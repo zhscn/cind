@@ -1,0 +1,256 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include "commands/editor_commands.hpp"
+
+#include <string>
+#include <utility>
+
+using namespace cind;
+
+namespace {
+
+// Fixture format from design.md §13.3: '^' marks the caret.
+std::pair<std::string, TextOffset> parse_caret(std::string_view fixture) {
+    std::size_t pos = fixture.find('^');
+    REQUIRE(pos != std::string_view::npos);
+    std::string text(fixture);
+    text.erase(pos, 1);
+    return {std::move(text), TextOffset{static_cast<std::uint32_t>(pos)}};
+}
+
+// Applies Enter at '^', returns the new text with '^' at the final caret.
+std::string enter(std::string_view fixture, const CppIndentStyle& style = {}) {
+    auto [text, caret] = parse_caret(fixture);
+    Document doc(std::move(text));
+    EnterResult result = press_enter(doc, caret, style);
+    std::string out(doc.snapshot().text());
+    out.insert(result.caret.value, "^");
+    return out;
+}
+
+// Type `input` at the caret (plain insert), returning the new caret.
+TextOffset type_text(Document& doc, TextOffset caret, std::string_view input) {
+    auto tx = doc.begin_transaction();
+    tx.insert(caret, input);
+    tx.commit();
+    return TextOffset{caret.value + static_cast<std::uint32_t>(input.size())};
+}
+
+} // namespace
+
+TEST_CASE("namespace body is not indented by default") {
+    CHECK(enter("namespace foo {^\nint x;\n}\n") == "namespace foo {\n^\nint x;\n}\n");
+
+    CppIndentStyle indented;
+    indented.indent_namespace_body = true;
+    CHECK(enter("namespace foo {^\nint x;\n}\n", indented) ==
+          "namespace foo {\n    ^\nint x;\n}\n");
+}
+
+TEST_CASE("enter between braces expands and places the caret on the middle line") {
+    CHECK(enter("void f() {^}\n") == "void f() {\n    ^\n}\n");
+    CHECK(enter("namespace foo {^}\n") == "namespace foo {\n^\n}\n");
+    CHECK(enter("class Foo {^};\n") == "class Foo {\n    ^\n};\n");
+    // nested: closing brace aligns with the opening line's indent
+    CHECK(enter("void f() {\n    if (x) {^}\n}\n") ==
+          "void f() {\n    if (x) {\n        ^\n    }\n}\n");
+    // lambda argument
+    CHECK(enter("foo([&](int x) {^});\n") == "foo([&](int x) {\n    ^\n});\n");
+}
+
+TEST_CASE("enter between braces works regardless of how the caret got there") {
+    // The braces were typed long ago; predicate is structural, not history.
+    std::string text = "void f() {}\n";
+    Document doc(text);
+    EnterResult result = press_enter(doc, TextOffset{10}, CppIndentStyle{});
+    CHECK(result.handler == "EnterBetweenBraces");
+    CHECK(doc.snapshot().text() == "void f() {\n    \n}\n");
+    // one undo unit reverts the whole expansion
+    REQUIRE(doc.undo().has_value());
+    CHECK(doc.snapshot().text() == text);
+}
+
+TEST_CASE("class body and access specifiers") {
+    CHECK(enter("class Foo {\npublic:^\n};\n") == "class Foo {\npublic:\n    ^\n};\n");
+
+    // reindenting the access specifier line keeps it at the class column
+    Document doc("class Foo {\n        public:\n};\n");
+    IndentDecision d = indent_line(doc, 1, CppIndentStyle{});
+    CHECK(d.role == FormatRole::AccessSpecifierLabel);
+    CHECK(doc.snapshot().text() == "class Foo {\npublic:\n};\n");
+
+    CppIndentStyle offset_style;
+    offset_style.access_specifier_offset = 2;
+    Document doc2("class Foo {\npublic:\n};\n");
+    indent_line(doc2, 1, offset_style);
+    CHECK(doc2.snapshot().text() == "class Foo {\n  public:\n};\n");
+}
+
+TEST_CASE("switch, case labels and case bodies") {
+    // statement after a label gets case-body indent
+    CHECK(enter("switch (x) {\ncase 1:^\n}\n") == "switch (x) {\ncase 1:\n    ^\n}\n");
+    // after a statement, stay at case-body indent
+    CHECK(enter("switch (x) {\ncase 1:\n    foo();^\n}\n") ==
+          "switch (x) {\ncase 1:\n    foo();\n    ^\n}\n");
+
+    // a mis-indented new label dedents back to the switch column
+    Document doc("switch (x) {\ncase 1:\n    foo();\n    case 2:\n}\n");
+    IndentDecision d = indent_line(doc, 3, CppIndentStyle{});
+    CHECK(d.role == FormatRole::CaseLabel);
+    CHECK(doc.snapshot().text() == "switch (x) {\ncase 1:\n    foo();\ncase 2:\n}\n");
+
+    CppIndentStyle both;
+    both.indent_case_label = true;
+    Document doc2("switch (x) {\ncase 1:\n}\n");
+    indent_line(doc2, 1, both);
+    CHECK(doc2.snapshot().text() == "switch (x) {\n    case 1:\n}\n");
+}
+
+TEST_CASE("constructor initializer list, typed step by step") {
+    // design.md §13.3 sequence fixture
+    Document doc("Foo::Foo()");
+    TextOffset caret{10};
+
+    EnterResult first = press_enter(doc, caret, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "Foo::Foo()\n    ");
+    caret = type_text(doc, first.caret, ": a_(1),");
+
+    EnterResult second = press_enter(doc, caret, CppIndentStyle{});
+    CHECK(second.decision.role == FormatRole::ConstructorInitializerItem);
+    type_text(doc, second.caret, "b_(2)");
+
+    CHECK(doc.snapshot().text() == "Foo::Foo()\n    : a_(1),\n      b_(2)");
+}
+
+TEST_CASE("bare colon initializer keeps a stable continuation indent") {
+    CHECK(enter("Foo::Foo()\n    :^\n") == "Foo::Foo()\n    :\n    ^\n");
+}
+
+TEST_CASE("constructor initializer styles") {
+    std::string text = "Foo::Foo()\n    : a_(1),^\n{\n}\n";
+
+    CppIndentStyle normal;
+    normal.constructor_initializers = CppIndentStyle::ConstructorInitializerStyle::NormalIndent;
+    CHECK(enter(text, normal) == "Foo::Foo()\n    : a_(1),\n    ^\n{\n}\n");
+
+    CppIndentStyle after_colon;
+    after_colon.constructor_initializers =
+        CppIndentStyle::ConstructorInitializerStyle::AlignAfterColon;
+    CHECK(enter(text, after_colon) == "Foo::Foo()\n    : a_(1),\n      ^\n{\n}\n");
+}
+
+TEST_CASE("declaration-prefix macro does not disturb initializer alignment") {
+    CHECK(enter("MY_API\nFoo::Foo()\n    : a_(1),^\n{\n}\n") ==
+          "MY_API\nFoo::Foo()\n    : a_(1),\n      ^\n{\n}\n");
+}
+
+TEST_CASE("if without braces indents one level and closes back") {
+    CHECK(enter("if (x)^\n") == "if (x)\n    ^\n");
+    CHECK(enter("if (x)\n    foo();^\n") == "if (x)\n    foo();\n^\n");
+    CHECK(enter("if (a)\n    f();\nelse^\n") == "if (a)\n    f();\nelse\n    ^\n");
+
+    // 'else' itself aligns with its if
+    Document doc("if (a)\n    f();\n        else\n    g();\n");
+    IndentDecision d = indent_line(doc, 2, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "if (a)\n    f();\nelse\n    g();\n");
+    CHECK(d.target_column == 0);
+}
+
+TEST_CASE("statement continuation") {
+    CHECK(enter("int x = a +^\n") == "int x = a +\n    ^\n");
+    CHECK(enter("foo(a,^ b);\n") == "foo(a,\n    ^ b);\n");
+}
+
+TEST_CASE("preprocessor directives stay at column zero") {
+    CHECK(enter("void f() {\n    body();^\n}\n") == "void f() {\n    body();\n    ^\n}\n");
+    Document doc("void f() {\n    #define X 1\n}\n");
+    IndentDecision d = indent_line(doc, 1, CppIndentStyle{});
+    CHECK(d.role == FormatRole::PreprocessorDirective);
+    CHECK(doc.snapshot().text() == "void f() {\n#define X 1\n}\n");
+}
+
+TEST_CASE("unclosed macro invocation leaves distant indent stable") {
+    // design.md §14.7 last sample: bounded degradation
+    std::string fixture = "#define DECLARE(x) x\n\nDECLARE(\nnamespace foo {^\nint x;\n}\n";
+    CHECK(enter(fixture) == "#define DECLARE(x) x\n\nDECLARE(\nnamespace foo {\n^\nint x;\n}\n");
+}
+
+TEST_CASE("raw strings and block comments are protected") {
+    SUBCASE("explicit indent never touches raw string content") {
+        std::string text = "auto s = R\"(\n  keep me\n)\";\n";
+        Document doc(text);
+        IndentDecision d = indent_line(doc, 1, CppIndentStyle{});
+        CHECK(d.preserve);
+        CHECK(d.role == FormatRole::PreservedRawString);
+        CHECK(doc.snapshot().text() == text);
+    }
+    SUBCASE("enter inside a raw string inserts no indentation") {
+        CHECK(enter("auto s = R\"(ab^cd)\";\n") == "auto s = R\"(ab\n^cd)\";\n");
+    }
+    SUBCASE("enter inside a block comment continues the previous indent") {
+        CHECK(enter("void f() {\n    /* comment^ */\n}\n") ==
+              "void f() {\n    /* comment\n    ^ */\n}\n");
+    }
+}
+
+TEST_CASE("explicit indent only changes leading whitespace") {
+    Document doc("namespace foo {\n        int x;   // trailing\n}\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "namespace foo {\nint x;   // trailing\n}\n");
+}
+
+TEST_CASE("smart tabs: structural part in tabs, alignment in spaces") {
+    CppIndentStyle tabs;
+    tabs.use_tabs = true;
+    CHECK(enter("void f() {^}\n", tabs) == "void f() {\n\t^\n}\n");
+    // ctor alignment beyond the structural level uses spaces
+    auto [text, caret] = parse_caret("Foo::Foo()\n\t: a_(1),^\n{\n}\n");
+    Document doc(std::move(text));
+    EnterResult result = press_enter(doc, caret, tabs);
+    CHECK(result.decision.role == FormatRole::ConstructorInitializerItem);
+    // target column 6: base 0 (fn line) -> no full tab at width 4 from
+    // structural 0, so all spaces
+    CHECK(result.decision.indentation_text == std::string(6, ' '));
+}
+
+TEST_CASE("every decision carries a trace and a handler") {
+    Document doc("void f() {}");
+    EnterResult result = press_enter(doc, TextOffset{10}, CppIndentStyle{});
+    REQUIRE(!result.decision.trace.empty());
+    CHECK(result.decision.trace.front() == "enter handler: EnterBetweenBraces");
+}
+
+TEST_CASE("prefix typing: enter at every prefix is deterministic and safe") {
+    static constexpr std::string_view kSample =
+        "namespace foo {\n"
+        "class Foo {\n"
+        "public:\n"
+        "    Foo();\n"
+        "};\n"
+        "Foo::Foo()\n"
+        "    : a_(1),\n"
+        "      b_{2}\n"
+        "{\n"
+        "    switch (x) {\n"
+        "    case 1:\n"
+        "        f([&] { return 1; });\n"
+        "    default:\n"
+        "        break;\n"
+        "    }\n"
+        "}\n"
+        "}\n";
+    for (std::size_t len = 0; len <= kSample.size(); ++len) {
+        std::string prefix(kSample.substr(0, len));
+        Document doc1(prefix);
+        Document doc2(prefix);
+        auto caret = TextOffset{static_cast<std::uint32_t>(doc1.snapshot().size_bytes())};
+        EnterResult r1 = press_enter(doc1, caret, CppIndentStyle{});
+        EnterResult r2 = press_enter(doc2, caret, CppIndentStyle{});
+        REQUIRE(doc1.snapshot().text() == doc2.snapshot().text()); // deterministic
+        REQUIRE(r1.caret == r2.caret);
+        // the whole command stays one undo unit
+        REQUIRE(doc1.undo().has_value());
+        REQUIRE(doc1.snapshot().text() == prefix);
+    }
+}

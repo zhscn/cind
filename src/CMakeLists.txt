@@ -16,7 +16,13 @@ add_library(cind_syntax STATIC
 )
 target_link_libraries(cind_syntax PUBLIC cind_lexer)
 
+add_library(cind_indent STATIC
+  indentation/indentation_service.cpp
+  commands/editor_commands.cpp
+)
+target_link_libraries(cind_indent PUBLIC cind_syntax)
+
 add_executable(indent-core
   cli/main.cpp
 )
-target_link_libraries(indent-core PRIVATE cind_syntax)
+target_link_libraries(indent-core PRIVATE cind_indent)

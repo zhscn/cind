@@ -9,3 +9,7 @@ add_test(NAME lexer_tests COMMAND lexer_tests)
 add_executable(parser_tests syntax/parser_tests.cpp)
 target_link_libraries(parser_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME parser_tests COMMAND parser_tests)
+
+add_executable(indentation_tests indentation/indentation_tests.cpp)
+target_link_libraries(indentation_tests PRIVATE cind_indent doctest::doctest)
+add_test(NAME indentation_tests COMMAND indentation_tests)
