@@ -1,5 +1,6 @@
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
+#include "syntax/syntax_tree.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -58,12 +59,31 @@ int cmd_tokens(const char* path) {
     return 0;
 }
 
+int cmd_tree(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::cerr << "indent-core: cannot open " << path << "\n";
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    cind::Document document(buffer.str());
+    auto snapshot = document.snapshot();
+    auto tree = cind::parse(snapshot.text());
+    std::cout << tree.dump(snapshot.text());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc >= 3 && std::string_view(argv[1]) == "tokens") {
+    const std::string_view command = argc >= 2 ? argv[1] : "";
+    if (argc >= 3 && command == "tokens") {
         return cmd_tokens(argv[2]);
     }
-    std::cerr << "usage: indent-core tokens <file>\n";
+    if (argc >= 3 && command == "tree") {
+        return cmd_tree(argv[2]);
+    }
+    std::cerr << "usage: indent-core <tokens|tree> <file>\n";
     return 2;
 }

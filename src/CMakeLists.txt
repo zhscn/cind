@@ -10,7 +10,13 @@ add_library(cind_lexer STATIC
 )
 target_link_libraries(cind_lexer PUBLIC cind_document)
 
+add_library(cind_syntax STATIC
+  syntax/parser.cpp
+  syntax/syntax_tree.cpp
+)
+target_link_libraries(cind_syntax PUBLIC cind_lexer)
+
 add_executable(indent-core
   cli/main.cpp
 )
-target_link_libraries(indent-core PRIVATE cind_lexer)
+target_link_libraries(indent-core PRIVATE cind_syntax)
