@@ -1,0 +1,26 @@
+version: 1
+
+toolchain:
+  linux: libcxx@22.1.8-1
+
+cmake:
+  generator: Ninja Multi-Config
+  default-preset: default
+  default-configuration: Debug
+  compile-commands: default
+  launcher: ccache
+
+  presets:
+    default:
+      build-dir: build
+
+  configurations:
+    - name: Debug
+    - name: Release
+    - name: Asan
+      inherits: Debug
+      compile: ["-fsanitize=address,undefined", -fno-omit-frame-pointer]
+      link: ["-fsanitize=address,undefined"]
+
+lint:
+  header-filter: ^src/
