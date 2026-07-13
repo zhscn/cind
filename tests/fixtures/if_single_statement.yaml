@@ -1,0 +1,11 @@
+name: braceless if indents one level and closes back
+initial: |
+  if (x)^
+actions:
+  - enter
+  - type: "foo();"
+  - enter
+expected: |
+  if (x)
+      foo();
+  ^

@@ -1,0 +1,9 @@
+name: enter between braces expands to three lines
+initial: |
+  void f() {^}
+actions:
+  - enter
+expected: |
+  void f() {
+      ^
+  }

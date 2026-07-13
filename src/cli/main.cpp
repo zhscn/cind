@@ -1,3 +1,5 @@
+#include "cli/fixture_runner.hpp"
+#include "cli/repl.hpp"
 #include "commands/editor_commands.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
@@ -149,8 +151,27 @@ int main(int argc, char** argv) {
         return cmd_apply_enter(argv[2],
                                static_cast<std::uint32_t>(std::strtoul(argv[4], nullptr, 10)));
     }
+    if (command == "repl") {
+        std::string initial;
+        if (argc >= 3) {
+            std::ifstream in(argv[2], std::ios::binary);
+            if (!in) {
+                std::cerr << "indent-core: cannot open " << argv[2] << "\n";
+                return 1;
+            }
+            std::stringstream buffer;
+            buffer << in.rdbuf();
+            initial = buffer.str();
+        }
+        return cind::run_repl(std::cin, std::move(initial));
+    }
+    if (argc >= 3 && command == "test") {
+        return cind::run_fixtures(argv[2]);
+    }
     std::cerr << "usage: indent-core tokens|tree <file>\n"
                  "       indent-core explain <file> --line <1-based>\n"
-                 "       indent-core apply-enter <file> --offset <byte>\n";
+                 "       indent-core apply-enter <file> --offset <byte>\n"
+                 "       indent-core repl [file]\n"
+                 "       indent-core test <fixture.yaml|dir>\n";
     return 2;
 }

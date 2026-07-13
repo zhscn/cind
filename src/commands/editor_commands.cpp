@@ -16,9 +16,10 @@ std::string_view leading_whitespace_of(const DocumentSnapshot& snapshot, std::ui
 
 // EnterBetweenBraces predicate: the nearest significant tokens around the
 // caret are '{' and its matching '}' of the same syntax node, with only
-// trivia in between. Matching is CST-based, so unbalanced braces simply fail
-// the predicate and fall through to plain newline-and-indent.
-bool between_braces(const SyntaxTree& tree, TextOffset caret) {
+// single-line trivia in between (a '}' already on its own line just needs the
+// fallback). Matching is CST-based, so unbalanced braces simply fail the
+// predicate and fall through to plain newline-and-indent.
+bool between_braces(std::string_view text, const SyntaxTree& tree, TextOffset caret) {
     const auto& tokens = tree.tokens();
     std::size_t prev = tokens.size();
     std::size_t next = tokens.size();
@@ -45,6 +46,10 @@ bool between_braces(const SyntaxTree& tree, TextOffset caret) {
     }
     for (std::size_t i = prev + 1; i < next; ++i) {
         if (!is_trivia(tokens[i].kind)) {
+            return false;
+        }
+        const TextRange r = tokens[i].range;
+        if (text.substr(r.start.value, r.length()).contains('\n')) {
             return false;
         }
     }
@@ -119,7 +124,7 @@ EnterResult newline_and_indent(Document& document, TextOffset caret,
 EnterResult press_enter(Document& document, TextOffset caret, const CppIndentStyle& style) {
     DocumentSnapshot snapshot = document.snapshot();
     SyntaxTree tree = parse(snapshot.text());
-    if (between_braces(tree, caret)) {
+    if (between_braces(snapshot.text(), tree, caret)) {
         return enter_between_braces(document, caret, style);
     }
     return newline_and_indent(document, caret, style);

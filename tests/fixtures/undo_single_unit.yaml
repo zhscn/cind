@@ -1,0 +1,8 @@
+name: enter expansion is one undo unit and restores the caret
+initial: |
+  void f() {^}
+actions:
+  - enter
+  - undo
+expected: |
+  void f() {^}

@@ -1,0 +1,12 @@
+name: namespace body indent is configurable
+style:
+  indent_namespace_body: true
+initial: |
+  namespace foo {^
+  }
+actions:
+  - enter
+expected: |
+  namespace foo {
+      ^
+  }

@@ -1,0 +1,15 @@
+name: mistyped case label dedents on explicit indent
+initial: |
+  switch (x) {
+  case 1:
+      foo();
+      case 2:^
+  }
+actions:
+  - indent
+expected: |
+  switch (x) {
+  case 1:
+      foo();
+  case 2:^
+  }

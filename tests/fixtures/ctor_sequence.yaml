@@ -1,0 +1,12 @@
+name: constructor initializer list typed step by step
+initial: |
+  Foo::Foo()^
+actions:
+  - enter
+  - type: ": a_(1),"
+  - enter
+  - type: "b_(2)"
+expected: |
+  Foo::Foo()
+      : a_(1),
+        b_(2)^

@@ -13,3 +13,5 @@ add_test(NAME parser_tests COMMAND parser_tests)
 add_executable(indentation_tests indentation/indentation_tests.cpp)
 target_link_libraries(indentation_tests PRIVATE cind_indent doctest::doctest)
 add_test(NAME indentation_tests COMMAND indentation_tests)
+
+add_test(NAME fixture_tests COMMAND indent-core test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures)

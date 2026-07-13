@@ -1,0 +1,12 @@
+name: namespace body is not indented by default
+initial: |
+  namespace foo {^
+  int x;
+  }
+actions:
+  - enter
+expected: |
+  namespace foo {
+  ^
+  int x;
+  }
