@@ -1,6 +1,7 @@
 #include "cpp_lexer/lexer.hpp"
 #include "document/char_source.hpp"
 #include "document/text.hpp"
+#include "syntax/pp_conditional.hpp"
 #include "syntax/syntax_tree.hpp"
 
 #include <algorithm>
@@ -108,7 +109,20 @@ public:
                 (k == TokenKind::CaseKw || k == TokenKind::DefaultKw)) {
                 break;
             }
+            const PPItem step = pp_open_item();
+            if (step == PPItem::StopLoop) {
+                break;
+            }
+            if (step == PPItem::Consumed) {
+                continue;
+            }
             guarded([&] { parse_declaration_or_statement(); });
+            if (unwinding()) {
+                if (static_cast<std::uint32_t>(stack_.size()) > unwind_target_) {
+                    break;
+                }
+                unwind_target_ = kNoUnwind;
+            }
         }
         result.nodes = std::move(tree_.nodes_);
         return result;
@@ -118,9 +132,7 @@ public:
         nodes().push_back(SyntaxNode{SyntaxKind::TranslationUnit, 0, 0, kInvalidNode, {}, false,
                                      false, TokenKind::EndOfFile});
         stack_.push_back(0);
-        while (!at_eof()) {
-            guarded([&] { parse_declaration_or_statement(); });
-        }
+        run_container_items([&] { return at_eof(); });
         pos_ = static_cast<std::uint32_t>(tree_.tokens_.size()); // include trailing trivia + EOF
         nodes()[0].end_token = pos_;
         stack_.pop_back();
@@ -329,6 +341,92 @@ private:
         close(d);
     }
 
+    // Classify the preprocessor directive whose '#' is at `hash`.
+    PPCat pp_category_at(std::uint32_t hash) {
+        std::uint32_t i = hash + 1;
+        while (i < tokens().size() && is_trivia(tokens()[i].kind)) {
+            ++i;
+        }
+        if (i >= tokens().size()) {
+            return PPCat::Other;
+        }
+        const TokenKind k = tokens()[i].kind;
+        if (k != TokenKind::Identifier) {
+            return pp_classify(k, {});
+        }
+        const Token& t = tokens()[i];
+        src_.extract(t.range.start.value, t.range.length(), token_text_buffer_);
+        return pp_classify(k, token_text_buffer_);
+    }
+
+    enum class PPItem : std::uint8_t {
+        Dispatch,  // no conditional directive here: parse the next item normally
+        Consumed,  // a conditional directive was consumed; re-run the loop
+        StopLoop,  // #else/#elif belongs to an outer container: unwind
+    };
+
+    // Called at the top of a container item loop. Handles a leading
+    // preprocessor conditional: #if pushes a frame, #else/#elif at the owning
+    // level is consumed (branches parse as siblings), #else/#elif belonging to
+    // an outer container requests an unwind, #endif pops the frame. #define
+    // and friends fall through to normal flat parsing.
+    PPItem pp_open_item() {
+        skip_trivia();
+        if (tokens()[pos_].kind != TokenKind::PreprocessorHash) {
+            return PPItem::Dispatch;
+        }
+        const std::uint32_t depth = static_cast<std::uint32_t>(stack_.size());
+        switch (pp_category_at(pos_)) {
+        case PPCat::Open:
+            parse_pp_directive();
+            pp_frames_.push_back({depth});
+            return PPItem::Consumed;
+        case PPCat::Alt:
+            if (pp_frames_.empty()) {
+                return PPItem::Dispatch; // straddles a sandbox start: flat fallback
+            }
+            if (pp_frames_.back().owner_depth < depth) {
+                unwind_target_ = pp_frames_.back().owner_depth;
+                return PPItem::StopLoop;
+            }
+            parse_pp_directive(); // this loop owns the conditional: consume, keep frame
+            return PPItem::Consumed;
+        case PPCat::Close:
+            if (!pp_frames_.empty()) {
+                pp_frames_.pop_back();
+            }
+            parse_pp_directive();
+            return PPItem::Consumed;
+        case PPCat::Other:
+            return PPItem::Dispatch;
+        }
+        return PPItem::Dispatch;
+    }
+
+    // The shared item loop for every statement/declaration container. `stop`
+    // reports the container's own terminators (EOF, '}', case labels). Handles
+    // preprocessor conditionals via pp_open_item and the cooperative unwind:
+    // when a deeper container requested a restore, break out until the owning
+    // loop (stack depth == unwind_target_) resumes.
+    template <typename StopFn> void run_container_items(StopFn stop) {
+        while (!stop()) {
+            const PPItem step = pp_open_item();
+            if (step == PPItem::StopLoop) {
+                break;
+            }
+            if (step == PPItem::Consumed) {
+                continue;
+            }
+            guarded([&] { parse_declaration_or_statement(); });
+            if (unwinding()) {
+                if (static_cast<std::uint32_t>(stack_.size()) > unwind_target_) {
+                    break;
+                }
+                unwind_target_ = kNoUnwind; // this loop owns the restore: resume
+            }
+        }
+    }
+
     void parse_namespace() {
         const SyntaxNodeId n = open(SyntaxKind::NamespaceDecl);
         advance(); // namespace
@@ -349,9 +447,7 @@ private:
         if (at(TokenKind::LBrace)) {
             const SyntaxNodeId body = open(SyntaxKind::NamespaceBody);
             advance();
-            while (!at_eof() && !at(TokenKind::RBrace)) {
-                guarded([&] { parse_declaration_or_statement(); });
-            }
+            run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
             expect_or_missing(TokenKind::RBrace);
             close(body);
         } else {
@@ -395,9 +491,7 @@ private:
             advance();
             const bool saved = enum_body_;
             enum_body_ = is_enum;
-            while (!at_eof() && !at(TokenKind::RBrace)) {
-                guarded([&] { parse_declaration_or_statement(); });
-            }
+            run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
             enum_body_ = saved;
             expect_or_missing(TokenKind::RBrace);
             close(body);
@@ -509,9 +603,7 @@ private:
         if (at(TokenKind::LBrace)) {
             const SyntaxNodeId body = open(SyntaxKind::CompoundStatement);
             advance();
-            while (!at_eof() && !at(TokenKind::RBrace)) {
-                guarded([&] { parse_declaration_or_statement(); });
-            }
+            run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
             expect_or_missing(TokenKind::RBrace);
             close(body);
         } else {
@@ -536,19 +628,17 @@ private:
             expect_or_missing(TokenKind::Colon);
             close(label);
         }
-        while (!at_eof() && !at(TokenKind::RBrace) && !at(TokenKind::CaseKw) &&
-               !at(TokenKind::DefaultKw)) {
-            guarded([&] { parse_declaration_or_statement(); });
-        }
+        run_container_items([&] {
+            return at_eof() || at(TokenKind::RBrace) || at(TokenKind::CaseKw) ||
+                   at(TokenKind::DefaultKw);
+        });
         close(section);
     }
 
     void parse_compound_statement() {
         const SyntaxNodeId c = open(SyntaxKind::CompoundStatement);
         advance(); // {
-        while (!at_eof() && !at(TokenKind::RBrace)) {
-            guarded([&] { parse_declaration_or_statement(); });
-        }
+        run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
         expect_or_missing(TokenKind::RBrace);
         close(c);
     }
@@ -666,9 +756,7 @@ private:
                 k == TokenKind::DoKw || k == TokenKind::SwitchKw) {
                 nodes()[g].kind = SyntaxKind::CompoundStatement;
                 nodes()[g].reclassified = true;
-                while (!at_eof() && !at(TokenKind::RBrace)) {
-                    guarded([&] { parse_declaration_or_statement(); });
-                }
+                run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
                 expect_or_missing(TokenKind::RBrace);
                 close(g);
                 return;
@@ -894,9 +982,7 @@ private:
                     nodes()[n].kind = SyntaxKind::NamespaceDecl;
                     const SyntaxNodeId body = open(SyntaxKind::NamespaceBody);
                     advance();
-                    while (!at_eof() && !at(TokenKind::RBrace)) {
-                        guarded([&] { parse_declaration_or_statement(); });
-                    }
+                    run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
                     expect_or_missing(TokenKind::RBrace);
                     close(body);
                     terminated = true;
@@ -974,6 +1060,19 @@ private:
     bool enum_body_ = false; // directly inside an enum's ClassBody
     SyntaxTree tree_;
     std::vector<SyntaxNodeId> stack_;
+
+    // Preprocessor conditional reconciliation (design.md §276): each open
+    // #if/#ifdef/#ifndef consumed at a container's item-loop level records the
+    // owner loop's stack depth; a following #else/#elif restores to it so
+    // alternative branches parse as siblings (one branch's net brace effect
+    // counts, not the sum). See pp_open_item / run_container_items.
+    struct PPFrame {
+        std::uint32_t owner_depth;
+    };
+    std::vector<PPFrame> pp_frames_;
+    static constexpr std::uint32_t kNoUnwind = 0xFFFFFFFFu;
+    std::uint32_t unwind_target_ = kNoUnwind;
+    bool unwinding() const { return unwind_target_ != kNoUnwind; }
 };
 
 SyntaxTree parse(std::string_view text) {

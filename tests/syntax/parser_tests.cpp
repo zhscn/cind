@@ -218,13 +218,59 @@ TEST_CASE("template angle heuristic") {
     }
 }
 
-TEST_CASE("unbalanced #if branches stay line-local") {
+TEST_CASE("split-brace #if/#else branches parse as sibling alternatives") {
+    // #ifdef A opens a brace in one branch, #else opens another, and a single
+    // '}' after #endif closes it. clang-format's model treats the branches as
+    // alternatives (one net brace), so f and g are siblings, not g nested
+    // inside f's unclosed body. design.md §276.
     SyntaxTree tree = parse_checked(
         "#ifdef A\nvoid f() {\n#else\nvoid g() {\n#endif\n    body();\n}\n");
     CHECK(find_all(tree, SyntaxKind::PreprocessorDirective).size() == 3);
-    // Both branch texts parse as active: two function definitions appear.
-    // (Known bounded degradation per design.md §7.4b — locked in here.)
-    CHECK(find_all(tree, SyntaxKind::FunctionDefinition).size() == 2);
+    auto fns = find_all(tree, SyntaxKind::FunctionDefinition);
+    REQUIRE(fns.size() == 2); // ids are DFS-preorder: fns[0] == f, fns[1] == g
+    CHECK(tree.node(fns[0]).parent == tree.root());
+    CHECK(tree.node(fns[1]).parent == tree.root());
+    // f's body is force-closed at #else (no real '}'); the shared body and the
+    // closing brace attach to the last branch (g), which closes cleanly.
+    SyntaxNodeId f_body = tree.node(fns[0]).children.back();
+    SyntaxNodeId g_body = tree.node(fns[1]).children.back();
+    CHECK(tree.node(f_body).kind == SyntaxKind::CompoundStatement);
+    CHECK(tree.node(g_body).kind == SyntaxKind::CompoundStatement);
+    CHECK(tree.node(f_body).incomplete);
+    CHECK(!tree.node(g_body).incomplete);
+}
+
+TEST_CASE("split-brace #if inside a function keeps the tail at body level") {
+    // The raw_socket_stream.cpp cascade: two `if (...) {` alternatives share
+    // one closing brace. The bug nested if2 inside if1, pushing everything
+    // after #endif one level too deep and cascading past the function.
+    SyntaxTree tree = parse_checked("int h() {\n"
+                                    "#ifdef _WIN32\n"
+                                    "  if (a) {\n"
+                                    "#else\n"
+                                    "  if (b) {\n"
+                                    "#endif\n"
+                                    "    inner();\n"
+                                    "  }\n"
+                                    "  tail();\n"
+                                    "}\n");
+    auto ifs = find_all(tree, SyntaxKind::IfStatement);
+    REQUIRE(ifs.size() == 2);
+    // both ifs are siblings in the same (function) compound, not nested
+    const SyntaxNodeId scope = tree.node(ifs[0]).parent;
+    CHECK(tree.node(ifs[1]).parent == scope);
+    CHECK(tree.node(scope).kind == SyntaxKind::CompoundStatement);
+    // tail() lives directly in the function body — the cascade is gone
+    bool tail_at_body = false;
+    for (SyntaxNodeId child : tree.node(scope).children) {
+        if (tree.node(child).kind == SyntaxKind::OpaqueDeclaration) {
+            tail_at_body = true; // an opaque stmt (inner()/tail()) at body level
+        }
+    }
+    CHECK(tail_at_body);
+    // the function body closes cleanly (its own '}'), nothing left dangling
+    SyntaxNodeId fn = find_one(tree, SyntaxKind::FunctionDefinition);
+    CHECK(!tree.node(fn).incomplete);
 }
 
 TEST_CASE("declarator suffixes still introduce a function body") {

@@ -134,6 +134,31 @@ TEST_CASE("IndentPPDirectives BeforeHash indents by conditional nesting depth") 
     }
 }
 
+TEST_CASE("split-brace #if/#else does not cascade the indent of the tail") {
+    CppIndentStyle style;
+    style.indent_width = 2;
+    // raw_socket_stream.cpp getSocketFD shape: two `if (...) {` alternatives
+    // share one closing brace after #endif. The old all-branches-active parse
+    // nested if2 inside if1 and pushed every following line one level too deep.
+    const std::string text = "int h() {\n"    // 0
+                             "#ifdef _WIN32\n" // 1
+                             "  if (a) {\n"    // 2  #if branch
+                             "#else\n"         // 3
+                             "  if (b) {\n"    // 4  #else branch
+                             "#endif\n"        // 5
+                             "    inner();\n"  // 6
+                             "  }\n"           // 7
+                             "  tail();\n"     // 8
+                             "}\n";            // 9
+    Document doc(text);
+    auto col = [&](std::uint32_t line) { return indent_line(doc, line, style).target_column; };
+    CHECK(col(2) == 2); // if in the #if branch sits at the function-body level
+    CHECK(col(4) == 2); // if in the #else branch sits at the same level
+    CHECK(col(6) == 4); // inner(): one level inside the (single) if
+    CHECK(col(7) == 2); // '}' closes that if
+    CHECK(col(8) == 2); // tail(): back at body level — the cascade is gone
+}
+
 TEST_CASE("enter between braces expands and places the caret on the middle line") {
     CHECK(enter("void f() {^}\n") == "void f() {\n    ^\n}\n");
     CHECK(enter("namespace foo {^}\n") == "namespace foo {\n^\n}\n");

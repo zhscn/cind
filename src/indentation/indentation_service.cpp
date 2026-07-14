@@ -2,6 +2,7 @@
 
 #include "document/char_source.hpp"
 #include "indentation/expression_continuation.hpp"
+#include "syntax/pp_conditional.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -182,8 +183,6 @@ std::optional<Token> token_covering(const SyntaxTree& tree, TextOffset offset) {
 // #else/#elif render at the enclosing level); the outermost #ifndef/#define …
 // trailing-#endif include guard is transparent, exactly as clang-format treats
 // it. Returns 0 when the line is not a nested directive.
-enum class PPCat { Open, Alt, Close, Other };
-
 int pp_before_hash_column(const SyntaxTree& tree, const Text& text, std::uint32_t query_line,
                           int step) {
     const auto& tokens = tree.tokens();
@@ -202,26 +201,10 @@ int pp_before_hash_column(const SyntaxTree& tree, const Text& text, std::uint32_
             return PPCat::Other;
         }
         const TokenKind k = tokens[i].kind;
-        if (k == TokenKind::IfKw) {
-            return PPCat::Open;
-        }
-        if (k == TokenKind::ElseKw) {
-            return PPCat::Alt;
-        }
         if (k != TokenKind::Identifier) {
-            return PPCat::Other;
+            return pp_classify(k, {});
         }
-        const std::string s = text.substring(tokens[i].range);
-        if (s == "ifdef" || s == "ifndef") {
-            return PPCat::Open;
-        }
-        if (s == "endif") {
-            return PPCat::Close;
-        }
-        if (s == "elif" || s == "elifdef" || s == "elifndef") {
-            return PPCat::Alt;
-        }
-        return PPCat::Other;
+        return pp_classify(k, text.substring(tokens[i].range));
     };
 
     // Directive starts in source order: a '#' that is the first significant
