@@ -6,8 +6,8 @@ namespace cind {
 
 namespace {
 
-GreenRef encode(const SyntaxTree& tree, SyntaxNodeId id) {
-    const SyntaxNode& n = tree.node(id);
+GreenRef encode(const std::vector<SyntaxNode>& nodes, SyntaxNodeId id) {
+    const SyntaxNode& n = nodes[id];
     auto g = std::make_shared<GreenNode>();
     g->kind = n.kind;
     g->width = n.end_token - n.first_token; // MissingToken: first == end -> 0
@@ -17,8 +17,8 @@ GreenRef encode(const SyntaxTree& tree, SyntaxNodeId id) {
     g->children.reserve(n.children.size());
     std::uint32_t cursor = n.first_token;
     for (SyntaxNodeId cid : n.children) {
-        const SyntaxNode& c = tree.node(cid);
-        g->children.push_back(GreenChild{c.first_token - cursor, encode(tree, cid)});
+        const SyntaxNode& c = nodes[cid];
+        g->children.push_back(GreenChild{c.first_token - cursor, encode(nodes, cid)});
         cursor = c.end_token;
     }
     return g;
@@ -44,10 +44,17 @@ void materialize(const GreenRef& g, std::uint32_t base, SyntaxNodeId parent,
 } // namespace
 
 GreenRef green_from_flat(const SyntaxTree& tree) {
-    if (tree.node_count() == 0) {
+    if (tree.nodes_.empty()) {
         return nullptr;
     }
-    return encode(tree, tree.root());
+    return encode(tree.nodes_, tree.root());
+}
+
+GreenRef green_from_flat_subtree(const std::vector<SyntaxNode>& nodes, SyntaxNodeId root) {
+    if (nodes.empty()) {
+        return nullptr;
+    }
+    return encode(nodes, root);
 }
 
 SyntaxTree flat_from_green(const GreenRef& root, std::vector<Token> tokens) {

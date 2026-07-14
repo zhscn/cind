@@ -178,7 +178,13 @@ TEST_CASE("reparse: edits at file boundaries") {
 }
 
 TEST_CASE("reparse: fuzz against full parse") {
-    std::mt19937 rng(20260715);
+    // Multiple seeds: 20260715 exercises the CaseSection sibling-leading shift
+    // (green splice); 50000 the zero-width-prefix-item boundary; the rest add
+    // breadth. Each seed reruns the full edit loop below.
+    const unsigned seeds[] = {20260715u, 50000u, 1013u, 424242u, 7u};
+    for (unsigned seed : seeds) {
+    CAPTURE(seed);
+    std::mt19937 rng(seed);
     const std::string_view fragments[] = {
         "int f(int a, int b) { return a + b; }\n",
         "namespace ns {\nvoid g() {}\n}\n",
@@ -221,6 +227,7 @@ TEST_CASE("reparse: fuzz against full parse") {
             doc = check_edit(doc, 0, static_cast<std::uint32_t>(doc.size()) / 2, "");
         }
     }
+    } // seeds
 }
 
 TEST_CASE("reparse: edits around split-brace #if/#else match a full parse") {

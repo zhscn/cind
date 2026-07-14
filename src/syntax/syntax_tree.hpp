@@ -14,9 +14,6 @@ namespace cind {
 
 class Text;
 
-using SyntaxNodeId = std::uint32_t;
-inline constexpr SyntaxNodeId kInvalidNode = 0xFFFFFFFFu;
-
 // A node covers a half-open range of token indices. Tokens (including trivia)
 // inside a node's range but outside all children belong to the node itself,
 // so every token belongs to exactly one deepest node. Leading/trailing trivia
@@ -63,6 +60,7 @@ private:
     friend void reparse(SyntaxTree&, std::vector<LexerState>&, const Text&, const Text&,
                         std::span<const TextEdit>);
     friend SyntaxTree flat_from_green(const GreenRef&, std::vector<Token>);
+    friend GreenRef green_from_flat(const SyntaxTree&);
 
     GreenRef green_root_;
     std::vector<Token> tokens_;

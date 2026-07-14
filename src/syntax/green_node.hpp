@@ -10,6 +10,10 @@
 namespace cind {
 
 class SyntaxTree;
+struct SyntaxNode;
+
+using SyntaxNodeId = std::uint32_t;
+inline constexpr SyntaxNodeId kInvalidNode = 0xFFFFFFFFu;
 
 // Length-encoded, position-independent, immutable syntax node (design.md §607,
 // "green tree 的另一半"). A node records its total token span as a relative
@@ -39,6 +43,10 @@ struct GreenNode {
 // Encode a flat red tree as a green tree (relative length encoding). Reads only
 // the public tree API. Returns nullptr for an empty tree.
 GreenRef green_from_flat(const SyntaxTree& tree);
+
+// Encode one subtree of an arbitrary flat node vector (e.g. an incremental
+// reparse sandbox result) as a green node, rooted at `root`.
+GreenRef green_from_flat_subtree(const std::vector<SyntaxNode>& nodes, SyntaxNodeId root);
 
 // Materialize a flat SyntaxTree from a green root and its token stream — the
 // inverse of green_from_flat. Ids are assigned in DFS-preorder, exactly as the

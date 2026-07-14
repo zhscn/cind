@@ -1121,35 +1121,6 @@ SyntaxTree parse(const Text& text, LexOutput lexed) {
 
 namespace {
 
-// Replaces v[first, last) with `replacement`, moving the tail once.
-template <typename T>
-void splice_nodes_vector(std::vector<T>& v, std::size_t first, std::size_t last,
-                         std::vector<T>& replacement) {
-    const std::size_t old_len = last - first;
-    const std::size_t new_len = replacement.size();
-    if (new_len <= old_len) {
-        std::move(replacement.begin(), replacement.end(),
-                  v.begin() + static_cast<std::ptrdiff_t>(first));
-        v.erase(v.begin() + static_cast<std::ptrdiff_t>(first + new_len),
-                v.begin() + static_cast<std::ptrdiff_t>(last));
-    } else {
-        std::move(replacement.begin(), replacement.begin() + static_cast<std::ptrdiff_t>(old_len),
-                  v.begin() + static_cast<std::ptrdiff_t>(first));
-        v.insert(v.begin() + static_cast<std::ptrdiff_t>(last),
-                 std::make_move_iterator(replacement.begin() + static_cast<std::ptrdiff_t>(old_len)),
-                 std::make_move_iterator(replacement.end()));
-    }
-}
-
-// One past the last node id of `id`'s subtree (parser allocates DFS-preorder,
-// so a subtree is a contiguous id range).
-SyntaxNodeId subtree_end(const std::vector<SyntaxNode>& nodes, SyntaxNodeId id) {
-    while (!nodes[id].children.empty()) {
-        id = nodes[id].children.back();
-    }
-    return id + 1;
-}
-
 bool is_item_container(const SyntaxNode& n) {
     switch (n.kind) {
     case SyntaxKind::TranslationUnit:
@@ -1168,14 +1139,17 @@ struct RepairContext {
     bool enum_body;
 };
 
-// Attempts the block repair inside container C. Returns true on success
-// (tree fixed up in place); false means escalate to the enclosing container.
-// Token vector is already the NEW stream; node token indices are still OLD.
-// [guard_lo, tok_hi) is the old-coordinate damage window (guard included);
-// old index j >= tok_hi lives at j + delta_tok in the new stream.
-bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
-                const RepairContext& ctx, std::uint32_t guard_lo, std::uint32_t tok_hi,
-                std::int64_t delta_tok, const Text& new_text) {
+// Attempts the block repair inside container C. Returns the rebuilt container
+// green node on success; null means escalate to the enclosing container. The
+// old flat `nodes` (red cache) and `container_green` (C's green node) still hold
+// OLD coordinates; the token vector is already the NEW stream. [guard_lo,
+// tok_hi) is the old-coordinate damage window (guard included); old index
+// j >= tok_hi lives at j + delta_tok in the new stream. Untouched child
+// GreenRefs are reused by pointer — their relative encoding is splice-invariant.
+GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
+                    const RepairContext& ctx, const GreenRef& container_green,
+                    std::uint32_t guard_lo, std::uint32_t tok_hi, std::int64_t delta_tok,
+                    const Text& new_text) {
     const SyntaxNodeId c_id = ctx.id;
     const SyntaxKind c_kind = nodes[c_id].kind;
     const bool is_tu = c_kind == SyntaxKind::TranslationUnit;
@@ -1202,14 +1176,14 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
     std::uint32_t lower = 0;
     if (c_kind == SyntaxKind::CaseSection) {
         if (label == kInvalidNode) {
-            return false;
+            return nullptr;
         }
         lower = nodes[label].end_token;
     } else if (!is_tu) {
         lower = nodes[c_id].first_token + 1; // past the '{'
     }
     if (guard_lo < lower) {
-        return false;
+        return nullptr;
     }
 
     // Post-loop boundary: where the container's item loop came to rest.
@@ -1223,7 +1197,7 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
         // at or after the section's end — outside the window by containment.
         std::uint32_t j = nodes[c_id].end_token;
         if (j < tok_hi) {
-            return false;
+            return nullptr;
         }
         while (is_trivia(toks[mapped(j)].kind)) {
             ++j;
@@ -1233,12 +1207,19 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
         post_loop_old = nodes[c_id].end_token - 1; // the consumed '}'
     }
     if (!is_tu && tok_hi > post_loop_old) {
-        return false; // the window reaches the container's own closer
+        return nullptr; // the window reaches the container's own closer
     }
 
     // Item span [i, ...) to reparse and the alignment boundaries after it.
+    // A zero-width item (e.g. an empty incomplete declaration) sitting exactly
+    // at guard_lo occupies the damage-window boundary: its first_token == the
+    // point the sandbox re-parses from, so keeping it as prefix would duplicate
+    // it against the sandbox output. Require the item to start strictly before
+    // guard_lo, which only excludes such degenerate boundary nodes (normal
+    // items ending at guard_lo already start before it).
     std::size_t i = 0;
-    while (i < items.size() && nodes[items[i]].end_token <= guard_lo) {
+    while (i < items.size() && nodes[items[i]].end_token <= guard_lo &&
+           nodes[items[i]].first_token < guard_lo) {
         ++i;
     }
     constexpr std::uint32_t kPostLoop = 0xFFFFFFFFu;
@@ -1264,7 +1245,7 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
     Parser<TextCharSource> sandbox(source, toks);
     auto result = sandbox.run_items(start, c_kind, ctx.enum_body, bounds);
     if (result.aligned_at == Parser<TextCharSource>::kNoBoundary) {
-        return false;
+        return nullptr;
     }
 
     // Which old items the reparse replaced: [i, m).
@@ -1281,89 +1262,50 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
         }
     }
 
-    const SyntaxNodeId at_end =
-        epilogue != kInvalidNode
-            ? epilogue
-            : (!items.empty() ? subtree_end(nodes, items.back())
-                              : (label != kInvalidNode ? subtree_end(nodes, label) : c_id + 1));
-    const SyntaxNodeId lo_id = i < items.size() ? items[i] : at_end;
-    const SyntaxNodeId hi_id = m < items.size() ? items[m] : at_end;
+    // Green splice: rebuild C's child list, reusing the untouched prefix/suffix
+    // child GreenRefs by pointer. C's green children line up 1:1 with its red
+    // children (both DFS-preorder), partitioned [label?] + items + [epilogue?],
+    // so the replaced item span [i, m) maps to green-child indices offset by the
+    // label. Relative `leading`s are recomputed from each child's new-stream
+    // first token; untouched children carry an unchanged gap and keep their
+    // pointer.
+    const std::size_t base = label != kInvalidNode ? 1 : 0;
+    const std::size_t lo_ci = base + i;
+    const std::size_t hi_ci = base + m;
+    const std::vector<GreenChild>& old_children = container_green->children;
+    const std::vector<SyntaxNodeId>& red_children = nodes[c_id].children;
+    const std::uint32_t container_first = nodes[c_id].first_token; // unchanged by the edit
 
-    // New block: sandbox ids 1.. shift onto [lo_id, ...); the sandbox root
-    // (id 0) stands for C.
-    std::vector<SyntaxNode> block(std::make_move_iterator(result.nodes.begin() + 1),
-                                  std::make_move_iterator(result.nodes.end()));
-    const std::int64_t id_shift = static_cast<std::int64_t>(lo_id) - 1;
-    for (SyntaxNode& n : block) {
-        n.parent = n.parent == 0 ? c_id : static_cast<SyntaxNodeId>(n.parent + id_shift);
-        for (SyntaxNodeId& ch : n.children) {
-            ch = static_cast<SyntaxNodeId>(ch + id_shift);
-        }
+    std::vector<GreenChild> merged;
+    merged.reserve(old_children.size() + result.nodes[0].children.size());
+    std::uint32_t cursor = container_first; // running new-stream end position
+    auto append = [&](const GreenRef& node, std::uint32_t new_first) {
+        merged.push_back(GreenChild{new_first - cursor, node});
+        cursor = new_first + node->width;
+    };
+    for (std::size_t k = 0; k < lo_ci; ++k) { // prefix: positions unchanged
+        append(old_children[k].node, nodes[red_children[k]].first_token);
     }
-    const std::int64_t node_delta =
-        static_cast<std::int64_t>(block.size()) - (static_cast<std::int64_t>(hi_id) - lo_id);
-
-    // C's child list, rebuilt from the pre-shift ids: entries < lo_id stay,
-    // the span [lo_id, hi_id) is dropped, entries >= hi_id shift; the new
-    // block goes exactly where the first entry >= lo_id was (or at the end).
-    {
-        std::vector<SyntaxNodeId> rebuilt;
-        rebuilt.reserve(nodes[c_id].children.size() + block.size());
-        bool inserted = false;
-        for (SyntaxNodeId entry : nodes[c_id].children) {
-            if (!inserted && entry >= lo_id) {
-                for (SyntaxNodeId nid : result.nodes[0].children) {
-                    rebuilt.push_back(static_cast<SyntaxNodeId>(nid + id_shift));
-                }
-                inserted = true;
-            }
-            if (entry < lo_id) {
-                rebuilt.push_back(entry);
-            } else if (entry >= hi_id) {
-                rebuilt.push_back(static_cast<SyntaxNodeId>(entry + node_delta));
-            }
-        }
-        if (!inserted) {
-            for (SyntaxNodeId nid : result.nodes[0].children) {
-                rebuilt.push_back(static_cast<SyntaxNodeId>(nid + id_shift));
-            }
-        }
-        nodes[c_id].children = std::move(rebuilt);
-        nodes[c_id].end_token = static_cast<std::uint32_t>(nodes[c_id].end_token + delta_tok);
+    for (SyntaxNodeId sid : result.nodes[0].children) { // replacement: new stream
+        append(green_from_flat_subtree(result.nodes, sid), result.nodes[sid].first_token);
     }
-    // Ancestors above C: extend over the token delta; shift child ids past
-    // the replaced span (C's own id stays below lo_id).
-    for (SyntaxNodeId a = nodes[c_id].parent; a != kInvalidNode; a = nodes[a].parent) {
-        nodes[a].end_token = static_cast<std::uint32_t>(nodes[a].end_token + delta_tok);
-        for (SyntaxNodeId& ch : nodes[a].children) {
-            if (ch >= hi_id) {
-                ch = static_cast<SyntaxNodeId>(ch + node_delta);
-            }
-        }
+    for (std::size_t k = hi_ci; k < old_children.size(); ++k) { // suffix: shift by delta
+        append(old_children[k].node,
+               static_cast<std::uint32_t>(nodes[red_children[k]].first_token + delta_tok));
     }
 
-    // Suffix nodes: token indices shift by delta_tok, ids by node_delta.
-    for (std::size_t n = hi_id; n < nodes.size(); ++n) {
-        SyntaxNode& node = nodes[n];
-        node.first_token = static_cast<std::uint32_t>(node.first_token + delta_tok);
-        node.end_token = static_cast<std::uint32_t>(node.end_token + delta_tok);
-        if (node.parent != kInvalidNode && node.parent >= hi_id) {
-            node.parent = static_cast<SyntaxNodeId>(node.parent + node_delta);
-        }
-        for (SyntaxNodeId& ch : node.children) {
-            ch = static_cast<SyntaxNodeId>(ch + node_delta);
-        }
-    }
-
-    splice_nodes_vector(nodes, lo_id, hi_id, block);
-
-    // A CaseSection's loop stops at an unconsumed token (case/default/'}'),
-    // so its end is trimmed back to its last child — not a fixed closer that
-    // the uniform delta shift would track.
-    if (c_kind == SyntaxKind::CaseSection && !nodes[c_id].children.empty()) {
-        nodes[c_id].end_token = nodes[nodes[c_id].children.back()].end_token;
-    }
-    return true;
+    auto rebuilt = std::make_shared<GreenNode>();
+    rebuilt->kind = container_green->kind;
+    rebuilt->incomplete = container_green->incomplete;
+    rebuilt->reclassified = container_green->reclassified;
+    rebuilt->expected = container_green->expected;
+    rebuilt->children = std::move(merged);
+    // A CaseSection has no fixed closer — it ends at its last child; every other
+    // container's closer just shifts by delta_tok, so its width does too.
+    rebuilt->width = c_kind == SyntaxKind::CaseSection
+                         ? cursor - container_first
+                         : static_cast<std::uint32_t>(container_green->width + delta_tok);
+    return rebuilt;
 }
 
 // True if the token range [lo, hi) contains a preprocessor conditional
@@ -1514,19 +1456,31 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
         return;
     }
 
-    // Container chain from the root down to the deepest one holding the
-    // window; repair is tried deepest-first.
-    std::vector<RepairContext> chain;
-    chain.push_back({0, false});
+    // Descent from the root down to the deepest node holding the window,
+    // tracking the parallel green spine (each node's GreenRef and the index it
+    // occupies in its parent) so a successful repair can rebuild only that spine
+    // and reuse every untouched subtree by pointer. Item-containers on the path
+    // are the repair candidates, tried deepest-first.
+    struct ChainEntry {
+        RepairContext ctx;
+        std::size_t depth; // index into path_green / path_index
+    };
+    std::vector<GreenRef> path_green{tree.green_root_};
+    std::vector<std::uint32_t> path_index{0}; // path_green[k] sits at this index in path_green[k-1]
+    std::vector<ChainEntry> chain;
+    chain.push_back({{0, false}, 0});
     bool enum_ctx = false;
     SyntaxNodeId cur = 0;
     while (true) {
         SyntaxNodeId next = kInvalidNode;
-        for (SyntaxNodeId child : tree.nodes_[cur].children) {
-            if (tree.nodes_[child].kind != SyntaxKind::MissingToken &&
-                tree.nodes_[child].first_token <= guard_lo &&
-                tree.nodes_[child].end_token >= tok_hi) {
-                next = child;
+        std::uint32_t next_index = 0;
+        const std::vector<SyntaxNodeId>& kids = tree.nodes_[cur].children;
+        for (std::uint32_t ci = 0; ci < kids.size(); ++ci) {
+            const SyntaxNode& child = tree.nodes_[kids[ci]];
+            if (child.kind != SyntaxKind::MissingToken && child.first_token <= guard_lo &&
+                child.end_token >= tok_hi) {
+                next = kids[ci];
+                next_index = ci;
                 break;
             }
         }
@@ -1543,17 +1497,43 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
             }
             enum_ctx = tree.tokens_[j].kind == TokenKind::EnumKw;
         }
+        path_green.push_back(path_green.back()->children[next_index].node);
+        path_index.push_back(next_index);
         if (is_item_container(tree.nodes_[next])) {
-            chain.push_back({next, enum_ctx});
+            chain.push_back({{next, enum_ctx}, path_green.size() - 1});
         }
         cur = next;
     }
 
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        if (try_repair(tree.nodes_, tree.tokens_, *it, guard_lo, tok_hi, delta_tok, new_text)) {
-            tree.green_root_ = green_from_flat(tree);
-            return;
+        GreenRef spliced = try_repair(tree.nodes_, tree.tokens_, it->ctx, path_green[it->depth],
+                                      guard_lo, tok_hi, delta_tok, new_text);
+        if (!spliced) {
+            continue;
         }
+        // A CaseSection has no fixed closer, so its width can change by more or
+        // less than delta_tok (the trailing-trivia boundary with its next
+        // sibling moves). The direct parent must shift that next sibling's
+        // leading to keep its absolute position at old + delta_tok; for
+        // fixed-closer containers the adjustment is zero.
+        const std::int64_t sibling_shift =
+            delta_tok - (static_cast<std::int64_t>(spliced->width) -
+                         static_cast<std::int64_t>(path_green[it->depth]->width));
+        // Rebuild the spine above the repaired container, reusing sibling
+        // GreenRefs by pointer; each ancestor grows by delta_tok.
+        for (std::size_t k = it->depth; k-- > 0;) {
+            auto parent = std::make_shared<GreenNode>(*path_green[k]);
+            parent->width = static_cast<std::uint32_t>(parent->width + delta_tok);
+            const std::uint32_t idx = path_index[k + 1];
+            parent->children[idx].node = spliced;
+            if (k == it->depth - 1 && idx + 1 < parent->children.size()) {
+                GreenChild& next = parent->children[idx + 1];
+                next.leading = static_cast<std::uint32_t>(next.leading + sibling_shift);
+            }
+            spliced = parent;
+        }
+        tree = flat_from_green(spliced, std::move(tree.tokens_));
+        return;
     }
 
     // No bounded repair region: full reparse over the (already new) tokens.
