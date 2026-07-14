@@ -264,6 +264,7 @@ private:
 
     void parse_class() {
         const SyntaxNodeId n = open(SyntaxKind::ClassDecl);
+        const bool is_enum = at(TokenKind::EnumKw);
         advance(); // class/struct/union/enum
         while (!at_eof() && !at(TokenKind::LBrace) && !at(TokenKind::Semicolon) &&
                !at(TokenKind::RBrace) && kind() != TokenKind::NamespaceKw) {
@@ -280,9 +281,12 @@ private:
         if (at(TokenKind::LBrace)) {
             const SyntaxNodeId body = open(SyntaxKind::ClassBody);
             advance();
+            const bool saved = enum_body_;
+            enum_body_ = is_enum;
             while (!at_eof() && !at(TokenKind::RBrace)) {
                 guarded([&] { parse_declaration_or_statement(); });
             }
+            enum_body_ = saved;
             expect_or_missing(TokenKind::RBrace);
             close(body);
             if (at(TokenKind::Semicolon)) {
@@ -690,8 +694,18 @@ private:
                 terminated = true;
                 break;
             }
+            // Enumerators are comma-separated siblings, not one declaration.
+            if (k == TokenKind::Comma && enum_body_) {
+                advance();
+                terminated = true;
+                break;
+            }
             if (k == TokenKind::RBrace) {
-                mark_incomplete(n);
+                if (enum_body_) {
+                    terminated = true; // the last enumerator ends at '}'
+                } else {
+                    mark_incomplete(n);
+                }
                 break;
             }
             if (is_sync_introducer(k)) {
@@ -772,6 +786,7 @@ private:
 
     std::string_view text_;
     std::uint32_t pos_ = 0;
+    bool enum_body_ = false; // directly inside an enum's ClassBody
     SyntaxTree tree_;
     std::vector<SyntaxNodeId> stack_;
 };

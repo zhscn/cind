@@ -257,6 +257,15 @@ TEST_CASE("trailing-return lambda inside an argument list") {
     CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
 }
 
+TEST_CASE("enumerators are sibling declarations, not one continuation") {
+    SyntaxTree tree = parse_checked("enum E {\n    A,\n    B = f(1, 2),\n    C\n};\n");
+    SyntaxNodeId body = find_one(tree, SyntaxKind::ClassBody);
+    CHECK(tree.node(body).children.size() == 3);
+    for (SyntaxNodeId child : tree.node(body).children) {
+        CHECK(!tree.node(child).incomplete);
+    }
+}
+
 TEST_CASE("= default is not a case label") {
     SyntaxTree tree = parse_checked("X::X() = default;\nvoid f() {}\n");
     CHECK(find_all(tree, SyntaxKind::CaseSection).empty());
