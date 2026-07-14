@@ -379,7 +379,12 @@ private:
             top().start_of_function_call = t.next_operator ? col : 0;
         }
         if (t.ctor_colon) {
-            top().indent = col + 2; // BCIS_BeforeColon: align items after ": "
+            // BeforeColon: items align after ": "; BeforeComma: the ','
+            // lands exactly under the ':'.
+            const bool comma_prepended =
+                style_.constructor_initializers ==
+                CppIndentStyle::ConstructorInitializerStyle::AlignWithColon;
+            top().indent = col + (comma_prepended ? 0 : 2);
             top().nested_block_indent = top().indent;
         }
         if ((t.binary || t.ternary_question || t.ternary_colon) && t.newline_before) {

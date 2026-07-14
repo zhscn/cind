@@ -48,6 +48,9 @@ struct CppIndentStyle {
         ContinuationIndent,
         AlignFirstInitializer,
         AlignAfterColon,
+        // Comma-prepended items (clang-format BreakConstructorInitializers:
+        // BeforeComma): every item line starts at the ':' column.
+        AlignWithColon,
     };
 
     ConstructorInitializerStyle constructor_initializers =

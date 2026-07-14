@@ -46,6 +46,20 @@ TEST_CASE("WebKit preset: Inner namespaces, no bracket alignment") {
     CHECK(style.align_open_bracket == false);
     CHECK(style.brace_init_continuation == false);
     CHECK(style.access_specifier_offset == 0); // 4 + (-4)
+    CHECK(style.constructor_initializers ==
+          CppIndentStyle::ConstructorInitializerStyle::AlignWithColon);
+}
+
+TEST_CASE("BreakConstructorInitializers maps to the initializer style") {
+    using CtorStyle = CppIndentStyle::ConstructorInitializerStyle;
+    CppIndentStyle base;
+    CHECK(parse_clang_format_yaml("BreakConstructorInitializers: BeforeComma\n", base)
+              .style.constructor_initializers == CtorStyle::AlignWithColon);
+    CHECK(parse_clang_format_yaml("BreakConstructorInitializers: BeforeColon\n", base)
+              .style.constructor_initializers == CtorStyle::AlignFirstInitializer);
+    // AfterColon: wrapped items still align with the first initializer.
+    CHECK(parse_clang_format_yaml("BreakConstructorInitializers: AfterColon\n", base)
+              .style.constructor_initializers == CtorStyle::AlignFirstInitializer);
 }
 
 TEST_CASE("access modifier offset converts against the final IndentWidth") {

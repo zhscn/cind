@@ -185,6 +185,8 @@ bool set_style_field(CppIndentStyle& style, std::string_view key, std::string_vi
             style.constructor_initializers = Style::ContinuationIndent;
         } else if (value == "AlignFirstInitializer") {
             style.constructor_initializers = Style::AlignFirstInitializer;
+        } else if (value == "AlignWithColon") {
+            style.constructor_initializers = Style::AlignWithColon;
         } else if (value == "AlignAfterColon") {
             style.constructor_initializers = Style::AlignAfterColon;
         } else {

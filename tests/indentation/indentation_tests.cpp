@@ -151,6 +151,24 @@ TEST_CASE("bare colon initializer keeps a stable continuation indent") {
     CHECK(enter("Foo::Foo()\n    :^\n") == "Foo::Foo()\n    :\n    ^\n");
 }
 
+TEST_CASE("comma-prepended constructor initializers align with the colon") {
+    // clang-format BreakConstructorInitializers: BeforeComma (WebKit/Mozilla)
+    CppIndentStyle style;
+    style.constructor_initializers =
+        CppIndentStyle::ConstructorInitializerStyle::AlignWithColon;
+
+    Document doc("Foo::Foo()");
+    TextOffset caret{10};
+    EnterResult first = press_enter(doc, caret, style);
+    caret = type_text(doc, first.caret, ": a_(1)");
+
+    EnterResult second = press_enter(doc, caret, style);
+    CHECK(second.decision.role == FormatRole::ConstructorInitializerItem);
+    type_text(doc, second.caret, ", b_(2) {}");
+
+    CHECK(doc.snapshot().content() == "Foo::Foo()\n    : a_(1)\n    , b_(2) {}");
+}
+
 TEST_CASE("constructor initializer styles") {
     std::string text = "Foo::Foo()\n    : a_(1),^\n{\n}\n";
 

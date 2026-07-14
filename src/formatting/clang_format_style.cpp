@@ -57,16 +57,17 @@ struct Preset {
     bool align_open_bracket;
     bool align_operands;
     int ctor_init_width;
+    bool ctor_break_before_comma; // BreakConstructorInitializers: BeforeComma
 };
 
 constexpr std::array<Preset, 7> kPresets = {{
-    {"LLVM", 2, 4, 8, -2, NI::None, false, true, true, true, 4},
-    {"Google", 2, 4, 8, -1, NI::None, true, true, true, true, 4},
-    {"Chromium", 2, 4, 8, -1, NI::None, true, true, true, true, 4},
-    {"Mozilla", 2, 2, 8, -2, NI::None, true, false, true, true, 2},
-    {"WebKit", 4, 4, 8, -4, NI::Inner, false, false, false, false, 4},
-    {"GNU", 2, 4, 8, -2, NI::None, false, false, true, true, 4},
-    {"Microsoft", 4, 4, 4, -2, NI::None, false, true, true, true, 4},
+    {"LLVM", 2, 4, 8, -2, NI::None, false, true, true, true, 4, false},
+    {"Google", 2, 4, 8, -1, NI::None, true, true, true, true, 4, false},
+    {"Chromium", 2, 4, 8, -1, NI::None, true, true, true, true, 4, false},
+    {"Mozilla", 2, 2, 8, -2, NI::None, true, false, true, true, 2, true},
+    {"WebKit", 4, 4, 8, -4, NI::Inner, false, false, false, false, 4, true},
+    {"GNU", 2, 4, 8, -2, NI::None, false, false, true, true, 4, false},
+    {"Microsoft", 4, 4, 4, -2, NI::None, false, true, true, true, 4, false},
 }};
 
 // Parser state: AccessModifierOffset and ConstructorInitializerIndentWidth
@@ -104,6 +105,10 @@ void apply_preset(const Preset& preset, PendingStyle& pending) {
     s.indent_wrapped_function_names = false;
     s.namespace_indentation = preset.namespace_indentation;
     s.indent_case_label = preset.indent_case_labels;
+    s.constructor_initializers =
+        preset.ctor_break_before_comma
+            ? CppIndentStyle::ConstructorInitializerStyle::AlignWithColon
+            : CppIndentStyle::ConstructorInitializerStyle::AlignFirstInitializer;
     pending.style = s;
     pending.access_modifier_offset = preset.access_modifier_offset;
     pending.ctor_init_width = preset.ctor_init_width;
@@ -284,6 +289,17 @@ void apply_key(const KeyValue& kv, PendingStyle& pending, ClangFormatStyle& resu
         set_bool(s.break_before_ternary);
     } else if (kv.key == "ConstructorInitializerIndentWidth") {
         set_int(pending.ctor_init_width);
+    } else if (kv.key == "BreakConstructorInitializers") {
+        using CtorStyle = CppIndentStyle::ConstructorInitializerStyle;
+        if (kv.value == "BeforeComma") {
+            s.constructor_initializers = CtorStyle::AlignWithColon;
+        } else if (value_in(kv.value, {"BeforeColon", "AfterColon"})) {
+            // AfterColon only moves where the ':' itself is written; wrapped
+            // items still align with the first initializer.
+            s.constructor_initializers = CtorStyle::AlignFirstInitializer;
+        } else {
+            warn_value();
+        }
     } else if (kv.key == "IndentPPDirectives") {
         if (kv.value != "None") {
             result.warnings.push_back(

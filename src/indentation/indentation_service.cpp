@@ -556,6 +556,16 @@ private:
             finish(FormatRole::ConstructorInitializerItem, fn_indent, col);
             return;
         }
+        case Style::AlignWithColon: {
+            // Comma-prepended items (BreakConstructorInitializers:
+            // BeforeComma): the ',' sits exactly under the ':'.
+            TextOffset colon = tree_.node_range(list).start;
+            decision_.anchor = colon;
+            int col = column_at(text_, lines_, colon, style_.tab_width);
+            trace("style AlignWithColon (comma-prepended items)");
+            finish(FormatRole::ConstructorInitializerItem, fn_indent, col);
+            return;
+        }
         case Style::NormalIndent:
             trace("style NormalIndent relative to the declarator line");
             finish(FormatRole::ConstructorInitializerItem, fn_indent + style_.indent_width,
