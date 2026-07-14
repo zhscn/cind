@@ -130,6 +130,57 @@ EnterResult press_enter(Document& document, TextOffset caret, const CppIndentSty
     return newline_and_indent(document, caret, style);
 }
 
+TypeCharResult type_char(Document& document, TextOffset caret, char ch,
+                         const CppIndentStyle& style) {
+    EditTransaction tx = document.begin_transaction();
+    tx.insert(caret, std::string_view(&ch, 1));
+
+    TypeCharResult result;
+    result.caret = TextOffset{caret.value + 1};
+
+    if (ch == '}' || ch == ':' || ch == '#') {
+        DocumentSnapshot spec = tx.speculative_snapshot();
+        const std::uint32_t line = spec.lines().position(caret).line;
+        const TextOffset line_start = spec.lines().line_start(line);
+        std::string_view prefix = spec.text(TextRange{line_start, caret});
+        const bool first_content =
+            prefix.find_first_not_of(" \t") == std::string_view::npos;
+
+        // ':' may complete a label anywhere on the line; '}' and '#' only
+        // reindent when they are the line's first content.
+        if (ch == ':' || first_content) {
+            SyntaxTree tree = parse(spec.text());
+            IndentDecision decision = compute_line_indent(spec, tree, line, style);
+            const bool colon_completes_label =
+                decision.role == FormatRole::CaseLabel ||
+                decision.role == FormatRole::AccessSpecifierLabel ||
+                decision.role == FormatRole::ConstructorInitializerIntro;
+            if (!decision.preserve && (ch != ':' || colon_completes_label)) {
+                std::string_view current = leading_whitespace_of(spec, line);
+                if (current != decision.indentation_text &&
+                    caret.value >= line_start.value + current.size()) {
+                    tx.replace(
+                        TextRange{line_start,
+                                  TextOffset{line_start.value +
+                                             static_cast<std::uint32_t>(current.size())}},
+                        decision.indentation_text);
+                    result.caret.value +=
+                        static_cast<std::uint32_t>(decision.indentation_text.size()) -
+                        static_cast<std::uint32_t>(current.size());
+                    decision.trace.insert(decision.trace.begin(),
+                                          "typed-char handler: reindent on input");
+                    result.reindented = true;
+                    result.decision = std::move(decision);
+                }
+            }
+        }
+    }
+
+    CommitResult commit = tx.commit();
+    result.change = std::move(commit.change);
+    return result;
+}
+
 IndentDecision indent_line(Document& document, std::uint32_t line, const CppIndentStyle& style) {
     DocumentSnapshot snapshot = document.snapshot();
     SyntaxTree tree = parse(snapshot.text());

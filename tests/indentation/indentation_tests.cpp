@@ -37,6 +37,20 @@ TextOffset type_text(Document& doc, TextOffset caret, std::string_view input) {
     return TextOffset{caret.value + static_cast<std::uint32_t>(input.size())};
 }
 
+// Feeds `input` through the typed-char pipeline; returns text with '^'.
+std::string type_chars(std::string_view fixture, std::string_view input,
+                       const CppIndentStyle& style = {}) {
+    auto [text, caret] = parse_caret(fixture);
+    Document doc(std::move(text));
+    TextOffset c = caret;
+    for (char ch : input) {
+        c = type_char(doc, c, ch, style).caret;
+    }
+    std::string out(doc.snapshot().text());
+    out.insert(c.value, "^");
+    return out;
+}
+
 } // namespace
 
 TEST_CASE("namespace body is not indented by default") {
@@ -311,6 +325,48 @@ TEST_CASE("smart tabs: structural part in tabs, alignment in spaces") {
     // target column 6: base 0 (fn line) -> no full tab at width 4 from
     // structural 0, so all spaces
     CHECK(result.decision.indentation_text == std::string(6, ' '));
+}
+
+TEST_CASE("typed-char reindent") {
+    SUBCASE("':' completing a case label dedents the line") {
+        CHECK(type_chars("switch (x) {\n    ^\n}\n", "case 1:") ==
+              "switch (x) {\ncase 1:^\n}\n");
+    }
+    SUBCASE("':' completing an access specifier") {
+        CHECK(type_chars("class C {\n    int a;\n    ^\n};\n", "public:") ==
+              "class C {\n    int a;\npublic:^\n};\n");
+    }
+    SUBCASE("':' opening a constructor initializer list") {
+        CHECK(type_chars("Foo::Foo()\n^\n{\n}\n", ":") == "Foo::Foo()\n    :^\n{\n}\n");
+    }
+    SUBCASE("'}' as first content dedents to the opener's construct") {
+        CHECK(type_chars("void f() {\n    body();\n    ^\n", "}") ==
+              "void f() {\n    body();\n}^\n");
+    }
+    SUBCASE("'#' as first content snaps to column zero") {
+        CHECK(type_chars("void f() {\n    ^\n}\n", "#") == "void f() {\n#^\n}\n");
+    }
+    SUBCASE("a ternary ':' is not a label") {
+        CHECK(type_chars("    int x = a ? b ^;\n", ":") == "    int x = a ? b :^;\n");
+    }
+    SUBCASE("'}' after code on the line does not reindent") {
+        CHECK(type_chars("void f() {\n    int a[] = {1^\n", "}") ==
+              "void f() {\n    int a[] = {1}^\n");
+    }
+    SUBCASE("protected lines are never touched") {
+        CHECK(type_chars("auto s = R\"(\nabc^\n)\";\n", ":") ==
+              "auto s = R\"(\nabc:^\n)\";\n");
+    }
+}
+
+TEST_CASE("typed-char reindent is one undo unit") {
+    auto [text, caret] = parse_caret("switch (x) {\n    case 1^\n}\n");
+    Document doc(std::move(text));
+    TypeCharResult result = type_char(doc, caret, ':', CppIndentStyle{});
+    CHECK(result.reindented);
+    CHECK(doc.snapshot().text() == "switch (x) {\ncase 1:\n}\n");
+    doc.undo();
+    CHECK(doc.snapshot().text() == "switch (x) {\n    case 1\n}\n");
 }
 
 TEST_CASE("every decision carries a trace and a handler") {

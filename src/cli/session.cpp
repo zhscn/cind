@@ -17,16 +17,15 @@ void EditSession::set_caret(TextOffset caret) {
 }
 
 void EditSession::type_text(std::string_view text) {
-    if (text.empty()) {
-        return;
+    // Character by character through the typed-char pipeline, exactly like
+    // an editor delivering keystrokes; each character is one undo unit.
+    for (char ch : text) {
+        const TextOffset before = caret_;
+        TypeCharResult result = type_char(document_, caret_, ch, style_);
+        caret_ = result.caret;
+        undo_carets_.push_back(before);
+        redo_carets_.clear();
     }
-    const TextOffset before = caret_;
-    EditTransaction tx = document_.begin_transaction();
-    tx.insert(caret_, text);
-    tx.commit();
-    caret_.value += static_cast<std::uint32_t>(text.size());
-    undo_carets_.push_back(before);
-    redo_carets_.clear();
 }
 
 EnterResult EditSession::enter() {

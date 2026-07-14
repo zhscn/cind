@@ -1,0 +1,11 @@
+name: typing a case label dedents on the colon
+initial: |
+  switch (x) {
+      ^
+  }
+actions:
+  - type: "case 1:"
+expected: |
+  switch (x) {
+  case 1:^
+  }
