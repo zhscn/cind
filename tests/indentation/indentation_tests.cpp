@@ -162,6 +162,47 @@ TEST_CASE("statement continuation") {
     CHECK(enter("foo(a,^ b);\n") == "foo(a,\n    ^ b);\n");
 }
 
+TEST_CASE("wrapped signature anchors the body on the declaration line") {
+    // '{' on a continuation line must not shift the body or the '}'
+    CHECK(enter("void long_name(int a,\n               int b) {^}\n") ==
+          "void long_name(int a,\n               int b) {\n    ^\n}\n");
+    // one step only: a braceless for's if-block anchors on the if line
+    CHECK(enter("for (;;)\n    if (x) {^}\n") ==
+          "for (;;)\n    if (x) {\n        ^\n    }\n");
+}
+
+TEST_CASE("open-bracket alignment") {
+    // content after '(' on its line: wrapped arguments align with it
+    CHECK(enter("int y = f(aa,^ bb);\n") == "int y = f(aa,\n          ^ bb);\n");
+    // break directly after '(': plain continuation indent
+    CHECK(enter("foo(^a);\n") == "foo(\n    ^a);\n");
+    CppIndentStyle no_align;
+    no_align.align_open_bracket = false;
+    CHECK(enter("int y = f(aa,^ bb);\n", no_align) == "int y = f(aa,\n    ^ bb);\n");
+}
+
+TEST_CASE("braced list continuation style") {
+    CppIndentStyle two;
+    two.indent_width = 2;
+    CHECK(enter("int arr[] = {^\n};\n", two) == "int arr[] = {\n  ^\n};\n");
+    two.brace_init_continuation = true;
+    CHECK(enter("int arr[] = {^\n};\n", two) == "int arr[] = {\n    ^\n};\n");
+}
+
+TEST_CASE("comment lines align with the code they annotate") {
+    // a comment before a case label takes the label's indent
+    Document doc("switch (x) {\ncase 1:\n    a();\n        // about case 2\ncase 2:\n"
+                 "    b();\n}\n");
+    IndentDecision d = indent_line(doc, 3, CppIndentStyle{});
+    CHECK(d.role == FormatRole::CaseLabel);
+    CHECK(doc.snapshot().text() ==
+          "switch (x) {\ncase 1:\n    a();\n// about case 2\ncase 2:\n    b();\n}\n");
+    // a comment before '}' keeps its block's indent
+    Document doc2("void f() {\n    a();\n// trailing\n}\n");
+    indent_line(doc2, 2, CppIndentStyle{});
+    CHECK(doc2.snapshot().text() == "void f() {\n    a();\n    // trailing\n}\n");
+}
+
 TEST_CASE("preprocessor directives stay at column zero") {
     CHECK(enter("void f() {\n    body();^\n}\n") == "void f() {\n    body();\n    ^\n}\n");
     Document doc("void f() {\n    #define X 1\n}\n");

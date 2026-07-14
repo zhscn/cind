@@ -8,6 +8,14 @@ struct CppIndentStyle {
     int tab_width = 4;
     bool use_tabs = false;
 
+    // T2.5: when the open bracket of a group has content after it on its
+    // line, wrapped lines align with that content (clang-format
+    // AlignAfterOpenBracket, CLion "align when multiline").
+    bool align_open_bracket = true;
+    // Braced-list contents use continuation_indent instead of indent_width
+    // (clang-format Cpp11BracedListStyle).
+    bool brace_init_continuation = false;
+
     bool indent_namespace_body = false;
     bool indent_type_body = true;
     bool indent_case_label = false;

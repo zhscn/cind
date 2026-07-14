@@ -160,8 +160,8 @@ class IndentComputer {
 public:
     IndentComputer(const DocumentSnapshot& snapshot, const SyntaxTree& tree, std::uint32_t line,
                    const CppIndentStyle& style)
-        : text_(snapshot.text()), lines_(snapshot.lines()), tree_(tree), line_(line),
-          style_(style) {}
+        : snapshot_(snapshot), text_(snapshot.text()), lines_(snapshot.lines()), tree_(tree),
+          line_(line), style_(style) {}
 
     IndentDecision run() {
         if (check_protected()) {
@@ -169,6 +169,9 @@ public:
         }
 
         first_significant_ = first_significant_on_line(tree_, lines_, line_);
+        if (!first_significant_ && comment_alignment()) {
+            return std::move(decision_);
+        }
         if (first_significant_) {
             trace("line starts with {}", token_kind_name(first_significant_->kind));
             switch (first_significant_->kind) {
@@ -228,6 +231,95 @@ private:
         trace("role {} -> column {}", format_role_name(role), decision_.target_column);
     }
 
+    // A braced body is measured from the line where its owning construct
+    // starts, not where '{' landed: a wrapped signature or condition puts
+    // '{' on a continuation line, and the body must not shift with it.
+    TextOffset anchor_origin(SyntaxNodeId node) const {
+        switch (tree_.node(node).kind) {
+        case SyntaxKind::CompoundStatement:
+        case SyntaxKind::ClassBody:
+        case SyntaxKind::NamespaceBody:
+        case SyntaxKind::BraceGroup: break;
+        default: return tree_.node_range(node).start;
+        }
+        // One step only: the enclosing construct whose header owns this
+        // brace. Statements further out contain this one as a body and must
+        // not pull the anchor to their own line.
+        const SyntaxNodeId parent = tree_.node(node).parent;
+        if (parent != kInvalidNode) {
+            switch (tree_.node(parent).kind) {
+            case SyntaxKind::FunctionDefinition:
+            case SyntaxKind::OpaqueDeclaration:
+            case SyntaxKind::ClassDecl:
+            case SyntaxKind::NamespaceDecl:
+            case SyntaxKind::IfStatement:
+            case SyntaxKind::ElseClause:
+            case SyntaxKind::ForStatement:
+            case SyntaxKind::WhileStatement:
+            case SyntaxKind::DoStatement:
+            case SyntaxKind::SwitchStatement:
+                return tree_.node_range(parent).start;
+            default: break;
+            }
+        }
+        return tree_.node_range(node).start;
+    }
+
+    // T2.5 alignment: content following the open bracket on its own line
+    // makes wrapped lines align with that first piece of content.
+    std::optional<int> aligned_continuation(SyntaxNodeId group) const {
+        const SyntaxNode& g = tree_.node(group);
+        const auto& tokens = tree_.tokens();
+        const std::uint32_t open_line =
+            lines_.position(tokens[g.first_token].range.start).line;
+        for (std::uint32_t i = g.first_token + 1; i < g.end_token; ++i) {
+            if (is_trivia(tokens[i].kind)) {
+                continue;
+            }
+            if (lines_.position(tokens[i].range.start).line != open_line) {
+                return std::nullopt;
+            }
+            return column_at(text_, lines_, tokens[i].range.start, style_.tab_width);
+        }
+        return std::nullopt;
+    }
+
+    // A comment-only line aligns with the code it annotates: the next line
+    // that starts with a significant token — unless that token closes a
+    // brace (a trailing comment keeps its block's indent).
+    bool comment_alignment() {
+        TextRange content = lines_.line_content_range(line_);
+        const auto& tokens = tree_.tokens();
+        auto it = std::ranges::lower_bound(tokens, content.start, {},
+                                           [](const Token& t) { return t.range.start; });
+        while (it != tokens.end() && it->range.start < content.end &&
+               it->kind == TokenKind::Whitespace) {
+            ++it;
+        }
+        if (it == tokens.end() || it->range.start >= content.end ||
+            (it->kind != TokenKind::LineComment && it->kind != TokenKind::BlockComment)) {
+            return false;
+        }
+        for (std::uint32_t next = line_ + 1; next < lines_.line_count(); ++next) {
+            auto tok = first_significant_on_line(tree_, lines_, next);
+            if (!tok) {
+                continue; // blank or another comment line
+            }
+            if (tok->kind == TokenKind::RBrace) {
+                return false;
+            }
+            IndentDecision adopted = IndentComputer(snapshot_, tree_, next, style_).run();
+            if (adopted.preserve) {
+                return false;
+            }
+            adopted.trace.insert(adopted.trace.begin(),
+                                 std::format("comment line aligns with line {}", next + 1));
+            decision_ = std::move(adopted);
+            return true;
+        }
+        return false;
+    }
+
     bool check_protected() {
         TextOffset line_start = lines_.line_start(line_);
         auto covering = token_covering(tree_, line_start);
@@ -261,10 +353,10 @@ private:
         case SyntaxKind::BracketGroup: break;
         default: return false;
         }
-        TextOffset opening = tree_.node_range(owner).start;
+        TextOffset opening = anchor_origin(owner);
         int target = indent_of_line(line_of(opening));
         decision_.anchor = opening;
-        trace("closing token of {} opened at line {}", syntax_kind_name(tree_.node(owner).kind),
+        trace("closing token of {} anchored at line {}", syntax_kind_name(tree_.node(owner).kind),
               line_of(opening) + 1);
         finish(FormatRole::ClosingToken, target, target);
         return true;
@@ -398,12 +490,13 @@ private:
         }
 
         const SyntaxNode& a = tree_.node(relevant);
-        const std::uint32_t opening_line = line_of(tree_.node_range(relevant).start);
+        const TextOffset origin = anchor_origin(relevant);
+        const std::uint32_t opening_line = line_of(origin);
         const int base = indent_of_line(opening_line);
         const int w = style_.indent_width;
         const int cont = style_.continuation_indent;
-        decision_.anchor = tree_.node_range(relevant).start;
-        trace("controlling block: {} opened at line {} (indent {})",
+        decision_.anchor = origin;
+        trace("controlling block: {} anchored at line {} (indent {})",
               syntax_kind_name(a.kind), opening_line + 1, base);
 
         switch (a.kind) {
@@ -457,7 +550,18 @@ private:
             finish(role, base + w, base + w);
             return;
         }
-        case SyntaxKind::BraceGroup: finish(FormatRole::BraceInit, base + w, base + w); return;
+        case SyntaxKind::BraceGroup: {
+            if (style_.align_open_bracket) {
+                if (auto col = aligned_continuation(relevant)) {
+                    trace("open brace has trailing content; aligning with it");
+                    finish(FormatRole::BraceInit, base, *col);
+                    return;
+                }
+            }
+            const int step = style_.brace_init_continuation ? cont : w;
+            finish(FormatRole::BraceInit, base + step, base + step);
+            return;
+        }
         case SyntaxKind::CaseSection:
             trace("statement in a case section; style.indent_case_body = {}",
                   style_.indent_case_body);
@@ -465,14 +569,23 @@ private:
                    base + (style_.indent_case_body ? w : 0));
             return;
         case SyntaxKind::ParenGroup:
-            finish(FormatRole::ParenContinuation, base + cont, base + cont);
-            return;
         case SyntaxKind::BracketGroup:
-            finish(FormatRole::BracketContinuation, base + cont, base + cont);
+        case SyntaxKind::TemplateArgumentList: {
+            const FormatRole role = a.kind == SyntaxKind::ParenGroup
+                                        ? FormatRole::ParenContinuation
+                                    : a.kind == SyntaxKind::BracketGroup
+                                        ? FormatRole::BracketContinuation
+                                        : FormatRole::TemplateArgsContinuation;
+            if (style_.align_open_bracket) {
+                if (auto col = aligned_continuation(relevant)) {
+                    trace("open bracket has trailing content; aligning with it");
+                    finish(role, base, *col);
+                    return;
+                }
+            }
+            finish(role, base + cont, base + cont);
             return;
-        case SyntaxKind::TemplateArgumentList:
-            finish(FormatRole::TemplateArgsContinuation, base + cont, base + cont);
-            return;
+        }
         case SyntaxKind::CtorInitializerList: ctor_items(relevant); return;
         case SyntaxKind::FunctionDefinition: {
             // A pending initializer list with no body yet: new lines continue
@@ -535,6 +648,7 @@ private:
         }
     }
 
+    const DocumentSnapshot& snapshot_;
     std::string_view text_;
     const LineIndex& lines_;
     const SyntaxTree& tree_;
