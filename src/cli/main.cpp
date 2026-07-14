@@ -243,7 +243,13 @@ int main(int argc, char** argv) {
                                static_cast<std::uint32_t>(std::strtoul(argv[4], nullptr, 10)));
     }
     if (argc >= 3 && command == "edit") {
-        return cind::tui::run_editor(argv[2]);
+        std::uint32_t initial_line = 0;
+        int file_arg = 2;
+        if (argv[2][0] == '+' && argc >= 4) {
+            initial_line = static_cast<std::uint32_t>(std::strtoul(argv[2] + 1, nullptr, 10));
+            file_arg = 3;
+        }
+        return cind::tui::run_editor(argv[file_arg], initial_line);
     }
     if (command == "repl") {
         std::string initial;
@@ -288,7 +294,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: indent-core tokens|tree <file>\n"
                  "       indent-core explain <file> --line <1-based>\n"
                  "       indent-core apply-enter <file> --offset <byte>\n"
-                 "       indent-core edit <file>\n"
+                 "       indent-core edit [+LINE] <file>\n"
                  "       indent-core repl [file]\n"
                  "       indent-core test <fixture.yaml|dir>\n"
                  "       indent-core bench <file|dir>... [--style default|file|<preset>] "

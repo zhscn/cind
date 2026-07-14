@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace cind::tui {
@@ -11,6 +12,7 @@ namespace cind::tui {
 //
 // Returns the process exit code. The style is discovered CLion-style: the
 // nearest .clang-format above the file (LLVM fallback otherwise).
-int run_editor(const std::string& path);
+// `initial_line` is 1-based (the CLI's +N argument); 0 means line 1.
+int run_editor(const std::string& path, std::uint32_t initial_line = 0);
 
 } // namespace cind::tui
