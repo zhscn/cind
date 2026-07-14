@@ -36,6 +36,10 @@ public:
     // Pure query: explain the indent of the caret's line.
     IndentDecision explain() const;
 
+    // Analysis of the current revision (cached; incrementally maintained
+    // across every command). Valid until the next mutation.
+    const Analysis& analysis() const { return analyzer_.analyze(document_.snapshot()); }
+
     std::string render_with_caret() const;
 
 private:
@@ -51,6 +55,7 @@ private:
     TextOffset caret_{0};
     CppIndentStyle style_;
     std::map<UndoNodeId, CaretPair> undo_carets_;
+    mutable Analyzer analyzer_; // memo of a pure function — const-safe
 };
 
 // Parses "key: value" into a style field; returns false on unknown key or

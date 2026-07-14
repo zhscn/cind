@@ -5,12 +5,17 @@
 #include "commands/editor_commands.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
+#include "syntax/analysis.hpp"
 #include "syntax/syntax_tree.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <vector>
 
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -137,6 +142,81 @@ int cmd_tree(const char* path) {
     return 0;
 }
 
+// Times each pipeline stage on a real file. The "enter" row is the §6 budget
+// metric: one full keystroke (lex + parse + indent + commit) on a fresh
+// document. Values are medians of `reps` runs.
+int cmd_perf(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::cerr << "indent-core: cannot open " << path << "\n";
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const std::string text = buffer.str();
+
+    constexpr int reps = 7;
+    auto median = [](std::vector<double>& v) {
+        std::sort(v.begin(), v.end());
+        return v[v.size() / 2];
+    };
+    auto time_ms = [&](auto&& fn) {
+        std::vector<double> runs;
+        for (int i = 0; i < reps; ++i) {
+            const auto t0 = std::chrono::steady_clock::now();
+            fn();
+            const auto t1 = std::chrono::steady_clock::now();
+            runs.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
+        return median(runs);
+    };
+
+    cind::Document document(text);
+    auto snapshot = document.snapshot();
+    const std::uint32_t lines = snapshot.content().line_count();
+    const cind::TextOffset mid = snapshot.content().line_start(lines / 2);
+
+    std::size_t token_count = 0;
+    std::size_t node_count = 0;
+    const double build_ms = time_ms([&] { cind::Document d(text); });
+    const double lex_ms = time_ms([&] { token_count = cind::lex(snapshot.content()).tokens.size(); });
+    const double parse_ms =
+        time_ms([&] { node_count = cind::parse(snapshot.content()).node_count(); });
+    cind::SyntaxTree tree = cind::parse(snapshot.content());
+    cind::CppIndentStyle style;
+    const double indent_ms =
+        time_ms([&] { cind::compute_line_indent(snapshot, tree, lines / 2, style); });
+    // Editor steady state: the analyzer is warm; one keystroke costs the
+    // incremental relex + reparse + commit.
+    std::vector<std::unique_ptr<cind::Document>> docs;
+    std::vector<std::unique_ptr<cind::Analyzer>> analyzers;
+    for (int i = 0; i < reps; ++i) {
+        docs.push_back(std::make_unique<cind::Document>(text));
+        analyzers.push_back(std::make_unique<cind::Analyzer>());
+        analyzers.back()->analyze(docs.back()->snapshot());
+    }
+    std::size_t rep = 0;
+    const double enter_ms = time_ms([&] {
+        const std::size_t i = rep++;
+        cind::press_enter(*docs[i], mid, style, *analyzers[i]);
+    });
+    const double cold_enter_ms = time_ms([&] {
+        cind::Document d(text);
+        cind::press_enter(d, mid, style);
+    });
+
+    std::printf("file:    %s\n", path);
+    std::printf("size:    %zu bytes, %u lines, %zu tokens, %zu nodes\n", text.size(), lines,
+                token_count, node_count);
+    std::printf("build:   %8.3f ms\n", build_ms);
+    std::printf("lex:     %8.3f ms\n", lex_ms);
+    std::printf("parse:   %8.3f ms   (lex included)\n", parse_ms);
+    std::printf("indent:  %8.3f ms   (single line query)\n", indent_ms);
+    std::printf("enter:   %8.3f ms   (keystroke, warm analyzer: incremental path)\n", enter_ms);
+    std::printf("enter0:  %8.3f ms   (keystroke, cold: full lex+parse twice)\n", cold_enter_ms);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -173,6 +253,9 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && command == "test") {
         return cind::run_fixtures(argv[2]);
+    }
+    if (argc >= 3 && command == "perf") {
+        return cmd_perf(argv[2]);
     }
     if (argc >= 3 && command == "bench") {
         cind::BenchOptions options;

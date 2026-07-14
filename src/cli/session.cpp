@@ -25,7 +25,7 @@ void EditSession::type_text(std::string_view text) {
     // an editor delivering keystrokes; each character is one undo unit.
     for (char ch : text) {
         const TextOffset before = caret_;
-        TypeCharResult result = type_char(document_, caret_, ch, style_);
+        TypeCharResult result = type_char(document_, caret_, ch, style_, analyzer_);
         caret_ = result.caret;
         record_caret(before);
     }
@@ -38,14 +38,15 @@ void EditSession::insert_text(std::string_view text) {
     const TextOffset before = caret_;
     EditTransaction tx = document_.begin_transaction();
     tx.insert(caret_, text);
-    tx.commit();
+    CommitResult commit = tx.commit();
+    analyzer_.apply(commit.change, commit.snapshot);
     caret_.value += static_cast<std::uint32_t>(text.size());
     record_caret(before);
 }
 
 EnterResult EditSession::enter() {
     const TextOffset before = caret_;
-    EnterResult result = press_enter(document_, caret_, style_);
+    EnterResult result = press_enter(document_, caret_, style_, analyzer_);
     caret_ = result.caret;
     record_caret(before);
     return result;
@@ -58,7 +59,8 @@ void EditSession::erase(TextRange range) {
     const TextOffset before = caret_;
     EditTransaction tx = document_.begin_transaction();
     tx.erase(range);
-    tx.commit();
+    CommitResult commit = tx.commit();
+    analyzer_.apply(commit.change, commit.snapshot);
     caret_ = range.start;
     record_caret(before);
 }
@@ -75,7 +77,7 @@ IndentDecision EditSession::indent() {
 
     const TextOffset before = caret_;
     const RevisionId revision_before = document_.revision();
-    IndentDecision decision = indent_line(document_, line, style_);
+    IndentDecision decision = indent_line(document_, line, style_, analyzer_);
     if (document_.revision() != revision_before) {
         const auto new_len = static_cast<std::uint32_t>(decision.indentation_text.size());
         if (caret_.value >= line_start.value + old_len) {
@@ -90,9 +92,11 @@ IndentDecision EditSession::indent() {
 
 bool EditSession::undo() {
     const UndoNodeId leaving = document_.undo_position();
-    if (!document_.undo()) {
+    std::optional<DocumentChange> change = document_.undo();
+    if (!change) {
         return false;
     }
+    analyzer_.apply(*change, document_.snapshot());
     if (auto it = undo_carets_.find(leaving); it != undo_carets_.end()) {
         caret_ = it->second.before;
     }
@@ -101,9 +105,11 @@ bool EditSession::undo() {
 }
 
 bool EditSession::redo() {
-    if (!document_.redo()) {
+    std::optional<DocumentChange> change = document_.redo();
+    if (!change) {
         return false;
     }
+    analyzer_.apply(*change, document_.snapshot());
     if (auto it = undo_carets_.find(document_.undo_position()); it != undo_carets_.end()) {
         caret_ = it->second.after;
     }
@@ -113,8 +119,8 @@ bool EditSession::redo() {
 
 IndentDecision EditSession::explain() const {
     DocumentSnapshot snap = snapshot();
-    SyntaxTree tree = parse(snap.content());
-    return compute_line_indent(snap, tree, snap.content().position(caret_).line, style_);
+    return compute_line_indent(snap, analysis().tree, snap.content().position(caret_).line,
+                               style_);
 }
 
 std::string EditSession::render_with_caret() const {

@@ -332,7 +332,7 @@ private:
     void handle_alt(char ch, bool& keep_message) {
         keep_message = true;
         const DocumentSnapshot snap = session_.snapshot();
-        const SyntaxTree tree = parse(snap.content());
+        const SyntaxTree& tree = session_.analysis().tree;
         switch (ch) {
         case 'f':
             if (auto unit = sexp_forward(tree, session_.caret())) {
@@ -480,7 +480,7 @@ private:
             break;
         case 'k': { // soft kill to end of line (never breaks balance)
             const DocumentSnapshot snap = session_.snapshot();
-            const SyntaxTree tree = parse(snap.content());
+            const SyntaxTree& tree = session_.analysis().tree;
             TextRange range = soft_kill_end(tree, snap.content(), session_.caret());
             if (!range.empty()) {
                 kill_range(range);
@@ -503,21 +503,13 @@ private:
 
     // ---- rendering --------------------------------------------------------
 
-    const LexOutput& tokens() {
-        const DocumentSnapshot snap = session_.snapshot();
-        if (!lexed_ || lexed_revision_ != snap.revision()) {
-            lex_cache_ = lex(snap.content());
-            lexed_revision_ = snap.revision();
-            lexed_ = true;
-        }
-        return lex_cache_;
-    }
+    const std::vector<Token>& tokens() { return session_.analysis().tree.tokens(); }
 
     void render_line(const Text& text, std::uint32_t line, int width) {
         const TextRange content = text.line_content_range(line);
-        const LexOutput& lexed = tokens();
+        const std::vector<Token>& lexed = tokens();
         // First token overlapping the line.
-        auto it = std::ranges::lower_bound(lexed.tokens, content.start,
+        auto it = std::ranges::lower_bound(lexed, content.start,
                                            [](TextOffset a, TextOffset b) { return a < b; },
                                            [](const Token& t) { return t.range.end; });
 
@@ -526,11 +518,11 @@ private:
         std::string_view active_color;
         bool active_sel = false;
         for (std::uint32_t p = content.start.value; p < content.end.value;) {
-            while (it != lexed.tokens.end() && it->range.end.value <= p) {
+            while (it != lexed.end() && it->range.end.value <= p) {
                 ++it;
             }
             std::string_view color;
-            if (it != lexed.tokens.end() && it->range.start.value <= p) {
+            if (it != lexed.end() && it->range.start.value <= p) {
                 color = token_color(*it);
             }
             const char c = text.byte_at(TextOffset{p});
@@ -651,9 +643,6 @@ private:
     bool quit_ = false;
     bool quit_pending_ = false;
 
-    bool lexed_ = false;
-    RevisionId lexed_revision_ = 0;
-    LexOutput lex_cache_;
 };
 
 } // namespace

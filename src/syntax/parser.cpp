@@ -928,4 +928,9 @@ SyntaxTree parse(const Text& text) {
     return Parser<TextCharSource>(source, lex(text)).run();
 }
 
+SyntaxTree parse(const Text& text, LexOutput lexed) {
+    TextCharSource source(text);
+    return Parser<TextCharSource>(source, std::move(lexed)).run();
+}
+
 } // namespace cind

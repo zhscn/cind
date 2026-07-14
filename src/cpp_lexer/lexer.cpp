@@ -1,8 +1,12 @@
 #include "cpp_lexer/lexer.hpp"
 
 #include "document/char_source.hpp"
+#include "document/text.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 
@@ -123,19 +127,47 @@ bool is_encoding_prefix(std::string_view s) {
     return s == "u8" || s == "u" || s == "U" || s == "L";
 }
 
+// Alignment oracle for incremental relex: past `min_pos`, the scanner asks at
+// every clean line start (fresh default state, between tokens) whether the
+// old lex agrees at the corresponding old offset. Answering true stops the
+// scan; the caller splices the old suffix.
+struct StopCheck {
+    std::size_t min_pos = 0;
+    // new-text position -> converged? Only called at clean line starts.
+    virtual bool converged(std::size_t new_pos) = 0;
+    virtual ~StopCheck() = default;
+};
+
 template <typename Source>
 class Lexer {
 public:
     explicit Lexer(const Source& source) : src_(source), size_(source.size()) {}
 
+    // Restart mode: begin scanning at `start`, which must be a line start
+    // whose entry state is default. No initial line state is recorded (the
+    // caller stitches line_states); `stop` may end the scan early.
+    Lexer(const Source& source, std::size_t start, StopCheck* stop)
+        : src_(source), size_(source.size()), pos_(start), at_line_start_(true), stop_(stop) {}
+
     LexOutput run() {
-        out_.line_states.emplace_back();
+        if (stop_ == nullptr) {
+            out_.line_states.emplace_back();
+        }
         while (pos_ < size_) {
+            if (at_line_start_ && !in_pp_line_ && stop_ != nullptr && pos_ >= stop_->min_pos &&
+                stop_->converged(pos_)) {
+                stopped_at_ = pos_;
+                return std::move(out_);
+            }
             lex_one();
         }
         emit(TokenKind::EndOfFile, pos_);
         return std::move(out_);
     }
+
+    // Position where the stop check fired; size_ (or beyond) means the scan
+    // ran to end of input.
+    std::size_t stopped_at() const { return stopped_at_; }
 
 private:
     char at(std::size_t pos) const { return src_.at(pos); }
@@ -157,6 +189,7 @@ private:
         if (!is_trivia(kind) && kind != TokenKind::EndOfFile) {
             line_has_content_ = true;
         }
+        at_line_start_ = false;
         out_.tokens.push_back(Token{
             kind, make_range(static_cast<std::uint32_t>(start), static_cast<std::uint32_t>(pos_)),
             flags});
@@ -172,6 +205,7 @@ private:
             push_line_state();
             in_pp_line_ = false;
             line_has_content_ = false;
+            at_line_start_ = true;
             return;
         }
         if (is_horizontal_space(c)) {
@@ -187,6 +221,7 @@ private:
             state.preprocessor_continuation = in_pp_line_;
             push_line_state(std::move(state));
             emit(TokenKind::Whitespace, start, LexicalFlags::EscapedNewline);
+            at_line_start_ = true; // physically at a line start (mid-splice)
             return; // a splice does not end a preprocessor line
         }
         if (c == '/' && peek() == '/') {
@@ -466,6 +501,9 @@ private:
     std::size_t pos_ = 0;
     bool in_pp_line_ = false;
     bool line_has_content_ = false;
+    bool at_line_start_ = false;
+    StopCheck* stop_ = nullptr;
+    std::size_t stopped_at_ = static_cast<std::size_t>(-1);
     std::string ident_buffer_;
     LexOutput out_;
 };
@@ -480,6 +518,132 @@ LexOutput lex(std::string_view text) {
 LexOutput lex(const Text& text) {
     TextCharSource source(text);
     return Lexer<TextCharSource>(source).run();
+}
+
+namespace {
+
+constexpr std::size_t kNoToken = static_cast<std::size_t>(-1);
+
+// Index of the token starting exactly at `off`, or kNoToken. Tokens are
+// contiguous and sorted; only EndOfFile is zero-length.
+std::size_t token_index_at(const std::vector<Token>& tokens, std::size_t off) {
+    auto it = std::partition_point(tokens.begin(), tokens.end(), [&](const Token& t) {
+        return t.range.start.value < off;
+    });
+    if (it != tokens.end() && it->range.start.value == off) {
+        return static_cast<std::size_t>(it - tokens.begin());
+    }
+    return kNoToken;
+}
+
+// Convergence oracle: true at a new-text clean line start whose corresponding
+// old offset is also a clean line start (default entry state) beginning a
+// token. From there on the old lex is valid verbatim, shifted by delta.
+struct AlignCheck final : StopCheck {
+    const std::vector<Token>* old_tokens = nullptr;
+    const std::vector<LexerState>* old_line_states = nullptr;
+    const Text* old_text = nullptr;
+    std::int64_t delta = 0;
+
+    std::size_t stop_token = kNoToken; // outputs, valid once converged
+    std::uint32_t stop_line = 0;
+
+    bool converged(std::size_t new_pos) override {
+        const std::int64_t old_pos = static_cast<std::int64_t>(new_pos) - delta;
+        if (old_pos < 0 || old_pos >= static_cast<std::int64_t>(old_text->size_bytes())) {
+            return false;
+        }
+        const TextOffset off{static_cast<std::uint32_t>(old_pos)};
+        const LinePosition pos = old_text->position(off);
+        if (pos.byte_column != 0 || !((*old_line_states)[pos.line] == LexerState{})) {
+            return false;
+        }
+        const std::size_t tok = token_index_at(*old_tokens, off.value);
+        if (tok == kNoToken) {
+            return false;
+        }
+        stop_token = tok;
+        stop_line = pos.line;
+        return true;
+    }
+};
+
+} // namespace
+
+LexOutput relex(const std::vector<Token>& old_tokens,
+                const std::vector<LexerState>& old_line_states, const Text& old_text,
+                const Text& new_text, std::span<const TextEdit> edits) {
+    if (edits.empty()) {
+        return LexOutput{old_tokens, old_line_states};
+    }
+
+    // Merged damage window: one hunk from the first edit to the last. The
+    // offset shift is uniform past the last edit, which is the only region
+    // where old coordinates are consulted again.
+    const std::size_t damage_old_start = edits.front().old_range.start.value;
+    const std::size_t damage_old_end = edits.back().old_range.end.value;
+    std::int64_t delta = 0;
+    for (const TextEdit& e : edits) {
+        delta += static_cast<std::int64_t>(e.new_text.size()) -
+                 static_cast<std::int64_t>(e.old_range.length());
+    }
+    const std::size_t damage_new_end =
+        static_cast<std::size_t>(static_cast<std::int64_t>(damage_old_end) + delta);
+
+    // Restart point: walk back to a line entered with default state that
+    // begins at a token boundary. The former rules out block comments, raw
+    // strings and pp continuations spanning into the line; the latter rules
+    // out a backslash-newline splice token spanning the line start.
+    std::uint32_t restart_line = old_text.position(TextOffset{static_cast<std::uint32_t>(
+        std::min<std::size_t>(damage_old_start, old_text.size_bytes()))}).line;
+    while (restart_line > 0 &&
+           !(old_line_states[restart_line] == LexerState{} &&
+             token_index_at(old_tokens, old_text.line_start(restart_line).value) != kNoToken)) {
+        --restart_line;
+    }
+    const std::size_t restart_off = old_text.line_start(restart_line).value;
+    const std::size_t keep_tokens = token_index_at(old_tokens, restart_off);
+
+    AlignCheck align;
+    align.min_pos = damage_new_end;
+    align.old_tokens = &old_tokens;
+    align.old_line_states = &old_line_states;
+    align.old_text = &old_text;
+    align.delta = delta;
+
+    TextCharSource source(new_text);
+    Lexer<TextCharSource> scanner(source, restart_off, &align);
+    LexOutput scanned = scanner.run();
+    const bool hit_eof = align.stop_token == kNoToken;
+
+    LexOutput result;
+    result.tokens.reserve(keep_tokens + scanned.tokens.size() +
+                          (hit_eof ? 0 : old_tokens.size() - align.stop_token));
+    result.tokens.insert(result.tokens.end(), old_tokens.begin(),
+                         old_tokens.begin() + static_cast<std::ptrdiff_t>(keep_tokens));
+    result.tokens.insert(result.tokens.end(), scanned.tokens.begin(), scanned.tokens.end());
+
+    result.line_states.reserve(new_text.line_count());
+    result.line_states.insert(result.line_states.end(), old_line_states.begin(),
+                              old_line_states.begin() + restart_line + 1);
+    result.line_states.insert(result.line_states.end(),
+                              std::make_move_iterator(scanned.line_states.begin()),
+                              std::make_move_iterator(scanned.line_states.end()));
+
+    if (!hit_eof) {
+        for (std::size_t i = align.stop_token; i < old_tokens.size(); ++i) {
+            Token t = old_tokens[i];
+            t.range.start.value = static_cast<std::uint32_t>(t.range.start.value + delta);
+            t.range.end.value = static_cast<std::uint32_t>(t.range.end.value + delta);
+            result.tokens.push_back(t);
+        }
+        // The scanner already pushed the entry state of the stop line when it
+        // consumed the newline before it; the old suffix starts one later.
+        result.line_states.insert(result.line_states.end(),
+                                  old_line_states.begin() + align.stop_line + 1,
+                                  old_line_states.end());
+    }
+    return result;
 }
 
 } // namespace cind

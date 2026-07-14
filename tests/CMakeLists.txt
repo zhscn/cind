@@ -6,6 +6,10 @@ add_executable(text_tests document/text_tests.cpp)
 target_link_libraries(text_tests PRIVATE cind_document doctest::doctest)
 add_test(NAME text_tests COMMAND text_tests)
 
+add_executable(relex_tests lexer/relex_tests.cpp)
+target_link_libraries(relex_tests PRIVATE cind_lexer doctest::doctest)
+add_test(NAME relex_tests COMMAND relex_tests)
+
 add_executable(lexer_tests lexer/lexer_tests.cpp)
 target_link_libraries(lexer_tests PRIVATE cind_lexer doctest::doctest)
 add_test(NAME lexer_tests COMMAND lexer_tests)

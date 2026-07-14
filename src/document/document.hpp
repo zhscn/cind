@@ -6,6 +6,7 @@
 
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,10 @@ public:
     // Snapshot of the pending state. Its revision is the revision commit()
     // would produce right now (base revision if no edits are pending).
     DocumentSnapshot speculative_snapshot() const;
+    // Normalized pending edits (base-revision coordinates, ascending,
+    // non-overlapping) — the incremental-analysis input for speculative
+    // snapshots.
+    std::span<const TextEdit> pending_edits() const { return edits_; }
 
     bool active() const { return document_ != nullptr; }
     CommitResult commit();

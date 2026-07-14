@@ -51,10 +51,14 @@ private:
 };
 
 class Text;
+struct LexOutput;
 
 // Full parse. Never fails; always yields a root covering every token. The
 // Text overload reads chunk by chunk without materializing the string.
 SyntaxTree parse(std::string_view text);
 SyntaxTree parse(const Text& text);
+// Parse over an existing token stream (e.g. from an incremental relex);
+// `lexed` must be the lex of `text`.
+SyntaxTree parse(const Text& text, LexOutput lexed);
 
 } // namespace cind
