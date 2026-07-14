@@ -44,6 +44,7 @@ struct RoleCount {
 
 struct Report {
     std::uint32_t files = 0;
+    std::uint32_t unclean = 0; // skipped: not clang-format-clean
     std::uint32_t lines = 0;
     std::uint32_t blank = 0;
     std::uint32_t preserved = 0;
@@ -55,6 +56,7 @@ struct Report {
 
     void add(const Report& other) {
         files += other.files;
+        unclean += other.unclean;
         lines += other.lines;
         blank += other.blank;
         preserved += other.preserved;
@@ -102,7 +104,48 @@ void print_summary(const Report& report) {
     }
 }
 
-Report bench_file(const fs::path& path, const CppIndentStyle& style, int& show_budget) {
+std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out += c;
+        }
+    }
+    out += "'";
+    return out;
+}
+
+// True when clang-format (resolving .clang-format via --style=file) would
+// leave the file byte-identical. Formatting failures count as clean so a
+// missing tool degrades to an unfiltered run, with one warning.
+bool clang_format_clean(const fs::path& path, std::string_view text) {
+    const std::string cmd =
+        "clang-format --style=file " + shell_quote(path.string()) + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return true;
+    }
+    std::string out;
+    char buf[1 << 16];
+    std::size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof buf, pipe)) > 0) {
+        out.append(buf, n);
+    }
+    if (pclose(pipe) != 0) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::cerr << "indent-core: clang-format failed; --clean-only not filtering\n";
+        }
+        return true;
+    }
+    return out == text;
+}
+
+Report bench_file(const fs::path& path, const CppIndentStyle& style, const BenchOptions& options,
+                  int& show_budget) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         std::cerr << "indent-core: cannot open " << path.string() << "\n";
@@ -110,6 +153,12 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, int& show_b
     }
     std::stringstream buffer;
     buffer << in.rdbuf();
+
+    if (options.clean_only && !clang_format_clean(path, buffer.view())) {
+        Report skipped;
+        skipped.unclean = 1;
+        return skipped;
+    }
 
     Document document(buffer.str());
     DocumentSnapshot snapshot = document.snapshot();
@@ -182,6 +231,7 @@ std::optional<CppIndentStyle> resolve_style(std::string_view preset) {
         style.indent_width = 2;
         style.continuation_indent = 4;
         style.brace_init_continuation = true;
+        style.indent_wrapped_function_names = false;
         return style;
     }
     return std::nullopt;
@@ -223,7 +273,8 @@ int run_bench(const std::vector<std::string>& paths, const BenchOptions& options
     int show_budget = options.show_mismatches;
     Report total;
     for (const fs::path& file : files) {
-        Report report = bench_file(file, *style, show_budget);
+        Report report = bench_file(file, *style, options, show_budget);
+        total.add(report);
         if (report.files == 0) {
             continue;
         }
@@ -231,10 +282,13 @@ int run_bench(const std::vector<std::string>& paths, const BenchOptions& options
             std::cout << "=== " << file.string() << "\n";
         }
         print_summary(report);
-        total.add(report);
     }
-    if (total.files > 1) {
-        std::cout << std::format("=== total ({} files)\n", total.files);
+    if (total.files > 1 || total.unclean > 0) {
+        std::cout << std::format("=== total ({} files{})\n", total.files,
+                                 total.unclean > 0
+                                     ? std::format(", skipped {} not format-clean",
+                                                   total.unclean)
+                                     : std::string());
         print_summary(total);
     }
     return total.files > 0 ? 0 : 1;

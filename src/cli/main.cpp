@@ -179,6 +179,8 @@ int main(int argc, char** argv) {
             } else if (arg == "--show" && i + 1 < argc) {
                 options.show_mismatches =
                     static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+            } else if (arg == "--clean-only") {
+                options.clean_only = true;
             } else {
                 paths.emplace_back(arg);
             }
@@ -192,6 +194,7 @@ int main(int argc, char** argv) {
                  "       indent-core apply-enter <file> --offset <byte>\n"
                  "       indent-core repl [file]\n"
                  "       indent-core test <fixture.yaml|dir>\n"
-                 "       indent-core bench <file|dir>... [--style default|llvm] [--show N]\n";
+                 "       indent-core bench <file|dir>... [--style default|llvm] [--show N] "
+                 "[--clean-only]\n";
     return 2;
 }

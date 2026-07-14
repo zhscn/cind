@@ -8,6 +8,9 @@ namespace cind {
 struct BenchOptions {
     std::string style_preset = "default"; // "default" (4-space) or "llvm" (2-space)
     int show_mismatches = 0;              // print up to N mismatching lines
+    // Ground-truth hygiene: skip files whose current content differs from
+    // clang-format's own output (legacy formatting is noise, not signal).
+    bool clean_only = false;
 };
 
 // Measures per-line indentation accuracy against already-formatted sources:
