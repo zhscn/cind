@@ -24,6 +24,7 @@ target_link_libraries(cind_indent PUBLIC cind_syntax)
 
 add_executable(indent-core
   cli/main.cpp
+  cli/bench.cpp
   cli/session.cpp
   cli/fixture_runner.cpp
   cli/repl.cpp

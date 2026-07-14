@@ -1,3 +1,4 @@
+#include "cli/bench.hpp"
 #include "cli/fixture_runner.hpp"
 #include "cli/repl.hpp"
 #include "commands/editor_commands.hpp"
@@ -168,10 +169,29 @@ int main(int argc, char** argv) {
     if (argc >= 3 && command == "test") {
         return cind::run_fixtures(argv[2]);
     }
+    if (argc >= 3 && command == "bench") {
+        cind::BenchOptions options;
+        std::vector<std::string> paths;
+        for (int i = 2; i < argc; ++i) {
+            std::string_view arg = argv[i];
+            if (arg == "--style" && i + 1 < argc) {
+                options.style_preset = argv[++i];
+            } else if (arg == "--show" && i + 1 < argc) {
+                options.show_mismatches =
+                    static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+            } else {
+                paths.emplace_back(arg);
+            }
+        }
+        if (!paths.empty()) {
+            return cind::run_bench(paths, options);
+        }
+    }
     std::cerr << "usage: indent-core tokens|tree <file>\n"
                  "       indent-core explain <file> --line <1-based>\n"
                  "       indent-core apply-enter <file> --offset <byte>\n"
                  "       indent-core repl [file]\n"
-                 "       indent-core test <fixture.yaml|dir>\n";
+                 "       indent-core test <fixture.yaml|dir>\n"
+                 "       indent-core bench <file|dir>... [--style default|llvm] [--show N]\n";
     return 2;
 }
