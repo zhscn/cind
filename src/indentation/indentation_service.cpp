@@ -725,7 +725,9 @@ private:
             return;
         case SyntaxKind::SwitchStatement: finish(FormatRole::Opaque, base + w, base + w); return;
         case SyntaxKind::PreprocessorDirective:
-            finish(FormatRole::PreprocessorDirective, base + cont, base + cont);
+            // A '\'-continued macro body indents like a block, not like an
+            // expression continuation (clang-format formats it this way).
+            finish(FormatRole::PreprocessorDirective, base + w, base + w);
             return;
         case SyntaxKind::Error: {
             trace("inside an error node; preserving the previous line's indent");

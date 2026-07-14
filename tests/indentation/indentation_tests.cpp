@@ -225,6 +225,34 @@ TEST_CASE("enumerators indent as siblings") {
     CHECK(enter("enum E {\n    A,^\n};\n") == "enum E {\n    A,\n    ^\n};\n");
 }
 
+TEST_CASE("macro body continuation uses the block indent width") {
+    CppIndentStyle two;
+    two.indent_width = 2; // continuation_indent stays 4
+    Document doc("#define F(x) \\\nbody(x)\n");
+    CHECK(indent_line(doc, 1, two).target_column == 2);
+}
+
+TEST_CASE("macro body call arguments align like code") {
+    CppIndentStyle two;
+    two.indent_width = 2;
+    Document doc("#define F(a, b)   \\\n  impl((long)(a), \\\n(long)(b))\n");
+    CHECK(indent_line(doc, 2, two).target_column == 7); // under '(long)(a)'
+}
+
+TEST_CASE("extern block follows namespace indent style") {
+    CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n") ==
+          "extern \"C\" {\n^\nvoid f(int);\n}\n");
+    CppIndentStyle indented;
+    indented.indent_namespace_body = true;
+    CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n", indented) ==
+          "extern \"C\" {\n    ^\nvoid f(int);\n}\n");
+    // the #ifdef-guarded frame: declarations inside stay at column zero
+    CHECK(enter("#ifdef __cplusplus\nextern \"C\" {\n#endif\nvoid f(int);^\n"
+                "#ifdef __cplusplus\n}\n#endif\n") ==
+          "#ifdef __cplusplus\nextern \"C\" {\n#endif\nvoid f(int);\n^\n"
+          "#ifdef __cplusplus\n}\n#endif\n");
+}
+
 TEST_CASE("macro callback block indents as a block") {
     CHECK(enter("LLVM_DEBUG({\n    f();^\n});\n") == "LLVM_DEBUG({\n    f();\n    ^\n});\n");
 }
