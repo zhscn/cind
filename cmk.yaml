@@ -18,8 +18,7 @@ cmake:
     - name: Debug
     - name: Release
     - name: Asan
-      inherits: Debug
-      compile: ["-fsanitize=address,undefined", -fno-omit-frame-pointer]
+      compile: [-g, "-fsanitize=address,undefined", -fno-omit-frame-pointer]
       link: ["-fsanitize=address,undefined"]
 
 lint:
