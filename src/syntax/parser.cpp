@@ -143,6 +143,7 @@ public:
         pos_ = static_cast<std::uint32_t>(tree_.tokens_.size()); // include trailing trivia + EOF
         nodes()[0].end_token = pos_;
         stack_.pop_back();
+        tree_.green_root_ = green_from_flat(tree_);
         return std::move(tree_);
     }
 
@@ -1550,6 +1551,7 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
 
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         if (try_repair(tree.nodes_, tree.tokens_, *it, guard_lo, tok_hi, delta_tok, new_text)) {
+            tree.green_root_ = green_from_flat(tree);
             return;
         }
     }

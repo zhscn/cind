@@ -16,10 +16,10 @@ using namespace cind;
 
 namespace {
 
-// The green encoding must round-trip byte-exact: flat -> green -> flat equals
-// the original tree, including DFS-preorder ids and per-node fields.
-void check_green_roundtrip(const SyntaxTree& t, std::string_view text) {
-    SyntaxTree back = flat_from_green(green_from_flat(t), t.tokens());
+// Materializing `green` against `t`'s tokens must reproduce `t` byte-exact:
+// same DFS-preorder ids and per-node fields.
+void expect_materializes_to(const GreenRef& green, const SyntaxTree& t, std::string_view text) {
+    SyntaxTree back = flat_from_green(green, t.tokens());
     REQUIRE(back.node_count() == t.node_count());
     REQUIRE(back.tokens().size() == t.tokens().size());
     for (SyntaxNodeId id = 0; id < t.node_count(); ++id) {
@@ -36,6 +36,14 @@ void check_green_roundtrip(const SyntaxTree& t, std::string_view text) {
         REQUIRE(b.expected == a.expected);
     }
     REQUIRE(back.dump(text) == t.dump(text));
+}
+
+// The green encoding round-trips (flat -> green -> flat), and the tree's own
+// green_root() (maintained by parse/reparse) is consistent with its red nodes.
+void check_green_roundtrip(const SyntaxTree& t, std::string_view text) {
+    expect_materializes_to(green_from_flat(t), t, text);
+    REQUIRE(t.green_root() != nullptr);
+    expect_materializes_to(t.green_root(), t, text);
 }
 
 // Applies one edit via reparse() and checks against a from-scratch parse.
@@ -78,6 +86,7 @@ std::string check_edit(const std::string& before, std::uint32_t start, std::uint
         REQUIRE(tree.node(id).expected == full.node(id).expected);
     }
     check_green_roundtrip(full, after);
+    check_green_roundtrip(tree, after);
     return after;
 }
 

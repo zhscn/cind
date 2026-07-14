@@ -2,9 +2,9 @@
 
 #include "cpp_lexer/lexer_state.hpp"
 #include "cpp_lexer/token.hpp"
+#include "syntax/green_node.hpp"
 #include "syntax/syntax_kind.hpp"
 
-#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,7 +13,6 @@
 namespace cind {
 
 class Text;
-struct GreenNode;
 
 using SyntaxNodeId = std::uint32_t;
 inline constexpr SyntaxNodeId kInvalidNode = 0xFFFFFFFFu;
@@ -54,12 +53,18 @@ public:
 
     std::string dump(std::string_view text) const;
 
+    // The length-encoded green tree — the source of truth from which the flat
+    // red node vector above is materialized (design.md §607). Null only for a
+    // default-constructed tree.
+    const GreenRef& green_root() const { return green_root_; }
+
 private:
     template <typename Source> friend class Parser;
     friend void reparse(SyntaxTree&, std::vector<LexerState>&, const Text&, const Text&,
                         std::span<const TextEdit>);
-    friend SyntaxTree flat_from_green(const std::shared_ptr<const GreenNode>&, std::vector<Token>);
+    friend SyntaxTree flat_from_green(const GreenRef&, std::vector<Token>);
 
+    GreenRef green_root_;
     std::vector<Token> tokens_;
     std::vector<SyntaxNode> nodes_;
 };

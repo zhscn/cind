@@ -52,6 +52,7 @@ GreenRef green_from_flat(const SyntaxTree& tree) {
 
 SyntaxTree flat_from_green(const GreenRef& root, std::vector<Token> tokens) {
     SyntaxTree tree;
+    tree.green_root_ = root;
     tree.tokens_ = std::move(tokens);
     if (root) {
         materialize(root, 0, kInvalidNode, tree.nodes_);
