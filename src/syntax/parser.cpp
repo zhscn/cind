@@ -10,6 +10,21 @@ namespace {
 // design.md §8.4: tokens that resynchronize the parser after opaque or
 // broken constructs. Seeing one of these mid-declaration ends the current
 // node instead of swallowing distant structure.
+// FOO_BAR(...) with nothing after it on the line: a macro invocation used
+// as a declaration (LLVM_YAML_IS_SEQUENCE_VECTOR, TEST_F without a body on
+// the same construct). All-caps naming is the cc-mode/CLion heuristic.
+bool is_macro_name(std::string_view s) {
+    if (s.size() < 3) {
+        return false;
+    }
+    for (char c : s) {
+        if (!(c == '_' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool is_sync_introducer(TokenKind k) {
     switch (k) {
     case TokenKind::NamespaceKw:
@@ -82,6 +97,33 @@ private:
         skip_trivia();
         const Token& t = tokens()[pos_];
         return text_.substr(t.range.start.value, t.range.length());
+    }
+    // Declarator-suffix tokens between ')' (or ']') and '{' that keep a
+    // function/lambda body possible: `) const {`, `) mutable -> T & {`.
+    bool keeps_body_pending() {
+        const TokenKind k = kind();
+        if (k == TokenKind::Identifier || k == TokenKind::ColonColon ||
+            k == TokenKind::Arrow) {
+            return true;
+        }
+        if (k != TokenKind::Punctuator) {
+            return false;
+        }
+        const std::string_view s = token_text();
+        return s == "&" || s == "&&" || s == "*";
+    }
+
+    bool newline_before_next_token() const {
+        for (std::uint32_t i = pos_; i < tokens().size(); ++i) {
+            const TokenKind k = tokens()[i].kind;
+            if (k == TokenKind::Newline || k == TokenKind::EndOfFile) {
+                return true;
+            }
+            if (!is_trivia(k)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // -- tree building -----------------------------------------------------
@@ -398,7 +440,7 @@ private:
     void parse_paren_group() {
         const SyntaxNodeId g = open(SyntaxKind::ParenGroup);
         advance(); // (
-        TokenKind prev = TokenKind::LParen;
+        bool body_pending = false; // ')'/']' + declarator suffixes seen
         while (!at_eof()) {
             const TokenKind k = kind();
             if (k == TokenKind::RParen) {
@@ -408,22 +450,23 @@ private:
             }
             if (k == TokenKind::LParen) {
                 parse_paren_group();
-                prev = TokenKind::RParen;
+                body_pending = true;
                 continue;
             }
             if (k == TokenKind::LBracket) {
                 parse_bracket_group();
-                prev = TokenKind::RBracket;
+                body_pending = true;
                 continue;
             }
             if (k == TokenKind::LBrace) {
-                // ')' or ']' before '{' inside an expression: a lambda body.
-                if (prev == TokenKind::RParen || prev == TokenKind::RBracket) {
+                // ')' or ']' (plus suffixes) before '{' inside an
+                // expression: a lambda body.
+                if (body_pending) {
                     parse_compound_statement();
                 } else {
                     parse_brace_group();
                 }
-                prev = TokenKind::RBrace;
+                body_pending = false;
                 continue;
             }
             // Unclosed paren: bail at structure that clearly is not an
@@ -432,8 +475,8 @@ private:
                 k == TokenKind::ClassKw || k == TokenKind::StructKw) {
                 break;
             }
+            body_pending = body_pending && keeps_body_pending();
             advance(); // ';' stays allowed: for (;;)
-            prev = k;
         }
         add_missing(TokenKind::RParen);
         close(g);
@@ -470,7 +513,7 @@ private:
     void parse_brace_group() {
         const SyntaxNodeId g = open(SyntaxKind::BraceGroup);
         advance(); // {
-        TokenKind prev = TokenKind::LBrace;
+        bool body_pending = false; // ')'/']' + declarator suffixes seen
         while (!at_eof()) {
             const TokenKind k = kind();
             if (k == TokenKind::RBrace) {
@@ -480,28 +523,31 @@ private:
             }
             if (k == TokenKind::LParen) {
                 parse_paren_group();
-                prev = TokenKind::RParen;
+                body_pending = true;
                 continue;
             }
             if (k == TokenKind::LBracket) {
                 parse_bracket_group();
-                prev = TokenKind::RBracket;
+                body_pending = true;
                 continue;
             }
             if (k == TokenKind::LBrace) {
-                if (prev == TokenKind::RParen || prev == TokenKind::RBracket) {
+                if (body_pending) {
                     parse_compound_statement();
                 } else {
                     parse_brace_group();
                 }
-                prev = TokenKind::RBrace;
+                body_pending = false;
                 continue;
             }
-            if (k == TokenKind::Semicolon || is_sync_introducer(k)) {
+            // 'return' can only reach a brace-init directly through a
+            // misparse; bail so the damage stays bounded.
+            if (k == TokenKind::Semicolon || k == TokenKind::ReturnKw ||
+                is_sync_introducer(k)) {
                 break;
             }
+            body_pending = body_pending && keeps_body_pending();
             advance();
-            prev = k;
         }
         add_missing(TokenKind::RBrace);
         close(g);
@@ -629,6 +675,13 @@ private:
         TokenKind prev = TokenKind::EndOfFile; // sentinel: nothing consumed yet
         bool saw_question = false;
         bool terminated = false;
+        // True after a ')' with only declarator suffixes since — const,
+        // noexcept(...), override/final, ref-qualifiers, a trailing return
+        // type. A '{' then still opens a function body ("`) const {`").
+        bool header_pending = false;
+        // True while the node consists of exactly one all-caps identifier;
+        // `MACRO(...)` followed by a line break then ends the declaration.
+        bool macro_ident_only = false;
 
         while (!at_eof()) {
             const TokenKind k = kind();
@@ -642,21 +695,33 @@ private:
                 break;
             }
             if (is_sync_introducer(k)) {
+                if (k == TokenKind::DefaultKw && prev == TokenKind::Equals) {
+                    advance(); // `= default;` — not a case label
+                    prev = k;
+                    continue;
+                }
                 mark_incomplete(n);
                 break;
             }
             if (k == TokenKind::LParen) {
                 parse_paren_group();
+                if (macro_ident_only && newline_before_next_token()) {
+                    terminated = true;
+                    break;
+                }
+                macro_ident_only = false;
                 prev = TokenKind::RParen;
+                header_pending = true;
                 continue;
             }
             if (k == TokenKind::LBracket) {
                 parse_bracket_group();
+                macro_ident_only = false;
                 prev = TokenKind::RBracket;
                 continue;
             }
             if (k == TokenKind::LBrace) {
-                if (prev == TokenKind::RParen) {
+                if (header_pending) {
                     nodes()[n].kind = SyntaxKind::FunctionDefinition;
                     parse_compound_statement();
                     terminated = true;
@@ -666,7 +731,7 @@ private:
                 prev = TokenKind::RBrace;
                 continue;
             }
-            if (k == TokenKind::Colon && prev == TokenKind::RParen && !saw_question) {
+            if (k == TokenKind::Colon && header_pending && !saw_question) {
                 nodes()[n].kind = SyntaxKind::FunctionDefinition;
                 parse_ctor_initializer_list();
                 if (at(TokenKind::LBrace)) {
@@ -687,6 +752,15 @@ private:
             if (k == TokenKind::Punctuator && token_text() == "?") {
                 saw_question = true;
             }
+            if (header_pending && k != TokenKind::Identifier && k != TokenKind::ColonColon &&
+                k != TokenKind::Arrow) {
+                const std::string_view s = token_text();
+                if (k != TokenKind::Punctuator || (s != "&" && s != "&&" && s != "*")) {
+                    header_pending = false;
+                }
+            }
+            macro_ident_only = prev == TokenKind::EndOfFile && k == TokenKind::Identifier &&
+                               is_macro_name(token_text());
             advance();
             prev = k;
         }

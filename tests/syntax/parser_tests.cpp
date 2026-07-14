@@ -223,6 +223,56 @@ TEST_CASE("unbalanced #if branches stay line-local") {
     CHECK(find_all(tree, SyntaxKind::FunctionDefinition).size() == 2);
 }
 
+TEST_CASE("declarator suffixes still introduce a function body") {
+    SUBCASE(") const {") {
+        SyntaxTree tree = parse_checked(
+            "class C {\n    int f(int a) const { return a; }\n    void g() {}\n};\n");
+        auto fns = find_all(tree, SyntaxKind::FunctionDefinition);
+        CHECK(fns.size() == 2);
+        // both stay members: the class body is not closed early
+        SyntaxNodeId body = find_one(tree, SyntaxKind::ClassBody);
+        for (SyntaxNodeId fn : fns) {
+            CHECK(tree.node(fn).parent == body);
+        }
+        CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+    }
+    SUBCASE("trailing return type") {
+        SyntaxTree tree = parse_checked("auto f(int a) -> int * { return &a; }\n");
+        find_one(tree, SyntaxKind::FunctionDefinition);
+        find_one(tree, SyntaxKind::CompoundStatement);
+        CHECK(find_all(tree, SyntaxKind::BraceGroup).empty());
+    }
+    SUBCASE("noexcept constructor initializer") {
+        SyntaxTree tree = parse_checked("X::X() noexcept : a_(1) {}\n");
+        find_one(tree, SyntaxKind::CtorInitializerList);
+        find_one(tree, SyntaxKind::FunctionDefinition);
+    }
+}
+
+TEST_CASE("trailing-return lambda inside an argument list") {
+    SyntaxTree tree = parse_checked("E = handleErrors(std::move(E), [&](const X &E) -> Error {\n"
+                                    "    use(E);\n    return f();\n});\n");
+    find_one(tree, SyntaxKind::CompoundStatement);
+    CHECK(find_all(tree, SyntaxKind::BraceGroup).empty());
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+}
+
+TEST_CASE("= default is not a case label") {
+    SyntaxTree tree = parse_checked("X::X() = default;\nvoid f() {}\n");
+    CHECK(find_all(tree, SyntaxKind::CaseSection).empty());
+    find_one(tree, SyntaxKind::FunctionDefinition);
+}
+
+TEST_CASE("macro invocation without a semicolon ends at the line break") {
+    SyntaxTree tree = parse_checked("DEFINE_THING(Kernel::Metadata)\nvoid f() {\n    g();\n}\n");
+    SyntaxNodeId fn = find_one(tree, SyntaxKind::FunctionDefinition);
+    CHECK(tree.node(fn).parent == tree.root());
+    // the macro line is a complete sibling, not a swallowing parent
+    SyntaxNodeId macro = tree.node(tree.root()).children.front();
+    CHECK(tree.node(macro).kind == SyntaxKind::OpaqueDeclaration);
+    CHECK(!tree.node(macro).incomplete);
+}
+
 TEST_CASE("do while") {
     SyntaxTree tree = parse_checked("do {\n    f();\n} while (x);\n");
     SyntaxNodeId n = find_one(tree, SyntaxKind::DoStatement);
