@@ -31,6 +31,18 @@ void EditSession::type_text(std::string_view text) {
     }
 }
 
+void EditSession::insert_text(std::string_view text) {
+    if (text.empty()) {
+        return;
+    }
+    const TextOffset before = caret_;
+    EditTransaction tx = document_.begin_transaction();
+    tx.insert(caret_, text);
+    tx.commit();
+    caret_.value += static_cast<std::uint32_t>(text.size());
+    record_caret(before);
+}
+
 EnterResult EditSession::enter() {
     const TextOffset before = caret_;
     EnterResult result = press_enter(document_, caret_, style_);

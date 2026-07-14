@@ -32,5 +32,7 @@ add_executable(indent-core
   cli/style_loader.cpp
   cli/fixture_runner.cpp
   cli/repl.cpp
+  tui/terminal.cpp
+  tui/editor.cpp
 )
 target_link_libraries(indent-core PRIVATE cind_indent)

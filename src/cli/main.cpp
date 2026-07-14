@@ -1,6 +1,7 @@
 #include "cli/bench.hpp"
 #include "cli/fixture_runner.hpp"
 #include "cli/repl.hpp"
+#include "tui/editor.hpp"
 #include "commands/editor_commands.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
@@ -153,6 +154,9 @@ int main(int argc, char** argv) {
         return cmd_apply_enter(argv[2],
                                static_cast<std::uint32_t>(std::strtoul(argv[4], nullptr, 10)));
     }
+    if (argc >= 3 && command == "edit") {
+        return cind::tui::run_editor(argv[2]);
+    }
     if (command == "repl") {
         std::string initial;
         if (argc >= 3) {
@@ -193,6 +197,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: indent-core tokens|tree <file>\n"
                  "       indent-core explain <file> --line <1-based>\n"
                  "       indent-core apply-enter <file> --offset <byte>\n"
+                 "       indent-core edit <file>\n"
                  "       indent-core repl [file]\n"
                  "       indent-core test <fixture.yaml|dir>\n"
                  "       indent-core bench <file|dir>... [--style default|file|<preset>] "

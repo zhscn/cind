@@ -20,8 +20,12 @@ public:
     TextOffset caret() const { return caret_; }
     void set_caret(TextOffset caret);
     CppIndentStyle& style() { return style_; }
+    const CppIndentStyle& style() const { return style_; }
 
     void type_text(std::string_view text);
+    // One-transaction insert at the caret, bypassing the typed-char pipeline.
+    // For multi-byte input (a UTF-8 code point is one undo unit) and pastes.
+    void insert_text(std::string_view text);
     EnterResult enter();
     IndentDecision indent(); // reindent the caret's line
     // Erases a range as one undo unit; the caret settles at range.start.
