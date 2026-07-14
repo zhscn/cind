@@ -14,6 +14,7 @@ target_link_libraries(cind_lexer PUBLIC cind_document)
 add_library(cind_syntax STATIC
   syntax/parser.cpp
   syntax/syntax_tree.cpp
+  syntax/structure.cpp
 )
 target_link_libraries(cind_syntax PUBLIC cind_lexer)
 

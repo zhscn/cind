@@ -16,6 +16,7 @@ struct TermSize {
 enum class KeyKind : std::uint8_t {
     Char, // printable input; `text` holds the whole UTF-8 sequence
     Ctrl, // control chord; `ch` holds the lowercase letter ('s' for Ctrl-S)
+    Alt,  // ESC-prefixed chord; Alt-x and Ctrl-Alt-x both yield `ch` = 'x'
     Enter,
     Tab,
     Backspace,

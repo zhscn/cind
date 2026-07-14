@@ -3,6 +3,7 @@
 #include "cli/session.hpp"
 #include "cli/style_loader.hpp"
 #include "cpp_lexer/lexer.hpp"
+#include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
 
 #include <algorithm>
@@ -63,8 +64,12 @@ std::string describe_key(const Key& key) {
     switch (key.kind) {
     case KeyKind::Char: return key.text;
     case KeyKind::Ctrl:
+        if (key.ch == ' ') {
+            return "Ctrl-Space";
+        }
         return std::format("Ctrl-{}",
                            static_cast<char>(std::toupper(static_cast<unsigned char>(key.ch))));
+    case KeyKind::Alt: return std::format("Alt-{}", key.ch);
     case KeyKind::Enter: return "Enter";
     case KeyKind::Tab: return "Tab";
     case KeyKind::Backspace: return "Backspace";
@@ -237,6 +242,7 @@ private:
     void handle_key(const Key& key) {
         const Text& text = session_.snapshot().content();
         const TextOffset caret = session_.caret();
+        const RevisionId rev_before = session_.snapshot().revision();
         bool keep_goal = false;
         bool keep_message = false;
         if (std::string caption = describe_key(key); !caption.empty()) {
@@ -258,16 +264,8 @@ private:
             keep_message = true;
             break;
         }
-        case KeyKind::Backspace:
-            if (caret.value > 0) {
-                session_.erase(TextRange{prev_code_point(text, caret), caret});
-            }
-            break;
-        case KeyKind::Delete:
-            if (caret.value < text.size_bytes()) {
-                session_.erase(TextRange{caret, next_code_point(text, caret)});
-            }
-            break;
+        case KeyKind::Backspace: soft_delete(false); break;
+        case KeyKind::Delete: soft_delete(true); break;
         case KeyKind::Left: session_.set_caret(prev_code_point(text, caret)); break;
         case KeyKind::Right: session_.set_caret(next_code_point(text, caret)); break;
         case KeyKind::Up:
@@ -293,6 +291,7 @@ private:
             session_.set_caret(text.line_content_end(text.position(caret).line));
             break;
         case KeyKind::Ctrl: handle_ctrl(key.ch, keep_message); break;
+        case KeyKind::Alt: handle_alt(key.ch, keep_message); break;
         case KeyKind::Eof: quit_ = true; break;
         case KeyKind::Escape:
         case KeyKind::None: keep_message = true; break;
@@ -307,6 +306,139 @@ private:
         if (key.kind != KeyKind::Ctrl || key.ch != 'q') {
             quit_pending_ = false;
         }
+        if (session_.snapshot().revision() != rev_before) {
+            mark_.reset(); // edits invalidate the selection
+            expand_stack_.clear();
+        }
+    }
+
+    std::optional<TextRange> selection() const {
+        if (!mark_) {
+            return std::nullopt;
+        }
+        const TextOffset caret = session_.caret();
+        if (*mark_ == caret) {
+            return std::nullopt;
+        }
+        return *mark_ < caret ? TextRange{*mark_, caret} : TextRange{caret, *mark_};
+    }
+
+    void kill_range(TextRange range) {
+        kill_slot_ = session_.snapshot().substring(range);
+        session_.erase(range);
+    }
+
+    // puni-style structural commands over the CST.
+    void handle_alt(char ch, bool& keep_message) {
+        keep_message = true;
+        const DocumentSnapshot snap = session_.snapshot();
+        const SyntaxTree tree = parse(snap.content());
+        switch (ch) {
+        case 'f':
+            if (auto unit = sexp_forward(tree, session_.caret())) {
+                session_.set_caret(unit->end);
+            }
+            break;
+        case 'b':
+            if (auto unit = sexp_backward(tree, session_.caret())) {
+                session_.set_caret(unit->start);
+            }
+            break;
+        case 'u':
+            if (auto list = enclosing_list(tree, session_.caret())) {
+                session_.set_caret(list->start);
+            }
+            break;
+        case 'h': { // expand region (repeat to grow)
+            TextRange current = selection().value_or(TextRange{session_.caret(), session_.caret()});
+            if (auto next = expand_selection(tree, current)) {
+                if (selection()) {
+                    expand_stack_.push_back(current);
+                }
+                mark_ = next->start;
+                session_.set_caret(next->end);
+            }
+            break;
+        }
+        case 'j': // contract region
+            if (!expand_stack_.empty()) {
+                TextRange prev = expand_stack_.back();
+                expand_stack_.pop_back();
+                mark_ = prev.start;
+                session_.set_caret(prev.end);
+            } else {
+                mark_.reset();
+            }
+            break;
+        case 'w': // copy region
+            if (auto sel = selection()) {
+                kill_slot_ = snap.substring(*sel);
+                mark_.reset();
+                message_ = "copied";
+            }
+            break;
+        default: message_.clear(); break;
+        }
+    }
+
+    // Soft deletion: bracket pairs and literal quotes are only deleted when
+    // the pair is empty; otherwise the caret moves across the delimiter.
+    void soft_delete(bool forward) {
+        const DocumentSnapshot snap = session_.snapshot();
+        const Text& text = snap.content();
+        const TextOffset caret = session_.caret();
+        if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
+            return;
+        }
+        const TextOffset target = forward ? caret : prev_code_point(text, caret);
+        const char c = text.byte_at(target);
+        auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
+        auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
+        auto partner = [](char ch) {
+            switch (ch) {
+            case '(': return ')';
+            case '[': return ']';
+            case '{': return '}';
+            case ')': return '(';
+            case ']': return '[';
+            default: return '{';
+            }
+        };
+        if (is_open(c) || is_close(c)) {
+            // Empty adjacent pair: delete both. Otherwise step over.
+            if (is_open(c) && target.value + 1 < text.size_bytes() &&
+                text.byte_at(TextOffset{target.value + 1}) == partner(c)) {
+                session_.erase(TextRange{target, TextOffset{target.value + 2}});
+                return;
+            }
+            if (is_close(c) && target.value >= 1 &&
+                text.byte_at(TextOffset{target.value - 1}) == partner(c)) {
+                session_.erase(TextRange{TextOffset{target.value - 1},
+                                         TextOffset{target.value + 1}});
+                return;
+            }
+            session_.set_caret(forward ? TextOffset{target.value + 1} : target);
+            message_ = "soft delete: pair not empty (moved over)";
+            return;
+        }
+        if (c == '"' || c == '\'') {
+            const char other = forward ? (target.value >= 1
+                                              ? text.byte_at(TextOffset{target.value - 1})
+                                              : '\0')
+                                       : (target.value + 1 < text.size_bytes()
+                                              ? text.byte_at(TextOffset{target.value + 1})
+                                              : '\0');
+            if (other == c) { // empty literal: delete both quotes
+                const std::uint32_t lo = forward ? target.value - 1 : target.value;
+                session_.erase(make_range(lo, lo + 2));
+                return;
+            }
+            session_.set_caret(forward ? TextOffset{target.value + 1} : target);
+            message_ = "soft delete: literal not empty (moved over)";
+            return;
+        }
+        session_.erase(forward ? TextRange{caret, next_code_point(text, caret)}
+                               : TextRange{prev_code_point(text, caret), caret});
     }
 
     void handle_ctrl(char ch, bool& keep_message) {
@@ -330,7 +462,36 @@ private:
             break;
         }
         case 'z': message_ = session_.undo() ? "undo" : "nothing to undo"; break;
-        case 'y': message_ = session_.redo() ? "redo" : "nothing to redo"; break;
+        case 'r': message_ = session_.redo() ? "redo" : "nothing to redo"; break;
+        case ' ': // set/clear mark
+            if (mark_ && *mark_ == session_.caret()) {
+                mark_.reset();
+                message_ = "mark cleared";
+            } else {
+                mark_ = session_.caret();
+                expand_stack_.clear();
+                message_ = "mark set";
+            }
+            break;
+        case 'w': // kill region
+            if (auto sel = selection()) {
+                kill_range(*sel);
+            }
+            break;
+        case 'k': { // soft kill to end of line (never breaks balance)
+            const DocumentSnapshot snap = session_.snapshot();
+            const SyntaxTree tree = parse(snap.content());
+            TextRange range = soft_kill_end(tree, snap.content(), session_.caret());
+            if (!range.empty()) {
+                kill_range(range);
+            }
+            break;
+        }
+        case 'y': // yank
+            if (!kill_slot_.empty()) {
+                session_.insert_text(kill_slot_);
+            }
+            break;
         case 'l': break; // redraw happens every loop anyway
         default: message_.clear(); break;
         }
@@ -360,8 +521,10 @@ private:
                                            [](TextOffset a, TextOffset b) { return a < b; },
                                            [](const Token& t) { return t.range.end; });
 
+        const std::optional<TextRange> sel = selection();
         int col = 0;
         std::string_view active_color;
+        bool active_sel = false;
         for (std::uint32_t p = content.start.value; p < content.end.value;) {
             while (it != lexed.tokens.end() && it->range.end.value <= p) {
                 ++it;
@@ -382,6 +545,12 @@ private:
                     term_.queue(active_color.empty() ? "" : "\x1b[0m");
                     term_.queue(color);
                     active_color = color;
+                    active_sel = false; // SGR 0 above cleared the selection too
+                }
+                const bool in_sel = sel && sel->contains(TextOffset{p});
+                if (in_sel != active_sel) {
+                    term_.queue(in_sel ? "\x1b[7m" : "\x1b[27m");
+                    active_sel = in_sel;
                 }
                 if (c == '\t') {
                     term_.queue(std::string(static_cast<std::size_t>(cell), ' '));
@@ -392,7 +561,7 @@ private:
             col += cell;
             ++p;
         }
-        if (!active_color.empty()) {
+        if (!active_color.empty() || active_sel) {
             term_.queue("\x1b[0m");
         }
     }
@@ -454,7 +623,8 @@ private:
         term_.queue(key_caption);
         term_.queue("\x1b[0m\r\n\x1b[K");
         term_.queue(message_.empty()
-                        ? "Ctrl-S save  Ctrl-Q quit  Ctrl-Z undo  Ctrl-Y redo  Tab reindent"
+                        ? "C-s save  C-q quit  C-z/C-r undo/redo  C-k kill  C-y yank  C-SPC mark  "
+                          "M-f/b sexp  M-u up  M-h/j expand/shrink  Tab indent"
                         : message_);
 
         // Park the cursor on the caret.
@@ -475,6 +645,9 @@ private:
     int goal_col_ = -1;
     std::string message_;
     std::string last_key_;
+    std::optional<TextOffset> mark_;
+    std::vector<TextRange> expand_stack_;
+    std::string kill_slot_;
     bool quit_ = false;
     bool quit_pending_ = false;
 

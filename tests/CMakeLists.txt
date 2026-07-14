@@ -14,6 +14,10 @@ add_executable(parser_tests syntax/parser_tests.cpp)
 target_link_libraries(parser_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME parser_tests COMMAND parser_tests)
 
+add_executable(structure_tests syntax/structure_tests.cpp)
+target_link_libraries(structure_tests PRIVATE cind_syntax doctest::doctest)
+add_test(NAME structure_tests COMMAND structure_tests)
+
 add_executable(clang_format_style_tests formatting/clang_format_style_tests.cpp)
 target_link_libraries(clang_format_style_tests PRIVATE cind_indent doctest::doctest)
 add_test(NAME clang_format_style_tests COMMAND clang_format_style_tests)

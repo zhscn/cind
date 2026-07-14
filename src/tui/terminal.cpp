@@ -95,6 +95,13 @@ Key Terminal::read_escape_sequence() {
         return Key{KeyKind::Escape, 0, {}};
     }
     if (b1 != '[' && b1 != 'O') {
+        // Meta chord: ESC + letter (Alt-x) or ESC + control byte (Ctrl-Alt-x).
+        if (b1 > 0 && b1 <= 26) {
+            return Key{KeyKind::Alt, static_cast<char>('a' + b1 - 1), {}};
+        }
+        if (b1 >= 0x20 && b1 < 0x7f) {
+            return Key{KeyKind::Alt, static_cast<char>(b1), {}};
+        }
         return Key{KeyKind::None, 0, {}};
     }
     const int b2 = read_byte(false);
@@ -144,6 +151,9 @@ Key Terminal::read_key() {
     }
     if (b == 127 || b == 8) {
         return Key{KeyKind::Backspace, 0, {}};
+    }
+    if (b == 0) {
+        return Key{KeyKind::Ctrl, ' ', {}}; // Ctrl-Space
     }
     if (b < 0x20) {
         return Key{KeyKind::Ctrl, static_cast<char>('a' + b - 1), {}};
