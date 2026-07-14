@@ -301,10 +301,18 @@ void apply_key(const KeyValue& kv, PendingStyle& pending, ClangFormatStyle& resu
             warn_value();
         }
     } else if (kv.key == "IndentPPDirectives") {
-        if (kv.value != "None") {
-            result.warnings.push_back(
-                std::format("unsupported: IndentPPDirectives: {}", kv.value));
+        using PP = CppIndentStyle::PPDirectiveIndent;
+        if (kv.value == "None") {
+            s.pp_directive_indent = PP::None;
+        } else if (kv.value == "AfterHash") {
+            s.pp_directive_indent = PP::AfterHash;
+        } else if (kv.value == "BeforeHash") {
+            s.pp_directive_indent = PP::BeforeHash;
+        } else {
+            warn_value();
         }
+    } else if (kv.key == "PPIndentWidth") {
+        set_int(s.pp_indent_width);
     } else if (kv.key == "IndentAccessModifiers") {
         if (kv.value == "true") {
             result.warnings.push_back("unsupported: IndentAccessModifiers: true");

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include <string>
+#include <vector>
 
 namespace cind {
 
@@ -174,6 +176,138 @@ std::optional<Token> token_covering(const SyntaxTree& tree, TextOffset offset) {
     return std::nullopt;
 }
 
+// clang-format IndentPPDirectives: BeforeHash. The leading column for the '#'
+// directive that begins on `query_line`. Directives nest by preprocessor
+// conditional depth (#if/#ifdef/#ifndef open a level, #endif closes it,
+// #else/#elif render at the enclosing level); the outermost #ifndef/#define …
+// trailing-#endif include guard is transparent, exactly as clang-format treats
+// it. Returns 0 when the line is not a nested directive.
+enum class PPCat { Open, Alt, Close, Other };
+
+int pp_before_hash_column(const SyntaxTree& tree, const Text& text, std::uint32_t query_line,
+                          int step) {
+    const auto& tokens = tree.tokens();
+
+    // The significant token right after a '#' — its directive keyword.
+    auto keyword_index = [&](std::size_t hash) {
+        std::size_t i = hash + 1;
+        while (i < tokens.size() && is_trivia(tokens[i].kind)) {
+            ++i;
+        }
+        return i;
+    };
+    auto category = [&](std::size_t hash) {
+        const std::size_t i = keyword_index(hash);
+        if (i >= tokens.size()) {
+            return PPCat::Other;
+        }
+        const TokenKind k = tokens[i].kind;
+        if (k == TokenKind::IfKw) {
+            return PPCat::Open;
+        }
+        if (k == TokenKind::ElseKw) {
+            return PPCat::Alt;
+        }
+        if (k != TokenKind::Identifier) {
+            return PPCat::Other;
+        }
+        const std::string s = text.substring(tokens[i].range);
+        if (s == "ifdef" || s == "ifndef") {
+            return PPCat::Open;
+        }
+        if (s == "endif") {
+            return PPCat::Close;
+        }
+        if (s == "elif" || s == "elifdef" || s == "elifndef") {
+            return PPCat::Alt;
+        }
+        return PPCat::Other;
+    };
+
+    // Directive starts in source order: a '#' that is the first significant
+    // token on its physical line (this excludes the '#'/'##' stringize and
+    // paste operators that appear inside a macro body).
+    struct Dir {
+        std::size_t hash;
+        std::uint32_t line;
+    };
+    std::vector<Dir> dirs;
+    bool line_start = true;
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+        const TokenKind k = tokens[i].kind;
+        if (k == TokenKind::Newline) {
+            line_start = true;
+            continue;
+        }
+        if (is_trivia(k)) {
+            continue;
+        }
+        if (line_start && k == TokenKind::PreprocessorHash) {
+            dirs.push_back({i, text.position(tokens[i].range.start).line});
+        }
+        line_start = false;
+    }
+    if (dirs.empty()) {
+        return 0;
+    }
+
+    // Include-guard transparency: first directive #ifndef SYM, second #define
+    // SYM (same symbol), the last directive an #endif with no code after it.
+    bool guard = false;
+    if (dirs.size() >= 3) {
+        auto symbol_after = [&](std::size_t kw) -> std::string {
+            std::size_t j = kw + 1;
+            while (j < tokens.size() && is_trivia(tokens[j].kind)) {
+                ++j;
+            }
+            if (j < tokens.size() && tokens[j].kind == TokenKind::Identifier) {
+                return text.substring(tokens[j].range);
+            }
+            return {};
+        };
+        const std::size_t k0 = keyword_index(dirs.front().hash);
+        const std::size_t k1 = keyword_index(dirs[1].hash);
+        const std::size_t kl = keyword_index(dirs.back().hash);
+        const bool shape = k0 < tokens.size() && tokens[k0].kind == TokenKind::Identifier &&
+                           text.substring(tokens[k0].range) == "ifndef" && k1 < tokens.size() &&
+                           tokens[k1].kind == TokenKind::Identifier &&
+                           text.substring(tokens[k1].range) == "define" && kl < tokens.size() &&
+                           tokens[kl].kind == TokenKind::Identifier &&
+                           text.substring(tokens[kl].range) == "endif";
+        if (shape) {
+            const std::string s0 = symbol_after(k0);
+            std::uint32_t last_sig_line = dirs.back().line;
+            for (std::size_t i = tokens.size(); i-- > 0;) {
+                const TokenKind k = tokens[i].kind;
+                if (k == TokenKind::EndOfFile || is_trivia(k)) {
+                    continue;
+                }
+                last_sig_line = text.position(tokens[i].range.start).line;
+                break;
+            }
+            guard = !s0.empty() && s0 == symbol_after(k1) && last_sig_line <= dirs.back().line;
+        }
+    }
+
+    int level = 0;
+    for (const Dir& d : dirs) {
+        int own = level;
+        switch (category(d.hash)) {
+        case PPCat::Open: own = level++; break;
+        case PPCat::Alt: own = std::max(level - 1, 0); break;
+        case PPCat::Close: own = (level = std::max(level - 1, 0)); break;
+        case PPCat::Other: own = level; break;
+        }
+        if (guard) {
+            own = std::max(own - 1, 0);
+        }
+        if (d.line == query_line) {
+            return own * step;
+        }
+    }
+    return 0;
+}
+
 class IndentComputer {
 public:
     IndentComputer(const DocumentSnapshot& snapshot, const SyntaxTree& tree, std::uint32_t line,
@@ -200,10 +334,20 @@ public:
                     return std::move(decision_);
                 }
                 break;
-            case TokenKind::PreprocessorHash:
-                trace("preprocessor directives stay at column zero");
-                finish(FormatRole::PreprocessorDirective, 0, 0);
+            case TokenKind::PreprocessorHash: {
+                // BeforeHash indents the whole '#directive' by conditional
+                // nesting depth; None and AfterHash keep '#' at column zero
+                // (AfterHash's between-#-and-keyword spacing is intra-line, so
+                // it does not change the leading column).
+                int col = 0;
+                if (style_.pp_directive_indent ==
+                    CppIndentStyle::PPDirectiveIndent::BeforeHash) {
+                    col = pp_before_hash_column(tree_, lines_, line_, style_.pp_step());
+                }
+                trace("preprocessor directive at conditional depth column {}", col);
+                finish(FormatRole::PreprocessorDirective, col, col);
                 return std::move(decision_);
+            }
             case TokenKind::CaseKw:
             case TokenKind::DefaultKw:
                 if (case_label()) {

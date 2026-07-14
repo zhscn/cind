@@ -62,6 +62,25 @@ TEST_CASE("BreakConstructorInitializers maps to the initializer style") {
               .style.constructor_initializers == CtorStyle::AlignFirstInitializer);
 }
 
+TEST_CASE("IndentPPDirectives and PPIndentWidth map to the PP directive style") {
+    using PP = CppIndentStyle::PPDirectiveIndent;
+    CppIndentStyle base;
+    CHECK(parse_clang_format_yaml("IndentPPDirectives: None\n", base).style.pp_directive_indent ==
+          PP::None);
+    CHECK(parse_clang_format_yaml("IndentPPDirectives: AfterHash\n", base)
+              .style.pp_directive_indent == PP::AfterHash);
+    auto before = parse_clang_format_yaml("IndentPPDirectives: BeforeHash\nPPIndentWidth: 2\n", base);
+    CHECK(before.style.pp_directive_indent == PP::BeforeHash);
+    CHECK(before.style.pp_indent_width == 2);
+    CHECK(before.warnings.empty());
+    // -1 (the default) means "use IndentWidth"; pp_step() resolves it.
+    CppIndentStyle w4;
+    w4.indent_width = 4;
+    CHECK(w4.pp_step() == 4);
+    w4.pp_indent_width = 2;
+    CHECK(w4.pp_step() == 2);
+}
+
 TEST_CASE("access modifier offset converts against the final IndentWidth") {
     // clang-format: offset is relative to the member indent, so overriding
     // IndentWidth after BasedOnStyle moves the access specifier too.
@@ -129,8 +148,9 @@ TEST_CASE("nested blocks, comments and quoted values") {
 
 TEST_CASE("unsupported indentation keys produce warnings, not silence") {
     CppIndentStyle base;
-    CHECK(parse_clang_format_yaml("IndentPPDirectives: BeforeHash\n", base).warnings.size() == 1);
-    CHECK(parse_clang_format_yaml("IndentPPDirectives: None\n", base).warnings.empty());
+    // IndentPPDirectives is now supported; an unrecognized value still warns.
+    CHECK(parse_clang_format_yaml("IndentPPDirectives: Sideways\n", base).warnings.size() == 1);
+    CHECK(parse_clang_format_yaml("IndentPPDirectives: BeforeHash\n", base).warnings.empty());
     CHECK(parse_clang_format_yaml("IndentAccessModifiers: true\n", base).warnings.size() == 1);
     CHECK(parse_clang_format_yaml("LambdaBodyIndentation: OuterScope\n", base).warnings.size() ==
           1);

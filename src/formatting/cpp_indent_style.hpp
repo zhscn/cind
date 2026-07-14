@@ -43,6 +43,22 @@ struct CppIndentStyle {
     // 0 = aligned with "class" (CLion default).
     int access_specifier_offset = 0;
 
+    // Leading indentation of preprocessor directives by conditional nesting
+    // depth (clang-format IndentPPDirectives). None: every '#' at column zero.
+    // BeforeHash: the whole '#directive' shifts right by depth*pp_indent_width.
+    // AfterHash keeps the '#' at column zero and indents the keyword after it
+    // — that is intra-line spacing, outside an indentation kernel's remit, so
+    // for the leading column it behaves like None. The outermost include guard
+    // (#ifndef/#define … trailing #endif) is transparent, matching clang-format.
+    enum class PPDirectiveIndent { None, AfterHash, BeforeHash };
+    PPDirectiveIndent pp_directive_indent = PPDirectiveIndent::None;
+    // Indent width per conditional level; -1 means "use indent_width"
+    // (clang-format PPIndentWidth default).
+    int pp_indent_width = -1;
+
+    // Effective columns of one preprocessor nesting level.
+    int pp_step() const { return pp_indent_width >= 0 ? pp_indent_width : indent_width; }
+
     enum class ConstructorInitializerStyle {
         NormalIndent,
         ContinuationIndent,

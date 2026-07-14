@@ -72,6 +72,68 @@ TEST_CASE("Inner namespace indentation indents only nested namespace bodies") {
           "namespace out {\nnamespace in {\n    ^\n}\n}\n");
 }
 
+TEST_CASE("IndentPPDirectives BeforeHash indents by conditional nesting depth") {
+    CppIndentStyle none; // the default keeps every '#' at column zero
+    CppIndentStyle before;
+    before.indent_width = 2; // LLVM
+    before.pp_directive_indent = CppIndentStyle::PPDirectiveIndent::BeforeHash;
+
+    // No include guard: every conditional level counts. #else/#endif render at
+    // the enclosing level.
+    const std::string nested = "#if defined(A)\n"
+                               "#if defined(B)\n"
+                               "#define X 1\n"
+                               "#else\n"
+                               "#define X 2\n"
+                               "#endif\n"
+                               "#endif\n";
+    {
+        Document doc(nested);
+        auto col = [&](std::uint32_t line, const CppIndentStyle& s) {
+            return indent_line(doc, line, s).target_column;
+        };
+        CHECK(col(0, before) == 0); // #if defined(A)
+        CHECK(col(1, before) == 2); // #if defined(B)
+        CHECK(col(2, before) == 4); // #define X 1
+        CHECK(col(3, before) == 2); // #else
+        CHECK(col(4, before) == 4); // #define X 2
+        CHECK(col(5, before) == 2); // #endif
+        CHECK(col(6, before) == 0); // #endif
+        // None leaves everything at column zero.
+        CHECK(col(2, none) == 0);
+        CHECK(col(5, none) == 0);
+    }
+
+    // Include guard: the outermost #ifndef/#define … trailing-#endif is
+    // transparent, so its body is not indented for that level.
+    const std::string guarded = "#ifndef FOO_H\n"
+                                "#define FOO_H\n"
+                                "#if defined(A)\n"
+                                "#define X 1\n"
+                                "#endif\n"
+                                "#endif\n";
+    {
+        Document doc(guarded);
+        auto col = [&](std::uint32_t line) { return indent_line(doc, line, before).target_column; };
+        CHECK(col(0) == 0); // #ifndef FOO_H (guard, transparent)
+        CHECK(col(1) == 0); // #define FOO_H
+        CHECK(col(2) == 0); // #if defined(A)  — guard level removed
+        CHECK(col(3) == 2); // #define X 1
+        CHECK(col(4) == 0); // #endif
+        CHECK(col(5) == 0); // #endif (guard close)
+    }
+
+    // A mismatched #define symbol is not a guard; the #ifndef counts a level.
+    const std::string not_guard = "#ifndef FOO_H\n"
+                                  "#define BAR_H\n"
+                                  "#define X 1\n"
+                                  "#endif\n";
+    {
+        Document doc(not_guard);
+        CHECK(indent_line(doc, 2, before).target_column == 2); // #define X 1 nested
+    }
+}
+
 TEST_CASE("enter between braces expands and places the caret on the middle line") {
     CHECK(enter("void f() {^}\n") == "void f() {\n    ^\n}\n");
     CHECK(enter("namespace foo {^}\n") == "namespace foo {\n^\n}\n");
