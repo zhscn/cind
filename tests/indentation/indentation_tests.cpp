@@ -189,18 +189,40 @@ TEST_CASE("braced list continuation style") {
     CHECK(enter("int arr[] = {^\n};\n", two) == "int arr[] = {\n    ^\n};\n");
 }
 
-TEST_CASE("comment lines align with the code they annotate") {
-    // a comment before a case label takes the label's indent
-    Document doc("switch (x) {\ncase 1:\n    a();\n        // about case 2\ncase 2:\n"
-                 "    b();\n}\n");
+TEST_CASE("wrapped function declarator name") {
+    CppIndentStyle llvm_names;
+    llvm_names.indent_wrapped_function_names = false;
+    // LLVM convention: after breaking behind the return type, the name
+    // line stays at the declaration's indent
+    Document doc("static std::map<int, int> &\n        foo::bar() {\n}\n");
+    CHECK(indent_line(doc, 1, llvm_names).target_column == 0);
+    // default style keeps continuation indent
+    Document doc2("static std::map<int, int> &\nfoo::bar() {\n}\n");
+    CHECK(indent_line(doc2, 1, CppIndentStyle{}).target_column == 4);
+    // an assignment continuation is not a declarator name
+    Document doc3("int x =\nf();\n");
+    CHECK(indent_line(doc3, 1, llvm_names).target_column == 4);
+}
+
+TEST_CASE("comment lines and the original-column rule") {
+    // aligned with the following case label: adopts its decision
+    Document doc("switch (x) {\ncase 1:\n    a();\n// about case 2\ncase 2:\n    b();\n}\n");
     IndentDecision d = indent_line(doc, 3, CppIndentStyle{});
     CHECK(d.role == FormatRole::CaseLabel);
-    CHECK(doc.snapshot().text() ==
-          "switch (x) {\ncase 1:\n    a();\n// about case 2\ncase 2:\n    b();\n}\n");
-    // a comment before '}' keeps its block's indent
-    Document doc2("void f() {\n    a();\n// trailing\n}\n");
-    indent_line(doc2, 2, CppIndentStyle{});
-    CHECK(doc2.snapshot().text() == "void f() {\n    a();\n    // trailing\n}\n");
+    CHECK(d.target_column == 0);
+    // not aligned with what follows: keeps the case body indent
+    Document doc2("switch (x) {\ncase 1:\n    a();\n        // stray\ncase 2:\n    b();\n}\n");
+    CHECK(indent_line(doc2, 3, CppIndentStyle{}).target_column == 4);
+    CHECK(doc2.snapshot().text() ==
+          "switch (x) {\ncase 1:\n    a();\n    // stray\ncase 2:\n    b();\n}\n");
+    // a comment at body indent before '}' stays at body indent
+    Document doc3("void f() {\n    a();\n    // trailing\n}\n");
+    indent_line(doc3, 2, CppIndentStyle{});
+    CHECK(doc3.snapshot().text() == "void f() {\n    a();\n    // trailing\n}\n");
+}
+
+TEST_CASE("enumerators indent as siblings") {
+    CHECK(enter("enum E {\n    A,^\n};\n") == "enum E {\n    A,\n    ^\n};\n");
 }
 
 TEST_CASE("preprocessor directives stay at column zero") {

@@ -265,6 +265,91 @@ private:
         return tree_.node_range(node).start;
     }
 
+    // clang-format TT_FunctionDeclarationName approximation: this line
+    // begins the declarator name of a declaration-scope function whose
+    // parameter list opens on the same line, and everything from the
+    // declaration start up to that '(' is name/type material — no '=',
+    // ',' or expression operators.
+    bool wrapped_declarator_name_line(SyntaxNodeId node) const {
+        const SyntaxNode& n = tree_.node(node);
+        if (n.kind != SyntaxKind::FunctionDefinition &&
+            n.kind != SyntaxKind::OpaqueDeclaration) {
+            return false;
+        }
+        if (n.parent == kInvalidNode) {
+            return false;
+        }
+        switch (tree_.node(n.parent).kind) {
+        case SyntaxKind::TranslationUnit:
+        case SyntaxKind::NamespaceBody:
+        case SyntaxKind::ClassBody: break;
+        default: return false;
+        }
+        SyntaxNodeId params = kInvalidNode;
+        for (SyntaxNodeId child : n.children) {
+            if (tree_.node(child).kind == SyntaxKind::ParenGroup) {
+                params = child;
+                break;
+            }
+        }
+        if (params == kInvalidNode) {
+            return false;
+        }
+        const auto& tokens = tree_.tokens();
+        const std::uint32_t open = tree_.node(params).first_token;
+        if (lines_.position(tokens[open].range.start).line != line_) {
+            return false;
+        }
+        TokenKind prev = TokenKind::EndOfFile;
+        for (std::uint32_t i = n.first_token; i < open; ++i) {
+            // Template arguments (and attribute brackets) are opaque
+            // children of the declaration; skip their whole span.
+            bool in_child = false;
+            for (SyntaxNodeId child : n.children) {
+                const SyntaxNode& c = tree_.node(child);
+                if (c.first_token <= i && i < c.end_token) {
+                    i = c.end_token - 1;
+                    in_child = c.kind == SyntaxKind::TemplateArgumentList ||
+                               c.kind == SyntaxKind::BracketGroup;
+                    break;
+                }
+            }
+            if (in_child) {
+                prev = TokenKind::Greater;
+                continue;
+            }
+            const Token& t = tokens[i];
+            if (is_trivia(t.kind)) {
+                continue;
+            }
+            switch (t.kind) {
+            case TokenKind::Identifier:
+            case TokenKind::ColonColon:
+            case TokenKind::Arrow:
+            case TokenKind::OperatorKw: break;
+            case TokenKind::Punctuator: {
+                const std::string_view s =
+                    text_.substr(t.range.start.value, t.range.length());
+                if (prev != TokenKind::OperatorKw && s != "*" && s != "&" && s != "&&" &&
+                    s != "~") {
+                    return false;
+                }
+                break;
+            }
+            case TokenKind::Equals:
+            case TokenKind::Less:
+            case TokenKind::Greater:
+                if (prev != TokenKind::OperatorKw) {
+                    return false;
+                }
+                break;
+            default: return false;
+            }
+            prev = t.kind;
+        }
+        return true;
+    }
+
     // T2.5 alignment: content following the open bracket on its own line
     // makes wrapped lines align with that first piece of content.
     std::optional<int> aligned_continuation(SyntaxNodeId group) const {
@@ -284,9 +369,11 @@ private:
         return std::nullopt;
     }
 
-    // A comment-only line aligns with the code it annotates: the next line
-    // that starts with a significant token — unless that token closes a
-    // brace (a trailing comment keeps its block's indent).
+    // A comment-only line belongs to the code it annotates only when it is
+    // already column-aligned with it (clang-format's original-column rule
+    // in distributeComments): then it adopts that line's decision. An
+    // unaligned comment keeps the enclosing structure's indent via the
+    // generic path.
     bool comment_alignment() {
         TextRange content = lines_.line_content_range(line_);
         const auto& tokens = tree_.tokens();
@@ -305,15 +392,13 @@ private:
             if (!tok) {
                 continue; // blank or another comment line
             }
-            if (tok->kind == TokenKind::RBrace) {
-                return false;
-            }
             IndentDecision adopted = IndentComputer(snapshot_, tree_, next, style_).run();
-            if (adopted.preserve) {
-                return false;
+            if (adopted.preserve ||
+                adopted.target_column != indent_of_line(line_)) {
+                return false; // not aligned with what follows: keep structure
             }
             adopted.trace.insert(adopted.trace.begin(),
-                                 std::format("comment line aligns with line {}", next + 1));
+                                 std::format("comment line aligned with line {}", next + 1));
             decision_ = std::move(adopted);
             return true;
         }
@@ -608,6 +693,12 @@ private:
                 ctor_items(list);
                 return;
             }
+            if (!style_.indent_wrapped_function_names &&
+                wrapped_declarator_name_line(relevant)) {
+                trace("wrapped declarator name; kept at the declaration indent");
+                finish(FormatRole::StatementContinuation, base, base);
+                return;
+            }
             finish(FormatRole::StatementContinuation, base + cont, base + cont);
             return;
         }
@@ -643,6 +734,12 @@ private:
             return;
         }
         default: // opaque declarations, labels, class heads: continuation
+            if (!style_.indent_wrapped_function_names &&
+                wrapped_declarator_name_line(relevant)) {
+                trace("wrapped declarator name; kept at the declaration indent");
+                finish(FormatRole::StatementContinuation, base, base);
+                return;
+            }
             finish(FormatRole::StatementContinuation, base + cont, base + cont);
             return;
         }

@@ -15,6 +15,11 @@ struct CppIndentStyle {
     // Braced-list contents use continuation_indent instead of indent_width
     // (clang-format Cpp11BracedListStyle).
     bool brace_init_continuation = false;
+    // false: a wrapped function declarator name stays at the declaration's
+    // indent instead of getting continuation indent (clang-format
+    // IndentWrappedFunctionNames — LLVM breaks after the return type and
+    // puts the name at column zero).
+    bool indent_wrapped_function_names = true;
 
     bool indent_namespace_body = false;
     bool indent_type_body = true;
