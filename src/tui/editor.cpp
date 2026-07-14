@@ -6,6 +6,7 @@
 #include "tui/terminal.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -54,6 +55,43 @@ std::string_view token_color(const Token& token) {
     case TokenKind::OperatorKw: return "\x1b[1;34m";
     default: return {};
     }
+}
+
+// Key caption for the status line (screenkey-style, so recordings show
+// which key produced each reaction).
+std::string describe_key(const Key& key) {
+    switch (key.kind) {
+    case KeyKind::Char: return key.text;
+    case KeyKind::Ctrl:
+        return std::format("Ctrl-{}",
+                           static_cast<char>(std::toupper(static_cast<unsigned char>(key.ch))));
+    case KeyKind::Enter: return "Enter";
+    case KeyKind::Tab: return "Tab";
+    case KeyKind::Backspace: return "Backspace";
+    case KeyKind::Delete: return "Delete";
+    case KeyKind::Up: return "Up";
+    case KeyKind::Down: return "Down";
+    case KeyKind::Left: return "Left";
+    case KeyKind::Right: return "Right";
+    case KeyKind::Home: return "Home";
+    case KeyKind::End: return "End";
+    case KeyKind::PageUp: return "PgUp";
+    case KeyKind::PageDown: return "PgDn";
+    case KeyKind::Escape: return "Esc";
+    case KeyKind::Eof:
+    case KeyKind::None: return {};
+    }
+    return {};
+}
+
+int caption_width(std::string_view s) {
+    int width = 0;
+    for (char c : s) {
+        if (!is_continuation_byte(c)) {
+            width += static_cast<unsigned char>(c) < 0x80 ? 1 : 2; // CJK 约两格
+        }
+    }
+    return width;
 }
 
 // Atomic save per buffer.md §6: temp file, fsync, rename, fsync the parent.
@@ -201,6 +239,9 @@ private:
         const TextOffset caret = session_.caret();
         bool keep_goal = false;
         bool keep_message = false;
+        if (std::string caption = describe_key(key); !caption.empty()) {
+            last_key_ = std::move(caption);
+        }
 
         switch (key.kind) {
         case KeyKind::Char:
@@ -393,18 +434,24 @@ private:
             term_.queue("\r\n");
         }
 
-        // Status line (reverse video) + message line.
+        // Status line (reverse video, keystroke caption on the right) +
+        // message line.
         std::string status =
             std::format(" {}{}  {}:{}  rev {}  style {} ", path_, dirty() ? " [+]" : "",
                         caret_pos.line + 1, caret_col + 1, snap.revision(), style_origin_);
-        if (static_cast<int>(status.size()) > size.cols) {
-            status.resize(static_cast<std::size_t>(size.cols));
+        const std::string key_caption =
+            last_key_.empty() ? std::string() : std::format("key: {} ", last_key_);
+        int fill = size.cols - caption_width(status) - caption_width(key_caption);
+        if (fill < 0) {
+            status.resize(std::max<std::size_t>(
+                0, status.size() + static_cast<std::size_t>(fill)));
+            fill = 0;
         }
         term_.queue("\x1b[7m");
         term_.queue(status);
-        term_.queue(std::string(
-            static_cast<std::size_t>(std::max(0, size.cols - static_cast<int>(status.size()))),
-            ' '));
+        term_.queue(std::string(static_cast<std::size_t>(fill), ' '));
+        term_.queue("\x1b[1m");
+        term_.queue(key_caption);
         term_.queue("\x1b[0m\r\n\x1b[K");
         term_.queue(message_.empty()
                         ? "Ctrl-S save  Ctrl-Q quit  Ctrl-Z undo  Ctrl-Y redo  Tab reindent"
@@ -427,6 +474,7 @@ private:
     int left_col_ = 0;
     int goal_col_ = -1;
     std::string message_;
+    std::string last_key_;
     bool quit_ = false;
     bool quit_pending_ = false;
 
