@@ -80,19 +80,26 @@ std::string materialize(int structural_cols, int target_cols, const CppIndentSty
 
 // Deepest node whose range contains `offset`, treating ranges as closed so
 // end-of-construct and end-of-file positions still resolve. The rightmost
-// matching child wins at boundaries.
+// matching child wins at boundaries. Children are source-ordered, so each
+// level is a binary search; the backward walk only skips zero-length
+// MissingToken nodes sharing the boundary.
 SyntaxNodeId query_node_at(const SyntaxTree& tree, TextOffset offset) {
     SyntaxNodeId current = tree.root();
     while (true) {
+        const auto& children = tree.node(current).children;
+        auto it = std::ranges::upper_bound(
+            children, offset, {},
+            [&](SyntaxNodeId child) { return tree.node_range(child).start; });
         SyntaxNodeId next = kInvalidNode;
-        for (SyntaxNodeId child : tree.node(current).children) {
-            if (tree.node(child).kind == SyntaxKind::MissingToken) {
+        while (it != children.begin()) {
+            --it;
+            if (tree.node(*it).kind == SyntaxKind::MissingToken) {
                 continue;
             }
-            TextRange r = tree.node_range(child);
-            if (r.start <= offset && offset <= r.end) {
-                next = child;
+            if (tree.node_range(*it).end >= offset) {
+                next = *it;
             }
+            break;
         }
         if (next == kInvalidNode) {
             return current;
