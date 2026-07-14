@@ -17,8 +17,12 @@ struct LexOutput {
     std::vector<LexerState> line_states;
 };
 
+class Text;
+
 // Full-file lossless lex. Never fails; unrecognized bytes become Invalid
-// tokens and unterminated constructs are flagged, not dropped.
+// tokens and unterminated constructs are flagged, not dropped. The Text
+// overload scans chunk by chunk without materializing the string.
 LexOutput lex(std::string_view text);
+LexOutput lex(const Text& text);
 
 } // namespace cind

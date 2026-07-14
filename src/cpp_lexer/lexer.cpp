@@ -1,6 +1,7 @@
 #include "cpp_lexer/lexer.hpp"
 
-#include <algorithm>
+#include "document/text.hpp"
+
 #include <cctype>
 #include <string>
 #include <unordered_map>
@@ -122,30 +123,93 @@ bool is_encoding_prefix(std::string_view s) {
     return s == "u8" || s == "u" || s == "U" || s == "L";
 }
 
-std::string extract_raw_delimiter(std::string_view token_text) {
-    std::size_t quote = token_text.find('"');
-    std::size_t paren = token_text.find('(', quote);
-    return std::string(token_text.substr(quote + 1, paren - quote - 1));
-}
+// Sequential character access over a contiguous string.
+struct StringSource {
+    std::string_view text;
 
+    std::size_t size() const { return text.size(); }
+    char at(std::size_t pos) const { return text[pos]; }
+    bool starts_with(std::size_t pos, std::string_view s) const {
+        return text.substr(pos).starts_with(s);
+    }
+    void extract(std::size_t pos, std::size_t len, std::string& out) const {
+        out.assign(text.substr(pos, len));
+    }
+};
+
+// Sequential character access over a chunked Text value. Keeps a window on
+// the current chunk; leaving the window re-seeks in O(log n), which a
+// forward scan does once per chunk.
+class TextSource {
+public:
+    explicit TextSource(const Text& text) : text_(text), size_(text.size_bytes()) {}
+
+    std::size_t size() const { return size_; }
+    char at(std::size_t pos) const {
+        if (pos < window_start_ || pos >= window_end_) {
+            refill(pos);
+        }
+        return window_[pos - window_start_];
+    }
+    bool starts_with(std::size_t pos, std::string_view s) const {
+        if (pos + s.size() > size_) {
+            return false;
+        }
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            if (at(pos + i) != s[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    void extract(std::size_t pos, std::size_t len, std::string& out) const {
+        out.clear();
+        for (std::size_t i = 0; i < len; ++i) {
+            out.push_back(at(pos + i));
+        }
+    }
+
+private:
+    void refill(std::size_t pos) const {
+        TextCursor cursor(text_, TextOffset{static_cast<std::uint32_t>(pos)});
+        window_ = cursor.chunk();
+        window_start_ = pos;
+        window_end_ = pos + window_.size();
+    }
+
+    const Text& text_;
+    std::size_t size_;
+    mutable std::string_view window_;
+    mutable std::size_t window_start_ = 0;
+    mutable std::size_t window_end_ = 0;
+};
+
+template <typename Source>
 class Lexer {
 public:
-    explicit Lexer(std::string_view text) : text_(text) {}
+    explicit Lexer(const Source& source) : src_(source), size_(source.size()) {}
 
     LexOutput run() {
-        while (pos_ < text_.size()) {
+        out_.line_states.emplace_back();
+        while (pos_ < size_) {
             lex_one();
         }
         emit(TokenKind::EndOfFile, pos_);
-        finalize_line_states();
         return std::move(out_);
     }
 
 private:
+    char at(std::size_t pos) const { return src_.at(pos); }
     char peek(std::size_t ahead = 1) const {
-        return pos_ + ahead < text_.size() ? text_[pos_ + ahead] : '\0';
+        return pos_ + ahead < size_ ? src_.at(pos_ + ahead) : '\0';
     }
-    bool starts_with(std::string_view s) const { return text_.substr(pos_).starts_with(s); }
+    bool starts_with(std::string_view s) const { return src_.starts_with(pos_, s); }
+
+    // Cross-line lexical state is recorded while scanning: every consumed
+    // '\n' appends the state entering the following line.
+    void push_line_state(LexerState state = {}) {
+        out_.line_states.push_back(std::move(state));
+    }
 
     void emit(TokenKind kind, std::size_t start, LexicalFlags flags = LexicalFlags::None) {
         if (in_pp_line_) {
@@ -161,17 +225,18 @@ private:
 
     void lex_one() {
         const std::size_t start = pos_;
-        const char c = text_[pos_];
+        const char c = at(pos_);
 
         if (c == '\n') {
             ++pos_;
             emit(TokenKind::Newline, start);
+            push_line_state();
             in_pp_line_ = false;
             line_has_content_ = false;
             return;
         }
         if (is_horizontal_space(c)) {
-            while (pos_ < text_.size() && is_horizontal_space(text_[pos_])) {
+            while (pos_ < size_ && is_horizontal_space(at(pos_))) {
                 ++pos_;
             }
             emit(TokenKind::Whitespace, start);
@@ -179,12 +244,15 @@ private:
         }
         if (c == '\\' && peek() == '\n') {
             pos_ += 2;
+            LexerState state;
+            state.preprocessor_continuation = in_pp_line_;
+            push_line_state(std::move(state));
             emit(TokenKind::Whitespace, start, LexicalFlags::EscapedNewline);
             return; // a splice does not end a preprocessor line
         }
         if (c == '/' && peek() == '/') {
             pos_ += 2;
-            while (pos_ < text_.size() && text_[pos_] != '\n') {
+            while (pos_ < size_ && at(pos_) != '\n') {
                 ++pos_;
             }
             emit(TokenKind::LineComment, start);
@@ -221,15 +289,25 @@ private:
     void lex_block_comment(std::size_t start) {
         pos_ += 2;
         LexicalFlags flags = LexicalFlags::None;
+        LexerState state;
+        state.inside_block_comment = true;
         while (true) {
-            if (pos_ + 1 >= text_.size()) {
-                pos_ = text_.size();
+            if (pos_ + 1 >= size_) {
+                while (pos_ < size_) { // at most the final byte
+                    if (at(pos_) == '\n') {
+                        push_line_state(state);
+                    }
+                    ++pos_;
+                }
                 flags = LexicalFlags::Unterminated;
                 break;
             }
-            if (text_[pos_] == '*' && text_[pos_ + 1] == '/') {
+            if (at(pos_) == '*' && at(pos_ + 1) == '/') {
                 pos_ += 2;
                 break;
+            }
+            if (at(pos_) == '\n') {
+                push_line_state(state);
             }
             ++pos_;
         }
@@ -239,13 +317,16 @@ private:
     // pos_ is at the opening quote; `start` may be earlier (encoding prefix).
     void lex_string(std::size_t start, TokenKind kind, char quote) {
         ++pos_;
-        while (pos_ < text_.size()) {
-            const char ch = text_[pos_];
+        while (pos_ < size_) {
+            const char ch = at(pos_);
             if (ch == '\n') {
                 emit(kind, start, LexicalFlags::Unterminated);
                 return; // the newline stays outside; damage is line-local
             }
-            if (ch == '\\' && pos_ + 1 < text_.size()) {
+            if (ch == '\\' && pos_ + 1 < size_) {
+                if (at(pos_ + 1) == '\n') {
+                    push_line_state(); // splice inside a literal: plain next line
+                }
                 pos_ += 2; // escape, including a splice inside the literal
                 continue;
             }
@@ -263,38 +344,47 @@ private:
         const std::size_t quote = pos_;
         ++pos_;
         const std::size_t delim_start = pos_;
-        while (pos_ < text_.size() && pos_ - delim_start < 16) {
-            const char ch = text_[pos_];
+        while (pos_ < size_ && pos_ - delim_start < 16) {
+            const char ch = at(pos_);
             if (ch == '(' || ch == ')' || ch == '"' || ch == '\\' || ch == ' ' || ch == '\n') {
                 break;
             }
             ++pos_;
         }
-        if (pos_ >= text_.size() || text_[pos_] != '(') {
+        if (pos_ >= size_ || at(pos_) != '(') {
             // Malformed raw string; degrade to a regular string literal.
             pos_ = quote;
             lex_string(start, TokenKind::StringLiteral, '"');
             return;
         }
-        const std::string terminator =
-            ")" + std::string(text_.substr(delim_start, pos_ - delim_start)) + "\"";
+        std::string delimiter;
+        src_.extract(delim_start, pos_ - delim_start, delimiter);
+        const std::string terminator = ")" + delimiter + "\"";
         ++pos_;
-        const std::size_t found = text_.find(terminator, pos_);
-        if (found == std::string_view::npos) {
-            pos_ = text_.size();
-            emit(TokenKind::RawStringLiteral, start, LexicalFlags::Unterminated);
-            return;
+        LexerState state;
+        state.inside_raw_string = true;
+        state.raw_delimiter = delimiter;
+        while (pos_ < size_) {
+            const char ch = at(pos_);
+            if (ch == ')' && src_.starts_with(pos_, terminator)) {
+                pos_ += terminator.size();
+                emit(TokenKind::RawStringLiteral, start);
+                return;
+            }
+            if (ch == '\n') {
+                push_line_state(state);
+            }
+            ++pos_;
         }
-        pos_ = found + terminator.size();
-        emit(TokenKind::RawStringLiteral, start);
+        emit(TokenKind::RawStringLiteral, start, LexicalFlags::Unterminated);
     }
 
     // pp-number: deliberately permissive, matches the preprocessing grammar.
     void lex_number(std::size_t start) {
         ++pos_;
-        while (pos_ < text_.size()) {
-            const char ch = text_[pos_];
-            const char prev = text_[pos_ - 1];
+        while (pos_ < size_) {
+            const char ch = at(pos_);
+            const char prev = at(pos_ - 1);
             if ((ch == '+' || ch == '-') &&
                 (prev == 'e' || prev == 'E' || prev == 'p' || prev == 'P')) {
                 ++pos_;
@@ -304,8 +394,8 @@ private:
                 ++pos_;
                 continue;
             }
-            if (ch == '\'' && pos_ + 1 < text_.size() &&
-                is_ident_continue(static_cast<unsigned char>(text_[pos_ + 1]))) {
+            if (ch == '\'' && pos_ + 1 < size_ &&
+                is_ident_continue(static_cast<unsigned char>(at(pos_ + 1)))) {
                 pos_ += 2;
                 continue;
             }
@@ -315,28 +405,37 @@ private:
     }
 
     void lex_identifier(std::size_t start) {
-        while (pos_ < text_.size() && is_ident_continue(static_cast<unsigned char>(text_[pos_]))) {
+        while (pos_ < size_ && is_ident_continue(static_cast<unsigned char>(at(pos_)))) {
             ++pos_;
         }
-        const std::string_view ident = text_.substr(start, pos_ - start);
-        if (pos_ < text_.size()) {
-            const char next = text_[pos_];
-            if (next == '"') {
-                if (ident == "R" ||
-                    (ident.ends_with('R') && is_encoding_prefix(ident.substr(0, ident.size() - 1)))) {
-                    lex_raw_string(start);
+        // Keywords and encoding prefixes are all short; longer identifiers
+        // need no text at all.
+        constexpr std::size_t kMaxInterestingIdent = 9; // "namespace"
+        TokenKind kind = TokenKind::Identifier;
+        if (pos_ - start <= kMaxInterestingIdent) {
+            src_.extract(start, pos_ - start, ident_buffer_);
+            const std::string_view ident = ident_buffer_;
+            if (pos_ < size_) {
+                const char next = at(pos_);
+                if (next == '"') {
+                    if (ident == "R" ||
+                        (ident.ends_with('R') &&
+                         is_encoding_prefix(ident.substr(0, ident.size() - 1)))) {
+                        lex_raw_string(start);
+                        return;
+                    }
+                    if (is_encoding_prefix(ident)) {
+                        lex_string(start, TokenKind::StringLiteral, '"');
+                        return;
+                    }
+                } else if (next == '\'' && is_encoding_prefix(ident)) {
+                    lex_string(start, TokenKind::CharacterLiteral, '\'');
                     return;
                 }
-                if (is_encoding_prefix(ident)) {
-                    lex_string(start, TokenKind::StringLiteral, '"');
-                    return;
-                }
-            } else if (next == '\'' && is_encoding_prefix(ident)) {
-                lex_string(start, TokenKind::CharacterLiteral, '\'');
-                return;
             }
+            kind = keyword_kind(ident);
         }
-        emit(keyword_kind(ident), start);
+        emit(kind, start);
     }
 
     void lex_hash(std::size_t start) {
@@ -391,7 +490,7 @@ private:
                 return;
             }
         }
-        const char c = text_[pos_++];
+        const char c = at(pos_++);
         TokenKind kind;
         switch (c) {
         case '{': kind = TokenKind::LBrace; break;
@@ -423,44 +522,25 @@ private:
         emit(kind, start);
     }
 
-    // Derives the lexer state entering each line from the finished token
-    // stream. Every '\n' belongs to exactly one token, so each occurrence
-    // appends the state for the following line.
-    void finalize_line_states() {
-        out_.line_states.emplace_back();
-        for (const Token& token : out_.tokens) {
-            const std::string_view tok_text =
-                text_.substr(token.range.start.value, token.range.length());
-            if (tok_text.find('\n') == std::string_view::npos) {
-                continue;
-            }
-            LexerState state;
-            if (token.kind == TokenKind::BlockComment) {
-                state.inside_block_comment = true;
-            } else if (token.kind == TokenKind::RawStringLiteral) {
-                state.inside_raw_string = true;
-                state.raw_delimiter = extract_raw_delimiter(tok_text);
-            } else if (token.kind == TokenKind::Whitespace &&
-                       has_flag(token.flags, LexicalFlags::EscapedNewline) &&
-                       has_flag(token.flags, LexicalFlags::PreprocessorLine)) {
-                state.preprocessor_continuation = true;
-            }
-            const auto count = std::count(tok_text.begin(), tok_text.end(), '\n');
-            for (std::ptrdiff_t i = 0; i < count; ++i) {
-                out_.line_states.push_back(state);
-            }
-        }
-    }
-
-    std::string_view text_;
+    const Source& src_;
+    std::size_t size_;
     std::size_t pos_ = 0;
     bool in_pp_line_ = false;
     bool line_has_content_ = false;
+    std::string ident_buffer_;
     LexOutput out_;
 };
 
 } // namespace
 
-LexOutput lex(std::string_view text) { return Lexer(text).run(); }
+LexOutput lex(std::string_view text) {
+    StringSource source{text};
+    return Lexer<StringSource>(source).run();
+}
+
+LexOutput lex(const Text& text) {
+    TextSource source(text);
+    return Lexer<TextSource>(source).run();
+}
 
 } // namespace cind

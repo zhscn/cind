@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "cpp_lexer/lexer.hpp"
+#include "document/text.hpp"
 
 #include <random>
 #include <string>
@@ -49,6 +50,22 @@ std::vector<TokenKind> kinds_of(std::string_view text, bool keep_trivia = false)
         kinds.push_back(token.kind);
     }
     return kinds;
+}
+
+// The chunked overload must be indistinguishable from the string one.
+void check_text_overload_matches(std::string_view text) {
+    LexOutput expected = lex(text);
+    LexOutput actual = lex(Text(text));
+    REQUIRE(actual.tokens.size() == expected.tokens.size());
+    for (std::size_t i = 0; i < expected.tokens.size(); ++i) {
+        CHECK(actual.tokens[i].kind == expected.tokens[i].kind);
+        CHECK(actual.tokens[i].range == expected.tokens[i].range);
+        CHECK(actual.tokens[i].flags == expected.tokens[i].flags);
+    }
+    REQUIRE(actual.line_states.size() == expected.line_states.size());
+    for (std::size_t i = 0; i < expected.line_states.size(); ++i) {
+        CHECK(actual.line_states[i] == expected.line_states[i]);
+    }
 }
 
 const Token& token_at(const LexOutput& out, std::size_t non_trivia_index) {
@@ -285,5 +302,30 @@ TEST_CASE("fuzz: arbitrary bytes never break the invariants") {
         }
         LexOutput out = lex(text);
         check_invariants(text, out);
+        check_text_overload_matches(text);
     }
+}
+
+TEST_CASE("chunked source: multi-chunk inputs lex identically") {
+    // Constructs cross the 2 KiB chunk boundary: long block comments, raw
+    // strings, splices, and plain token streams.
+    std::string text;
+    text += "/* ";
+    text.append(3000, 'x');
+    text += "\n mid \n*/\n";
+    text += "R\"delim(";
+    text.append(2500, 'y');
+    text += "\ninside\n)delim\";\n";
+    text += "#define LONG_MACRO(a, b) \\\n    ((a) + (b))\n";
+    for (int i = 0; i < 400; ++i) {
+        text += "auto v" + std::to_string(i) + " = a" + std::to_string(i) + " <=> b;\n";
+    }
+    text += "const char* s = \"esc\\\nape\";\n";
+    check_text_overload_matches(text);
+
+    // Identifier / keyword straddling a chunk edge.
+    std::string pad(2040, ' ');
+    check_text_overload_matches(pad + "namespace foo {}");
+    check_text_overload_matches(pad + "very_long_identifier_that_crosses_chunks");
+    check_text_overload_matches(pad + "u8R\"(raw)\" 0x1.8p-3");
 }
