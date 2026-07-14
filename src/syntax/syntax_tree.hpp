@@ -1,13 +1,17 @@
 #pragma once
 
+#include "cpp_lexer/lexer_state.hpp"
 #include "cpp_lexer/token.hpp"
 #include "syntax/syntax_kind.hpp"
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace cind {
+
+class Text;
 
 using SyntaxNodeId = std::uint32_t;
 inline constexpr SyntaxNodeId kInvalidNode = 0xFFFFFFFFu;
@@ -24,6 +28,11 @@ struct SyntaxNode {
     SyntaxNodeId parent = kInvalidNode;
     std::vector<SyntaxNodeId> children;
     bool incomplete = false;
+    // BraceGroup reclassified to CompoundStatement on statement evidence:
+    // its early tokens were consumed with brace-group (initializer-list)
+    // semantics, so it is not a uniform statement container. Incremental
+    // repair must not replay its item loop.
+    bool reclassified = false;
     // MissingToken nodes only: what the parser expected here.
     TokenKind expected = TokenKind::EndOfFile;
 };
@@ -45,12 +54,13 @@ public:
 
 private:
     template <typename Source> friend class Parser;
+    friend void reparse(SyntaxTree&, std::vector<LexerState>&, const Text&, const Text&,
+                        std::span<const TextEdit>);
 
     std::vector<Token> tokens_;
     std::vector<SyntaxNode> nodes_;
 };
 
-class Text;
 struct LexOutput;
 
 // Full parse. Never fails; always yields a root covering every token. The
@@ -60,5 +70,14 @@ SyntaxTree parse(const Text& text);
 // Parse over an existing token stream (e.g. from an incremental relex);
 // `lexed` must be the lex of `text`.
 SyntaxTree parse(const Text& text, LexOutput lexed);
+
+// In-place incremental reparse (design.md §17): advances `tree` (the parse of
+// `old_text`, with `line_states` from its lex) to the parse of `new_text`,
+// given the normalized edit list between the two. Internally: incremental
+// relex, then either verbatim node reuse (token sequence unchanged), a
+// bounded block reparse spliced into the node vector, or a full reparse as
+// fallback. The result always equals parse(new_text) — fuzz-locked.
+void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text& old_text,
+             const Text& new_text, std::span<const TextEdit> edits);
 
 } // namespace cind

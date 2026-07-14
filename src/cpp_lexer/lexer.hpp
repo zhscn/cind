@@ -42,4 +42,34 @@ LexOutput relex(const std::vector<Token>& old_tokens,
                 const std::vector<LexerState>& old_line_states, const Text& old_text,
                 const Text& new_text, std::span<const TextEdit> edits);
 
+// The raw relex plan: which old tokens/lines survive and what was rescanned.
+// Old tokens [keep_tokens, stop_token) are replaced by `scanned.tokens`; old
+// line states [restart_line + 1, stop_line + 1) by `scanned.line_states`.
+// Token byte offsets from stop_token on shift by `delta`. When the scan ran
+// to EOF, stop_token/stop_line are the old vector sizes and delta is
+// meaningless (nothing survives past the window).
+struct RelexSplice {
+    std::size_t keep_tokens = 0;
+    std::size_t stop_token = 0;
+    std::uint32_t restart_line = 0;
+    std::uint32_t stop_line = 0;
+    std::int64_t delta = 0;
+    bool hit_eof = false;
+    LexOutput scanned;
+};
+
+RelexSplice relex_scan(const std::vector<Token>& old_tokens,
+                       const std::vector<LexerState>& old_line_states, const Text& old_text,
+                       const Text& new_text, std::span<const TextEdit> edits);
+
+// Applies a relex_scan plan to the vectors it was computed from: shifts the
+// surviving suffix and splices the rescanned window in.
+void relex_apply(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
+                 RelexSplice&& splice);
+
+// In-place variant of relex() (scan + apply). Same equivalence guarantee.
+RelexSplice relex_in_place(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
+                           const Text& old_text, const Text& new_text,
+                           std::span<const TextEdit> edits);
+
 } // namespace cind

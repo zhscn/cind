@@ -200,6 +200,13 @@ int cmd_perf(const char* path) {
         const std::size_t i = rep++;
         cind::press_enter(*docs[i], mid, style, *analyzers[i]);
     });
+    // Plain character: the common keystroke — one in-place incremental
+    // advance, no speculative analysis.
+    rep = 0;
+    const double char_ms = time_ms([&] {
+        const std::size_t i = rep++;
+        cind::type_char(*docs[i], mid, 'x', style, *analyzers[i]);
+    });
     const double cold_enter_ms = time_ms([&] {
         cind::Document d(text);
         cind::press_enter(d, mid, style);
@@ -213,6 +220,7 @@ int cmd_perf(const char* path) {
     std::printf("parse:   %8.3f ms   (lex included)\n", parse_ms);
     std::printf("indent:  %8.3f ms   (single line query)\n", indent_ms);
     std::printf("enter:   %8.3f ms   (keystroke, warm analyzer: incremental path)\n", enter_ms);
+    std::printf("char:    %8.3f ms   (plain character, in-place incremental)\n", char_ms);
     std::printf("enter0:  %8.3f ms   (keystroke, cold: full lex+parse twice)\n", cold_enter_ms);
     return 0;
 }

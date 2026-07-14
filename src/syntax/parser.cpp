@@ -1,7 +1,9 @@
 #include "cpp_lexer/lexer.hpp"
 #include "document/char_source.hpp"
+#include "document/text.hpp"
 #include "syntax/syntax_tree.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace cind {
@@ -60,9 +62,61 @@ public:
         tree_.tokens_ = std::move(lexed.tokens);
     }
 
+    // Sandbox mode for incremental block reparse: tokens are borrowed, not
+    // owned, and parsing replays one container's item loop.
+    Parser(const Source& source, const std::vector<Token>& tokens)
+        : src_(source), tokens_view_(&tokens) {}
+
+    // Replays the guarded(parse_declaration_or_statement) loop of a
+    // `container` node from `start`, stopping as soon as the position (after
+    // trivia) lands on one of `boundaries` (sorted, current-token-stream
+    // coordinates) — the old parse is provably identical from there on. The
+    // sandbox root (node 0) stands in for the container; its direct children
+    // are the reparsed items. aligned_at stays kNoBoundary when the loop ran
+    // past every boundary or hit a loop-exit token that is not a boundary —
+    // the caller escalates to the enclosing container.
+    static constexpr std::uint32_t kNoBoundary = 0xFFFFFFFFu;
+    struct SandboxResult {
+        std::vector<SyntaxNode> nodes;
+        std::uint32_t aligned_at = kNoBoundary;
+    };
+    SandboxResult run_items(std::uint32_t start, SyntaxKind container, bool enum_body,
+                            std::span<const std::uint32_t> boundaries) {
+        nodes().push_back(SyntaxNode{container, start, start, kInvalidNode, {}, false, false,
+                                     TokenKind::EndOfFile});
+        stack_.push_back(0);
+        pos_ = start;
+        enum_body_ = enum_body;
+        SandboxResult result;
+        while (true) {
+            skip_trivia();
+            if (std::binary_search(boundaries.begin(), boundaries.end(), pos_)) {
+                result.aligned_at = pos_;
+                break;
+            }
+            if (pos_ > boundaries.back()) {
+                break; // ran past every boundary: escalate
+            }
+            const TokenKind k = tokens()[pos_].kind;
+            if (k == TokenKind::EndOfFile) {
+                break; // a legal EOF stop would have matched a boundary
+            }
+            if (container != SyntaxKind::TranslationUnit && k == TokenKind::RBrace) {
+                break; // container loop exit that is not where the old one was
+            }
+            if (container == SyntaxKind::CaseSection &&
+                (k == TokenKind::CaseKw || k == TokenKind::DefaultKw)) {
+                break;
+            }
+            guarded([&] { parse_declaration_or_statement(); });
+        }
+        result.nodes = std::move(tree_.nodes_);
+        return result;
+    }
+
     SyntaxTree run() {
         nodes().push_back(SyntaxNode{SyntaxKind::TranslationUnit, 0, 0, kInvalidNode, {}, false,
-                                     TokenKind::EndOfFile});
+                                     false, TokenKind::EndOfFile});
         stack_.push_back(0);
         while (!at_eof()) {
             guarded([&] { parse_declaration_or_statement(); });
@@ -75,7 +129,9 @@ public:
 
 private:
     std::vector<SyntaxNode>& nodes() { return tree_.nodes_; }
-    const std::vector<Token>& tokens() const { return tree_.tokens_; }
+    const std::vector<Token>& tokens() const {
+        return tokens_view_ != nullptr ? *tokens_view_ : tree_.tokens_;
+    }
 
     // -- cursor ------------------------------------------------------------
 
@@ -130,7 +186,7 @@ private:
         skip_trivia(); // leading trivia belongs to the parent
         const auto id = static_cast<SyntaxNodeId>(nodes().size());
         nodes().push_back(
-            SyntaxNode{kind, pos_, pos_, stack_.back(), {}, false, TokenKind::EndOfFile});
+            SyntaxNode{kind, pos_, pos_, stack_.back(), {}, false, false, TokenKind::EndOfFile});
         nodes()[stack_.back()].children.push_back(id);
         stack_.push_back(id);
         return id;
@@ -158,8 +214,8 @@ private:
     void add_missing(TokenKind expected) {
         skip_trivia();
         const auto id = static_cast<SyntaxNodeId>(nodes().size());
-        nodes().push_back(
-            SyntaxNode{SyntaxKind::MissingToken, pos_, pos_, stack_.back(), {}, true, expected});
+        nodes().push_back(SyntaxNode{SyntaxKind::MissingToken, pos_, pos_, stack_.back(), {},
+                                     true, false, expected});
         nodes()[stack_.back()].children.push_back(id);
         nodes()[stack_.back()].incomplete = true;
     }
@@ -609,6 +665,7 @@ private:
                 k == TokenKind::IfKw || k == TokenKind::WhileKw || k == TokenKind::ForKw ||
                 k == TokenKind::DoKw || k == TokenKind::SwitchKw) {
                 nodes()[g].kind = SyntaxKind::CompoundStatement;
+                nodes()[g].reclassified = true;
                 while (!at_eof() && !at(TokenKind::RBrace)) {
                     guarded([&] { parse_declaration_or_statement(); });
                 }
@@ -911,6 +968,7 @@ private:
     }
 
     const Source& src_;
+    const std::vector<Token>* tokens_view_ = nullptr; // sandbox mode
     std::string token_text_buffer_;
     std::uint32_t pos_ = 0;
     bool enum_body_ = false; // directly inside an enum's ClassBody
@@ -931,6 +989,356 @@ SyntaxTree parse(const Text& text) {
 SyntaxTree parse(const Text& text, LexOutput lexed) {
     TextCharSource source(text);
     return Parser<TextCharSource>(source, std::move(lexed)).run();
+}
+
+// ---- incremental reparse (design.md §17) -----------------------------------
+
+namespace {
+
+// Replaces v[first, last) with `replacement`, moving the tail once.
+template <typename T>
+void splice_nodes_vector(std::vector<T>& v, std::size_t first, std::size_t last,
+                         std::vector<T>& replacement) {
+    const std::size_t old_len = last - first;
+    const std::size_t new_len = replacement.size();
+    if (new_len <= old_len) {
+        std::move(replacement.begin(), replacement.end(),
+                  v.begin() + static_cast<std::ptrdiff_t>(first));
+        v.erase(v.begin() + static_cast<std::ptrdiff_t>(first + new_len),
+                v.begin() + static_cast<std::ptrdiff_t>(last));
+    } else {
+        std::move(replacement.begin(), replacement.begin() + static_cast<std::ptrdiff_t>(old_len),
+                  v.begin() + static_cast<std::ptrdiff_t>(first));
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(last),
+                 std::make_move_iterator(replacement.begin() + static_cast<std::ptrdiff_t>(old_len)),
+                 std::make_move_iterator(replacement.end()));
+    }
+}
+
+// One past the last node id of `id`'s subtree (parser allocates DFS-preorder,
+// so a subtree is a contiguous id range).
+SyntaxNodeId subtree_end(const std::vector<SyntaxNode>& nodes, SyntaxNodeId id) {
+    while (!nodes[id].children.empty()) {
+        id = nodes[id].children.back();
+    }
+    return id + 1;
+}
+
+bool is_item_container(const SyntaxNode& n) {
+    switch (n.kind) {
+    case SyntaxKind::TranslationUnit:
+    case SyntaxKind::NamespaceBody:
+    case SyntaxKind::ClassBody:
+    case SyntaxKind::CaseSection: return true;
+    // A reclassified brace group consumed its early tokens with initializer
+    // semantics; its item loop cannot be replayed uniformly.
+    case SyntaxKind::CompoundStatement: return !n.reclassified;
+    default: return false;
+    }
+}
+
+struct RepairContext {
+    SyntaxNodeId id;
+    bool enum_body;
+};
+
+// Attempts the block repair inside container C. Returns true on success
+// (tree fixed up in place); false means escalate to the enclosing container.
+// Token vector is already the NEW stream; node token indices are still OLD.
+// [guard_lo, tok_hi) is the old-coordinate damage window (guard included);
+// old index j >= tok_hi lives at j + delta_tok in the new stream.
+bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
+                const RepairContext& ctx, std::uint32_t guard_lo, std::uint32_t tok_hi,
+                std::int64_t delta_tok, const Text& new_text) {
+    const SyntaxNodeId c_id = ctx.id;
+    const SyntaxKind c_kind = nodes[c_id].kind;
+    const bool is_tu = c_kind == SyntaxKind::TranslationUnit;
+    const auto new_count = static_cast<std::uint32_t>(toks.size());
+
+    auto mapped = [&](std::uint32_t old_idx) {
+        return static_cast<std::uint32_t>(old_idx + delta_tok);
+    };
+
+    // Items and the region they may occupy.
+    std::vector<SyntaxNodeId> items;
+    SyntaxNodeId label = kInvalidNode;    // CaseSection prologue
+    SyntaxNodeId epilogue = kInvalidNode; // MissingToken for the closer
+    for (SyntaxNodeId child : nodes[c_id].children) {
+        if (nodes[child].kind == SyntaxKind::MissingToken) {
+            epilogue = child;
+        } else if (c_kind == SyntaxKind::CaseSection && child == nodes[c_id].children.front()) {
+            label = child;
+        } else {
+            items.push_back(child);
+        }
+    }
+
+    std::uint32_t lower = 0;
+    if (c_kind == SyntaxKind::CaseSection) {
+        if (label == kInvalidNode) {
+            return false;
+        }
+        lower = nodes[label].end_token;
+    } else if (!is_tu) {
+        lower = nodes[c_id].first_token + 1; // past the '{'
+    }
+    if (guard_lo < lower) {
+        return false;
+    }
+
+    // Post-loop boundary: where the container's item loop came to rest.
+    std::uint32_t post_loop_old = 0;
+    if (is_tu) {
+        post_loop_old = 0; // unused; TU aligns on the new EOF directly
+    } else if (epilogue != kInvalidNode) {
+        post_loop_old = nodes[epilogue].first_token;
+    } else if (c_kind == SyntaxKind::CaseSection) {
+        // The stop token was not consumed; it is the first significant token
+        // at or after the section's end — outside the window by containment.
+        std::uint32_t j = nodes[c_id].end_token;
+        if (j < tok_hi) {
+            return false;
+        }
+        while (is_trivia(toks[mapped(j)].kind)) {
+            ++j;
+        }
+        post_loop_old = j;
+    } else {
+        post_loop_old = nodes[c_id].end_token - 1; // the consumed '}'
+    }
+    if (!is_tu && tok_hi > post_loop_old) {
+        return false; // the window reaches the container's own closer
+    }
+
+    // Item span [i, ...) to reparse and the alignment boundaries after it.
+    std::size_t i = 0;
+    while (i < items.size() && nodes[items[i]].end_token <= guard_lo) {
+        ++i;
+    }
+    constexpr std::uint32_t kPostLoop = 0xFFFFFFFFu;
+    std::vector<std::uint32_t> bounds;
+    std::vector<std::uint32_t> bound_old; // parallel: old coords (kPostLoop = post-loop)
+    for (std::size_t k = i; k < items.size(); ++k) {
+        if (nodes[items[k]].first_token >= tok_hi) {
+            bounds.push_back(mapped(nodes[items[k]].first_token));
+            bound_old.push_back(nodes[items[k]].first_token);
+        }
+    }
+    const std::uint32_t post_loop_new = is_tu ? new_count - 1 : mapped(post_loop_old);
+    bounds.push_back(post_loop_new);
+    bound_old.push_back(kPostLoop);
+
+    // Sandbox start: the loop position right after the last untouched item.
+    std::uint32_t start = i > 0 ? nodes[items[i - 1]].end_token : lower;
+    while (is_trivia(toks[start].kind)) {
+        ++start;
+    }
+
+    TextCharSource source(new_text);
+    Parser<TextCharSource> sandbox(source, toks);
+    auto result = sandbox.run_items(start, c_kind, ctx.enum_body, bounds);
+    if (result.aligned_at == Parser<TextCharSource>::kNoBoundary) {
+        return false;
+    }
+
+    // Which old items the reparse replaced: [i, m).
+    std::size_t m = items.size();
+    for (std::size_t k = 0; k < bounds.size(); ++k) {
+        if (bounds[k] == result.aligned_at && bound_old[k] != kPostLoop) {
+            for (std::size_t it = i; it < items.size(); ++it) {
+                if (nodes[items[it]].first_token == bound_old[k]) {
+                    m = it;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    const SyntaxNodeId at_end =
+        epilogue != kInvalidNode
+            ? epilogue
+            : (!items.empty() ? subtree_end(nodes, items.back())
+                              : (label != kInvalidNode ? subtree_end(nodes, label) : c_id + 1));
+    const SyntaxNodeId lo_id = i < items.size() ? items[i] : at_end;
+    const SyntaxNodeId hi_id = m < items.size() ? items[m] : at_end;
+
+    // New block: sandbox ids 1.. shift onto [lo_id, ...); the sandbox root
+    // (id 0) stands for C.
+    std::vector<SyntaxNode> block(std::make_move_iterator(result.nodes.begin() + 1),
+                                  std::make_move_iterator(result.nodes.end()));
+    const std::int64_t id_shift = static_cast<std::int64_t>(lo_id) - 1;
+    for (SyntaxNode& n : block) {
+        n.parent = n.parent == 0 ? c_id : static_cast<SyntaxNodeId>(n.parent + id_shift);
+        for (SyntaxNodeId& ch : n.children) {
+            ch = static_cast<SyntaxNodeId>(ch + id_shift);
+        }
+    }
+    const std::int64_t node_delta =
+        static_cast<std::int64_t>(block.size()) - (static_cast<std::int64_t>(hi_id) - lo_id);
+
+    // C's child list, rebuilt from the pre-shift ids: entries < lo_id stay,
+    // the span [lo_id, hi_id) is dropped, entries >= hi_id shift; the new
+    // block goes exactly where the first entry >= lo_id was (or at the end).
+    {
+        std::vector<SyntaxNodeId> rebuilt;
+        rebuilt.reserve(nodes[c_id].children.size() + block.size());
+        bool inserted = false;
+        for (SyntaxNodeId entry : nodes[c_id].children) {
+            if (!inserted && entry >= lo_id) {
+                for (SyntaxNodeId nid : result.nodes[0].children) {
+                    rebuilt.push_back(static_cast<SyntaxNodeId>(nid + id_shift));
+                }
+                inserted = true;
+            }
+            if (entry < lo_id) {
+                rebuilt.push_back(entry);
+            } else if (entry >= hi_id) {
+                rebuilt.push_back(static_cast<SyntaxNodeId>(entry + node_delta));
+            }
+        }
+        if (!inserted) {
+            for (SyntaxNodeId nid : result.nodes[0].children) {
+                rebuilt.push_back(static_cast<SyntaxNodeId>(nid + id_shift));
+            }
+        }
+        nodes[c_id].children = std::move(rebuilt);
+        nodes[c_id].end_token = static_cast<std::uint32_t>(nodes[c_id].end_token + delta_tok);
+    }
+    // Ancestors above C: extend over the token delta; shift child ids past
+    // the replaced span (C's own id stays below lo_id).
+    for (SyntaxNodeId a = nodes[c_id].parent; a != kInvalidNode; a = nodes[a].parent) {
+        nodes[a].end_token = static_cast<std::uint32_t>(nodes[a].end_token + delta_tok);
+        for (SyntaxNodeId& ch : nodes[a].children) {
+            if (ch >= hi_id) {
+                ch = static_cast<SyntaxNodeId>(ch + node_delta);
+            }
+        }
+    }
+
+    // Suffix nodes: token indices shift by delta_tok, ids by node_delta.
+    for (std::size_t n = hi_id; n < nodes.size(); ++n) {
+        SyntaxNode& node = nodes[n];
+        node.first_token = static_cast<std::uint32_t>(node.first_token + delta_tok);
+        node.end_token = static_cast<std::uint32_t>(node.end_token + delta_tok);
+        if (node.parent != kInvalidNode && node.parent >= hi_id) {
+            node.parent = static_cast<SyntaxNodeId>(node.parent + node_delta);
+        }
+        for (SyntaxNodeId& ch : node.children) {
+            ch = static_cast<SyntaxNodeId>(ch + node_delta);
+        }
+    }
+
+    splice_nodes_vector(nodes, lo_id, hi_id, block);
+
+    // A CaseSection's loop stops at an unconsumed token (case/default/'}'),
+    // so its end is trimmed back to its last child — not a fixed closer that
+    // the uniform delta shift would track.
+    if (c_kind == SyntaxKind::CaseSection && !nodes[c_id].children.empty()) {
+        nodes[c_id].end_token = nodes[nodes[c_id].children.back()].end_token;
+    }
+    return true;
+}
+
+} // namespace
+
+void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text& old_text,
+             const Text& new_text, std::span<const TextEdit> edits) {
+    if (edits.empty()) {
+        return;
+    }
+
+    RelexSplice s = relex_scan(tree.tokens_, line_states, old_text, new_text, edits);
+
+    // Token-identity fast path: the parser observes token kinds, flags and
+    // identifier spellings — never byte positions (nodes hold token indices).
+    // If the rescanned window matches the old one on those, the entire node
+    // structure is reusable verbatim.
+    const std::size_t old_span = s.stop_token - s.keep_tokens;
+    bool identical = s.scanned.tokens.size() == old_span;
+    for (std::size_t k = 0; identical && k < old_span; ++k) {
+        const Token& a = tree.tokens_[s.keep_tokens + k];
+        const Token& b = s.scanned.tokens[k];
+        identical = a.kind == b.kind && a.flags == b.flags &&
+                    (a.kind != TokenKind::Identifier ||
+                     old_text.substring(a.range) == new_text.substring(b.range));
+    }
+
+    const std::uint32_t tok_lo = static_cast<std::uint32_t>(s.keep_tokens);
+    const std::uint32_t tok_hi = static_cast<std::uint32_t>(s.stop_token);
+    const std::int64_t delta_tok =
+        static_cast<std::int64_t>(s.scanned.tokens.size()) - static_cast<std::int64_t>(old_span);
+
+    relex_apply(tree.tokens_, line_states, std::move(s));
+    if (identical) {
+        return;
+    }
+
+    // match_angles may look up to 200 significant tokens ahead, stopped only
+    // unconditionally by ';', '{' or '}'. Extend the window start back to the
+    // last such barrier so no reused item could have looked into the damage.
+    std::uint32_t guard_lo = tok_lo;
+    {
+        int significant = 0;
+        for (std::uint32_t j = tok_lo; j-- > 0;) {
+            const TokenKind k = tree.tokens_[j].kind; // prefix: indices unchanged
+            if (is_trivia(k)) {
+                continue;
+            }
+            guard_lo = j;
+            if (k == TokenKind::Semicolon || k == TokenKind::LBrace || k == TokenKind::RBrace ||
+                ++significant >= 200) {
+                break;
+            }
+        }
+    }
+
+    // Container chain from the root down to the deepest one holding the
+    // window; repair is tried deepest-first.
+    std::vector<RepairContext> chain;
+    chain.push_back({0, false});
+    bool enum_ctx = false;
+    SyntaxNodeId cur = 0;
+    while (true) {
+        SyntaxNodeId next = kInvalidNode;
+        for (SyntaxNodeId child : tree.nodes_[cur].children) {
+            if (tree.nodes_[child].kind != SyntaxKind::MissingToken &&
+                tree.nodes_[child].first_token <= guard_lo &&
+                tree.nodes_[child].end_token >= tok_hi) {
+                next = child;
+                break;
+            }
+        }
+        if (next == kInvalidNode) {
+            break;
+        }
+        if (tree.nodes_[next].kind == SyntaxKind::ClassBody) {
+            // enum_body_ is scoped to the nearest ClassBody: derive it from
+            // the class head's first significant token.
+            const SyntaxNodeId decl = tree.nodes_[next].parent;
+            std::uint32_t j = tree.nodes_[decl].first_token;
+            while (is_trivia(tree.tokens_[j].kind)) {
+                ++j;
+            }
+            enum_ctx = tree.tokens_[j].kind == TokenKind::EnumKw;
+        }
+        if (is_item_container(tree.nodes_[next])) {
+            chain.push_back({next, enum_ctx});
+        }
+        cur = next;
+    }
+
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        if (try_repair(tree.nodes_, tree.tokens_, *it, guard_lo, tok_hi, delta_tok, new_text)) {
+            return;
+        }
+    }
+
+    // No bounded repair region: full reparse over the (already new) tokens.
+    LexOutput lexed;
+    lexed.tokens = std::move(tree.tokens_);
+    SyntaxTree fresh = parse(new_text, std::move(lexed));
+    tree = std::move(fresh);
 }
 
 } // namespace cind

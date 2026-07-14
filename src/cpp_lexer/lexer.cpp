@@ -524,6 +524,26 @@ namespace {
 
 constexpr std::size_t kNoToken = static_cast<std::size_t>(-1);
 
+// Replaces v[first, last) with `replacement`, moving the tail once.
+template <typename T>
+void splice_vector(std::vector<T>& v, std::size_t first, std::size_t last,
+                   std::vector<T>& replacement) {
+    const std::size_t old_len = last - first;
+    const std::size_t new_len = replacement.size();
+    if (new_len <= old_len) {
+        std::move(replacement.begin(), replacement.end(),
+                  v.begin() + static_cast<std::ptrdiff_t>(first));
+        v.erase(v.begin() + static_cast<std::ptrdiff_t>(first + new_len),
+                v.begin() + static_cast<std::ptrdiff_t>(last));
+    } else {
+        std::move(replacement.begin(), replacement.begin() + static_cast<std::ptrdiff_t>(old_len),
+                  v.begin() + static_cast<std::ptrdiff_t>(first));
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(last),
+                 std::make_move_iterator(replacement.begin() + static_cast<std::ptrdiff_t>(old_len)),
+                 std::make_move_iterator(replacement.end()));
+    }
+}
+
 // Index of the token starting exactly at `off`, or kNoToken. Tokens are
 // contiguous and sorted; only EndOfFile is zero-length.
 std::size_t token_index_at(const std::vector<Token>& tokens, std::size_t off) {
@@ -570,13 +590,9 @@ struct AlignCheck final : StopCheck {
 
 } // namespace
 
-LexOutput relex(const std::vector<Token>& old_tokens,
-                const std::vector<LexerState>& old_line_states, const Text& old_text,
-                const Text& new_text, std::span<const TextEdit> edits) {
-    if (edits.empty()) {
-        return LexOutput{old_tokens, old_line_states};
-    }
-
+RelexSplice relex_scan(const std::vector<Token>& old_tokens,
+                       const std::vector<LexerState>& old_line_states, const Text& old_text,
+                       const Text& new_text, std::span<const TextEdit> edits) {
     // Merged damage window: one hunk from the first edit to the last. The
     // offset shift is uniform past the last edit, which is the only region
     // where old coordinates are consulted again.
@@ -602,7 +618,6 @@ LexOutput relex(const std::vector<Token>& old_tokens,
         --restart_line;
     }
     const std::size_t restart_off = old_text.line_start(restart_line).value;
-    const std::size_t keep_tokens = token_index_at(old_tokens, restart_off);
 
     AlignCheck align;
     align.min_pos = damage_new_end;
@@ -613,37 +628,86 @@ LexOutput relex(const std::vector<Token>& old_tokens,
 
     TextCharSource source(new_text);
     Lexer<TextCharSource> scanner(source, restart_off, &align);
-    LexOutput scanned = scanner.run();
-    const bool hit_eof = align.stop_token == kNoToken;
+
+    RelexSplice s;
+    s.scanned = scanner.run();
+    s.keep_tokens = token_index_at(old_tokens, restart_off);
+    s.restart_line = restart_line;
+    s.delta = delta;
+    s.hit_eof = align.stop_token == kNoToken;
+    s.stop_token = s.hit_eof ? old_tokens.size() : align.stop_token;
+    s.stop_line =
+        s.hit_eof ? static_cast<std::uint32_t>(old_line_states.size() - 1) : align.stop_line;
+    return s;
+}
+
+LexOutput relex(const std::vector<Token>& old_tokens,
+                const std::vector<LexerState>& old_line_states, const Text& old_text,
+                const Text& new_text, std::span<const TextEdit> edits) {
+    if (edits.empty()) {
+        return LexOutput{old_tokens, old_line_states};
+    }
+    RelexSplice s = relex_scan(old_tokens, old_line_states, old_text, new_text, edits);
 
     LexOutput result;
-    result.tokens.reserve(keep_tokens + scanned.tokens.size() +
-                          (hit_eof ? 0 : old_tokens.size() - align.stop_token));
+    result.tokens.reserve(s.keep_tokens + s.scanned.tokens.size() +
+                          (old_tokens.size() - s.stop_token));
     result.tokens.insert(result.tokens.end(), old_tokens.begin(),
-                         old_tokens.begin() + static_cast<std::ptrdiff_t>(keep_tokens));
-    result.tokens.insert(result.tokens.end(), scanned.tokens.begin(), scanned.tokens.end());
+                         old_tokens.begin() + static_cast<std::ptrdiff_t>(s.keep_tokens));
+    result.tokens.insert(result.tokens.end(), s.scanned.tokens.begin(), s.scanned.tokens.end());
+    for (std::size_t i = s.stop_token; i < old_tokens.size(); ++i) {
+        Token t = old_tokens[i];
+        t.range.start.value = static_cast<std::uint32_t>(t.range.start.value + s.delta);
+        t.range.end.value = static_cast<std::uint32_t>(t.range.end.value + s.delta);
+        result.tokens.push_back(t);
+    }
 
     result.line_states.reserve(new_text.line_count());
     result.line_states.insert(result.line_states.end(), old_line_states.begin(),
-                              old_line_states.begin() + restart_line + 1);
+                              old_line_states.begin() + s.restart_line + 1);
     result.line_states.insert(result.line_states.end(),
-                              std::make_move_iterator(scanned.line_states.begin()),
-                              std::make_move_iterator(scanned.line_states.end()));
-
-    if (!hit_eof) {
-        for (std::size_t i = align.stop_token; i < old_tokens.size(); ++i) {
-            Token t = old_tokens[i];
-            t.range.start.value = static_cast<std::uint32_t>(t.range.start.value + delta);
-            t.range.end.value = static_cast<std::uint32_t>(t.range.end.value + delta);
-            result.tokens.push_back(t);
-        }
-        // The scanner already pushed the entry state of the stop line when it
-        // consumed the newline before it; the old suffix starts one later.
+                              std::make_move_iterator(s.scanned.line_states.begin()),
+                              std::make_move_iterator(s.scanned.line_states.end()));
+    // The scanner already pushed the entry state of the stop line when it
+    // consumed the newline before it; the old suffix starts one later.
+    if (!s.hit_eof) {
         result.line_states.insert(result.line_states.end(),
-                                  old_line_states.begin() + align.stop_line + 1,
+                                  old_line_states.begin() + s.stop_line + 1,
                                   old_line_states.end());
     }
     return result;
+}
+
+void relex_apply(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
+                 RelexSplice&& s) {
+    // Shift the surviving suffix first (safe: the splice below only moves
+    // elements, never reads their ranges).
+    for (std::size_t i = s.stop_token; i < tokens.size(); ++i) {
+        tokens[i].range.start.value =
+            static_cast<std::uint32_t>(tokens[i].range.start.value + s.delta);
+        tokens[i].range.end.value = static_cast<std::uint32_t>(tokens[i].range.end.value + s.delta);
+    }
+    splice_vector(tokens, s.keep_tokens, s.stop_token, s.scanned.tokens);
+    splice_vector(line_states, s.restart_line + 1,
+                  s.hit_eof ? line_states.size() : s.stop_line + 1, s.scanned.line_states);
+}
+
+RelexSplice relex_in_place(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
+                           const Text& old_text, const Text& new_text,
+                           std::span<const TextEdit> edits) {
+    if (edits.empty()) {
+        return RelexSplice{tokens.size(), tokens.size(),
+                           static_cast<std::uint32_t>(line_states.size() - 1),
+                           static_cast<std::uint32_t>(line_states.size() - 1),
+                           0,
+                           false,
+                           {}};
+    }
+    RelexSplice s = relex_scan(tokens, line_states, old_text, new_text, edits);
+    RelexSplice out{s.keep_tokens, s.stop_token, s.restart_line, s.stop_line,
+                    s.delta,       s.hit_eof,    {}}; // scanned stays with the apply
+    relex_apply(tokens, line_states, std::move(s));
+    return out;
 }
 
 } // namespace cind

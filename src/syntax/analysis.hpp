@@ -43,6 +43,14 @@ public:
     // a transaction that was committed unchanged).
     void adopt(Analysis analysis);
 
+    // Steals the cache when it sits at `revision` — the zero-copy path for
+    // speculative advancement inside a transaction: take, reparse in place,
+    // compute, and adopt() the result back at the commit revision.
+    std::optional<Analysis> take(RevisionId revision);
+
+    // One-shot full analysis (no cache involved).
+    static Analysis full(const Text& text, RevisionId revision);
+
 private:
     std::optional<Analysis> cache_;
 };

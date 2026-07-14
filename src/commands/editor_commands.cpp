@@ -67,15 +67,42 @@ bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, Te
     return owner_range.end == tokens[next].range.end;
 }
 
+// Steals the analyzer cache and advances it in place onto the transaction's
+// pending state — the zero-copy speculative analysis. Falls back to a full
+// pass when the cache was cold.
+Analysis speculative_analysis(Analyzer& analyzer, const EditTransaction& tx,
+                              const Text& old_text, RevisionId old_revision,
+                              const DocumentSnapshot& spec) {
+    if (std::optional<Analysis> stolen = analyzer.take(old_revision)) {
+        reparse(stolen->tree, stolen->line_states, old_text, spec.content(), tx.pending_edits());
+        stolen->text = spec.content();
+        stolen->revision = spec.revision();
+        return std::move(*stolen);
+    }
+    return Analyzer::full(spec.content(), spec.revision());
+}
+
+// Advances a speculative analysis over edits made after it was computed
+// (given in speculative coordinates), then hands it to the analyzer as the
+// committed state.
+void adopt_committed(Analyzer& analyzer, Analysis analysis, std::vector<TextEdit> late_edits,
+                     const CommitResult& commit) {
+    const Text spec_text = analysis.text;
+    reparse(analysis.tree, analysis.line_states, spec_text, commit.snapshot.content(),
+            late_edits);
+    analysis.text = commit.snapshot.content();
+    analysis.revision = commit.snapshot.revision();
+    analyzer.adopt(std::move(analysis));
+}
+
 EnterResult enter_between_braces(Document& document, TextOffset caret,
                                  const CppIndentStyle& style, Analyzer& analyzer,
-                                 const Analysis& base) {
+                                 const Text& old_text, RevisionId old_revision) {
     EditTransaction tx = document.begin_transaction();
     tx.insert(caret, "\n\n");
 
     DocumentSnapshot spec = tx.speculative_snapshot();
-    Analysis spec_analysis =
-        Analyzer::derive(base, spec.content(), tx.pending_edits(), spec.revision());
+    Analysis spec_analysis = speculative_analysis(analyzer, tx, old_text, old_revision, spec);
     const std::uint32_t caret_line = spec.content().position(caret).line;
 
     IndentDecision middle = compute_line_indent(spec, spec_analysis.tree, caret_line + 1, style);
@@ -83,26 +110,31 @@ EnterResult enter_between_braces(Document& document, TextOffset caret,
     middle.trace.insert(middle.trace.begin(), "enter handler: EnterBetweenBraces");
 
     // Higher offset first so the earlier insert does not shift it.
-    tx.insert(spec.content().line_start(caret_line + 2), closing.indentation_text);
+    const TextOffset closing_start = spec.content().line_start(caret_line + 2);
+    tx.insert(closing_start, closing.indentation_text);
     TextOffset middle_start = spec.content().line_start(caret_line + 1);
     tx.insert(middle_start, middle.indentation_text);
+
+    std::vector<TextEdit> late;
+    late.push_back(TextEdit{TextRange{middle_start, middle_start}, middle.indentation_text});
+    late.push_back(TextEdit{TextRange{closing_start, closing_start}, closing.indentation_text});
 
     TextOffset final_caret{middle_start.value +
                            static_cast<std::uint32_t>(middle.indentation_text.size())};
     CommitResult commit = tx.commit();
-    analyzer.apply(commit.change, commit.snapshot);
+    adopt_committed(analyzer, std::move(spec_analysis), std::move(late), commit);
     return EnterResult{"EnterBetweenBraces", std::move(middle), final_caret,
                        std::move(commit.change)};
 }
 
 EnterResult newline_and_indent(Document& document, TextOffset caret, const CppIndentStyle& style,
-                               Analyzer& analyzer, const Analysis& base) {
+                               Analyzer& analyzer, const Text& old_text,
+                               RevisionId old_revision) {
     EditTransaction tx = document.begin_transaction();
     tx.insert(caret, "\n");
 
     DocumentSnapshot spec = tx.speculative_snapshot();
-    Analysis spec_analysis =
-        Analyzer::derive(base, spec.content(), tx.pending_edits(), spec.revision());
+    Analysis spec_analysis = speculative_analysis(analyzer, tx, old_text, old_revision, spec);
     const std::uint32_t new_line = spec.content().position(TextOffset{caret.value + 1}).line;
 
     IndentDecision decision = compute_line_indent(spec, spec_analysis.tree, new_line, style);
@@ -116,11 +148,17 @@ EnterResult newline_and_indent(Document& document, TextOffset caret, const CppIn
                  ? leading_whitespace_of(spec, new_line - 1)
                  : std::string();
     }
-    tx.insert(TextOffset{caret.value + 1}, ws);
+    const TextOffset ws_at{caret.value + 1};
+    tx.insert(ws_at, ws);
+
+    std::vector<TextEdit> late;
+    if (!ws.empty()) {
+        late.push_back(TextEdit{TextRange{ws_at, ws_at}, ws});
+    }
 
     TextOffset final_caret{caret.value + 1 + static_cast<std::uint32_t>(ws.size())};
     CommitResult commit = tx.commit();
-    analyzer.apply(commit.change, commit.snapshot);
+    adopt_committed(analyzer, std::move(spec_analysis), std::move(late), commit);
     return EnterResult{"NewlineAndIndent", std::move(decision), final_caret,
                        std::move(commit.change)};
 }
@@ -131,10 +169,13 @@ EnterResult press_enter(Document& document, TextOffset caret, const CppIndentSty
                         Analyzer& analyzer) {
     DocumentSnapshot snapshot = document.snapshot();
     const Analysis& base = analyzer.analyze(snapshot);
-    if (between_braces(snapshot, base.tree, caret)) {
-        return enter_between_braces(document, caret, style, analyzer, base);
+    const bool braces = between_braces(snapshot, base.tree, caret);
+    if (braces) {
+        return enter_between_braces(document, caret, style, analyzer, snapshot.content(),
+                                    snapshot.revision());
     }
-    return newline_and_indent(document, caret, style, analyzer, base);
+    return newline_and_indent(document, caret, style, analyzer, snapshot.content(),
+                              snapshot.revision());
 }
 
 EnterResult press_enter(Document& document, TextOffset caret, const CppIndentStyle& style) {
@@ -144,13 +185,16 @@ EnterResult press_enter(Document& document, TextOffset caret, const CppIndentSty
 
 TypeCharResult type_char(Document& document, TextOffset caret, char ch,
                          const CppIndentStyle& style, Analyzer& analyzer) {
-    const Analysis& base = analyzer.analyze(document.snapshot());
+    const Text old_text = document.snapshot().content();
+    const RevisionId old_revision = document.revision();
     EditTransaction tx = document.begin_transaction();
     tx.insert(caret, std::string_view(&ch, 1));
 
     TypeCharResult result;
     result.caret = TextOffset{caret.value + 1};
 
+    std::optional<Analysis> spec_analysis;
+    std::vector<TextEdit> late;
     if (ch == '}' || ch == ':' || ch == '#') {
         DocumentSnapshot spec = tx.speculative_snapshot();
         const std::uint32_t line = spec.content().position(caret).line;
@@ -161,10 +205,8 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch,
         // ':' may complete a label anywhere on the line; '}' and '#' only
         // reindent when they are the line's first content.
         if (ch == ':' || first_content) {
-            Analysis spec_analysis =
-                Analyzer::derive(base, spec.content(), tx.pending_edits(), spec.revision());
-            const SyntaxTree& tree = spec_analysis.tree;
-            IndentDecision decision = compute_line_indent(spec, tree, line, style);
+            spec_analysis = speculative_analysis(analyzer, tx, old_text, old_revision, spec);
+            IndentDecision decision = compute_line_indent(spec, spec_analysis->tree, line, style);
             const bool colon_completes_label =
                 decision.role == FormatRole::CaseLabel ||
                 decision.role == FormatRole::AccessSpecifierLabel ||
@@ -173,11 +215,11 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch,
                 const std::string current = leading_whitespace_of(spec, line);
                 if (current != decision.indentation_text &&
                     caret.value >= line_start.value + current.size()) {
-                    tx.replace(
-                        TextRange{line_start,
-                                  TextOffset{line_start.value +
-                                             static_cast<std::uint32_t>(current.size())}},
-                        decision.indentation_text);
+                    const TextRange ws_range{
+                        line_start,
+                        TextOffset{line_start.value + static_cast<std::uint32_t>(current.size())}};
+                    tx.replace(ws_range, decision.indentation_text);
+                    late.push_back(TextEdit{ws_range, decision.indentation_text});
                     result.caret.value +=
                         static_cast<std::uint32_t>(decision.indentation_text.size()) -
                         static_cast<std::uint32_t>(current.size());
@@ -191,7 +233,11 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch,
     }
 
     CommitResult commit = tx.commit();
-    analyzer.apply(commit.change, commit.snapshot);
+    if (spec_analysis) {
+        adopt_committed(analyzer, std::move(*spec_analysis), std::move(late), commit);
+    } else {
+        analyzer.apply(commit.change, commit.snapshot);
+    }
     result.change = std::move(commit.change);
     return result;
 }

@@ -26,25 +26,38 @@ const Analysis& Analyzer::analyze(const DocumentSnapshot& snap) {
 
 Analysis Analyzer::derive(const Analysis& base, const Text& new_text,
                           std::span<const TextEdit> edits, RevisionId revision) {
-    Analysis a;
-    a.revision = revision;
+    Analysis a = base; // O(n) vector copies; the reparse below is incremental
+    reparse(a.tree, a.line_states, base.text, new_text, edits);
     a.text = new_text;
-    LexOutput new_lex = relex(base.tree.tokens(), base.line_states, base.text, new_text, edits);
-    a.line_states = std::move(new_lex.line_states);
-    new_lex.line_states.clear();
-    a.tree = parse(new_text, std::move(new_lex));
+    a.revision = revision;
     return a;
 }
 
 void Analyzer::apply(const DocumentChange& change, const DocumentSnapshot& after) {
     if (cache_ && cache_->revision == change.old_revision &&
         after.revision() == change.new_revision) {
-        cache_ = derive(*cache_, after.content(), change.edits, change.new_revision);
+        // Fully in place: no copies of the token or node vectors.
+        reparse(cache_->tree, cache_->line_states, cache_->text, after.content(), change.edits);
+        cache_->text = after.content();
+        cache_->revision = change.new_revision;
         return;
     }
     cache_.reset();
 }
 
 void Analyzer::adopt(Analysis analysis) { cache_ = std::move(analysis); }
+
+std::optional<Analysis> Analyzer::take(RevisionId revision) {
+    if (!cache_ || cache_->revision != revision) {
+        return std::nullopt;
+    }
+    std::optional<Analysis> out = std::move(cache_);
+    cache_.reset();
+    return out;
+}
+
+Analysis Analyzer::full(const Text& text, RevisionId revision) {
+    return full_analysis(text, revision);
+}
 
 } // namespace cind
