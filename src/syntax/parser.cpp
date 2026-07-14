@@ -220,13 +220,57 @@ private:
         }
     }
 
+    // The directive owns everything up to and including the terminating
+    // (still-flagged) newline. Bracket pairs inside the body become group
+    // nodes so multi-line macro bodies get normal continuation/alignment;
+    // group parsing never leaves the directive, so an unbalanced macro
+    // (`#define LPAREN (`) stays bounded.
+    bool pp_line_continues() const {
+        return pos_ + 1 < tokens().size() &&
+               has_flag(tokens()[pos_].flags, LexicalFlags::PreprocessorLine);
+    }
+
+    void parse_pp_group(TokenKind closer, SyntaxKind kind) {
+        const SyntaxNodeId g = open(kind);
+        ++pos_; // opener
+        while (pp_line_continues()) {
+            const TokenKind k = tokens()[pos_].kind;
+            if (is_trivia(k)) {
+                ++pos_;
+                continue;
+            }
+            if (k == closer) {
+                ++pos_;
+                close(g);
+                return;
+            }
+            if (!parse_pp_body_token(k)) {
+                ++pos_;
+            }
+        }
+        add_missing(closer);
+        close(g);
+    }
+
+    // Returns true if the token opened a nested group (already consumed).
+    bool parse_pp_body_token(TokenKind k) {
+        switch (k) {
+        case TokenKind::LParen: parse_pp_group(TokenKind::RParen, SyntaxKind::ParenGroup); return true;
+        case TokenKind::LBracket:
+            parse_pp_group(TokenKind::RBracket, SyntaxKind::BracketGroup);
+            return true;
+        case TokenKind::LBrace: parse_pp_group(TokenKind::RBrace, SyntaxKind::BraceGroup); return true;
+        default: return false;
+        }
+    }
+
     void parse_pp_directive() {
         const SyntaxNodeId d = open(SyntaxKind::PreprocessorDirective);
-        // Raw consumption: the directive owns its trivia up to and including
-        // the terminating (still-flagged) newline.
-        while (pos_ + 1 < tokens().size() &&
-               has_flag(tokens()[pos_].flags, LexicalFlags::PreprocessorLine)) {
-            ++pos_;
+        while (pp_line_continues()) {
+            const TokenKind k = tokens()[pos_].kind;
+            if (is_trivia(k) || !parse_pp_body_token(k)) {
+                ++pos_;
+            }
         }
         close(d);
     }
@@ -712,6 +756,10 @@ private:
         // True while the node consists of exactly one identifier; ':' then
         // makes it a goto label.
         bool label_candidate = false;
+        // Linkage specification: `extern` then a string literal arms it; a
+        // '{' then opens a namespace-like body (extern "C" { ... }).
+        enum class Linkage : std::uint8_t { None, Extern, Armed };
+        Linkage linkage = Linkage::None;
 
         while (!at_eof()) {
             const TokenKind k = kind();
@@ -773,6 +821,20 @@ private:
                 continue;
             }
             if (k == TokenKind::LBrace) {
+                if (linkage == Linkage::Armed) {
+                    // extern "C" { ... }: namespace semantics — contents are
+                    // top-level declarations, indent follows namespace style.
+                    nodes()[n].kind = SyntaxKind::NamespaceDecl;
+                    const SyntaxNodeId body = open(SyntaxKind::NamespaceBody);
+                    advance();
+                    while (!at_eof() && !at(TokenKind::RBrace)) {
+                        guarded([&] { parse_declaration_or_statement(); });
+                    }
+                    expect_or_missing(TokenKind::RBrace);
+                    close(body);
+                    terminated = true;
+                    break;
+                }
                 if (header_pending) {
                     nodes()[n].kind = SyntaxKind::FunctionDefinition;
                     parse_compound_statement();
@@ -824,6 +886,13 @@ private:
                 prev == TokenKind::EndOfFile && k == TokenKind::Identifier;
             macro_ident_only = first_identifier && is_macro_name(token_text());
             label_candidate = first_identifier;
+            if (first_identifier && token_text() == "extern") {
+                linkage = Linkage::Extern;
+            } else if (linkage == Linkage::Extern && k == TokenKind::StringLiteral) {
+                linkage = Linkage::Armed;
+            } else {
+                linkage = Linkage::None;
+            }
             advance();
             prev = k;
         }

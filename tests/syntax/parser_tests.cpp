@@ -144,10 +144,14 @@ TEST_CASE("declaration-prefix macro does not break the constructor") {
 TEST_CASE("unclosed macro invocation has bounded damage") {
     SyntaxTree tree =
         parse_checked("#define DECLARE(x) x\n\nDECLARE(\nnamespace foo {\nint x;\n}\n");
-    find_one(tree, SyntaxKind::PreprocessorDirective);
-    // the paren group bailed at 'namespace' instead of swallowing it
-    SyntaxNodeId group = find_one(tree, SyntaxKind::ParenGroup);
-    CHECK(tree.node(group).incomplete);
+    SyntaxNodeId pp = find_one(tree, SyntaxKind::PreprocessorDirective);
+    // two groups: '(x)' inside the #define, and the unclosed 'DECLARE(',
+    // which bailed at 'namespace' instead of swallowing it
+    auto groups = find_all(tree, SyntaxKind::ParenGroup);
+    REQUIRE(groups.size() == 2);
+    CHECK(tree.node(groups[0]).parent == pp);
+    CHECK(!tree.node(groups[0]).incomplete);
+    CHECK(tree.node(groups[1]).incomplete);
     SyntaxNodeId ns = find_one(tree, SyntaxKind::NamespaceDecl);
     SyntaxNodeId body = find_one(tree, SyntaxKind::NamespaceBody);
     CHECK(!tree.node(ns).incomplete);
@@ -278,6 +282,55 @@ TEST_CASE("goto label is complete on its own") {
     // in-class constructor initializer is not a label
     SyntaxTree tree2 = parse_checked("struct S {\n    S() : a_(1) {}\n};\n");
     find_one(tree2, SyntaxKind::CtorInitializerList);
+}
+
+TEST_CASE("macro bodies get group structure, bounded to the directive") {
+    SyntaxTree tree = parse_checked(
+        "#define F(a, b) \\\n  impl((long)(a), \\\n       (long)(b))\nint x;\n");
+    CHECK(find_all(tree, SyntaxKind::PreprocessorDirective).size() == 1);
+    CHECK(find_all(tree, SyntaxKind::ParenGroup).size() >= 2);
+    // unbalanced parens inside a macro never leak past the line
+    SyntaxTree tree2 = parse_checked("#define LPAREN (\nint y;\n");
+    SyntaxNodeId pp = find_one(tree2, SyntaxKind::PreprocessorDirective);
+    SyntaxNodeId group = find_one(tree2, SyntaxKind::ParenGroup);
+    CHECK(tree2.node(group).parent == pp);
+    CHECK(find_all(tree2, SyntaxKind::OpaqueDeclaration).size() == 1); // int y;
+}
+
+TEST_CASE("extern linkage block has namespace semantics") {
+    SyntaxTree tree =
+        parse_checked("extern \"C\" {\nvoid f(int);\nint g(void) { return 0; }\n}\n");
+    SyntaxNodeId body = find_one(tree, SyntaxKind::NamespaceBody);
+    CHECK(tree.node(body).children.size() >= 2);
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+    // a plain extern declaration is untouched
+    SyntaxTree tree2 = parse_checked("extern \"C\" void f(int);\nextern int x;\n");
+    CHECK(find_all(tree2, SyntaxKind::NamespaceBody).empty());
+}
+
+TEST_CASE("ifdef-guarded extern block pairs across the branches") {
+    // The canonical C header frame: '{' and '}' live in different #if
+    // branches; all branches parse active, so the pair still matches.
+    SyntaxTree tree = parse_checked("#ifdef __cplusplus\n"
+                                    "extern \"C\" {\n"
+                                    "#endif\n"
+                                    "\n"
+                                    "void f(int);\n"
+                                    "int g(void);\n"
+                                    "\n"
+                                    "#ifdef __cplusplus\n"
+                                    "}\n"
+                                    "#endif\n");
+    SyntaxNodeId body = find_one(tree, SyntaxKind::NamespaceBody);
+    CHECK(!tree.node(body).incomplete);
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+    CHECK(find_all(tree, SyntaxKind::Error).empty());
+    // the declarations are children of the linkage body
+    std::size_t decls = 0;
+    for (SyntaxNodeId child : tree.node(body).children) {
+        decls += tree.node(child).kind == SyntaxKind::OpaqueDeclaration ? 1 : 0;
+    }
+    CHECK(decls == 2);
 }
 
 TEST_CASE("enumerators are sibling declarations, not one continuation") {
