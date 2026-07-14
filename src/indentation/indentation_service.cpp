@@ -593,11 +593,27 @@ private:
 
         switch (a.kind) {
         case SyntaxKind::TranslationUnit: finish(FormatRole::File, 0, 0); return;
-        case SyntaxKind::NamespaceBody:
-            trace("style.indent_namespace_body = {}", style_.indent_namespace_body);
-            finish(FormatRole::NamespaceBody, base,
-                   base + (style_.indent_namespace_body ? w : 0));
+        case SyntaxKind::NamespaceBody: {
+            using NI = CppIndentStyle::NamespaceIndentation;
+            bool nested = false;
+            for (SyntaxNodeId up = a.parent; up != kInvalidNode;
+                 up = tree_.node(up).parent) {
+                if (tree_.node(up).kind == SyntaxKind::NamespaceBody) {
+                    nested = true;
+                    break;
+                }
+            }
+            const bool indents =
+                style_.namespace_indentation == NI::All ||
+                (style_.namespace_indentation == NI::Inner && nested);
+            trace("style.namespace_indentation = {}, nested = {}",
+                  style_.namespace_indentation == NI::None    ? "None"
+                  : style_.namespace_indentation == NI::Inner ? "Inner"
+                                                              : "All",
+                  nested);
+            finish(FormatRole::NamespaceBody, base, base + (indents ? w : 0));
             return;
+        }
         case SyntaxKind::ClassBody:
             trace("style.indent_type_body = {}", style_.indent_type_body);
             finish(FormatRole::TypeBody, base + (style_.indent_type_body ? w : 0),

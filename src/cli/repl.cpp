@@ -1,6 +1,7 @@
 #include "cli/repl.hpp"
 
 #include "cli/session.hpp"
+#include "cli/style_loader.hpp"
 
 #include <charconv>
 #include <iostream>
@@ -37,7 +38,8 @@ constexpr std::string_view kHelp = R"(commands:
   show               print the document with the caret
   explain            explain the indent of the caret's line
   tree               dump the syntax tree
-  style <key> <val>  e.g. style indent_namespace_body true
+  style <key> <val>  e.g. style namespace_indentation Inner
+  loadstyle <path>   read a .clang-format file (or discover upward from a dir)
   quit
 )";
 
@@ -105,6 +107,21 @@ int run_repl(std::istream& in, std::string initial) {
             } else if (line == "tree") {
                 auto snap = session.snapshot();
                 std::cout << parse(snap.text()).dump(snap.text());
+            } else if (line.starts_with("loadstyle ")) {
+                std::string_view path = std::string_view(line).substr(10);
+                if (auto loaded = load_clang_format_style(std::string(path))) {
+                    session.style() = loaded->style;
+                    std::cout << "loaded " << loaded->config_path.string() << "\n";
+                    if (loaded->disable_format) {
+                        std::cout << "note: DisableFormat: true (clang-format "
+                                     "would not touch these files)\n";
+                    }
+                    for (const std::string& warning : loaded->warnings) {
+                        std::cout << "warning: " << warning << "\n";
+                    }
+                } else {
+                    std::cout << "error: no .clang-format found from " << path << "\n";
+                }
             } else if (line.starts_with("style ")) {
                 std::string_view rest = std::string_view(line).substr(6);
                 std::size_t space = rest.find(' ');

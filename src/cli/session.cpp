@@ -135,8 +135,18 @@ bool set_style_field(CppIndentStyle& style, std::string_view key, std::string_vi
     if (key == "use_tabs") {
         return parse_bool(style.use_tabs);
     }
-    if (key == "indent_namespace_body") {
-        return parse_bool(style.indent_namespace_body);
+    if (key == "indent_namespace_body" || key == "namespace_indentation") {
+        using NI = CppIndentStyle::NamespaceIndentation;
+        if (value == "true" || value == "All") {
+            style.namespace_indentation = NI::All;
+        } else if (value == "false" || value == "None") {
+            style.namespace_indentation = NI::None;
+        } else if (value == "Inner") {
+            style.namespace_indentation = NI::Inner;
+        } else {
+            return false;
+        }
+        return true;
     }
     if (key == "indent_type_body") {
         return parse_bool(style.indent_type_body);

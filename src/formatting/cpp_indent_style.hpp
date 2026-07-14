@@ -21,7 +21,11 @@ struct CppIndentStyle {
     // puts the name at column zero).
     bool indent_wrapped_function_names = true;
 
-    bool indent_namespace_body = false;
+    // None: namespace bodies flush with the namespace keyword; Inner: only
+    // bodies nested inside another namespace indent; All: every body indents
+    // (clang-format NamespaceIndentation).
+    enum class NamespaceIndentation { None, Inner, All };
+    NamespaceIndentation namespace_indentation = NamespaceIndentation::None;
     bool indent_type_body = true;
     bool indent_case_label = false;
     bool indent_case_body = true;
@@ -39,6 +43,8 @@ struct CppIndentStyle {
 
     ConstructorInitializerStyle constructor_initializers =
         ConstructorInitializerStyle::AlignFirstInitializer;
+
+    bool operator==(const CppIndentStyle&) const = default;
 };
 
 } // namespace cind

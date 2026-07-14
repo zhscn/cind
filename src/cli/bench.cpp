@@ -1,6 +1,8 @@
 #include "cli/bench.hpp"
 
+#include "cli/style_loader.hpp"
 #include "document/document.hpp"
+#include "formatting/clang_format_style.hpp"
 #include "indentation/indentation_service.hpp"
 #include "syntax/syntax_tree.hpp"
 
@@ -12,6 +14,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -44,7 +47,8 @@ struct RoleCount {
 
 struct Report {
     std::uint32_t files = 0;
-    std::uint32_t unclean = 0; // skipped: not clang-format-clean
+    std::uint32_t unclean = 0;         // skipped: not clang-format-clean
+    std::uint32_t format_disabled = 0; // skipped: DisableFormat: true
     std::uint32_t lines = 0;
     std::uint32_t blank = 0;
     std::uint32_t preserved = 0;
@@ -57,6 +61,7 @@ struct Report {
     void add(const Report& other) {
         files += other.files;
         unclean += other.unclean;
+        format_disabled += other.format_disabled;
         lines += other.lines;
         blank += other.blank;
         preserved += other.preserved;
@@ -227,25 +232,68 @@ std::optional<CppIndentStyle> resolve_style(std::string_view preset) {
     if (preset == "default") {
         return style;
     }
-    if (preset == "llvm") {
-        style.indent_width = 2;
-        style.continuation_indent = 4;
-        style.brace_init_continuation = true;
-        style.indent_wrapped_function_names = false;
+    if (apply_clang_format_preset(preset, style)) {
         return style;
     }
     return std::nullopt;
 }
 
+// --style=file: per-file .clang-format discovery, cached per directory.
+class StyleResolver {
+public:
+    struct Resolved {
+        CppIndentStyle style;
+        bool format_disabled = false;
+    };
+
+    const Resolved& for_file(const fs::path& path) {
+        fs::path dir = path.parent_path();
+        auto [it, inserted] = by_directory_.try_emplace(dir.string());
+        if (inserted) {
+            if (auto loaded = load_clang_format_style(dir)) {
+                it->second = {loaded->style, loaded->disable_format};
+                if (reported_configs_.insert(loaded->config_path.string()).second) {
+                    for (const std::string& warning : loaded->warnings) {
+                        std::cerr << "indent-core: " << loaded->config_path.string()
+                                  << ": " << warning << "\n";
+                    }
+                }
+            } else {
+                it->second = {fallback_, false};
+                if (!warned_) {
+                    warned_ = true;
+                    std::cerr << "indent-core: no .clang-format above "
+                              << dir.string() << "; using LLVM preset\n";
+                }
+            }
+        }
+        return it->second;
+    }
+
+    StyleResolver() { apply_clang_format_preset("LLVM", fallback_); }
+
+private:
+    std::map<std::string, Resolved> by_directory_;
+    std::set<std::string> reported_configs_;
+    CppIndentStyle fallback_;
+    bool warned_ = false;
+};
+
 } // namespace
 
 int run_bench(const std::vector<std::string>& paths, const BenchOptions& options) {
-    auto style = resolve_style(options.style_preset);
-    if (!style) {
-        std::cerr << "indent-core: unknown style preset '" << options.style_preset
-                  << "' (expected: default, llvm)\n";
-        return 2;
+    const bool per_file_style = options.style_preset == "file";
+    std::optional<CppIndentStyle> style;
+    if (!per_file_style) {
+        style = resolve_style(options.style_preset);
+        if (!style) {
+            std::cerr << "indent-core: unknown style '" << options.style_preset
+                      << "' (expected: default, file, or a clang-format preset "
+                         "name like llvm)\n";
+            return 2;
+        }
     }
+    StyleResolver resolver;
 
     std::vector<fs::path> files;
     for (const std::string& raw : paths) {
@@ -273,7 +321,14 @@ int run_bench(const std::vector<std::string>& paths, const BenchOptions& options
     int show_budget = options.show_mismatches;
     Report total;
     for (const fs::path& file : files) {
-        Report report = bench_file(file, *style, options, show_budget);
+        if (per_file_style && resolver.for_file(file).format_disabled) {
+            Report skipped;
+            skipped.format_disabled = 1;
+            total.add(skipped);
+            continue;
+        }
+        Report report = bench_file(file, per_file_style ? resolver.for_file(file).style : *style,
+                                   options, show_budget);
         total.add(report);
         if (report.files == 0) {
             continue;
@@ -283,12 +338,15 @@ int run_bench(const std::vector<std::string>& paths, const BenchOptions& options
         }
         print_summary(report);
     }
-    if (total.files > 1 || total.unclean > 0) {
-        std::cout << std::format("=== total ({} files{})\n", total.files,
-                                 total.unclean > 0
-                                     ? std::format(", skipped {} not format-clean",
-                                                   total.unclean)
-                                     : std::string());
+    if (total.files > 1 || total.unclean > 0 || total.format_disabled > 0) {
+        std::string skipped_note;
+        if (total.unclean > 0) {
+            skipped_note += std::format(", skipped {} not format-clean", total.unclean);
+        }
+        if (total.format_disabled > 0) {
+            skipped_note += std::format(", skipped {} format-disabled", total.format_disabled);
+        }
+        std::cout << std::format("=== total ({} files{})\n", total.files, skipped_note);
         print_summary(total);
     }
     return total.files > 0 ? 0 : 1;

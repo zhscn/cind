@@ -194,7 +194,7 @@ int main(int argc, char** argv) {
                  "       indent-core apply-enter <file> --offset <byte>\n"
                  "       indent-core repl [file]\n"
                  "       indent-core test <fixture.yaml|dir>\n"
-                 "       indent-core bench <file|dir>... [--style default|llvm] [--show N] "
-                 "[--clean-only]\n";
+                 "       indent-core bench <file|dir>... [--style default|file|<preset>] "
+                 "[--show N] [--clean-only]\n";
     return 2;
 }

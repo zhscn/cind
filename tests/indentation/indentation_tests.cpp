@@ -57,9 +57,19 @@ TEST_CASE("namespace body is not indented by default") {
     CHECK(enter("namespace foo {^\nint x;\n}\n") == "namespace foo {\n^\nint x;\n}\n");
 
     CppIndentStyle indented;
-    indented.indent_namespace_body = true;
+    indented.namespace_indentation = CppIndentStyle::NamespaceIndentation::All;
     CHECK(enter("namespace foo {^\nint x;\n}\n", indented) ==
           "namespace foo {\n    ^\nint x;\n}\n");
+}
+
+TEST_CASE("Inner namespace indentation indents only nested namespace bodies") {
+    CppIndentStyle inner;
+    inner.namespace_indentation = CppIndentStyle::NamespaceIndentation::Inner;
+    // Outer body stays flush (clang-format NamespaceIndentation: Inner).
+    CHECK(enter("namespace out {^\n}\n", inner) == "namespace out {\n^\n}\n");
+    // The nested namespace's body indents relative to its own opening line.
+    CHECK(enter("namespace out {\nnamespace in {^\n}\n}\n", inner) ==
+          "namespace out {\nnamespace in {\n    ^\n}\n}\n");
 }
 
 TEST_CASE("enter between braces expands and places the caret on the middle line") {
@@ -257,7 +267,7 @@ TEST_CASE("extern block follows namespace indent style") {
     CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n") ==
           "extern \"C\" {\n^\nvoid f(int);\n}\n");
     CppIndentStyle indented;
-    indented.indent_namespace_body = true;
+    indented.namespace_indentation = CppIndentStyle::NamespaceIndentation::All;
     CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n", indented) ==
           "extern \"C\" {\n    ^\nvoid f(int);\n}\n");
     // the #ifdef-guarded frame: declarations inside stay at column zero

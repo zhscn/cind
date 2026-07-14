@@ -19,6 +19,7 @@ target_link_libraries(cind_syntax PUBLIC cind_lexer)
 add_library(cind_indent STATIC
   indentation/indentation_service.cpp
   commands/editor_commands.cpp
+  formatting/clang_format_style.cpp
 )
 target_link_libraries(cind_indent PUBLIC cind_syntax)
 
@@ -26,6 +27,7 @@ add_executable(indent-core
   cli/main.cpp
   cli/bench.cpp
   cli/session.cpp
+  cli/style_loader.cpp
   cli/fixture_runner.cpp
   cli/repl.cpp
 )
