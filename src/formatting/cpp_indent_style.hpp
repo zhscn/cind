@@ -21,6 +21,15 @@ struct CppIndentStyle {
     // puts the name at column zero).
     bool indent_wrapped_function_names = true;
 
+    // T3: wrapped operands of a binary/ternary expression align with the
+    // first operand instead of plain continuation (clang-format
+    // AlignOperands: Align / DontAlign).
+    bool align_operands = true;
+    // Wrapped ternary expressions put ?/: at line starts; controls where the
+    // ?-column alignment anchor is recorded (clang-format
+    // BreakBeforeTernaryOperators).
+    bool break_before_ternary = true;
+
     // None: namespace bodies flush with the namespace keyword; Inner: only
     // bodies nested inside another namespace indent; All: every body indents
     // (clang-format NamespaceIndentation).

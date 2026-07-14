@@ -310,6 +310,7 @@ private:
         const SyntaxNodeId n = open(SyntaxKind::ClassDecl);
         const bool is_enum = at(TokenKind::EnumKw);
         advance(); // class/struct/union/enum
+        bool saw_equals = false;
         while (!at_eof() && !at(TokenKind::LBrace) && !at(TokenKind::Semicolon) &&
                !at(TokenKind::RBrace) && kind() != TokenKind::NamespaceKw) {
             if (at(TokenKind::LParen)) {
@@ -319,8 +320,21 @@ private:
                     advance();
                 }
             } else {
+                saw_equals = saw_equals || at(TokenKind::Equals);
                 advance(); // head: name, base clause, attributes
             }
+        }
+        if (saw_equals && at(TokenKind::LBrace)) {
+            // `struct f_cnvrt Convert = { ... };` — the keyword introduces the
+            // variable's type, and a brace after '=' is always an initializer
+            // list, never a class body (clang-format calculateBraceTypes).
+            nodes()[n].kind = SyntaxKind::OpaqueDeclaration;
+            parse_brace_group();
+            if (at(TokenKind::Semicolon)) {
+                advance();
+            }
+            close(n);
+            return;
         }
         if (at(TokenKind::LBrace)) {
             const SyntaxNodeId body = open(SyntaxKind::ClassBody);

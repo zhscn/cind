@@ -178,9 +178,20 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, const Bench
     Report report;
     report.files = 1;
     report.lines = lines.line_count();
+    bool formatting_on = true;
     for (std::uint32_t line = 0; line < lines.line_count(); ++line) {
         TextRange content = lines.line_content_range(line);
         std::string_view line_text = text.substr(content.start.value, content.length());
+        // Lines under "clang-format off" are not format ground truth.
+        if (line_text.find("clang-format off") != std::string_view::npos) {
+            formatting_on = false;
+        } else if (line_text.find("clang-format on") != std::string_view::npos) {
+            formatting_on = true;
+        }
+        if (!formatting_on) {
+            ++report.preserved;
+            continue;
+        }
         std::size_t ws = 0;
         while (ws < line_text.size() && (line_text[ws] == ' ' || line_text[ws] == '\t')) {
             ++ws;

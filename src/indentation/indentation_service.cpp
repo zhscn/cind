@@ -1,6 +1,9 @@
 #include "indentation/indentation_service.hpp"
 
+#include "indentation/expression_continuation.hpp"
+
 #include <algorithm>
+#include <cctype>
 #include <format>
 
 namespace cind {
@@ -471,6 +474,18 @@ private:
     }
 
     bool access_label() {
+        // `public Base` in a base clause is not a label: the keyword must be
+        // followed by (identifiers and) a single ':' (Qt's "public slots:").
+        std::size_t p = first_significant_->range.end.value;
+        while (p < text_.size() &&
+               (text_[p] == ' ' || text_[p] == '\t' || text_[p] == '_' ||
+                (std::isalnum(static_cast<unsigned char>(text_[p])) != 0))) {
+            ++p;
+        }
+        if (p >= text_.size() || text_[p] != ':' ||
+            (p + 1 < text_.size() && text_[p + 1] == ':')) {
+            return false;
+        }
         SyntaxNodeId node = query_node_at(tree_, first_significant_->range.start);
         auto class_node = find_ancestor(tree_, node, SyntaxKind::ClassDecl);
         if (!class_node) {
@@ -659,6 +674,9 @@ private:
             return;
         }
         case SyntaxKind::BraceGroup: {
+            if (expression_engine(relevant, FormatRole::BraceInit)) {
+                return;
+            }
             if (style_.align_open_bracket) {
                 if (auto col = aligned_continuation(relevant)) {
                     trace("open brace has trailing content; aligning with it");
@@ -684,6 +702,9 @@ private:
                                     : a.kind == SyntaxKind::BracketGroup
                                         ? FormatRole::BracketContinuation
                                         : FormatRole::TemplateArgsContinuation;
+            if (expression_engine(relevant, role)) {
+                return;
+            }
             if (style_.align_open_bracket) {
                 if (auto col = aligned_continuation(relevant)) {
                     trace("open bracket has trailing content; aligning with it");
@@ -720,6 +741,9 @@ private:
                 wrapped_declarator_name_line(relevant)) {
                 trace("wrapped declarator name; kept at the declaration indent");
                 finish(FormatRole::StatementContinuation, base, base);
+                return;
+            }
+            if (expression_engine(relevant, FormatRole::StatementContinuation)) {
                 return;
             }
             finish(FormatRole::StatementContinuation, base + cont, base + cont);
@@ -765,9 +789,24 @@ private:
                 finish(FormatRole::StatementContinuation, base, base);
                 return;
             }
+            if (expression_engine(relevant, FormatRole::StatementContinuation)) {
+                return;
+            }
             finish(FormatRole::StatementContinuation, base + cont, base + cont);
             return;
         }
+    }
+
+    // T3: replay clang-format's continuation column rules over the actual
+    // statement layout (design.md §10.2). False = fall back to the T2 table.
+    bool expression_engine(SyntaxNodeId controlling, FormatRole role) {
+        auto column = expression_continuation_column(snapshot_, tree_, line_, controlling,
+                                                     style_, decision_.trace);
+        if (!column) {
+            return false;
+        }
+        finish(role, *column, *column);
+        return true;
     }
 
     const DocumentSnapshot& snapshot_;

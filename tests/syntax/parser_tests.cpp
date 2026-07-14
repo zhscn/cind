@@ -268,6 +268,15 @@ TEST_CASE("statement evidence upgrades a brace group to a block") {
     CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
 }
 
+TEST_CASE("brace after '=' in a struct-typed variable is an init list") {
+    SyntaxTree tree = parse_checked(
+        "static const struct f_cnvrt Convert = {\n    SETCVTOFF, // cvtcmd\n"
+        "    0,         // pccsid\n};\n");
+    CHECK(find_all(tree, SyntaxKind::ClassBody).empty());
+    find_one(tree, SyntaxKind::BraceGroup);
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+}
+
 TEST_CASE("capture-only lambda gets a body block") {
     SyntaxTree tree = parse_checked("auto f = [this] { return go(); };\n");
     find_one(tree, SyntaxKind::CompoundStatement);
@@ -425,4 +434,60 @@ TEST_CASE("fuzz: arbitrary input never breaks parser invariants") {
         }
         parse_checked(text);
     }
+}
+
+// design.md §14: structural churn — how many levels of the caret's ancestor
+// path change per typed character. Error recovery's goal is edit stability:
+// prefixes should converge to a stable spine early and stay there, not flip
+// between label/expression/error readings.
+namespace {
+
+std::vector<SyntaxKind> ancestor_path_at_end(const SyntaxTree& tree, std::size_t size) {
+    const TextOffset probe{size > 0 ? static_cast<std::uint32_t>(size - 1) : 0};
+    std::vector<SyntaxKind> path;
+    for (SyntaxNodeId id = tree.node_at(probe); id != kInvalidNode;
+         id = tree.node(id).parent) {
+        path.push_back(tree.node(id).kind);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+// Sum over keystrokes of levels dropped + levels gained relative to the
+// previous prefix's ancestor path.
+int total_churn(std::string_view sample) {
+    std::vector<SyntaxKind> previous;
+    int total = 0;
+    for (std::size_t i = 1; i <= sample.size(); ++i) {
+        SyntaxTree tree = parse(sample.substr(0, i));
+        std::vector<SyntaxKind> path = ancestor_path_at_end(tree, i);
+        std::size_t common = 0;
+        while (common < previous.size() && common < path.size() &&
+               previous[common] == path[common]) {
+            ++common;
+        }
+        total += static_cast<int>(previous.size() - common) +
+                 static_cast<int>(path.size() - common);
+        previous = std::move(path);
+    }
+    return total;
+}
+
+} // namespace
+
+TEST_CASE("structural churn stays bounded while typing (golden)") {
+    // Constructor with initializer list: the design's canonical stability
+    // sample (§14). The spine must converge to FunctionDefinition +
+    // initializer list early and not flip per keystroke.
+    // Measured 21/25 when locked in; the bound is a regression tripwire, not
+    // a target — recovery changes that raise it need a conscious decision.
+    const std::string_view ctor = "Foo::Foo() : a_(1), b_(2) {}";
+    const int ctor_churn = total_churn(ctor);
+    MESSAGE("ctor churn: ", ctor_churn);
+    CHECK(ctor_churn <= 24);
+
+    const std::string_view stmt = "if (a && b(c))\n    return d + e;\n";
+    const int stmt_churn = total_churn(stmt);
+    MESSAGE("stmt churn: ", stmt_churn);
+    CHECK(stmt_churn <= 28);
 }

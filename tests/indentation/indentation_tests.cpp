@@ -181,9 +181,53 @@ TEST_CASE("if without braces indents one level and closes back") {
     CHECK(d.target_column == 0);
 }
 
+TEST_CASE("T3: adjacent string literals align to the run start") {
+    Document doc("  return \"aaa\"\n\"bbb\";\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  return \"aaa\"\n         \"bbb\";\n");
+}
+
+TEST_CASE("T3: wrapped ternary aligns ':' with its '?'") {
+    Document doc("  x = c\n          ? aaa\n: bbb;\n");
+    indent_line(doc, 2, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  x = c\n          ? aaa\n          : bbb;\n");
+}
+
+TEST_CASE("T3: break after a nested open paren compounds continuation") {
+    // Continuation stacks from the enclosing level, not anchor line + cont.
+    Document doc("  if (check(setParam(\nx)))\n    ;\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  if (check(setParam(\n          x)))\n    ;\n");
+}
+
+TEST_CASE("T3: operator chain inside call arguments") {
+    // The additive chain's fake paren sits at 'bb' plus one continuation.
+    Document doc("  f(a, bb +\ncc);\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  f(a, bb +\n           cc);\n");
+}
+
+TEST_CASE("T3: member call chain and stream continuation") {
+    Document doc("  return WithColor(OS)\n.get()\n<< \"e\";\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    indent_line(doc, 2, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  return WithColor(OS)\n             .get()\n         << \"e\";\n");
+}
+
+TEST_CASE("T3: braced init contents indent from the expression level") {
+    Document doc("  struct S c = {\nX,\n  };\n");
+    indent_line(doc, 1, CppIndentStyle{});
+    CHECK(doc.snapshot().text() == "  struct S c = {\n      X,\n  };\n");
+}
+
 TEST_CASE("statement continuation") {
-    CHECK(enter("int x = a +^\n") == "int x = a +\n    ^\n");
+    // AlignOperands: the wrapped operand aligns under the RHS start.
+    CHECK(enter("int x = a +^\n") == "int x = a +\n        ^\n");
     CHECK(enter("foo(a,^ b);\n") == "foo(a,\n    ^ b);\n");
+
+    CppIndentStyle dont_align;
+    dont_align.align_operands = false;
+    CHECK(enter("int x = a +^\n", dont_align) == "int x = a +\n    ^\n");
 }
 
 TEST_CASE("wrapped signature anchors the body on the declaration line") {

@@ -18,6 +18,7 @@ target_link_libraries(cind_syntax PUBLIC cind_lexer)
 
 add_library(cind_indent STATIC
   indentation/indentation_service.cpp
+  indentation/expression_continuation.cpp
   commands/editor_commands.cpp
   formatting/clang_format_style.cpp
 )

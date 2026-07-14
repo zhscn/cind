@@ -55,17 +55,18 @@ struct Preset {
     bool indent_case_labels;
     bool braced_list_continuation;
     bool align_open_bracket;
+    bool align_operands;
     int ctor_init_width;
 };
 
 constexpr std::array<Preset, 7> kPresets = {{
-    {"LLVM", 2, 4, 8, -2, NI::None, false, true, true, 4},
-    {"Google", 2, 4, 8, -1, NI::None, true, true, true, 4},
-    {"Chromium", 2, 4, 8, -1, NI::None, true, true, true, 4},
-    {"Mozilla", 2, 2, 8, -2, NI::None, true, false, true, 2},
-    {"WebKit", 4, 4, 8, -4, NI::Inner, false, false, false, 4},
-    {"GNU", 2, 4, 8, -2, NI::None, false, false, true, 4},
-    {"Microsoft", 4, 4, 4, -2, NI::None, false, true, true, 4},
+    {"LLVM", 2, 4, 8, -2, NI::None, false, true, true, true, 4},
+    {"Google", 2, 4, 8, -1, NI::None, true, true, true, true, 4},
+    {"Chromium", 2, 4, 8, -1, NI::None, true, true, true, true, 4},
+    {"Mozilla", 2, 2, 8, -2, NI::None, true, false, true, true, 2},
+    {"WebKit", 4, 4, 8, -4, NI::Inner, false, false, false, false, 4},
+    {"GNU", 2, 4, 8, -2, NI::None, false, false, true, true, 4},
+    {"Microsoft", 4, 4, 4, -2, NI::None, false, true, true, true, 4},
 }};
 
 // Parser state: AccessModifierOffset and ConstructorInitializerIndentWidth
@@ -97,6 +98,8 @@ void apply_preset(const Preset& preset, PendingStyle& pending) {
     s.tab_width = preset.tab_width;
     s.use_tabs = false;
     s.align_open_bracket = preset.align_open_bracket;
+    s.align_operands = preset.align_operands;
+    s.break_before_ternary = true; // uniform across all built-in presets
     s.brace_init_continuation = preset.braced_list_continuation;
     s.indent_wrapped_function_names = false;
     s.namespace_indentation = preset.namespace_indentation;
@@ -267,6 +270,18 @@ void apply_key(const KeyValue& kv, PendingStyle& pending, ClangFormatStyle& resu
         }
     } else if (kv.key == "IndentWrappedFunctionNames") {
         set_bool(s.indent_wrapped_function_names);
+    } else if (kv.key == "AlignOperands") {
+        // AlignAfterOperator additionally un-indents the operator itself;
+        // approximated as plain alignment.
+        if (value_in(kv.value, {"Align", "AlignAfterOperator", "true"})) {
+            s.align_operands = true;
+        } else if (value_in(kv.value, {"DontAlign", "false"})) {
+            s.align_operands = false;
+        } else {
+            warn_value();
+        }
+    } else if (kv.key == "BreakBeforeTernaryOperators") {
+        set_bool(s.break_before_ternary);
     } else if (kv.key == "ConstructorInitializerIndentWidth") {
         set_int(pending.ctor_init_width);
     } else if (kv.key == "IndentPPDirectives") {
