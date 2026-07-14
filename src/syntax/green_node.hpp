@@ -40,18 +40,16 @@ struct GreenNode {
     std::vector<GreenChild> children;
 };
 
-// Encode a flat red tree as a green tree (relative length encoding). Reads only
-// the public tree API. Returns nullptr for an empty tree.
-GreenRef green_from_flat(const SyntaxTree& tree);
-
 // Encode one subtree of an arbitrary flat node vector (e.g. an incremental
 // reparse sandbox result) as a green node, rooted at `root`.
 GreenRef green_from_flat_subtree(const std::vector<SyntaxNode>& nodes, SyntaxNodeId root);
 
-// Materialize a flat SyntaxTree from a green root and its token stream — the
-// inverse of green_from_flat. Ids are assigned in DFS-preorder, exactly as the
-// parser allocates them, so the round-trip is byte-exact (this is also the
-// Phase-2 red-cache materializer).
-SyntaxTree flat_from_green(const GreenRef& root, std::vector<Token> tokens);
+// Total green node count under (and including) `root`. O(nodes).
+std::size_t green_count(const GreenRef& root);
+
+// Deep structural + positional equality of two green trees: same kind, width,
+// flags, expected, and children (with equal relative leadings) recursively. An
+// id-free oracle — two trees are green_equal iff they materialize identically.
+bool green_equal(const GreenRef& a, const GreenRef& b);
 
 } // namespace cind

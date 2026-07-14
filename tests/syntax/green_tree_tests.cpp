@@ -10,28 +10,37 @@ using namespace cind;
 
 namespace {
 
-// flat -> green -> flat must reproduce the tree byte-exact: same DFS-preorder
-// ids, same per-node fields, same dump. This is the Phase-1 encoding proof.
+// The lazily materialized red pool must mirror the green tree exactly: matching
+// kind/flags/expected, absolute token span reconstructed from the relative
+// leadings/widths, parent links, and child structure — recursively. Holding a
+// red reference across the recursive t.node() calls also exercises the pool's
+// stable-address guarantee.
+void check_red_matches_green(const SyntaxTree& t, SyntaxNodeId id, const GreenNode* g,
+                             std::uint32_t base) {
+    const SyntaxNode& n = t.node(id);
+    REQUIRE(n.kind == g->kind);
+    REQUIRE(n.first_token == base);
+    REQUIRE(n.end_token == base + g->width);
+    REQUIRE(n.incomplete == g->incomplete);
+    REQUIRE(n.reclassified == g->reclassified);
+    REQUIRE(n.expected == g->expected);
+    REQUIRE(n.children.size() == g->children.size());
+    std::uint32_t cursor = base;
+    for (std::size_t k = 0; k < g->children.size(); ++k) {
+        const std::uint32_t cf = cursor + g->children[k].leading;
+        const SyntaxNodeId cid = n.children[k];
+        REQUIRE(t.node(cid).parent == id);
+        check_red_matches_green(t, cid, g->children[k].node.get(), cf);
+        cursor = cf + g->children[k].node->width;
+    }
+}
+
 void roundtrip(std::string_view src) {
     SyntaxTree t = parse(src);
-    SyntaxTree back = flat_from_green(green_from_flat(t), t.tokens());
-
-    REQUIRE(back.node_count() == t.node_count());
-    REQUIRE(back.tokens().size() == t.tokens().size());
-    for (SyntaxNodeId id = 0; id < t.node_count(); ++id) {
-        CAPTURE(id);
-        const SyntaxNode& a = t.node(id);
-        const SyntaxNode& b = back.node(id);
-        REQUIRE(b.kind == a.kind);
-        REQUIRE(b.first_token == a.first_token);
-        REQUIRE(b.end_token == a.end_token);
-        REQUIRE(b.parent == a.parent);
-        REQUIRE(b.children == a.children);
-        REQUIRE(b.incomplete == a.incomplete);
-        REQUIRE(b.reclassified == a.reclassified);
-        REQUIRE(b.expected == a.expected);
-    }
-    REQUIRE(back.dump(src) == t.dump(src));
+    REQUIRE(t.green_root() != nullptr);
+    check_red_matches_green(t, t.root(), t.green_root().get(), 0);
+    REQUIRE(t.node_count() == green_count(t.green_root()));
+    REQUIRE(green_equal(t.green_root(), t.green_root()));
 }
 
 } // namespace

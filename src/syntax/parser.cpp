@@ -131,7 +131,7 @@ public:
             result.aligned_at = kNoBoundary; // a conditional opened before our span
             return result;
         }
-        result.nodes = std::move(tree_.nodes_);
+        result.nodes = std::move(build_);
         return result;
     }
 
@@ -143,12 +143,12 @@ public:
         pos_ = static_cast<std::uint32_t>(tree_.tokens_.size()); // include trailing trivia + EOF
         nodes()[0].end_token = pos_;
         stack_.pop_back();
-        tree_.green_root_ = green_from_flat(tree_);
+        tree_.set_green(green_from_flat_subtree(build_, 0));
         return std::move(tree_);
     }
 
 private:
-    std::vector<SyntaxNode>& nodes() { return tree_.nodes_; }
+    std::vector<SyntaxNode>& nodes() { return build_; }
     const std::vector<Token>& tokens() const {
         return tokens_view_ != nullptr ? *tokens_view_ : tree_.tokens_;
     }
@@ -1082,6 +1082,10 @@ private:
     std::uint32_t pos_ = 0;
     bool enum_body_ = false; // directly inside an enum's ClassBody
     SyntaxTree tree_;
+    // Flat build buffer: the parser assembles nodes here, then the tree keeps
+    // only the length-encoded green tree (green_from_flat_subtree(build_, 0)).
+    // The red view is materialized lazily from green on demand.
+    std::vector<SyntaxNode> build_;
     std::vector<SyntaxNodeId> stack_;
 
     // Preprocessor conditional reconciliation (design.md §276): each open
@@ -1121,21 +1125,20 @@ SyntaxTree parse(const Text& text, LexOutput lexed) {
 
 namespace {
 
-bool is_item_container(const SyntaxNode& n) {
-    switch (n.kind) {
+bool is_item_container(SyntaxKind kind, bool reclassified) {
+    switch (kind) {
     case SyntaxKind::TranslationUnit:
     case SyntaxKind::NamespaceBody:
     case SyntaxKind::ClassBody:
     case SyntaxKind::CaseSection: return true;
     // A reclassified brace group consumed its early tokens with initializer
     // semantics; its item loop cannot be replayed uniformly.
-    case SyntaxKind::CompoundStatement: return !n.reclassified;
+    case SyntaxKind::CompoundStatement: return !reclassified;
     default: return false;
     }
 }
 
 struct RepairContext {
-    SyntaxNodeId id;
     bool enum_body;
 };
 
@@ -1146,41 +1149,55 @@ struct RepairContext {
 // tok_hi) is the old-coordinate damage window (guard included); old index
 // j >= tok_hi lives at j + delta_tok in the new stream. Untouched child
 // GreenRefs are reused by pointer — their relative encoding is splice-invariant.
-GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
-                    const RepairContext& ctx, const GreenRef& container_green,
+GreenRef try_repair(const std::vector<Token>& toks, const RepairContext& ctx,
+                    const GreenRef& container_green, std::uint32_t container_first,
                     std::uint32_t guard_lo, std::uint32_t tok_hi, std::int64_t delta_tok,
                     const Text& new_text) {
-    const SyntaxNodeId c_id = ctx.id;
-    const SyntaxKind c_kind = nodes[c_id].kind;
+    const SyntaxKind c_kind = container_green->kind;
     const bool is_tu = c_kind == SyntaxKind::TranslationUnit;
     const auto new_count = static_cast<std::uint32_t>(toks.size());
+    const std::uint32_t container_end = container_first + container_green->width;
 
     auto mapped = [&](std::uint32_t old_idx) {
         return static_cast<std::uint32_t>(old_idx + delta_tok);
     };
 
-    // Items and the region they may occupy.
-    std::vector<SyntaxNodeId> items;
-    SyntaxNodeId label = kInvalidNode;    // CaseSection prologue
-    SyntaxNodeId epilogue = kInvalidNode; // MissingToken for the closer
-    for (SyntaxNodeId child : nodes[c_id].children) {
-        if (nodes[child].kind == SyntaxKind::MissingToken) {
-            epilogue = child;
-        } else if (c_kind == SyntaxKind::CaseSection && child == nodes[c_id].children.front()) {
-            label = child;
+    // Absolute (old-coord) span of each container child, from the relative
+    // leadings — no red materialization needed.
+    const std::vector<GreenChild>& gch = container_green->children;
+    std::vector<std::uint32_t> child_first(gch.size());
+    std::vector<std::uint32_t> child_end(gch.size());
+    {
+        std::uint32_t cursor = container_first;
+        for (std::size_t k = 0; k < gch.size(); ++k) {
+            child_first[k] = cursor + gch[k].leading;
+            child_end[k] = child_first[k] + gch[k].node->width;
+            cursor = child_end[k];
+        }
+    }
+
+    // Partition children (indices into gch) into label / items / epilogue.
+    std::vector<std::size_t> items;
+    std::size_t label = gch.size();    // sentinel: none
+    std::size_t epilogue = gch.size(); // sentinel: none
+    for (std::size_t k = 0; k < gch.size(); ++k) {
+        if (gch[k].node->kind == SyntaxKind::MissingToken) {
+            epilogue = k;
+        } else if (c_kind == SyntaxKind::CaseSection && k == 0) {
+            label = k;
         } else {
-            items.push_back(child);
+            items.push_back(k);
         }
     }
 
     std::uint32_t lower = 0;
     if (c_kind == SyntaxKind::CaseSection) {
-        if (label == kInvalidNode) {
+        if (label == gch.size()) {
             return nullptr;
         }
-        lower = nodes[label].end_token;
+        lower = child_end[label];
     } else if (!is_tu) {
-        lower = nodes[c_id].first_token + 1; // past the '{'
+        lower = container_first + 1; // past the '{'
     }
     if (guard_lo < lower) {
         return nullptr;
@@ -1190,12 +1207,12 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
     std::uint32_t post_loop_old = 0;
     if (is_tu) {
         post_loop_old = 0; // unused; TU aligns on the new EOF directly
-    } else if (epilogue != kInvalidNode) {
-        post_loop_old = nodes[epilogue].first_token;
+    } else if (epilogue != gch.size()) {
+        post_loop_old = child_first[epilogue];
     } else if (c_kind == SyntaxKind::CaseSection) {
         // The stop token was not consumed; it is the first significant token
         // at or after the section's end — outside the window by containment.
-        std::uint32_t j = nodes[c_id].end_token;
+        std::uint32_t j = container_end;
         if (j < tok_hi) {
             return nullptr;
         }
@@ -1204,7 +1221,7 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
         }
         post_loop_old = j;
     } else {
-        post_loop_old = nodes[c_id].end_token - 1; // the consumed '}'
+        post_loop_old = container_end - 1; // the consumed '}'
     }
     if (!is_tu && tok_hi > post_loop_old) {
         return nullptr; // the window reaches the container's own closer
@@ -1218,17 +1235,17 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
     // guard_lo, which only excludes such degenerate boundary nodes (normal
     // items ending at guard_lo already start before it).
     std::size_t i = 0;
-    while (i < items.size() && nodes[items[i]].end_token <= guard_lo &&
-           nodes[items[i]].first_token < guard_lo) {
+    while (i < items.size() && child_end[items[i]] <= guard_lo &&
+           child_first[items[i]] < guard_lo) {
         ++i;
     }
     constexpr std::uint32_t kPostLoop = 0xFFFFFFFFu;
     std::vector<std::uint32_t> bounds;
     std::vector<std::uint32_t> bound_old; // parallel: old coords (kPostLoop = post-loop)
     for (std::size_t k = i; k < items.size(); ++k) {
-        if (nodes[items[k]].first_token >= tok_hi) {
-            bounds.push_back(mapped(nodes[items[k]].first_token));
-            bound_old.push_back(nodes[items[k]].first_token);
+        if (child_first[items[k]] >= tok_hi) {
+            bounds.push_back(mapped(child_first[items[k]]));
+            bound_old.push_back(child_first[items[k]]);
         }
     }
     const std::uint32_t post_loop_new = is_tu ? new_count - 1 : mapped(post_loop_old);
@@ -1236,7 +1253,7 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
     bound_old.push_back(kPostLoop);
 
     // Sandbox start: the loop position right after the last untouched item.
-    std::uint32_t start = i > 0 ? nodes[items[i - 1]].end_token : lower;
+    std::uint32_t start = i > 0 ? child_end[items[i - 1]] : lower;
     while (is_trivia(toks[start].kind)) {
         ++start;
     }
@@ -1253,7 +1270,7 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
     for (std::size_t k = 0; k < bounds.size(); ++k) {
         if (bounds[k] == result.aligned_at && bound_old[k] != kPostLoop) {
             for (std::size_t it = i; it < items.size(); ++it) {
-                if (nodes[items[it]].first_token == bound_old[k]) {
+                if (child_first[items[it]] == bound_old[k]) {
                     m = it;
                     break;
                 }
@@ -1263,35 +1280,30 @@ GreenRef try_repair(const std::vector<SyntaxNode>& nodes, const std::vector<Toke
     }
 
     // Green splice: rebuild C's child list, reusing the untouched prefix/suffix
-    // child GreenRefs by pointer. C's green children line up 1:1 with its red
-    // children (both DFS-preorder), partitioned [label?] + items + [epilogue?],
-    // so the replaced item span [i, m) maps to green-child indices offset by the
-    // label. Relative `leading`s are recomputed from each child's new-stream
-    // first token; untouched children carry an unchanged gap and keep their
-    // pointer.
-    const std::size_t base = label != kInvalidNode ? 1 : 0;
+    // child GreenRefs by pointer. Children are partitioned [label?] + items +
+    // [epilogue?], so the replaced item span [i, m) maps to gch indices offset by
+    // the label. Relative `leading`s are recomputed from each child's new-stream
+    // first token (prefix positions unchanged, suffix shifted by delta_tok);
+    // untouched children keep their GreenRef.
+    const std::size_t base = label != gch.size() ? 1 : 0;
     const std::size_t lo_ci = base + i;
     const std::size_t hi_ci = base + m;
-    const std::vector<GreenChild>& old_children = container_green->children;
-    const std::vector<SyntaxNodeId>& red_children = nodes[c_id].children;
-    const std::uint32_t container_first = nodes[c_id].first_token; // unchanged by the edit
 
     std::vector<GreenChild> merged;
-    merged.reserve(old_children.size() + result.nodes[0].children.size());
+    merged.reserve(gch.size() + result.nodes[0].children.size());
     std::uint32_t cursor = container_first; // running new-stream end position
     auto append = [&](const GreenRef& node, std::uint32_t new_first) {
         merged.push_back(GreenChild{new_first - cursor, node});
         cursor = new_first + node->width;
     };
     for (std::size_t k = 0; k < lo_ci; ++k) { // prefix: positions unchanged
-        append(old_children[k].node, nodes[red_children[k]].first_token);
+        append(gch[k].node, child_first[k]);
     }
     for (SyntaxNodeId sid : result.nodes[0].children) { // replacement: new stream
         append(green_from_flat_subtree(result.nodes, sid), result.nodes[sid].first_token);
     }
-    for (std::size_t k = hi_ci; k < old_children.size(); ++k) { // suffix: shift by delta
-        append(old_children[k].node,
-               static_cast<std::uint32_t>(nodes[red_children[k]].first_token + delta_tok));
+    for (std::size_t k = hi_ci; k < gch.size(); ++k) { // suffix: shift by delta
+        append(gch[k].node, static_cast<std::uint32_t>(child_first[k] + delta_tok));
     }
 
     auto rebuilt = std::make_shared<GreenNode>();
@@ -1416,8 +1428,9 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
         splice_touches_pp_conditional(s.scanned.tokens, 0, s.scanned.tokens.size(), new_text);
 
     relex_apply(tree.tokens_, line_states, std::move(s));
+    tree.red_.clear(); // token indices shifted; drop stale materialized red nodes
     if (identical) {
-        return;
+        return; // structure unchanged; green_root_ still valid
     }
     if (pp_structure_changed) {
         LexOutput lexed;
@@ -1456,57 +1469,66 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
         return;
     }
 
-    // Descent from the root down to the deepest node holding the window,
-    // tracking the parallel green spine (each node's GreenRef and the index it
-    // occupies in its parent) so a successful repair can rebuild only that spine
-    // and reuse every untouched subtree by pointer. Item-containers on the path
-    // are the repair candidates, tried deepest-first.
+    // Descent from the root down to the deepest green node holding the window,
+    // tracking each path node's GreenRef, its index in its parent, and its
+    // absolute first token (accumulated from relative leadings). A successful
+    // repair rebuilds only that spine, reusing every untouched subtree by
+    // pointer. Item-containers on the path are the repair candidates, tried
+    // deepest-first — no red materialization; offsets come from green.
     struct ChainEntry {
-        RepairContext ctx;
-        std::size_t depth; // index into path_green / path_index
+        std::size_t depth; // index into path_green / path_index / path_first
+        bool enum_body;
     };
     std::vector<GreenRef> path_green{tree.green_root_};
     std::vector<std::uint32_t> path_index{0}; // path_green[k] sits at this index in path_green[k-1]
+    std::vector<std::uint32_t> path_first{0};  // absolute first token of path_green[k]
     std::vector<ChainEntry> chain;
-    chain.push_back({{0, false}, 0});
+    if (is_item_container(tree.green_root_->kind, tree.green_root_->reclassified)) {
+        chain.push_back({0, false});
+    }
     bool enum_ctx = false;
-    SyntaxNodeId cur = 0;
     while (true) {
-        SyntaxNodeId next = kInvalidNode;
+        const GreenNode* cur = path_green.back().get();
+        const std::uint32_t cur_first = path_first.back();
+        const GreenNode* next = nullptr;
         std::uint32_t next_index = 0;
-        const std::vector<SyntaxNodeId>& kids = tree.nodes_[cur].children;
-        for (std::uint32_t ci = 0; ci < kids.size(); ++ci) {
-            const SyntaxNode& child = tree.nodes_[kids[ci]];
-            if (child.kind != SyntaxKind::MissingToken && child.first_token <= guard_lo &&
-                child.end_token >= tok_hi) {
-                next = kids[ci];
+        std::uint32_t next_first = 0;
+        std::uint32_t cursor = cur_first;
+        for (std::uint32_t ci = 0; ci < cur->children.size(); ++ci) {
+            const GreenChild& gc = cur->children[ci];
+            const std::uint32_t cf = cursor + gc.leading;
+            if (gc.node->kind != SyntaxKind::MissingToken && cf <= guard_lo &&
+                cf + gc.node->width >= tok_hi) {
+                next = gc.node.get();
                 next_index = ci;
+                next_first = cf;
                 break;
             }
+            cursor = cf + gc.node->width;
         }
-        if (next == kInvalidNode) {
+        if (next == nullptr) {
             break;
         }
-        if (tree.nodes_[next].kind == SyntaxKind::ClassBody) {
-            // enum_body_ is scoped to the nearest ClassBody: derive it from
-            // the class head's first significant token.
-            const SyntaxNodeId decl = tree.nodes_[next].parent;
-            std::uint32_t j = tree.nodes_[decl].first_token;
+        if (next->kind == SyntaxKind::ClassBody) {
+            // enum_body_ is scoped to the nearest ClassBody: derive it from the
+            // class head (cur, the ClassDecl) first significant token.
+            std::uint32_t j = cur_first;
             while (is_trivia(tree.tokens_[j].kind)) {
                 ++j;
             }
             enum_ctx = tree.tokens_[j].kind == TokenKind::EnumKw;
         }
-        path_green.push_back(path_green.back()->children[next_index].node);
+        path_green.push_back(cur->children[next_index].node);
         path_index.push_back(next_index);
-        if (is_item_container(tree.nodes_[next])) {
-            chain.push_back({{next, enum_ctx}, path_green.size() - 1});
+        path_first.push_back(next_first);
+        if (is_item_container(next->kind, next->reclassified)) {
+            chain.push_back({path_green.size() - 1, enum_ctx});
         }
-        cur = next;
     }
 
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        GreenRef spliced = try_repair(tree.nodes_, tree.tokens_, it->ctx, path_green[it->depth],
+        const RepairContext ctx{it->enum_body};
+        GreenRef spliced = try_repair(tree.tokens_, ctx, path_green[it->depth], path_first[it->depth],
                                       guard_lo, tok_hi, delta_tok, new_text);
         if (!spliced) {
             continue;
@@ -1532,7 +1554,7 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
             }
             spliced = parent;
         }
-        tree = flat_from_green(spliced, std::move(tree.tokens_));
+        tree.set_green(spliced);
         return;
     }
 

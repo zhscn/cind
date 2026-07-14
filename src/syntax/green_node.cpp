@@ -24,31 +24,7 @@ GreenRef encode(const std::vector<SyntaxNode>& nodes, SyntaxNodeId id) {
     return g;
 }
 
-void materialize(const GreenRef& g, std::uint32_t base, SyntaxNodeId parent,
-                 std::vector<SyntaxNode>& out) {
-    const auto id = static_cast<SyntaxNodeId>(out.size());
-    out.push_back(SyntaxNode{g->kind, base, base + g->width, parent, {}, g->incomplete,
-                             g->reclassified, g->expected});
-    std::vector<SyntaxNodeId> child_ids;
-    child_ids.reserve(g->children.size());
-    std::uint32_t cursor = base;
-    for (const GreenChild& c : g->children) {
-        const std::uint32_t cbase = cursor + c.leading;
-        child_ids.push_back(static_cast<SyntaxNodeId>(out.size()));
-        materialize(c.node, cbase, id, out);
-        cursor = cbase + c.node->width;
-    }
-    out[id].children = std::move(child_ids);
-}
-
 } // namespace
-
-GreenRef green_from_flat(const SyntaxTree& tree) {
-    if (tree.nodes_.empty()) {
-        return nullptr;
-    }
-    return encode(tree.nodes_, tree.root());
-}
 
 GreenRef green_from_flat_subtree(const std::vector<SyntaxNode>& nodes, SyntaxNodeId root) {
     if (nodes.empty()) {
@@ -57,14 +33,36 @@ GreenRef green_from_flat_subtree(const std::vector<SyntaxNode>& nodes, SyntaxNod
     return encode(nodes, root);
 }
 
-SyntaxTree flat_from_green(const GreenRef& root, std::vector<Token> tokens) {
-    SyntaxTree tree;
-    tree.green_root_ = root;
-    tree.tokens_ = std::move(tokens);
-    if (root) {
-        materialize(root, 0, kInvalidNode, tree.nodes_);
+std::size_t green_count(const GreenRef& root) {
+    if (!root) {
+        return 0;
     }
-    return tree;
+    std::size_t n = 1;
+    for (const GreenChild& c : root->children) {
+        n += green_count(c.node);
+    }
+    return n;
+}
+
+bool green_equal(const GreenRef& a, const GreenRef& b) {
+    if (a == b) {
+        return true; // same pointer (shared subtree) or both null
+    }
+    if (!a || !b) {
+        return false;
+    }
+    if (a->kind != b->kind || a->width != b->width || a->incomplete != b->incomplete ||
+        a->reclassified != b->reclassified || a->expected != b->expected ||
+        a->children.size() != b->children.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a->children.size(); ++i) {
+        if (a->children[i].leading != b->children[i].leading ||
+            !green_equal(a->children[i].node, b->children[i].node)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace cind

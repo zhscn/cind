@@ -36,23 +36,69 @@ std::string_view syntax_kind_name(SyntaxKind kind) {
     return "?";
 }
 
-TextRange SyntaxTree::node_range(SyntaxNodeId id) const {
-    const SyntaxNode& n = nodes_[id];
-    if (n.first_token >= n.end_token) {
-        const std::uint32_t offset = n.first_token < tokens_.size()
-                                         ? tokens_[n.first_token].range.start.value
-                                         : (tokens_.empty() ? 0 : tokens_.back().range.end.value);
+namespace {
+
+// Text range of a node spanning half-open token range [base, base+width).
+// Zero-width nodes (MissingToken) collapse to a zero-length range.
+TextRange span_range(std::uint32_t base, std::uint32_t width, const std::vector<Token>& toks) {
+    if (width == 0) {
+        const std::uint32_t offset = base < toks.size()
+                                         ? toks[base].range.start.value
+                                         : (toks.empty() ? 0 : toks.back().range.end.value);
         return make_range(offset, offset);
     }
-    return TextRange{tokens_[n.first_token].range.start, tokens_[n.end_token - 1].range.end};
+    return TextRange{toks[base].range.start, toks[base + width - 1].range.end};
+}
+
+} // namespace
+
+SyntaxNodeId SyntaxTree::root() const {
+    if (red_.empty() && green_root_) {
+        red_.push_back(SyntaxNode{green_root_->kind, 0, green_root_->width, kInvalidNode, {},
+                                  green_root_->incomplete, green_root_->reclassified,
+                                  green_root_->expected, green_root_.get(), false});
+    }
+    return 0;
+}
+
+void SyntaxTree::expand(SyntaxNodeId id) const {
+    SyntaxNode& n = red_[id];
+    if (n.expanded) {
+        return;
+    }
+    n.expanded = true;
+    const GreenNode* g = n.green;
+    std::uint32_t cursor = n.first_token;
+    std::vector<SyntaxNodeId> kids;
+    kids.reserve(g->children.size());
+    for (const GreenChild& gc : g->children) {
+        const std::uint32_t cf = cursor + gc.leading;
+        kids.push_back(static_cast<SyntaxNodeId>(red_.size()));
+        red_.push_back(SyntaxNode{gc.node->kind, cf, cf + gc.node->width, id, {},
+                                  gc.node->incomplete, gc.node->reclassified, gc.node->expected,
+                                  gc.node.get(), false});
+        cursor = cf + gc.node->width;
+    }
+    red_[id].children = std::move(kids);
+}
+
+const SyntaxNode& SyntaxTree::node(SyntaxNodeId id) const {
+    expand(id);
+    return red_[id];
+}
+
+TextRange SyntaxTree::node_range(SyntaxNodeId id) const {
+    const SyntaxNode& n = red_[id];
+    return span_range(n.first_token, n.end_token - n.first_token, tokens_);
 }
 
 SyntaxNodeId SyntaxTree::node_at(TextOffset offset) const {
     SyntaxNodeId current = root();
     while (true) {
+        expand(current);
         bool descended = false;
-        for (SyntaxNodeId child : nodes_[current].children) {
-            if (nodes_[child].kind == SyntaxKind::MissingToken) {
+        for (SyntaxNodeId child : red_[current].children) {
+            if (red_[child].kind == SyntaxKind::MissingToken) {
                 continue;
             }
             if (node_range(child).contains(offset)) {
@@ -69,27 +115,32 @@ SyntaxNodeId SyntaxTree::node_at(TextOffset offset) const {
 
 namespace {
 
-void dump_node(const SyntaxTree& tree, SyntaxNodeId id, int depth, std::string& out) {
-    const SyntaxNode& n = tree.node(id);
+// Preorder dump straight from the green tree (no red materialization). `base` is
+// the node's first token index; child offsets accumulate from relative leadings.
+void dump_green(const GreenNode* g, std::uint32_t base, const std::vector<Token>& toks, int depth,
+                std::string& out) {
     out.append(static_cast<std::size_t>(depth) * 2, ' ');
-    if (n.kind == SyntaxKind::MissingToken) {
+    if (g->kind == SyntaxKind::MissingToken) {
         out += "Missing(";
-        out += token_kind_name(n.expected);
+        out += token_kind_name(g->expected);
         out += ")";
     } else {
-        out += syntax_kind_name(n.kind);
+        out += syntax_kind_name(g->kind);
     }
-    TextRange range = tree.node_range(id);
+    const TextRange range = span_range(base, g->width, toks);
     out += " ";
     out += std::to_string(range.start.value);
     out += "..";
     out += std::to_string(range.end.value);
-    if (n.incomplete) {
+    if (g->incomplete) {
         out += " (incomplete)";
     }
     out += "\n";
-    for (SyntaxNodeId child : n.children) {
-        dump_node(tree, child, depth + 1, out);
+    std::uint32_t cursor = base;
+    for (const GreenChild& c : g->children) {
+        const std::uint32_t cf = cursor + c.leading;
+        dump_green(c.node.get(), cf, toks, depth + 1, out);
+        cursor = cf + c.node->width;
     }
 }
 
@@ -97,7 +148,9 @@ void dump_node(const SyntaxTree& tree, SyntaxNodeId id, int depth, std::string& 
 
 std::string SyntaxTree::dump(std::string_view) const {
     std::string out;
-    dump_node(*this, root(), 0, out);
+    if (green_root_) {
+        dump_green(green_root_.get(), 0, tokens_, 0, out);
+    }
     return out;
 }
 

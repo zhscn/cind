@@ -16,36 +16,6 @@ using namespace cind;
 
 namespace {
 
-// Materializing `green` against `t`'s tokens must reproduce `t` byte-exact:
-// same DFS-preorder ids and per-node fields.
-void expect_materializes_to(const GreenRef& green, const SyntaxTree& t, std::string_view text) {
-    SyntaxTree back = flat_from_green(green, t.tokens());
-    REQUIRE(back.node_count() == t.node_count());
-    REQUIRE(back.tokens().size() == t.tokens().size());
-    for (SyntaxNodeId id = 0; id < t.node_count(); ++id) {
-        CAPTURE(id);
-        const SyntaxNode& a = t.node(id);
-        const SyntaxNode& b = back.node(id);
-        REQUIRE(b.kind == a.kind);
-        REQUIRE(b.first_token == a.first_token);
-        REQUIRE(b.end_token == a.end_token);
-        REQUIRE(b.parent == a.parent);
-        REQUIRE(b.children == a.children);
-        REQUIRE(b.incomplete == a.incomplete);
-        REQUIRE(b.reclassified == a.reclassified);
-        REQUIRE(b.expected == a.expected);
-    }
-    REQUIRE(back.dump(text) == t.dump(text));
-}
-
-// The green encoding round-trips (flat -> green -> flat), and the tree's own
-// green_root() (maintained by parse/reparse) is consistent with its red nodes.
-void check_green_roundtrip(const SyntaxTree& t, std::string_view text) {
-    expect_materializes_to(green_from_flat(t), t, text);
-    REQUIRE(t.green_root() != nullptr);
-    expect_materializes_to(t.green_root(), t, text);
-}
-
 // Applies one edit via reparse() and checks against a from-scratch parse.
 std::string check_edit(const std::string& before, std::uint32_t start, std::uint32_t end,
                        std::string_view replacement) {
@@ -76,17 +46,10 @@ std::string check_edit(const std::string& before, std::uint32_t start, std::uint
     const std::string got = tree.dump(after);
     const std::string want = full.dump(after);
     CHECK(got == want);
-    REQUIRE(tree.node_count() == full.node_count());
-    // dump() does not show parent links; verify them structurally.
-    for (SyntaxNodeId id = 0; id < tree.node_count(); ++id) {
-        CAPTURE(id);
-        REQUIRE(tree.node(id).parent == full.node(id).parent);
-        REQUIRE(tree.node(id).children == full.node(id).children);
-        REQUIRE(tree.node(id).incomplete == full.node(id).incomplete);
-        REQUIRE(tree.node(id).expected == full.node(id).expected);
-    }
-    check_green_roundtrip(full, after);
-    check_green_roundtrip(tree, after);
+    // green_equal is the complete id-free structural + positional oracle: same
+    // kind, width, flags, expected, and children with equal relative leadings,
+    // recursively — two trees are green_equal iff they materialize identically.
+    REQUIRE(green_equal(tree.green_root(), full.green_root()));
     return after;
 }
 
