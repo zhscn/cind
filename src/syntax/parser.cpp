@@ -117,12 +117,19 @@ public:
                 continue;
             }
             guarded([&] { parse_declaration_or_statement(); });
+            if (pp_escalate_) {
+                break;
+            }
             if (unwinding()) {
                 if (static_cast<std::uint32_t>(stack_.size()) > unwind_target_) {
                     break;
                 }
                 unwind_target_ = kNoUnwind;
             }
+        }
+        if (pp_escalate_) {
+            result.aligned_at = kNoBoundary; // a conditional opened before our span
+            return result;
         }
         result.nodes = std::move(tree_.nodes_);
         return result;
@@ -383,7 +390,16 @@ private:
             return PPItem::Consumed;
         case PPCat::Alt:
             if (pp_frames_.empty()) {
-                return PPItem::Dispatch; // straddles a sandbox start: flat fallback
+                // The matching #if is not in view. In a full parse this is a
+                // genuinely unmatched #else — stay flat, bounded. In a sandbox
+                // reparse it means the conditional opened before our span, so
+                // we cannot know whether to unwind: escalate to a container
+                // that spans the whole conditional.
+                if (tokens_view_ != nullptr) {
+                    pp_escalate_ = true;
+                    return PPItem::StopLoop;
+                }
+                return PPItem::Dispatch;
             }
             if (pp_frames_.back().owner_depth < depth) {
                 unwind_target_ = pp_frames_.back().owner_depth;
@@ -410,6 +426,9 @@ private:
     // loop (stack depth == unwind_target_) resumes.
     template <typename StopFn> void run_container_items(StopFn stop) {
         while (!stop()) {
+            if (pp_escalate_) {
+                break;
+            }
             const PPItem step = pp_open_item();
             if (step == PPItem::StopLoop) {
                 break;
@@ -418,6 +437,9 @@ private:
                 continue;
             }
             guarded([&] { parse_declaration_or_statement(); });
+            if (pp_escalate_) {
+                break;
+            }
             if (unwinding()) {
                 if (static_cast<std::uint32_t>(stack_.size()) > unwind_target_) {
                     break;
@@ -1073,6 +1095,10 @@ private:
     static constexpr std::uint32_t kNoUnwind = 0xFFFFFFFFu;
     std::uint32_t unwind_target_ = kNoUnwind;
     bool unwinding() const { return unwind_target_ != kNoUnwind; }
+    // Sandbox reparse only: set when an #else/#elif is reached whose #if opened
+    // before the reparse span, so the block repair must escalate to a wider
+    // container instead of guessing the conditional's brace balance.
+    bool pp_escalate_ = false;
 };
 
 SyntaxTree parse(std::string_view text) {
@@ -1339,6 +1365,77 @@ bool try_repair(std::vector<SyntaxNode>& nodes, const std::vector<Token>& toks,
     return true;
 }
 
+// True if the token range [lo, hi) contains a preprocessor conditional
+// directive (#if/#ifdef/#ifndef/#else/#elif/#endif). `text` resolves the
+// directive keyword spelling. Adding, deleting or retyping such a directive
+// shifts the #if-frame nesting for every following sibling item, which the
+// block repair reuses verbatim — so it forces a full reparse instead.
+// The #if-frame model reshapes the tree only when an alternative branch forces
+// an unwind, so it makes a block repair over the window at `guard_lo` unsafe in
+// exactly two cases, both of which mean the reused prefix/suffix could carry a
+// stale brace-frame context the local repair cannot rebuild:
+//   * guard_lo sits inside an open conditional (an #if before it is not yet
+//     closed) — an #else in that conditional, even before the window, unwinds
+//     across it;
+//   * an #else/#elif lies at or after guard_lo — its #if may be arbitrarily far
+//     back and a brace edit shifts the depth it restores to.
+// A file whose conditionals are all balanced-and-closed before guard_lo with no
+// alternative in reach parses identically to the flat baseline, so this returns
+// false and the fast incremental path runs. The caller full-reparses otherwise.
+bool pp_repair_unsafe(const std::vector<Token>& toks, std::uint32_t guard_lo, const Text& text) {
+    int depth = 0;
+    for (std::uint32_t i = 0; i < toks.size(); ++i) {
+        if (i == guard_lo && depth > 0) {
+            return true; // window opens inside a conditional
+        }
+        if (toks[i].kind != TokenKind::PreprocessorHash) {
+            continue;
+        }
+        std::uint32_t j = i + 1;
+        while (j < toks.size() && is_trivia(toks[j].kind)) {
+            ++j;
+        }
+        if (j >= toks.size()) {
+            continue;
+        }
+        const TokenKind kw = toks[j].kind;
+        const PPCat cat = kw == TokenKind::Identifier ? pp_classify(kw, text.substring(toks[j].range))
+                                                      : pp_classify(kw, {});
+        if (cat == PPCat::Alt && i >= guard_lo) {
+            return true; // alternative branch within reach of the window
+        }
+        if (cat == PPCat::Open) {
+            ++depth;
+        } else if (cat == PPCat::Close) {
+            depth = depth > 0 ? depth - 1 : 0;
+        }
+    }
+    return false;
+}
+
+bool splice_touches_pp_conditional(const std::vector<Token>& toks, std::size_t lo, std::size_t hi,
+                                   const Text& text) {
+    for (std::size_t i = lo; i < hi && i < toks.size(); ++i) {
+        if (toks[i].kind != TokenKind::PreprocessorHash) {
+            continue;
+        }
+        std::size_t j = i + 1;
+        while (j < toks.size() && is_trivia(toks[j].kind)) {
+            ++j;
+        }
+        if (j >= toks.size()) {
+            continue;
+        }
+        const TokenKind kw = toks[j].kind;
+        const PPCat cat = kw == TokenKind::Identifier ? pp_classify(kw, text.substring(toks[j].range))
+                                                      : pp_classify(kw, {});
+        if (cat != PPCat::Other) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text& old_text,
@@ -1368,8 +1465,21 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     const std::int64_t delta_tok =
         static_cast<std::int64_t>(s.scanned.tokens.size()) - static_cast<std::int64_t>(old_span);
 
+    // Read the old (about-to-be-replaced) and new token windows before the
+    // splice is applied: a conditional directive on either side means the
+    // #if-frame nesting may have shifted for following items.
+    const bool pp_structure_changed =
+        splice_touches_pp_conditional(tree.tokens_, tok_lo, tok_hi, old_text) ||
+        splice_touches_pp_conditional(s.scanned.tokens, 0, s.scanned.tokens.size(), new_text);
+
     relex_apply(tree.tokens_, line_states, std::move(s));
     if (identical) {
+        return;
+    }
+    if (pp_structure_changed) {
+        LexOutput lexed;
+        lexed.tokens = std::move(tree.tokens_);
+        tree = parse(new_text, std::move(lexed));
         return;
     }
 
@@ -1390,6 +1500,17 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
                 break;
             }
         }
+    }
+
+    // A conditional whose #if-frame context the local repair cannot rebuild
+    // (window inside an open conditional, or an #else/#elif in reach) forces a
+    // full reparse. Files without a reachable alternative branch parse exactly
+    // as the flat baseline, so this never fires for them.
+    if (pp_repair_unsafe(tree.tokens_, guard_lo, new_text)) {
+        LexOutput lexed;
+        lexed.tokens = std::move(tree.tokens_);
+        tree = parse(new_text, std::move(lexed));
+        return;
     }
 
     // Container chain from the root down to the deepest one holding the

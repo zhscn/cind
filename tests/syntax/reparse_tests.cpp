@@ -189,3 +189,91 @@ TEST_CASE("reparse: fuzz against full parse") {
         }
     }
 }
+
+TEST_CASE("reparse: edits around split-brace #if/#else match a full parse") {
+    // Both branches open a brace, one shared '}' after #endif. A reparse whose
+    // span starts between #if and #else must not flatten the sibling structure
+    // the full parse produces (design.md §276).
+    const std::string text = "int h() {\n"    // 0
+                             "#ifdef A\n"      // 1
+                             "  int x = 1;\n"  // 2
+                             "  if (a) {\n"    // 3
+                             "#else\n"         // 4
+                             "  int y = 2;\n"  // 5
+                             "  if (b) {\n"    // 6
+                             "#endif\n"        // 7
+                             "    inner();\n"  // 8
+                             "  }\n"           // 9
+                             "  tail();\n"     // 10
+                             "}\n";            // 11
+    // edit inside the #if branch (before #else): the risky mid-conditional start
+    check_edit(text, 30, 31, "11");  // int x = 1 -> int x = 11
+    // edit inside the #else branch
+    check_edit(text, 56, 57, "22");
+    // edit in the shared tail after #endif
+    check_edit(text, 92, 96, "call");
+    // edit on the last statement
+    check_edit(text, 108, 112, "ret");
+}
+
+TEST_CASE("reparse: edits near the extern-C / __cplusplus guard match a full parse") {
+    const std::string text = "#ifdef __cplusplus\n"
+                             "extern \"C\" {\n"
+                             "#endif\n"
+                             "void f(int);\n"
+                             "int g(void);\n"
+                             "#ifdef __cplusplus\n"
+                             "}\n"
+                             "#endif\n";
+    check_edit(text, 50, 51, "F");   // rename inside the guarded body
+    check_edit(text, 63, 63, "\nvoid h(void);"); // insert a declaration
+}
+
+TEST_CASE("reparse fuzz: split-brace conditionals stay consistent under random edits") {
+    std::mt19937 rng(0xC0FFEE);
+    const char* fragments[] = {
+        "#ifdef A\n", "#else\n", "#endif\n", "#if X\n", "#elif Y\n",
+        "if (a) {\n", "if (b) {\n", "}\n", "  stmt();\n", "  return x;\n",
+        "int z = 1;\n", "void q() {\n", "for (;;) {\n", ";", "{", "}",
+        "// c\n", "x", "\n", "  ",
+    };
+    std::string doc = "int h() {\n"
+                      "#ifdef A\n  if (a) {\n#else\n  if (b) {\n#endif\n"
+                      "    inner();\n  }\n  tail();\n}\n";
+    for (int step = 0; step < 400; ++step) {
+        CAPTURE(step);
+        const auto pick = fragments[rng() % std::size(fragments)];
+        const auto len = static_cast<std::uint32_t>(doc.size());
+        std::uint32_t start = len == 0 ? 0 : rng() % (len + 1);
+        std::uint32_t end = start;
+        if (rng() % 3 == 0 && start < len) {
+            end = start + rng() % std::min<std::uint32_t>(len - start + 1, 40);
+        }
+        const bool insert = rng() % 4 != 0;
+        doc = check_edit(doc, start, end, insert ? pick : std::string_view{});
+        if (doc.size() > 8000) {
+            doc = check_edit(doc, 0, static_cast<std::uint32_t>(doc.size()) / 2, "");
+        }
+    }
+}
+
+TEST_CASE("reparse: minimized pp-fuzz repro (step 153)") {
+    const std::string doc = "; } ;;##endif\ni#else\n{#e\n}\nx;void#i X\nq() {\n#elif Y\n  // c\n";
+    check_edit(doc, 27, 27, "#ifdef A\n");
+}
+
+TEST_CASE("reparse: minimized pp-fuzz repro (seed5 step268)") {
+    const std::string doc =
+        "#  ifdef Ax\nt#int v#else\noid q()#endif\n {\nz =    for (;;) {\n(ifurn x;\n#if X\nt//"
+        "}oivoid q() if (a) {\n{\nf (a) {\n#else\nid q() {\nturn x;\nnt #i;xe#ifdef A\n;\n(  "
+        "stmtvoid q() {\n\nif (#else\nif (b) {\nb) {\n)inxt z  //void q() {\n\n{\n {\n();\ne#endif\n";
+    check_edit(doc, 214, 223, "  stmt();\n");
+}
+
+TEST_CASE("reparse: minimized pp-fuzz repro (seed11 step463)") {
+    const std::string doc =
+        "#if X\nif    int x#ifdef A\nc\nivoid q\n#if X\ntm};t(})void q(#else\n) {for#{else\n (;;) "
+        "{if (a) {\nurn x;\nor (;;) {\n#elif Y\n\nq(}}\n) {#endif\n\n {\n  #  return x;\n (a) {\n"
+        "f int z = 1;\nlif Y\n{\n X\n";
+    check_edit(doc, 16, 16, "for (;;) {\n");
+}
