@@ -3,6 +3,7 @@
 
 #include "cpp_lexer/lexer.hpp"
 #include "document/text.hpp"
+#include "syntax/green_node.hpp"
 #include "syntax/syntax_tree.hpp"
 
 #include <cstdlib>
@@ -14,6 +15,28 @@
 using namespace cind;
 
 namespace {
+
+// The green encoding must round-trip byte-exact: flat -> green -> flat equals
+// the original tree, including DFS-preorder ids and per-node fields.
+void check_green_roundtrip(const SyntaxTree& t, std::string_view text) {
+    SyntaxTree back = flat_from_green(green_from_flat(t), t.tokens());
+    REQUIRE(back.node_count() == t.node_count());
+    REQUIRE(back.tokens().size() == t.tokens().size());
+    for (SyntaxNodeId id = 0; id < t.node_count(); ++id) {
+        CAPTURE(id);
+        const SyntaxNode& a = t.node(id);
+        const SyntaxNode& b = back.node(id);
+        REQUIRE(b.kind == a.kind);
+        REQUIRE(b.first_token == a.first_token);
+        REQUIRE(b.end_token == a.end_token);
+        REQUIRE(b.parent == a.parent);
+        REQUIRE(b.children == a.children);
+        REQUIRE(b.incomplete == a.incomplete);
+        REQUIRE(b.reclassified == a.reclassified);
+        REQUIRE(b.expected == a.expected);
+    }
+    REQUIRE(back.dump(text) == t.dump(text));
+}
 
 // Applies one edit via reparse() and checks against a from-scratch parse.
 std::string check_edit(const std::string& before, std::uint32_t start, std::uint32_t end,
@@ -54,6 +77,7 @@ std::string check_edit(const std::string& before, std::uint32_t start, std::uint
         REQUIRE(tree.node(id).incomplete == full.node(id).incomplete);
         REQUIRE(tree.node(id).expected == full.node(id).expected);
     }
+    check_green_roundtrip(full, after);
     return after;
 }
 

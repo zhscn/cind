@@ -10,6 +10,10 @@ add_executable(reparse_tests syntax/reparse_tests.cpp)
 target_link_libraries(reparse_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME reparse_tests COMMAND reparse_tests)
 
+add_executable(green_tree_tests syntax/green_tree_tests.cpp)
+target_link_libraries(green_tree_tests PRIVATE cind_syntax doctest::doctest)
+add_test(NAME green_tree_tests COMMAND green_tree_tests)
+
 add_executable(relex_tests lexer/relex_tests.cpp)
 target_link_libraries(relex_tests PRIVATE cind_lexer doctest::doctest)
 add_test(NAME relex_tests COMMAND relex_tests)

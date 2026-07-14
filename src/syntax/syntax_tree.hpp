@@ -4,6 +4,7 @@
 #include "cpp_lexer/token.hpp"
 #include "syntax/syntax_kind.hpp"
 
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@
 namespace cind {
 
 class Text;
+struct GreenNode;
 
 using SyntaxNodeId = std::uint32_t;
 inline constexpr SyntaxNodeId kInvalidNode = 0xFFFFFFFFu;
@@ -56,6 +58,7 @@ private:
     template <typename Source> friend class Parser;
     friend void reparse(SyntaxTree&, std::vector<LexerState>&, const Text&, const Text&,
                         std::span<const TextEdit>);
+    friend SyntaxTree flat_from_green(const std::shared_ptr<const GreenNode>&, std::vector<Token>);
 
     std::vector<Token> tokens_;
     std::vector<SyntaxNode> nodes_;
