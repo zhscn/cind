@@ -88,6 +88,13 @@ public:
     // Content comparison, chunk-wise, without materializing.
     friend bool operator==(const Text& a, std::string_view b);
 
+    // Structural diff: the smallest single edit turning a into b, with the
+    // shared prefix and suffix skipped chunk-wise (pointer-equal chunks
+    // compare in O(1), so revisions that share structure diff in
+    // O(changed bytes + log n)). Returns nullopt when the contents are
+    // equal. The result is in a's coordinates.
+    friend std::optional<TextEdit> diff_edit(const Text& a, const Text& b);
+
 private:
     friend class TextCursor;
 
@@ -108,6 +115,10 @@ public:
     std::string_view chunk() const;
     // Offset of chunk().front(); size_bytes() when at the end.
     TextOffset position() const;
+    // The whole chunk containing the current position (chunk() without the
+    // leading skip) and the text offset of its first byte.
+    std::string_view whole_chunk() const;
+    TextOffset whole_chunk_offset() const { return TextOffset{leaf_start_}; }
     bool at_end() const { return leaf_ == nullptr; }
     void advance_chunk();
 

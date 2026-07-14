@@ -58,7 +58,9 @@ std::uint32_t adjust_anchor(std::uint32_t offset, AnchorAffinity affinity, std::
 // ---------------------------------------------------------------- Document
 
 Document::Document(std::string text, DocumentId id)
-    : id_(id), text_(normalize_newlines(std::move(text))) {}
+    : id_(id), text_(normalize_newlines(std::move(text))) {
+    undo_nodes_.push_back(UndoNode{text_, {}, {}, kInvalidUndoNode, {}});
+}
 
 DocumentSnapshot Document::snapshot() const { return DocumentSnapshot(id_, revision_, text_); }
 
@@ -88,25 +90,80 @@ DocumentChange Document::apply_edit_list(const std::vector<TextEdit>& edits) {
 
 std::optional<DocumentChange> Document::undo() {
     require_no_transaction("undo");
-    if (undo_stack_.empty()) {
+    if (undo_current_ == 0) {
         return std::nullopt;
     }
-    UndoEntry entry = std::move(undo_stack_.back());
-    undo_stack_.pop_back();
-    DocumentChange change = apply_edit_list(entry.inverse);
-    redo_stack_.push_back(std::move(entry));
+    const UndoNodeId leaving = undo_current_;
+    DocumentChange change = apply_edit_list(undo_nodes_[leaving].inverse);
+    undo_current_ = undo_nodes_[leaving].parent;
     return change;
 }
 
 std::optional<DocumentChange> Document::redo() {
     require_no_transaction("redo");
-    if (redo_stack_.empty()) {
+    const auto& children = undo_nodes_[undo_current_].children;
+    if (children.empty()) {
         return std::nullopt;
     }
-    UndoEntry entry = std::move(redo_stack_.back());
-    redo_stack_.pop_back();
-    DocumentChange change = apply_edit_list(entry.forward);
-    undo_stack_.push_back(std::move(entry));
+    const UndoNodeId child = children.back();
+    DocumentChange change = apply_edit_list(undo_nodes_[child].forward);
+    undo_current_ = child;
+    return change;
+}
+
+const Document::UndoNode& Document::undo_node(UndoNodeId id) const {
+    if (id >= undo_nodes_.size()) {
+        throw std::out_of_range("Document: unknown undo node");
+    }
+    return undo_nodes_[id];
+}
+
+UndoNodeId Document::undo_parent(UndoNodeId id) const { return undo_node(id).parent; }
+
+const std::vector<UndoNodeId>& Document::undo_children(UndoNodeId id) const {
+    return undo_node(id).children;
+}
+
+const Text& Document::undo_node_text(UndoNodeId id) const { return undo_node(id).text; }
+
+DocumentChange Document::undo_to(UndoNodeId id) {
+    require_no_transaction("undo_to");
+    undo_node(id); // validate
+
+    // Path current -> LCA -> target, found by walking both ancestor chains.
+    std::vector<UndoNodeId> target_chain; // target up to the root
+    for (UndoNodeId n = id; n != kInvalidUndoNode; n = undo_nodes_[n].parent) {
+        target_chain.push_back(n);
+    }
+    std::vector<UndoNodeId> up; // nodes left while climbing from current
+    UndoNodeId meet = kInvalidUndoNode;
+    for (UndoNodeId n = undo_current_; n != kInvalidUndoNode; n = undo_nodes_[n].parent) {
+        if (auto it = std::ranges::find(target_chain, n); it != target_chain.end()) {
+            meet = n;
+            target_chain.erase(it, target_chain.end()); // keep target..below-LCA
+            break;
+        }
+        up.push_back(n);
+    }
+    (void)meet; // both chains reach the root, so a meeting point always exists
+
+    // Replay all step edit lists inside one transaction: one revision, one
+    // normalized composed edit list.
+    EditTransaction tx = begin_transaction();
+    tx.record_undo_ = false;
+    auto apply_list = [&tx](const std::vector<TextEdit>& edits) {
+        for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+            tx.replace(it->old_range, it->new_text);
+        }
+    };
+    for (UndoNodeId n : up) {
+        apply_list(undo_nodes_[n].inverse);
+    }
+    for (auto it = target_chain.rbegin(); it != target_chain.rend(); ++it) {
+        apply_list(undo_nodes_[*it].forward); // LCA-side first, target last
+    }
+    DocumentChange change = tx.commit().change;
+    undo_current_ = id;
     return change;
 }
 
@@ -346,8 +403,11 @@ CommitResult EditTransaction::commit() {
     doc.anchors_ = std::move(anchors_);
 
     if (record_undo_) {
-        doc.undo_stack_.push_back(Document::UndoEntry{std::move(edits_), std::move(inverse)});
-        doc.redo_stack_.clear();
+        const auto id = static_cast<UndoNodeId>(doc.undo_nodes_.size());
+        doc.undo_nodes_.push_back(Document::UndoNode{
+            doc.text_, std::move(edits_), std::move(inverse), doc.undo_current_, {}});
+        doc.undo_nodes_[doc.undo_current_].children.push_back(id);
+        doc.undo_current_ = id; // an edit after undo starts a new branch
     }
 
     CommitResult result{std::move(change), doc.snapshot()};

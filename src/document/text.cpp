@@ -453,6 +453,69 @@ std::optional<std::string> Text::validate() const {
     return validate_node(root_.get(), true);
 }
 
+std::optional<TextEdit> diff_edit(const Text& a, const Text& b) {
+    const std::uint32_t a_size = a.size_bytes();
+    const std::uint32_t b_size = b.size_bytes();
+    const std::uint32_t limit = std::min(a_size, b_size);
+
+    // Common prefix: shared chunks (same storage, same cut) skip whole; a
+    // divergence falls back to byte comparison inside the chunk pair.
+    std::uint32_t prefix = 0;
+    while (prefix < limit) {
+        TextCursor ca(a, TextOffset{prefix});
+        TextCursor cb(b, TextOffset{prefix});
+        const std::string_view x = ca.chunk();
+        const std::string_view y = cb.chunk();
+        if (x.data() == y.data() && x.size() == y.size()) {
+            prefix += static_cast<std::uint32_t>(x.size());
+            continue;
+        }
+        const std::size_t n = std::min({x.size(), y.size(),
+                                        static_cast<std::size_t>(limit - prefix)});
+        std::size_t i = 0;
+        while (i < n && x[i] == y[i]) {
+            ++i;
+        }
+        prefix += static_cast<std::uint32_t>(i);
+        if (i < n) {
+            break;
+        }
+    }
+    if (a_size == b_size && prefix == a_size) {
+        return std::nullopt;
+    }
+
+    // Common suffix over the bytes past the prefix, walking chunks backwards.
+    const std::uint32_t max_suffix = limit - prefix;
+    std::uint32_t suffix = 0;
+    while (suffix < max_suffix) {
+        const std::uint32_t ea = a_size - suffix; // exclusive ends
+        const std::uint32_t eb = b_size - suffix;
+        TextCursor ca(a, TextOffset{ea - 1});
+        TextCursor cb(b, TextOffset{eb - 1});
+        const std::string_view x = ca.whole_chunk();
+        const std::string_view y = cb.whole_chunk();
+        const std::uint32_t wa = ea - ca.whole_chunk_offset().value; // bytes before ea
+        const std::uint32_t wb = eb - cb.whole_chunk_offset().value;
+        const std::uint32_t step = std::min({wa, wb, max_suffix - suffix});
+        if (x.data() == y.data() && wa == wb) {
+            suffix += step; // identical chunk, identical cut: bytes must match
+            continue;
+        }
+        std::uint32_t j = 0;
+        while (j < step && x[wa - 1 - j] == y[wb - 1 - j]) {
+            ++j;
+        }
+        suffix += j;
+        if (j < step) {
+            break;
+        }
+    }
+
+    return TextEdit{make_range(prefix, a_size - suffix),
+                    b.substring(make_range(prefix, b_size - suffix))};
+}
+
 bool operator==(const Text& a, std::string_view b) {
     if (a.size_bytes() != b.size()) {
         return false;
@@ -499,6 +562,13 @@ std::string_view TextCursor::chunk() const {
         return {};
     }
     return std::string_view(leaf_->bytes).substr(skip_);
+}
+
+std::string_view TextCursor::whole_chunk() const {
+    if (!leaf_) {
+        return {};
+    }
+    return leaf_->bytes;
 }
 
 TextOffset TextCursor::position() const {

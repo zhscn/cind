@@ -220,6 +220,49 @@ TEST_CASE("text: chunk cursor covers the text from any start") {
                     std::out_of_range);
 }
 
+TEST_CASE("text: structural diff between revisions") {
+    std::string base;
+    for (int i = 0; i < 4000; ++i) {
+        base += "line " + std::to_string(i) + "\n";
+    }
+    Text a(base);
+    CHECK(!diff_edit(a, a).has_value());
+    CHECK(!diff_edit(Text(), Text()).has_value());
+
+    auto check_diff = [](const Text& x, const Text& y) {
+        std::optional<TextEdit> d = diff_edit(x, y);
+        REQUIRE(d.has_value());
+        std::string patched = x.to_string();
+        patched.replace(d->old_range.start.value, d->old_range.length(), d->new_text);
+        CHECK(patched == y.to_string());
+        return *d;
+    };
+
+    // Single mid-file edit on shared structure: the diff is tight.
+    Text b = a.replace(make_range(20000, 20005), "EDIT");
+    TextEdit d = check_diff(a, b);
+    CHECK(d.old_range.start.value >= 19995);
+    CHECK(d.old_range.end.value <= 20010);
+
+    check_diff(b, a);                                    // reverse direction
+    check_diff(a, a.insert(TextOffset{0}, "prefix"));    // no shared alignment
+    check_diff(a, a.erase(make_range(0, 100)));
+    check_diff(a, a.insert(a.end_offset(), "suffix"));
+    check_diff(a, Text());                               // everything deleted
+    check_diff(Text(), a);
+
+    // Randomized: diff of two edit chains still patches correctly.
+    std::mt19937 rng(99);
+    Text c = a;
+    std::uniform_int_distribution<std::uint32_t> dist(0, 1 << 30);
+    for (int i = 0; i < 20; ++i) {
+        std::uint32_t at = dist(rng) % (c.size_bytes() + 1);
+        std::uint32_t len = std::min(dist(rng) % 40, c.size_bytes() - at);
+        c = c.replace(make_range(at, at + len), i % 2 ? "" : "patchpatch");
+        check_diff(a, c);
+    }
+}
+
 TEST_CASE("text: randomized edits match std::string model") {
     std::mt19937 rng(20260714);
     std::string model;

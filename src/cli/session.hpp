@@ -2,14 +2,16 @@
 
 #include "commands/editor_commands.hpp"
 
+#include <algorithm>
+#include <map>
 #include <string>
 #include <string_view>
 
 namespace cind {
 
 // Shared execution core for the repl and the fixture runner: a document, a
-// caret and a style, driven by editor commands. Caret history mirrors the
-// document's undo stack so undo also restores the caret.
+// caret and a style, driven by editor commands. Caret history is keyed by
+// undo-tree node, so undo/redo restore the caret on any branch.
 class EditSession {
 public:
     explicit EditSession(std::string initial_text, CppIndentStyle style = {});
@@ -22,6 +24,8 @@ public:
     void type_text(std::string_view text);
     EnterResult enter();
     IndentDecision indent(); // reindent the caret's line
+    // Erases a range as one undo unit; the caret settles at range.start.
+    void erase(TextRange range);
     bool undo();
     bool redo();
 
@@ -31,11 +35,18 @@ public:
     std::string render_with_caret() const;
 
 private:
+    struct CaretPair {
+        TextOffset before; // caret before the edit that created the node
+        TextOffset after;  // caret right after it
+    };
+
+    void record_caret(TextOffset before);
+    void clamp_caret() { caret_.value = std::min(caret_.value, snapshot().size_bytes()); }
+
     Document document_;
     TextOffset caret_{0};
     CppIndentStyle style_;
-    std::vector<TextOffset> undo_carets_;
-    std::vector<TextOffset> redo_carets_;
+    std::map<UndoNodeId, CaretPair> undo_carets_;
 };
 
 // Parses "key: value" into a style field; returns false on unknown key or

@@ -269,7 +269,8 @@ TEST_CASE("undo and redo") {
     CHECK(doc.snapshot().content() == "v1+x");
     CHECK(!doc.can_redo());
 
-    // A new commit clears the redo stack.
+    // A commit after undo starts a fresh branch: no redo at its tip, but the
+    // old branch stays reachable through the parent (see the tree tests).
     doc.undo();
     {
         auto tx = doc.begin_transaction();
@@ -277,6 +278,99 @@ TEST_CASE("undo and redo") {
         tx.commit();
     }
     CHECK(!doc.can_redo());
+}
+
+TEST_CASE("undo tree: branches, redo picks the newest, undo_to jumps") {
+    Document doc("r");
+    const UndoNodeId root = doc.undo_position();
+    CHECK(root == 0);
+
+    auto edit = [&](std::string_view insert) {
+        auto tx = doc.begin_transaction();
+        tx.insert(doc.snapshot().end_offset(), insert);
+        tx.commit();
+        return doc.undo_position();
+    };
+
+    const UndoNodeId a = edit("A");  // "rA"
+    const UndoNodeId a2 = edit("2"); // "rA2"
+    REQUIRE(doc.undo().has_value()); // back to "rA"
+    REQUIRE(doc.undo().has_value()); // back to "r"
+    const UndoNodeId b = edit("B");  // "rB" — second branch off the root
+    CHECK(doc.undo_children(root).size() == 2);
+    CHECK(doc.undo_parent(a) == root);
+    CHECK(doc.undo_parent(b) == root);
+
+    // Preview without switching.
+    CHECK(doc.undo_node_text(a2) == "rA2");
+    CHECK(doc.snapshot().content() == "rB");
+
+    // redo from the root goes to the newest branch (B).
+    REQUIRE(doc.undo().has_value());
+    CHECK(doc.snapshot().content() == "r");
+    CHECK(doc.can_redo());
+    REQUIRE(doc.redo().has_value());
+    CHECK(doc.snapshot().content() == "rB");
+    CHECK(doc.undo_position() == b);
+
+    // Jump across branches in one revision; the change replays cleanly.
+    std::string before_text = doc.snapshot().content().to_string();
+    const RevisionId rev = doc.revision();
+    DocumentChange change = doc.undo_to(a2);
+    CHECK(doc.snapshot().content() == "rA2");
+    CHECK(doc.undo_position() == a2);
+    CHECK(doc.revision() == rev + 1);
+    check_normalized(change.edits);
+    CHECK(apply_normalized(before_text, change.edits) == "rA2");
+
+    // Jumping to the current node is a no-op change.
+    DocumentChange same = doc.undo_to(a2);
+    CHECK(same.edits.empty());
+    CHECK(same.old_revision == same.new_revision);
+    CHECK(doc.revision() == rev + 1);
+
+    CHECK_THROWS_AS(doc.undo_to(doc.undo_node_count()), std::out_of_range);
+}
+
+TEST_CASE("undo tree: random walk matches per-node model") {
+    std::mt19937 rng(424242);
+    Document doc("seed\n");
+    std::vector<std::string> node_text{doc.snapshot().content().to_string()};
+
+    auto rand_int = [&](std::uint32_t lo, std::uint32_t hi) {
+        return std::uniform_int_distribution<std::uint32_t>(lo, hi)(rng);
+    };
+
+    for (int op = 0; op < 300; ++op) {
+        switch (rand_int(0, 5)) {
+        case 0:
+        case 1: { // edit: new child node
+            std::string cur = node_text[doc.undo_position()];
+            std::uint32_t at = rand_int(0, static_cast<std::uint32_t>(cur.size()));
+            std::string piece = "x" + std::to_string(op);
+            auto tx = doc.begin_transaction();
+            tx.insert(TextOffset{at}, piece);
+            tx.commit();
+            cur.insert(at, piece);
+            REQUIRE(doc.undo_position() == node_text.size());
+            node_text.push_back(std::move(cur));
+            break;
+        }
+        case 2: doc.undo(); break;
+        case 3: doc.redo(); break;
+        default: { // undo_to a random known node
+            const auto target = static_cast<UndoNodeId>(
+                rand_int(0, static_cast<std::uint32_t>(node_text.size() - 1)));
+            std::string before = doc.snapshot().content().to_string();
+            DocumentChange change = doc.undo_to(target);
+            check_normalized(change.edits);
+            REQUIRE(apply_normalized(before, change.edits) == node_text[target]);
+            break;
+        }
+        }
+        REQUIRE(doc.undo_node_count() == node_text.size());
+        REQUIRE(doc.snapshot().content() == node_text[doc.undo_position()]);
+    }
 }
 
 TEST_CASE("line index") {

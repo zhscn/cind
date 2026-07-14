@@ -1,6 +1,5 @@
 #include "cli/session.hpp"
 
-#include <algorithm>
 #include <charconv>
 #include <stdexcept>
 
@@ -16,6 +15,11 @@ void EditSession::set_caret(TextOffset caret) {
     caret_ = caret;
 }
 
+// Ties the undo-tree node the last command created to its caret motion.
+void EditSession::record_caret(TextOffset before) {
+    undo_carets_[document_.undo_position()] = CaretPair{before, caret_};
+}
+
 void EditSession::type_text(std::string_view text) {
     // Character by character through the typed-char pipeline, exactly like
     // an editor delivering keystrokes; each character is one undo unit.
@@ -23,8 +27,7 @@ void EditSession::type_text(std::string_view text) {
         const TextOffset before = caret_;
         TypeCharResult result = type_char(document_, caret_, ch, style_);
         caret_ = result.caret;
-        undo_carets_.push_back(before);
-        redo_carets_.clear();
+        record_caret(before);
     }
 }
 
@@ -32,9 +35,20 @@ EnterResult EditSession::enter() {
     const TextOffset before = caret_;
     EnterResult result = press_enter(document_, caret_, style_);
     caret_ = result.caret;
-    undo_carets_.push_back(before);
-    redo_carets_.clear();
+    record_caret(before);
     return result;
+}
+
+void EditSession::erase(TextRange range) {
+    if (range.empty()) {
+        return;
+    }
+    const TextOffset before = caret_;
+    EditTransaction tx = document_.begin_transaction();
+    tx.erase(range);
+    tx.commit();
+    caret_ = range.start;
+    record_caret(before);
 }
 
 IndentDecision EditSession::indent() {
@@ -57,37 +71,31 @@ IndentDecision EditSession::indent() {
         } else {
             caret_.value = line_start.value + new_len;
         }
-        undo_carets_.push_back(before);
-        redo_carets_.clear();
+        record_caret(before);
     }
     return decision;
 }
 
 bool EditSession::undo() {
-    if (!document_.can_undo()) {
+    const UndoNodeId leaving = document_.undo_position();
+    if (!document_.undo()) {
         return false;
     }
-    document_.undo();
-    redo_carets_.push_back(caret_);
-    if (!undo_carets_.empty()) {
-        caret_ = undo_carets_.back();
-        undo_carets_.pop_back();
+    if (auto it = undo_carets_.find(leaving); it != undo_carets_.end()) {
+        caret_ = it->second.before;
     }
-    caret_.value = std::min(caret_.value, snapshot().size_bytes());
+    clamp_caret();
     return true;
 }
 
 bool EditSession::redo() {
-    if (!document_.can_redo()) {
+    if (!document_.redo()) {
         return false;
     }
-    document_.redo();
-    undo_carets_.push_back(caret_);
-    if (!redo_carets_.empty()) {
-        caret_ = redo_carets_.back();
-        redo_carets_.pop_back();
+    if (auto it = undo_carets_.find(document_.undo_position()); it != undo_carets_.end()) {
+        caret_ = it->second.after;
     }
-    caret_.value = std::min(caret_.value, snapshot().size_bytes());
+    clamp_caret();
     return true;
 }
 

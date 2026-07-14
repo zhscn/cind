@@ -14,6 +14,10 @@ namespace cind {
 
 class Document;
 
+// Node in a document's undo tree. Node 0 is the initial state.
+using UndoNodeId = std::uint32_t;
+inline constexpr UndoNodeId kInvalidUndoNode = 0xFFFFFFFFu;
+
 struct CommitResult {
     DocumentChange change;
     DocumentSnapshot snapshot;
@@ -86,12 +90,29 @@ public:
 
     EditTransaction begin_transaction();
 
-    bool can_undo() const { return !undo_stack_.empty(); }
-    bool can_redo() const { return !redo_stack_.empty(); }
-    // Undo/redo produce a *new* revision whose content equals the historical
-    // text; revisions are strictly monotonic. Returns nullopt when empty.
+    // Undo history is a tree of snapshot values (buffer.md §5): undoing and
+    // then editing starts a new branch, the old branch stays reachable.
+    // undo() moves to the parent, redo() to the most recently created child.
+    // Undo/redo/undo_to produce a *new* revision whose content equals the
+    // historical text; revisions are strictly monotonic.
+    bool can_undo() const { return undo_current_ != 0; }
+    bool can_redo() const { return !undo_nodes_[undo_current_].children.empty(); }
     std::optional<DocumentChange> undo();
     std::optional<DocumentChange> redo();
+
+    // Tree navigation. Node 0 is the initial state; ids are stable and dense.
+    UndoNodeId undo_position() const { return undo_current_; }
+    std::uint32_t undo_node_count() const {
+        return static_cast<std::uint32_t>(undo_nodes_.size());
+    }
+    UndoNodeId undo_parent(UndoNodeId id) const;
+    const std::vector<UndoNodeId>& undo_children(UndoNodeId id) const;
+    // Historical text of any node, without switching to it (O(1)).
+    const Text& undo_node_text(UndoNodeId id) const;
+    // Jump to an arbitrary node: the edit lists along the tree path are
+    // replayed inside one transaction, so the jump is one revision and one
+    // normalized edit list. Jumping to the current node is a no-op change.
+    DocumentChange undo_to(UndoNodeId id);
 
     // Anchor management is not allowed while a transaction is active.
     AnchorId create_anchor(TextOffset offset, AnchorAffinity affinity);
@@ -103,15 +124,19 @@ public:
 private:
     friend class EditTransaction;
 
-    struct UndoEntry {
-        std::vector<TextEdit> forward; // coordinates of the pre-change revision
-        std::vector<TextEdit> inverse; // coordinates of the post-change revision
+    struct UndoNode {
+        Text text;                     // document content at this state
+        std::vector<TextEdit> forward; // parent -> this, parent coordinates
+        std::vector<TextEdit> inverse; // this -> parent, this coordinates
+        UndoNodeId parent = kInvalidUndoNode;
+        std::vector<UndoNodeId> children; // creation order; back() = newest
     };
 
     // Applies a normalized edit list (coordinates of the current revision)
     // without recording undo. Used by undo/redo.
     DocumentChange apply_edit_list(const std::vector<TextEdit>& edits);
     void require_no_transaction(const char* what) const;
+    const UndoNode& undo_node(UndoNodeId id) const;
 
     DocumentId id_;
     RevisionId revision_ = 0;
@@ -119,8 +144,8 @@ private:
     std::map<AnchorId, EditTransaction::AnchorState> anchors_;
     AnchorId next_anchor_id_ = 1;
     bool transaction_active_ = false;
-    std::vector<UndoEntry> undo_stack_;
-    std::vector<UndoEntry> redo_stack_;
+    std::vector<UndoNode> undo_nodes_; // [0] = initial state
+    UndoNodeId undo_current_ = 0;
 };
 
 } // namespace cind
