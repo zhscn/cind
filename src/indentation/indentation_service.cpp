@@ -337,15 +337,11 @@ private:
             case TokenKind::ColonColon:
             case TokenKind::Arrow:
             case TokenKind::OperatorKw: break;
-            case TokenKind::Punctuator: {
-                const std::string_view s =
-                    text_.substr(t.range.start.value, t.range.length());
-                if (prev != TokenKind::OperatorKw && s != "*" && s != "&" && s != "&&" &&
-                    s != "~") {
-                    return false;
-                }
-                break;
-            }
+            // Return-type decoration; also legal as an operator name.
+            case TokenKind::Star:
+            case TokenKind::Amp:
+            case TokenKind::AmpAmp:
+            case TokenKind::Tilde: break;
             case TokenKind::Equals:
             case TokenKind::Less:
             case TokenKind::Greater:
@@ -353,7 +349,13 @@ private:
                     return false;
                 }
                 break;
-            default: return false;
+            default:
+                // Any other operator spelling only as `operator@`'s name.
+                if (prev != TokenKind::OperatorKw ||
+                    (!is_operator_spelling(t.kind) && t.kind != TokenKind::Punctuator)) {
+                    return false;
+                }
+                break;
             }
             prev = t.kind;
         }

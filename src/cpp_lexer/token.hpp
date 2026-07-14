@@ -56,7 +56,47 @@ enum class TokenKind : std::uint8_t {
     Arrow,
     Equals,
 
-    // Any operator not singled out above; opaque to the parser.
+    // Operator punctuators, one kind per spelling (maximal munch). The
+    // block from Plus to GreaterGreaterEqual is contiguous — see
+    // is_operator_spelling().
+    Plus,                // +
+    Minus,               // -
+    Star,                // *
+    Slash,               // /
+    Percent,             // %
+    Exclaim,             // !
+    Amp,                 // &
+    Pipe,                // |
+    Caret,               // ^
+    Tilde,               // ~
+    Question,            // ?
+    Period,              // .
+    Ellipsis,            // ...
+    PlusPlus,            // ++
+    MinusMinus,          // --
+    AmpAmp,              // &&
+    PipePipe,            // ||
+    EqualEqual,          // ==
+    ExclaimEqual,        // !=
+    LessEqual,           // <=
+    GreaterEqual,        // >=
+    Spaceship,           // <=>
+    LessLess,            // <<
+    GreaterGreater,      // >>
+    PeriodStar,          // .*
+    ArrowStar,           // ->*
+    PlusEqual,           // +=
+    MinusEqual,          // -=
+    StarEqual,           // *=
+    SlashEqual,          // /=
+    PercentEqual,        // %=
+    AmpEqual,            // &=
+    PipeEqual,           // |=
+    CaretEqual,          // ^=
+    LessLessEqual,       // <<=
+    GreaterGreaterEqual, // >>=
+
+    // Leftover operator spellings ('##', stringizing '#'); opaque.
     Punctuator,
 
     PreprocessorHash,
@@ -87,6 +127,12 @@ struct Token {
     TextRange range;
     LexicalFlags flags = LexicalFlags::None;
 };
+
+// True for the operator-punctuator block above (excludes structural tokens
+// like Less/Greater/Equals/Arrow that predate it).
+constexpr bool is_operator_spelling(TokenKind kind) {
+    return kind >= TokenKind::Plus && kind <= TokenKind::GreaterGreaterEqual;
+}
 
 constexpr bool is_trivia(TokenKind kind) {
     return kind == TokenKind::Whitespace || kind == TokenKind::Newline ||

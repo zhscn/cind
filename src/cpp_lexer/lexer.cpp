@@ -51,6 +51,42 @@ std::string_view token_kind_name(TokenKind kind) {
     case TokenKind::Semicolon: return "Semicolon";
     case TokenKind::Arrow: return "Arrow";
     case TokenKind::Equals: return "Equals";
+    case TokenKind::Plus: return "Plus";
+    case TokenKind::Minus: return "Minus";
+    case TokenKind::Star: return "Star";
+    case TokenKind::Slash: return "Slash";
+    case TokenKind::Percent: return "Percent";
+    case TokenKind::Exclaim: return "Exclaim";
+    case TokenKind::Amp: return "Amp";
+    case TokenKind::Pipe: return "Pipe";
+    case TokenKind::Caret: return "Caret";
+    case TokenKind::Tilde: return "Tilde";
+    case TokenKind::Question: return "Question";
+    case TokenKind::Period: return "Period";
+    case TokenKind::Ellipsis: return "Ellipsis";
+    case TokenKind::PlusPlus: return "PlusPlus";
+    case TokenKind::MinusMinus: return "MinusMinus";
+    case TokenKind::AmpAmp: return "AmpAmp";
+    case TokenKind::PipePipe: return "PipePipe";
+    case TokenKind::EqualEqual: return "EqualEqual";
+    case TokenKind::ExclaimEqual: return "ExclaimEqual";
+    case TokenKind::LessEqual: return "LessEqual";
+    case TokenKind::GreaterEqual: return "GreaterEqual";
+    case TokenKind::Spaceship: return "Spaceship";
+    case TokenKind::LessLess: return "LessLess";
+    case TokenKind::GreaterGreater: return "GreaterGreater";
+    case TokenKind::PeriodStar: return "PeriodStar";
+    case TokenKind::ArrowStar: return "ArrowStar";
+    case TokenKind::PlusEqual: return "PlusEqual";
+    case TokenKind::MinusEqual: return "MinusEqual";
+    case TokenKind::StarEqual: return "StarEqual";
+    case TokenKind::SlashEqual: return "SlashEqual";
+    case TokenKind::PercentEqual: return "PercentEqual";
+    case TokenKind::AmpEqual: return "AmpEqual";
+    case TokenKind::PipeEqual: return "PipeEqual";
+    case TokenKind::CaretEqual: return "CaretEqual";
+    case TokenKind::LessLessEqual: return "LessLessEqual";
+    case TokenKind::GreaterGreaterEqual: return "GreaterGreaterEqual";
     case TokenKind::Punctuator: return "Punctuator";
     case TokenKind::PreprocessorHash: return "PreprocessorHash";
     case TokenKind::Invalid: return "Invalid";
@@ -319,25 +355,39 @@ private:
     }
 
     void lex_punctuator_or_invalid(std::size_t start) {
-        static constexpr std::string_view kThree[] = {"<<=", ">>=", "<=>", "->*", "..."};
-        static constexpr std::string_view kTwo[] = {"::", "<<", ">>", "<=", ">=", "==",
-                                                    "!=", "&&", "||", "+=", "-=", "*=",
-                                                    "/=", "%=", "&=", "|=", "^=", "->",
-                                                    "++", "--", ".*"};
-        for (const std::string_view op : kThree) {
-            if (starts_with(op)) {
+        struct Spelling {
+            std::string_view text;
+            TokenKind kind;
+        };
+        static constexpr Spelling kThree[] = {
+            {"<<=", TokenKind::LessLessEqual}, {">>=", TokenKind::GreaterGreaterEqual},
+            {"<=>", TokenKind::Spaceship},     {"->*", TokenKind::ArrowStar},
+            {"...", TokenKind::Ellipsis},
+        };
+        static constexpr Spelling kTwo[] = {
+            {"::", TokenKind::ColonColon},   {"<<", TokenKind::LessLess},
+            {">>", TokenKind::GreaterGreater}, {"<=", TokenKind::LessEqual},
+            {">=", TokenKind::GreaterEqual}, {"==", TokenKind::EqualEqual},
+            {"!=", TokenKind::ExclaimEqual}, {"&&", TokenKind::AmpAmp},
+            {"||", TokenKind::PipePipe},     {"+=", TokenKind::PlusEqual},
+            {"-=", TokenKind::MinusEqual},   {"*=", TokenKind::StarEqual},
+            {"/=", TokenKind::SlashEqual},   {"%=", TokenKind::PercentEqual},
+            {"&=", TokenKind::AmpEqual},     {"|=", TokenKind::PipeEqual},
+            {"^=", TokenKind::CaretEqual},   {"->", TokenKind::Arrow},
+            {"++", TokenKind::PlusPlus},     {"--", TokenKind::MinusMinus},
+            {".*", TokenKind::PeriodStar},
+        };
+        for (const Spelling& op : kThree) {
+            if (starts_with(op.text)) {
                 pos_ += 3;
-                emit(TokenKind::Punctuator, start);
+                emit(op.kind, start);
                 return;
             }
         }
-        for (const std::string_view op : kTwo) {
-            if (starts_with(op)) {
+        for (const Spelling& op : kTwo) {
+            if (starts_with(op.text)) {
                 pos_ += 2;
-                TokenKind kind = op == "::"   ? TokenKind::ColonColon
-                                 : op == "->" ? TokenKind::Arrow
-                                              : TokenKind::Punctuator;
-                emit(kind, start);
+                emit(op.kind, start);
                 return;
             }
         }
@@ -356,18 +406,18 @@ private:
         case ',': kind = TokenKind::Comma; break;
         case ';': kind = TokenKind::Semicolon; break;
         case '=': kind = TokenKind::Equals; break;
-        case '+':
-        case '-':
-        case '*':
-        case '/':
-        case '%':
-        case '!':
-        case '&':
-        case '|':
-        case '^':
-        case '~':
-        case '?':
-        case '.': kind = TokenKind::Punctuator; break;
+        case '+': kind = TokenKind::Plus; break;
+        case '-': kind = TokenKind::Minus; break;
+        case '*': kind = TokenKind::Star; break;
+        case '/': kind = TokenKind::Slash; break;
+        case '%': kind = TokenKind::Percent; break;
+        case '!': kind = TokenKind::Exclaim; break;
+        case '&': kind = TokenKind::Amp; break;
+        case '|': kind = TokenKind::Pipe; break;
+        case '^': kind = TokenKind::Caret; break;
+        case '~': kind = TokenKind::Tilde; break;
+        case '?': kind = TokenKind::Question; break;
+        case '.': kind = TokenKind::Period; break;
         default: kind = TokenKind::Invalid; break;
         }
         emit(kind, start);

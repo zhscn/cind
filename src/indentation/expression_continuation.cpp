@@ -32,7 +32,7 @@ enum Precedence : int {
 
 struct SimToken {
     TokenKind kind = TokenKind::Invalid;
-    std::string_view text;
+    int length = 0; // display width == byte length for the tokens that matter
     int column = 0;
     bool newline_before = false;
 
@@ -72,41 +72,56 @@ bool is_operand_end(const SimToken& t) {
 int binary_precedence(const SimToken& t) {
     switch (t.kind) {
     case TokenKind::Comma: return kPrecComma;
-    case TokenKind::Equals: return kPrecAssignment;
+    case TokenKind::Equals:
+    case TokenKind::PlusEqual:
+    case TokenKind::MinusEqual:
+    case TokenKind::StarEqual:
+    case TokenKind::SlashEqual:
+    case TokenKind::PercentEqual:
+    case TokenKind::AmpEqual:
+    case TokenKind::PipeEqual:
+    case TokenKind::CaretEqual:
+    case TokenKind::LessLessEqual:
+    case TokenKind::GreaterGreaterEqual: return kPrecAssignment;
+    case TokenKind::PipePipe: return kPrecLogicalOr;
+    case TokenKind::AmpAmp: return 5;
+    case TokenKind::Pipe: return 6;
+    case TokenKind::Caret: return 7;
+    case TokenKind::Amp: return 8;
+    case TokenKind::EqualEqual:
+    case TokenKind::ExclaimEqual: return 9;
     case TokenKind::Less:
-    case TokenKind::Greater: return 10; // Relational
+    case TokenKind::Greater:
+    case TokenKind::LessEqual:
+    case TokenKind::GreaterEqual: return 10; // Relational
+    case TokenKind::Spaceship: return 11;
+    case TokenKind::LessLess:
+    case TokenKind::GreaterGreater: return 12;
+    case TokenKind::Plus:
+    case TokenKind::Minus: return 13;
+    case TokenKind::Star:
+    case TokenKind::Slash:
+    case TokenKind::Percent: return 14;
+    case TokenKind::PeriodStar:
+    case TokenKind::ArrowStar: return kPrecPointerToMember;
+    case TokenKind::Period:
     case TokenKind::Arrow: return kPrecArrowAndPeriod;
-    case TokenKind::Punctuator: break;
     default: return -1;
     }
-    const std::string_view s = t.text;
-    if (s == "||") return kPrecLogicalOr;
-    if (s == "&&") return 5;
-    if (s == "|") return 6;
-    if (s == "^") return 7;
-    if (s == "&") return 8;
-    if (s == "==" || s == "!=") return 9;
-    if (s == "<=" || s == ">=") return 10;
-    if (s == "<=>") return 11;
-    if (s == "<<" || s == ">>") return 12;
-    if (s == "+" || s == "-") return 13;
-    if (s == "*" || s == "/" || s == "%") return 14;
-    if (s == ".*" || s == "->*") return kPrecPointerToMember;
-    if (s == ".") return kPrecArrowAndPeriod;
-    if (s == "=" || s == "+=" || s == "-=" || s == "*=" || s == "/=" || s == "%=" ||
-        s == "&=" || s == "|=" || s == "^=" || s == "<<=" || s == ">>=") {
-        return kPrecAssignment;
-    }
-    return -1;
 }
 
 bool is_unary_spelling(const SimToken& t) {
-    if (t.kind != TokenKind::Punctuator) {
-        return false;
+    switch (t.kind) {
+    case TokenKind::Plus:
+    case TokenKind::Minus:
+    case TokenKind::Star:
+    case TokenKind::Amp:
+    case TokenKind::Exclaim:
+    case TokenKind::Tilde:
+    case TokenKind::PlusPlus:
+    case TokenKind::MinusMinus: return true;
+    default: return false;
     }
-    const std::string_view s = t.text;
-    return s == "+" || s == "-" || s == "*" || s == "&" || s == "!" || s == "~" ||
-           s == "++" || s == "--";
 }
 
 // ---- fake paren assignment (TokenAnnotator::ExpressionParser port) ---------
@@ -366,7 +381,7 @@ private:
             top().nested_block_indent = top().indent;
         }
         if ((t.binary || t.ternary_question || t.ternary_colon) && t.newline_before) {
-            top().nested_block_indent = col + static_cast<int>(t.text.size()) + 1;
+            top().nested_block_indent = col + t.length + 1;
         }
 
         move_past_fake_lparens(t, prev_nc);
@@ -406,9 +421,9 @@ private:
     // (e.g. '*') to find where the declarator starts (802-815).
     int variable_start_column(const SimToken* prev, const SimToken* prev2) {
         int column = prev ? prev->column : 0;
-        if (prev && prev2 && prev2->kind == TokenKind::Punctuator &&
-            (prev2->text == "*" || prev2->text == "&") &&
-            prev2->column + static_cast<int>(prev2->text.size()) == column) {
+        if (prev && prev2 &&
+            (prev2->kind == TokenKind::Star || prev2->kind == TokenKind::Amp) &&
+            prev2->column + prev2->length == column) {
             column = prev2->column;
         }
         return column;
@@ -690,7 +705,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
         }
         SimToken s;
         s.kind = tok.kind;
-        s.text = text.substr(tok.range.start.value, tok.range.length());
+        s.length = static_cast<int>(tok.range.length());
         s.column = display_column(tok.range.start);
         s.newline_before = tok_line != prev_line;
         prev_line = tok_line;
@@ -763,7 +778,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                     s.ternary_colon = true;
                     question_stack.pop_back();
                 }
-            } else if (tok.kind == TokenKind::Punctuator && s.text == "?") {
+            } else if (tok.kind == TokenKind::Question) {
                 // A lone '?' in an expression region is a ternary even before
                 // its ':' exists (the mid-typing case).
                 s.ternary_question = true;
@@ -774,12 +789,12 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                 const int prec = binary_precedence(s);
                 // Pointer '*'/'&'/'&&' and template '<'/'>' are only binary
                 // operators when spaced on both sides.
-                const bool ambiguous = s.text == "*" || s.text == "&" ||
-                                       s.text == "&&" || s.kind == TokenKind::Less ||
+                const bool ambiguous = s.kind == TokenKind::Star || s.kind == TokenKind::Amp ||
+                                       s.kind == TokenKind::AmpAmp || s.kind == TokenKind::Less ||
                                        s.kind == TokenKind::Greater;
                 const bool operand_before = prev_sig && is_operand_end(*prev_sig);
-                if (s.kind == TokenKind::Arrow || s.text == "." || s.text == "->*" ||
-                    s.text == ".*") {
+                if (s.kind == TokenKind::Arrow || s.kind == TokenKind::Period ||
+                    s.kind == TokenKind::ArrowStar || s.kind == TokenKind::PeriodStar) {
                     if (operand_before) {
                         s.member_access = true;
                     }
@@ -790,7 +805,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                     if (operand_before && (!ambiguous || (space_before && space_after))) {
                         s.binary = true;
                         s.precedence = prec;
-                        s.lessless = s.text == "<<";
+                        s.lessless = s.kind == TokenKind::LessLess;
                     } else if (!operand_before) {
                         s.unary = is_unary_spelling(s);
                     }

@@ -91,18 +91,19 @@ TEST_CASE("keywords are exact matches") {
 
 TEST_CASE("maximal munch punctuators") {
     using enum TokenKind;
-    CHECK(kinds_of("a<<b") == std::vector<TokenKind>{Identifier, Punctuator, Identifier});
+    CHECK(kinds_of("a<<b") == std::vector<TokenKind>{Identifier, LessLess, Identifier});
     CHECK(kinds_of("a<b>c") ==
           std::vector<TokenKind>{Identifier, Less, Identifier, Greater, Identifier});
     CHECK(kinds_of("x::y") == std::vector<TokenKind>{Identifier, ColonColon, Identifier});
     CHECK(kinds_of("x: y") == std::vector<TokenKind>{Identifier, Colon, Identifier});
     CHECK(kinds_of("p->q") == std::vector<TokenKind>{Identifier, Arrow, Identifier});
-    CHECK(kinds_of("p->*q") == std::vector<TokenKind>{Identifier, Punctuator, Identifier});
-    CHECK(kinds_of("a<=>b") == std::vector<TokenKind>{Identifier, Punctuator, Identifier});
+    CHECK(kinds_of("p->*q") == std::vector<TokenKind>{Identifier, ArrowStar, Identifier});
+    CHECK(kinds_of("a<=>b") == std::vector<TokenKind>{Identifier, Spaceship, Identifier});
     CHECK(kinds_of("a=b==c") ==
-          std::vector<TokenKind>{Identifier, Equals, Identifier, Punctuator, Identifier});
-    CHECK(kinds_of("f(...)") == std::vector<TokenKind>{Identifier, LParen, Punctuator, RParen});
-    CHECK(kinds_of(">>=") == std::vector<TokenKind>{Punctuator});
+          std::vector<TokenKind>{Identifier, Equals, Identifier, EqualEqual, Identifier});
+    CHECK(kinds_of("f(...)") == std::vector<TokenKind>{Identifier, LParen, Ellipsis, RParen});
+    CHECK(kinds_of(">>=") == std::vector<TokenKind>{GreaterGreaterEqual});
+    CHECK(kinds_of("a##b") == std::vector<TokenKind>{Identifier, Punctuator, Identifier});
 }
 
 TEST_CASE("string and character literals") {
@@ -186,8 +187,8 @@ TEST_CASE("numbers use the pp-number rule") {
     using enum TokenKind;
     CHECK(kinds_of("1'000'000 0x1.8p-3 1.5e+10f 0b1010 .5") ==
           std::vector<TokenKind>{Number, Number, Number, Number, Number});
-    CHECK(kinds_of("1+2") == std::vector<TokenKind>{Number, Punctuator, Number});
-    CHECK(kinds_of("x-1") == std::vector<TokenKind>{Identifier, Punctuator, Number});
+    CHECK(kinds_of("1+2") == std::vector<TokenKind>{Number, Plus, Number});
+    CHECK(kinds_of("x-1") == std::vector<TokenKind>{Identifier, Minus, Number});
 }
 
 TEST_CASE("preprocessor lines") {
@@ -252,9 +253,9 @@ TEST_CASE("invalid bytes become Invalid tokens") {
 
 TEST_CASE("operator keyword and template brackets") {
     using enum TokenKind;
-    CHECK(kinds_of("operator<<") == std::vector<TokenKind>{OperatorKw, Punctuator});
+    CHECK(kinds_of("operator<<") == std::vector<TokenKind>{OperatorKw, LessLess});
     CHECK(kinds_of("vector<vector<int>> v") ==
-          std::vector<TokenKind>{Identifier, Less, Identifier, Less, Identifier, Punctuator,
+          std::vector<TokenKind>{Identifier, Less, Identifier, Less, Identifier, GreaterGreater,
                                  Identifier});
 }
 

@@ -102,15 +102,9 @@ private:
     // function/lambda body possible: `) const {`, `) mutable -> T & {`.
     bool keeps_body_pending() {
         const TokenKind k = kind();
-        if (k == TokenKind::Identifier || k == TokenKind::ColonColon ||
-            k == TokenKind::Arrow) {
-            return true;
-        }
-        if (k != TokenKind::Punctuator) {
-            return false;
-        }
-        const std::string_view s = token_text();
-        return s == "&" || s == "&&" || s == "*";
+        return k == TokenKind::Identifier || k == TokenKind::ColonColon ||
+               k == TokenKind::Arrow || k == TokenKind::Amp || k == TokenKind::AmpAmp ||
+               k == TokenKind::Star;
     }
 
     bool newline_before_next_token() const {
@@ -661,12 +655,10 @@ private:
                     return i + 1;
                 }
                 break;
-            case TokenKind::Punctuator:
-                if (text_.substr(t.range.start.value, t.range.length()) == ">>") {
-                    angle -= 2;
-                    if (angle <= 0) {
-                        return i + 1;
-                    }
+            case TokenKind::GreaterGreater:
+                angle -= 2;
+                if (angle <= 0) {
+                    return i + 1;
                 }
                 break;
             case TokenKind::LParen: ++paren; break;
@@ -886,15 +878,13 @@ private:
                     continue;
                 }
             }
-            if (k == TokenKind::Punctuator && token_text() == "?") {
+            if (k == TokenKind::Question) {
                 saw_question = true;
             }
             if (header_pending && k != TokenKind::Identifier && k != TokenKind::ColonColon &&
-                k != TokenKind::Arrow) {
-                const std::string_view s = token_text();
-                if (k != TokenKind::Punctuator || (s != "&" && s != "&&" && s != "*")) {
-                    header_pending = false;
-                }
+                k != TokenKind::Arrow && k != TokenKind::Amp && k != TokenKind::AmpAmp &&
+                k != TokenKind::Star) {
+                header_pending = false;
             }
             const bool first_identifier =
                 prev == TokenKind::EndOfFile && k == TokenKind::Identifier;
