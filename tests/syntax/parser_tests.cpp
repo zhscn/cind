@@ -257,6 +257,29 @@ TEST_CASE("trailing-return lambda inside an argument list") {
     CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
 }
 
+TEST_CASE("statement evidence upgrades a brace group to a block") {
+    // macro callback: LLVM_DEBUG({ statements; });
+    SyntaxTree tree = parse_checked("LLVM_DEBUG({\n    dbgs() << x;\n    f();\n});\n");
+    find_one(tree, SyntaxKind::CompoundStatement);
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+}
+
+TEST_CASE("capture-only lambda gets a body block") {
+    SyntaxTree tree = parse_checked("auto f = [this] { return go(); };\n");
+    find_one(tree, SyntaxKind::CompoundStatement);
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+}
+
+TEST_CASE("goto label is complete on its own") {
+    SyntaxTree tree = parse_checked("void f() {\nretry:\n    if (x)\n        goto retry;\n}\n");
+    find_one(tree, SyntaxKind::IfStatement); // sibling of the label, not swallowed
+    SyntaxNodeId fn = find_one(tree, SyntaxKind::FunctionDefinition);
+    CHECK(!tree.node(fn).incomplete);
+    // in-class constructor initializer is not a label
+    SyntaxTree tree2 = parse_checked("struct S {\n    S() : a_(1) {}\n};\n");
+    find_one(tree2, SyntaxKind::CtorInitializerList);
+}
+
 TEST_CASE("enumerators are sibling declarations, not one continuation") {
     SyntaxTree tree = parse_checked("enum E {\n    A,\n    B = f(1, 2),\n    C\n};\n");
     SyntaxNodeId body = find_one(tree, SyntaxKind::ClassBody);

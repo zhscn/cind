@@ -225,6 +225,14 @@ TEST_CASE("enumerators indent as siblings") {
     CHECK(enter("enum E {\n    A,^\n};\n") == "enum E {\n    A,\n    ^\n};\n");
 }
 
+TEST_CASE("macro callback block indents as a block") {
+    CHECK(enter("LLVM_DEBUG({\n    f();^\n});\n") == "LLVM_DEBUG({\n    f();\n    ^\n});\n");
+}
+
+TEST_CASE("statement after a goto label stays at block level") {
+    CHECK(enter("void f() {\nout:^\n}\n") == "void f() {\nout:\n    ^\n}\n");
+}
+
 TEST_CASE("preprocessor directives stay at column zero") {
     CHECK(enter("void f() {\n    body();^\n}\n") == "void f() {\n    body();\n    ^\n}\n");
     Document doc("void f() {\n    #define X 1\n}\n");

@@ -544,11 +544,34 @@ private:
                 body_pending = false;
                 continue;
             }
-            // 'return' can only reach a brace-init directly through a
-            // misparse; bail so the damage stays bounded.
+            // Statement evidence inside a "braced init" means it is really
+            // a block — macro callbacks like LLVM_DEBUG({...}), capture-only
+            // lambdas (clang-format calculateBraceTypes: semi/if/for/... in
+            // an unknown brace forces BK_Block). Reclassify and continue as
+            // statements; already-consumed tokens stay flat.
             if (k == TokenKind::Semicolon || k == TokenKind::ReturnKw ||
-                is_sync_introducer(k)) {
-                break;
+                k == TokenKind::IfKw || k == TokenKind::WhileKw || k == TokenKind::ForKw ||
+                k == TokenKind::DoKw || k == TokenKind::SwitchKw) {
+                nodes()[g].kind = SyntaxKind::CompoundStatement;
+                while (!at_eof() && !at(TokenKind::RBrace)) {
+                    guarded([&] { parse_declaration_or_statement(); });
+                }
+                expect_or_missing(TokenKind::RBrace);
+                close(g);
+                return;
+            }
+            // Preprocessor lines inside a braced list are neutral, exactly
+            // as in calculateBraceTypes: consume the whole line and keep
+            // classifying ("{a, \n#ifdef X\n b,\n#endif\n c}").
+            if (k == TokenKind::PreprocessorHash) {
+                while (pos_ + 1 < tokens().size() &&
+                       has_flag(tokens()[pos_].flags, LexicalFlags::PreprocessorLine)) {
+                    ++pos_;
+                }
+                continue;
+            }
+            if (is_sync_introducer(k)) {
+                break; // structure that cannot be an initializer: bail
             }
             body_pending = body_pending && keeps_body_pending();
             advance();
@@ -686,6 +709,9 @@ private:
         // True while the node consists of exactly one all-caps identifier;
         // `MACRO(...)` followed by a line break then ends the declaration.
         bool macro_ident_only = false;
+        // True while the node consists of exactly one identifier; ':' then
+        // makes it a goto label.
+        bool label_candidate = false;
 
         while (!at_eof()) {
             const TokenKind k = kind();
@@ -724,14 +750,26 @@ private:
                     break;
                 }
                 macro_ident_only = false;
+                label_candidate = false;
                 prev = TokenKind::RParen;
                 header_pending = true;
                 continue;
             }
             if (k == TokenKind::LBracket) {
+                // clang-format tryToParseLambdaIntroducer: '[' is a lambda
+                // when nothing identifier-like precedes it (start of the
+                // statement, '=', ',', 'return') — then a '{' may follow
+                // the capture list directly, with no parameter list.
+                const bool lambda_introducer =
+                    prev == TokenKind::EndOfFile || prev == TokenKind::Equals ||
+                    prev == TokenKind::Comma || prev == TokenKind::ReturnKw;
                 parse_bracket_group();
                 macro_ident_only = false;
+                label_candidate = false;
                 prev = TokenKind::RBracket;
+                if (lambda_introducer) {
+                    header_pending = true;
+                }
                 continue;
             }
             if (k == TokenKind::LBrace) {
@@ -742,8 +780,16 @@ private:
                     break; // no ';' required after a body
                 }
                 parse_brace_group();
+                label_candidate = false;
                 prev = TokenKind::RBrace;
                 continue;
+            }
+            // 'name:' with nothing else before it: a goto label, complete on
+            // its own — the next statement is a sibling, not a continuation.
+            if (k == TokenKind::Colon && label_candidate) {
+                advance();
+                terminated = true;
+                break;
             }
             if (k == TokenKind::Colon && header_pending && !saw_question) {
                 nodes()[n].kind = SyntaxKind::FunctionDefinition;
@@ -759,6 +805,7 @@ private:
             if (k == TokenKind::Less &&
                 (prev == TokenKind::Identifier || prev == TokenKind::TemplateKw)) {
                 if (parse_template_args()) {
+                    label_candidate = false;
                     prev = TokenKind::Greater;
                     continue;
                 }
@@ -773,8 +820,10 @@ private:
                     header_pending = false;
                 }
             }
-            macro_ident_only = prev == TokenKind::EndOfFile && k == TokenKind::Identifier &&
-                               is_macro_name(token_text());
+            const bool first_identifier =
+                prev == TokenKind::EndOfFile && k == TokenKind::Identifier;
+            macro_ident_only = first_identifier && is_macro_name(token_text());
+            label_candidate = first_identifier;
             advance();
             prev = k;
         }
