@@ -1,5 +1,7 @@
 #include "indentation/expression_continuation.hpp"
 
+#include "document/char_source.hpp"
+
 #include <algorithm>
 #include <format>
 
@@ -572,8 +574,8 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                                                   SyntaxNodeId controlling,
                                                   const CppIndentStyle& style,
                                                   std::vector<std::string>& trace) {
-    const LineIndex& lines = snapshot.lines();
-    const std::string_view text = snapshot.text();
+    const Text& lines = snapshot.content();
+    const TextCharSource text(snapshot.content());
     const std::vector<Token>& tokens = tree.tokens();
 
     // Region: climb to the node whose parent is a block-level scope — the
@@ -837,10 +839,9 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
 
     const std::uint32_t region_line =
         lines.position(tokens[first_token].range.start).line;
-    const std::string_view first_line_text =
-        text.substr(lines.line_start(region_line).value);
     int first_indent = 0;
-    for (char c : first_line_text) {
+    for (std::uint32_t i = lines.line_start(region_line).value; i < text.size(); ++i) {
+        const char c = text[i];
         if (c == ' ') {
             ++first_indent;
         } else if (c == '\t') {

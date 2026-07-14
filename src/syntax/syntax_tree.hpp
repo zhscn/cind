@@ -44,13 +44,17 @@ public:
     std::string dump(std::string_view text) const;
 
 private:
-    friend class Parser;
+    template <typename Source> friend class Parser;
 
     std::vector<Token> tokens_;
     std::vector<SyntaxNode> nodes_;
 };
 
-// Full parse. Never fails; always yields a root covering every token.
+class Text;
+
+// Full parse. Never fails; always yields a root covering every token. The
+// Text overload reads chunk by chunk without materializing the string.
 SyntaxTree parse(std::string_view text);
+SyntaxTree parse(const Text& text);
 
 } // namespace cind

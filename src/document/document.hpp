@@ -42,7 +42,7 @@ public:
     TextOffset anchor_offset(AnchorId id) const;
     void set_anchor_affinity(AnchorId id, AnchorAffinity affinity);
 
-    std::string_view current_text() const { return text_; }
+    const Text& current_text() const { return text_; }
     // Snapshot of the pending state. Its revision is the revision commit()
     // would produce right now (base revision if no edits are pending).
     DocumentSnapshot speculative_snapshot() const;
@@ -68,7 +68,7 @@ private:
     Document* document_ = nullptr;
     RevisionId base_revision_ = 0;
     bool record_undo_ = true;
-    std::string text_;
+    Text text_; // pending state
     std::vector<TextEdit> edits_;
     std::map<AnchorId, AnchorState> anchors_;
 };
@@ -115,8 +115,7 @@ private:
 
     DocumentId id_;
     RevisionId revision_ = 0;
-    std::shared_ptr<const std::string> text_;
-    std::shared_ptr<const LineIndex> lines_;
+    Text text_;
     std::map<AnchorId, EditTransaction::AnchorState> anchors_;
     AnchorId next_anchor_id_ = 1;
     bool transaction_active_ = false;

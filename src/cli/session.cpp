@@ -39,9 +39,9 @@ EnterResult EditSession::enter() {
 
 IndentDecision EditSession::indent() {
     DocumentSnapshot snap = snapshot();
-    const std::uint32_t line = snap.lines().position(caret_).line;
-    const TextOffset line_start = snap.lines().line_start(line);
-    std::string_view content = snap.text(snap.lines().line_content_range(line));
+    const std::uint32_t line = snap.content().position(caret_).line;
+    const TextOffset line_start = snap.content().line_start(line);
+    const std::string content = snap.substring(snap.content().line_content_range(line));
     std::uint32_t old_len = 0;
     while (old_len < content.size() && (content[old_len] == ' ' || content[old_len] == '\t')) {
         ++old_len;
@@ -93,12 +93,12 @@ bool EditSession::redo() {
 
 IndentDecision EditSession::explain() const {
     DocumentSnapshot snap = snapshot();
-    SyntaxTree tree = parse(snap.text());
-    return compute_line_indent(snap, tree, snap.lines().position(caret_).line, style_);
+    SyntaxTree tree = parse(snap.content());
+    return compute_line_indent(snap, tree, snap.content().position(caret_).line, style_);
 }
 
 std::string EditSession::render_with_caret() const {
-    std::string out(snapshot().text());
+    std::string out = snapshot().content().to_string();
     out.insert(caret_.value, "^");
     return out;
 }

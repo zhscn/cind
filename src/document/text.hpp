@@ -85,6 +85,9 @@ public:
     // violation, or nullopt if the tree is well-formed.
     std::optional<std::string> validate() const;
 
+    // Content comparison, chunk-wise, without materializing.
+    friend bool operator==(const Text& a, std::string_view b);
+
 private:
     friend class TextCursor;
 

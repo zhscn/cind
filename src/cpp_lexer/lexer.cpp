@@ -1,6 +1,6 @@
 #include "cpp_lexer/lexer.hpp"
 
-#include "document/text.hpp"
+#include "document/char_source.hpp"
 
 #include <cctype>
 #include <string>
@@ -122,67 +122,6 @@ TokenKind keyword_kind(std::string_view ident) {
 bool is_encoding_prefix(std::string_view s) {
     return s == "u8" || s == "u" || s == "U" || s == "L";
 }
-
-// Sequential character access over a contiguous string.
-struct StringSource {
-    std::string_view text;
-
-    std::size_t size() const { return text.size(); }
-    char at(std::size_t pos) const { return text[pos]; }
-    bool starts_with(std::size_t pos, std::string_view s) const {
-        return text.substr(pos).starts_with(s);
-    }
-    void extract(std::size_t pos, std::size_t len, std::string& out) const {
-        out.assign(text.substr(pos, len));
-    }
-};
-
-// Sequential character access over a chunked Text value. Keeps a window on
-// the current chunk; leaving the window re-seeks in O(log n), which a
-// forward scan does once per chunk.
-class TextSource {
-public:
-    explicit TextSource(const Text& text) : text_(text), size_(text.size_bytes()) {}
-
-    std::size_t size() const { return size_; }
-    char at(std::size_t pos) const {
-        if (pos < window_start_ || pos >= window_end_) {
-            refill(pos);
-        }
-        return window_[pos - window_start_];
-    }
-    bool starts_with(std::size_t pos, std::string_view s) const {
-        if (pos + s.size() > size_) {
-            return false;
-        }
-        for (std::size_t i = 0; i < s.size(); ++i) {
-            if (at(pos + i) != s[i]) {
-                return false;
-            }
-        }
-        return true;
-    }
-    void extract(std::size_t pos, std::size_t len, std::string& out) const {
-        out.clear();
-        for (std::size_t i = 0; i < len; ++i) {
-            out.push_back(at(pos + i));
-        }
-    }
-
-private:
-    void refill(std::size_t pos) const {
-        TextCursor cursor(text_, TextOffset{static_cast<std::uint32_t>(pos)});
-        window_ = cursor.chunk();
-        window_start_ = pos;
-        window_end_ = pos + window_.size();
-    }
-
-    const Text& text_;
-    std::size_t size_;
-    mutable std::string_view window_;
-    mutable std::size_t window_start_ = 0;
-    mutable std::size_t window_end_ = 0;
-};
 
 template <typename Source>
 class Lexer {
@@ -534,13 +473,13 @@ private:
 } // namespace
 
 LexOutput lex(std::string_view text) {
-    StringSource source{text};
-    return Lexer<StringSource>(source).run();
+    StringCharSource source{text};
+    return Lexer<StringCharSource>(source).run();
 }
 
 LexOutput lex(const Text& text) {
-    TextSource source(text);
-    return Lexer<TextSource>(source).run();
+    TextCharSource source(text);
+    return Lexer<TextCharSource>(source).run();
 }
 
 } // namespace cind

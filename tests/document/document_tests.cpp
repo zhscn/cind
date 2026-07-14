@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "document/document.hpp"
+#include "document/line_index.hpp"
 
 #include <random>
 #include <stdexcept>
@@ -30,7 +31,9 @@ void check_normalized(const std::vector<TextEdit>& edits) {
     }
 }
 
-void check_line_index(std::string_view text, const LineIndex& index) {
+// Index is LineIndex or Text (same line-query API).
+template <typename Index>
+void check_line_index(std::string_view text, const Index& index) {
     std::vector<std::uint32_t> starts{0};
     for (std::size_t i = 0; i < text.size(); ++i) {
         if (text[i] == '\n') {
@@ -59,9 +62,9 @@ TEST_CASE("empty document basics") {
     Document doc("");
     auto snap = doc.snapshot();
     CHECK(snap.revision() == 0);
-    CHECK(snap.text() == "");
+    CHECK(snap.content() == "");
     CHECK(snap.size_bytes() == 0);
-    CHECK(snap.lines().line_count() == 1);
+    CHECK(snap.content().line_count() == 1);
 }
 
 TEST_CASE("single edits") {
@@ -71,7 +74,7 @@ TEST_CASE("single edits") {
         auto tx = doc.begin_transaction();
         tx.insert(TextOffset{5}, ",");
         auto result = tx.commit();
-        CHECK(doc.snapshot().text() == "hello, world");
+        CHECK(doc.snapshot().content() == "hello, world");
         CHECK(result.change.old_revision == 0);
         CHECK(result.change.new_revision == 1);
         REQUIRE(result.change.edits.size() == 1);
@@ -84,13 +87,13 @@ TEST_CASE("single edits") {
         auto tx = doc.begin_transaction();
         tx.erase(make_range(5, 11));
         tx.commit();
-        CHECK(doc.snapshot().text() == "hello");
+        CHECK(doc.snapshot().content() == "hello");
     }
     SUBCASE("replace") {
         auto tx = doc.begin_transaction();
         tx.replace(make_range(6, 11), "there");
         tx.commit();
-        CHECK(doc.snapshot().text() == "hello there");
+        CHECK(doc.snapshot().content() == "hello there");
     }
 }
 
@@ -102,9 +105,9 @@ TEST_CASE("snapshots are immutable across commits") {
         tx.replace(make_range(0, 3), "xyz");
         tx.commit();
     }
-    CHECK(before.text() == "abc");
+    CHECK(before.content() == "abc");
     CHECK(before.revision() == 0);
-    CHECK(doc.snapshot().text() == "xyz");
+    CHECK(doc.snapshot().content() == "xyz");
     CHECK(doc.snapshot().revision() == 1);
 }
 
@@ -120,7 +123,7 @@ TEST_CASE("multi-edit transaction produces one normalized change") {
     CHECK(tx.anchor_offset(caret).value == 15);
     auto result = tx.commit();
 
-    CHECK(doc.snapshot().text() == "void f() {\n    }");
+    CHECK(doc.snapshot().content() == "void f() {\n    }");
     CHECK(doc.anchor_offset(caret).value == 15);
     // Adjacent inserts merged into a single edit.
     REQUIRE(result.change.edits.size() == 1);
@@ -129,7 +132,7 @@ TEST_CASE("multi-edit transaction produces one normalized change") {
 
     // One undo unit reverts the whole command.
     REQUIRE(doc.undo().has_value());
-    CHECK(doc.snapshot().text() == "void f() {}");
+    CHECK(doc.snapshot().content() == "void f() {}");
     CHECK(doc.anchor_offset(caret).value == 10);
 }
 
@@ -141,7 +144,7 @@ TEST_CASE("edit folding keeps the list normalized") {
         tx.insert(TextOffset{8}, "B");
         tx.insert(TextOffset{2}, "A");
         auto result = tx.commit();
-        CHECK(doc.snapshot().text() == "01A234567B89");
+        CHECK(doc.snapshot().content() == "01A234567B89");
         REQUIRE(result.change.edits.size() == 2);
         check_normalized(result.change.edits);
         CHECK(apply_normalized("0123456789", result.change.edits) == "01A234567B89");
@@ -151,7 +154,7 @@ TEST_CASE("edit folding keeps the list normalized") {
         tx.insert(TextOffset{5}, "XX"); // "01234XX56789"
         tx.replace(make_range(4, 9), "-"); // spans "4XX56"
         auto result = tx.commit();
-        CHECK(doc.snapshot().text() == "0123-789");
+        CHECK(doc.snapshot().content() == "0123-789");
         REQUIRE(result.change.edits.size() == 1);
         CHECK(apply_normalized("0123456789", result.change.edits) == "0123-789");
     }
@@ -161,7 +164,7 @@ TEST_CASE("edit folding keeps the list normalized") {
         tx.insert(TextOffset{9}, "B");  // "01A234567B89"
         tx.erase(make_range(1, 11));    // spans both, keeps "0" and the final "9"
         auto result = tx.commit();
-        CHECK(doc.snapshot().text() == "09");
+        CHECK(doc.snapshot().content() == "09");
         REQUIRE(result.change.edits.size() == 1);
         CHECK(apply_normalized("0123456789", result.change.edits) == "09");
     }
@@ -176,7 +179,7 @@ TEST_CASE("abort leaves the document untouched") {
         CHECK(tx.anchor_offset(a).value == 12);
         tx.abort();
     }
-    CHECK(doc.snapshot().text() == "stable");
+    CHECK(doc.snapshot().content() == "stable");
     CHECK(doc.revision() == 0);
     CHECK(doc.anchor_offset(a).value == 3);
 
@@ -185,7 +188,7 @@ TEST_CASE("abort leaves the document untouched") {
             auto tx = doc.begin_transaction();
             tx.insert(TextOffset{0}, "x");
         }
-        CHECK(doc.snapshot().text() == "stable");
+        CHECK(doc.snapshot().content() == "stable");
         auto tx = doc.begin_transaction(); // no "already active" throw
         tx.abort();
     }
@@ -210,7 +213,7 @@ TEST_CASE("edit validation") {
     CHECK_THROWS_AS(tx.insert(TextOffset{0}, "a\r\nb"), std::invalid_argument);
     tx.insert(TextOffset{3}, "!");
     tx.commit();
-    CHECK(doc.snapshot().text() == "abc!");
+    CHECK(doc.snapshot().content() == "abc!");
 }
 
 TEST_CASE("empty commit does not bump the revision") {
@@ -229,11 +232,11 @@ TEST_CASE("speculative snapshot") {
     tx.insert(TextOffset{1}, "\n");
     auto spec = tx.speculative_snapshot();
     CHECK(spec.revision() == 1);
-    CHECK(spec.text() == "a\nb");
-    CHECK(spec.lines().line_count() == 2);
+    CHECK(spec.content() == "a\nb");
+    CHECK(spec.content().line_count() == 2);
     tx.abort();
     CHECK(doc.revision() == 0);
-    CHECK(spec.text() == "a\nb"); // snapshot outlives the transaction
+    CHECK(spec.content() == "a\nb"); // snapshot outlives the transaction
 }
 
 TEST_CASE("undo and redo") {
@@ -248,22 +251,22 @@ TEST_CASE("undo and redo") {
         tx.insert(TextOffset{2}, "+x");
         tx.commit();
     }
-    CHECK(doc.snapshot().text() == "v1+x");
+    CHECK(doc.snapshot().content() == "v1+x");
     CHECK(doc.revision() == 2);
 
     REQUIRE(doc.undo().has_value());
-    CHECK(doc.snapshot().text() == "v1");
+    CHECK(doc.snapshot().content() == "v1");
     CHECK(doc.revision() == 3); // undo creates a new revision
 
     REQUIRE(doc.undo().has_value());
-    CHECK(doc.snapshot().text() == "v0");
+    CHECK(doc.snapshot().content() == "v0");
     CHECK(!doc.can_undo());
     CHECK(!doc.undo().has_value());
 
     REQUIRE(doc.redo().has_value());
-    CHECK(doc.snapshot().text() == "v1");
+    CHECK(doc.snapshot().content() == "v1");
     REQUIRE(doc.redo().has_value());
-    CHECK(doc.snapshot().text() == "v1+x");
+    CHECK(doc.snapshot().content() == "v1+x");
     CHECK(!doc.can_redo());
 
     // A new commit clears the redo stack.
@@ -295,8 +298,8 @@ TEST_CASE("line index") {
 
 TEST_CASE("newline normalization in constructor") {
     Document doc("a\r\nb\rc\n");
-    CHECK(doc.snapshot().text() == "a\nb\nc\n");
-    CHECK(doc.snapshot().lines().line_count() == 4);
+    CHECK(doc.snapshot().content() == "a\nb\nc\n");
+    CHECK(doc.snapshot().content().line_count() == 4);
 }
 
 TEST_CASE("anchor affinity at the insertion point") {
@@ -384,21 +387,21 @@ TEST_CASE("fuzz: random transactions keep every invariant") {
         auto result = tx.commit();
         history.push_back(model);
 
-        REQUIRE(doc.snapshot().text() == model);
+        REQUIRE(doc.snapshot().content() == model);
         check_normalized(result.change.edits);
         REQUIRE(apply_normalized(before, result.change.edits) == model);
-        check_line_index(model, doc.snapshot().lines());
+        check_line_index(model, doc.snapshot().content());
         CHECK(doc.anchor_offset(anchor).value <= model.size());
     }
 
     for (std::size_t i = history.size(); i-- > 1;) {
         REQUIRE(doc.undo().has_value());
-        REQUIRE(doc.snapshot().text() == history[i - 1]);
+        REQUIRE(doc.snapshot().content() == history[i - 1]);
     }
     CHECK(!doc.can_undo());
     for (std::size_t i = 1; i < history.size(); ++i) {
         REQUIRE(doc.redo().has_value());
-        REQUIRE(doc.snapshot().text() == history[i]);
+        REQUIRE(doc.snapshot().content() == history[i]);
     }
     CHECK(!doc.can_redo());
 

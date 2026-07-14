@@ -2,6 +2,7 @@
 
 #include "cli/style_loader.hpp"
 #include "document/document.hpp"
+#include "document/line_index.hpp"
 #include "formatting/clang_format_style.hpp"
 #include "indentation/indentation_service.hpp"
 #include "syntax/syntax_tree.hpp"
@@ -167,12 +168,12 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, const Bench
 
     Document document(buffer.str());
     DocumentSnapshot snapshot = document.snapshot();
-    std::string_view text = snapshot.text();
-    const LineIndex& lines = snapshot.lines();
+    const std::string text = snapshot.content().to_string();
+    const LineIndex lines(text);
 
     using clock = std::chrono::steady_clock;
     auto t0 = clock::now();
-    SyntaxTree tree = parse(text);
+    SyntaxTree tree = parse(snapshot.content()); // the editor path: chunked scan
     auto t1 = clock::now();
 
     Report report;
@@ -181,7 +182,8 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, const Bench
     bool formatting_on = true;
     for (std::uint32_t line = 0; line < lines.line_count(); ++line) {
         TextRange content = lines.line_content_range(line);
-        std::string_view line_text = text.substr(content.start.value, content.length());
+        std::string_view line_text =
+            std::string_view(text).substr(content.start.value, content.length());
         // Lines under "clang-format off" are not format ground truth.
         if (line_text.find("clang-format off") != std::string_view::npos) {
             formatting_on = false;

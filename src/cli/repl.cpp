@@ -106,7 +106,8 @@ int run_repl(std::istream& in, std::string initial) {
                 print_decision(session.explain());
             } else if (line == "tree") {
                 auto snap = session.snapshot();
-                std::cout << parse(snap.text()).dump(snap.text());
+                const std::string text = snap.content().to_string();
+                std::cout << parse(text).dump(text);
             } else if (line.starts_with("loadstyle ")) {
                 std::string_view path = std::string_view(line).substr(10);
                 if (auto loaded = load_clang_format_style(std::string(path))) {

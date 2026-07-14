@@ -235,7 +235,7 @@ bool run_one(const Fixture& fixture, std::string& failure) {
         }
     }
 
-    std::string actual(session.snapshot().text());
+    std::string actual = session.snapshot().content().to_string();
     bool text_ok = actual == fixture.expected;
     bool caret_ok = !fixture.expected_caret || session.caret() == *fixture.expected_caret;
     if (text_ok && caret_ok) {

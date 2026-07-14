@@ -1,5 +1,6 @@
 #include "indentation/indentation_service.hpp"
 
+#include "document/char_source.hpp"
 #include "indentation/expression_continuation.hpp"
 
 #include <algorithm>
@@ -47,25 +48,32 @@ int display_width(std::string_view chars, int start_col, int tab_width) {
     return col;
 }
 
-std::string_view leading_whitespace(std::string_view text, const LineIndex& lines,
-                                    std::uint32_t line) {
+std::string leading_whitespace(const TextCharSource& text, const Text& lines,
+                               std::uint32_t line) {
     TextRange content = lines.line_content_range(line);
-    std::string_view s = text.substr(content.start.value, content.length());
-    std::size_t n = 0;
-    while (n < s.size() && (s[n] == ' ' || s[n] == '\t')) {
-        ++n;
+    std::string out;
+    for (std::uint32_t p = content.start.value; p < content.end.value; ++p) {
+        const char c = text[p];
+        if (c != ' ' && c != '\t') {
+            break;
+        }
+        out.push_back(c);
     }
-    return s.substr(0, n);
+    return out;
 }
 
-int line_indent_width(std::string_view text, const LineIndex& lines, std::uint32_t line,
+int line_indent_width(const TextCharSource& text, const Text& lines, std::uint32_t line,
                       int tab_width) {
     return display_width(leading_whitespace(text, lines, line), 0, tab_width);
 }
 
-int column_at(std::string_view text, const LineIndex& lines, TextOffset offset, int tab_width) {
+int column_at(const TextCharSource& text, const Text& lines, TextOffset offset, int tab_width) {
     const std::uint32_t start = lines.line_start(lines.position(offset).line).value;
-    return display_width(text.substr(start, offset.value - start), 0, tab_width);
+    int col = 0;
+    for (std::uint32_t p = start; p < offset.value; ++p) {
+        col += text[p] == '\t' ? tab_width - col % tab_width : 1;
+    }
+    return col;
 }
 
 // design.md §9.5: structural columns may become tabs; alignment beyond the
@@ -122,7 +130,7 @@ std::optional<SyntaxNodeId> find_ancestor(const SyntaxTree& tree, SyntaxNodeId f
 }
 
 // First non-trivia token starting on the given line, if any.
-std::optional<Token> first_significant_on_line(const SyntaxTree& tree, const LineIndex& lines,
+std::optional<Token> first_significant_on_line(const SyntaxTree& tree, const Text& lines,
                                                std::uint32_t line) {
     TextRange range = lines.line_range(line);
     const auto& tokens = tree.tokens();
@@ -170,7 +178,7 @@ class IndentComputer {
 public:
     IndentComputer(const DocumentSnapshot& snapshot, const SyntaxTree& tree, std::uint32_t line,
                    const CppIndentStyle& style)
-        : snapshot_(snapshot), text_(snapshot.text()), lines_(snapshot.lines()), tree_(tree),
+        : snapshot_(snapshot), text_(snapshot.content()), lines_(snapshot.content()), tree_(tree),
           line_(line), style_(style) {}
 
     IndentDecision run() {
@@ -812,8 +820,8 @@ private:
     }
 
     const DocumentSnapshot& snapshot_;
-    std::string_view text_;
-    const LineIndex& lines_;
+    TextCharSource text_;
+    const Text& lines_;
     const SyntaxTree& tree_;
     std::uint32_t line_;
     CppIndentStyle style_;

@@ -57,15 +57,10 @@ std::uint32_t adjust_anchor(std::uint32_t offset, AnchorAffinity affinity, std::
 
 // ---------------------------------------------------------------- Document
 
-Document::Document(std::string text, DocumentId id) : id_(id) {
-    auto normalized = std::make_shared<const std::string>(normalize_newlines(std::move(text)));
-    lines_ = std::make_shared<const LineIndex>(*normalized);
-    text_ = std::move(normalized);
-}
+Document::Document(std::string text, DocumentId id)
+    : id_(id), text_(normalize_newlines(std::move(text))) {}
 
-DocumentSnapshot Document::snapshot() const {
-    return DocumentSnapshot(id_, revision_, text_, lines_);
-}
+DocumentSnapshot Document::snapshot() const { return DocumentSnapshot(id_, revision_, text_); }
 
 EditTransaction Document::begin_transaction() {
     if (transaction_active_) {
@@ -117,7 +112,7 @@ std::optional<DocumentChange> Document::redo() {
 
 AnchorId Document::create_anchor(TextOffset offset, AnchorAffinity affinity) {
     require_no_transaction("create_anchor");
-    if (offset.value > text_->size()) {
+    if (offset.value > text_.size_bytes()) {
         throw std::out_of_range("Document: anchor offset out of range");
     }
     AnchorId id = next_anchor_id_++;
@@ -160,7 +155,7 @@ void Document::set_anchor_affinity(AnchorId id, AnchorAffinity affinity) {
 // --------------------------------------------------------- EditTransaction
 
 EditTransaction::EditTransaction(Document& document)
-    : document_(&document), base_revision_(document.revision_), text_(*document.text_),
+    : document_(&document), base_revision_(document.revision_), text_(document.text_),
       anchors_(document.anchors_) {
     document.transaction_active_ = true;
 }
@@ -204,7 +199,7 @@ void EditTransaction::erase(TextRange range) {
 // Existing edits whose pending-coordinate extent overlaps or touches [cs, ce]
 // are merged with the new edit into a single record.
 void EditTransaction::apply(std::uint32_t cs, std::uint32_t ce, std::string_view replacement) {
-    if (cs > ce || ce > text_.size()) {
+    if (cs > ce || ce > text_.size_bytes()) {
         throw std::out_of_range("EditTransaction: edit out of range");
     }
     if (replacement.contains('\r')) {
@@ -262,9 +257,9 @@ void EditTransaction::apply(std::uint32_t cs, std::uint32_t ce, std::string_view
         const std::uint32_t mce = std::max(ce, last_cur_end);
         std::string merged;
         merged.reserve((cs - mcs) + replacement.size() + (mce - ce));
-        merged.append(text_, mcs, cs - mcs);
+        merged.append(text_.substring(make_range(mcs, cs)));
         merged.append(replacement);
-        merged.append(text_, ce, mce - ce);
+        merged.append(text_.substring(make_range(ce, mce)));
         const std::uint32_t old_start =
             mcs < first_cur_start
                 ? static_cast<std::uint32_t>(static_cast<std::int64_t>(mcs) - delta_before_first)
@@ -279,7 +274,7 @@ void EditTransaction::apply(std::uint32_t cs, std::uint32_t ce, std::string_view
                       TextEdit{make_range(old_start, old_end), std::move(merged)});
     }
 
-    text_.replace(cs, ce - cs, replacement);
+    text_ = text_.replace(make_range(cs, ce), replacement);
 
     for (auto& [id, state] : anchors_) {
         state.offset = adjust_anchor(state.offset, state.affinity, cs, ce, new_len);
@@ -307,9 +302,7 @@ void EditTransaction::set_anchor_affinity(AnchorId id, AnchorAffinity affinity) 
 DocumentSnapshot EditTransaction::speculative_snapshot() const {
     require_active();
     RevisionId revision = edits_.empty() ? base_revision_ : base_revision_ + 1;
-    auto text = std::make_shared<const std::string>(text_);
-    auto lines = std::make_shared<const LineIndex>(*text);
-    return DocumentSnapshot(document_->id_, revision, std::move(text), std::move(lines));
+    return DocumentSnapshot(document_->id_, revision, text_);
 }
 
 CommitResult EditTransaction::commit() {
@@ -325,7 +318,7 @@ CommitResult EditTransaction::commit() {
         return result;
     }
 
-    const std::string& old_text = *doc.text_;
+    const Text& old_text = doc.text_;
 
     std::vector<TextEdit> inverse;
     inverse.reserve(edits_.size());
@@ -335,8 +328,7 @@ CommitResult EditTransaction::commit() {
             static_cast<std::int64_t>(edit.old_range.start.value) + delta);
         const auto new_end = new_start + static_cast<std::uint32_t>(edit.new_text.size());
         inverse.push_back(
-            TextEdit{make_range(new_start, new_end),
-                     std::string(old_text, edit.old_range.start.value, edit.old_range.length())});
+            TextEdit{make_range(new_start, new_end), old_text.substring(edit.old_range)});
         delta += static_cast<std::int64_t>(edit.new_text.size()) - edit.old_range.length();
     }
 
@@ -349,10 +341,7 @@ CommitResult EditTransaction::commit() {
     change.affected_new_range =
         TextRange{inverse.front().old_range.start, inverse.back().old_range.end};
 
-    auto text = std::make_shared<const std::string>(std::move(text_));
-    auto lines = std::make_shared<const LineIndex>(*text);
-    doc.text_ = std::move(text);
-    doc.lines_ = std::move(lines);
+    doc.text_ = std::move(text_);
     doc.revision_ = base_revision_ + 1;
     doc.anchors_ = std::move(anchors_);
 

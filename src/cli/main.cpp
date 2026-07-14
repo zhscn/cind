@@ -43,10 +43,10 @@ int cmd_tokens(const char* path) {
     buffer << in.rdbuf();
     cind::Document document(buffer.str());
     auto snapshot = document.snapshot();
-    auto output = cind::lex(snapshot.text());
+    auto output = cind::lex(snapshot.content());
 
     for (const auto& token : output.tokens) {
-        auto pos = snapshot.lines().position(token.range.start);
+        auto pos = snapshot.content().position(token.range.start);
         std::string flags;
         if (has_flag(token.flags, cind::LexicalFlags::PreprocessorLine)) {
             flags += " pp";
@@ -60,7 +60,7 @@ int cmd_tokens(const char* path) {
         std::printf("%5u..%-5u %3u:%-3u %-18s |%s|%s\n", token.range.start.value,
                     token.range.end.value, pos.line, pos.byte_column,
                     std::string(cind::token_kind_name(token.kind)).c_str(),
-                    escape_preview(snapshot.text(token.range)).c_str(), flags.c_str());
+                    escape_preview(snapshot.substring(token.range)).c_str(), flags.c_str());
     }
     return 0;
 }
@@ -75,11 +75,11 @@ int cmd_explain(const char* path, std::uint32_t line_1based) {
     buffer << in.rdbuf();
     cind::Document document(buffer.str());
     auto snapshot = document.snapshot();
-    if (line_1based == 0 || line_1based > snapshot.lines().line_count()) {
+    if (line_1based == 0 || line_1based > snapshot.content().line_count()) {
         std::cerr << "indent-core: line out of range\n";
         return 1;
     }
-    auto tree = cind::parse(snapshot.text());
+    auto tree = cind::parse(snapshot.content());
     cind::CppIndentStyle style;
     auto decision = cind::compute_line_indent(snapshot, tree, line_1based - 1, style);
 
@@ -89,7 +89,7 @@ int cmd_explain(const char* path, std::uint32_t line_1based) {
         std::cout << "preserve: line must not be reindented\n";
     }
     if (decision.anchor) {
-        auto pos = snapshot.lines().position(*decision.anchor);
+        auto pos = snapshot.content().position(*decision.anchor);
         std::cout << "anchor: line " << pos.line + 1 << ", column " << pos.byte_column << "\n";
     }
     std::cout << "\ntrace:\n";
@@ -114,7 +114,7 @@ int cmd_apply_enter(const char* path, std::uint32_t offset) {
     }
     cind::CppIndentStyle style;
     auto result = cind::press_enter(document, cind::TextOffset{offset}, style);
-    std::string out(document.snapshot().text());
+    std::string out = document.snapshot().content().to_string();
     out.insert(result.caret.value, "^");
     std::cout << "handler: " << result.handler << "\n---\n" << out;
     return 0;
@@ -130,8 +130,9 @@ int cmd_tree(const char* path) {
     buffer << in.rdbuf();
     cind::Document document(buffer.str());
     auto snapshot = document.snapshot();
-    auto tree = cind::parse(snapshot.text());
-    std::cout << tree.dump(snapshot.text());
+    const std::string text = snapshot.content().to_string();
+    auto tree = cind::parse(text);
+    std::cout << tree.dump(text);
     return 0;
 }
 

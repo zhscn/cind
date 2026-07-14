@@ -4,14 +4,15 @@ namespace cind {
 
 namespace {
 
-std::string_view leading_whitespace_of(const DocumentSnapshot& snapshot, std::uint32_t line) {
-    TextRange content = snapshot.lines().line_content_range(line);
-    std::string_view s = snapshot.text(content);
+std::string leading_whitespace_of(const DocumentSnapshot& snapshot, std::uint32_t line) {
+    TextRange content = snapshot.content().line_content_range(line);
+    std::string s = snapshot.substring(content);
     std::size_t n = 0;
     while (n < s.size() && (s[n] == ' ' || s[n] == '\t')) {
         ++n;
     }
-    return s.substr(0, n);
+    s.resize(n);
+    return s;
 }
 
 // EnterBetweenBraces predicate: the nearest significant tokens around the
@@ -19,7 +20,7 @@ std::string_view leading_whitespace_of(const DocumentSnapshot& snapshot, std::ui
 // single-line trivia in between (a '}' already on its own line just needs the
 // fallback). Matching is CST-based, so unbalanced braces simply fail the
 // predicate and fall through to plain newline-and-indent.
-bool between_braces(std::string_view text, const SyntaxTree& tree, TextOffset caret) {
+bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, TextOffset caret) {
     const auto& tokens = tree.tokens();
     std::size_t prev = tokens.size();
     std::size_t next = tokens.size();
@@ -49,7 +50,7 @@ bool between_braces(std::string_view text, const SyntaxTree& tree, TextOffset ca
             return false;
         }
         const TextRange r = tokens[i].range;
-        if (text.substr(r.start.value, r.length()).contains('\n')) {
+        if (snapshot.substring(r).contains('\n')) {
             return false;
         }
     }
@@ -72,16 +73,16 @@ EnterResult enter_between_braces(Document& document, TextOffset caret,
     tx.insert(caret, "\n\n");
 
     DocumentSnapshot spec = tx.speculative_snapshot();
-    SyntaxTree tree = parse(spec.text());
-    const std::uint32_t caret_line = spec.lines().position(caret).line;
+    SyntaxTree tree = parse(spec.content());
+    const std::uint32_t caret_line = spec.content().position(caret).line;
 
     IndentDecision middle = compute_line_indent(spec, tree, caret_line + 1, style);
     IndentDecision closing = compute_line_indent(spec, tree, caret_line + 2, style);
     middle.trace.insert(middle.trace.begin(), "enter handler: EnterBetweenBraces");
 
     // Higher offset first so the earlier insert does not shift it.
-    tx.insert(spec.lines().line_start(caret_line + 2), closing.indentation_text);
-    TextOffset middle_start = spec.lines().line_start(caret_line + 1);
+    tx.insert(spec.content().line_start(caret_line + 2), closing.indentation_text);
+    TextOffset middle_start = spec.content().line_start(caret_line + 1);
     tx.insert(middle_start, middle.indentation_text);
 
     TextOffset final_caret{middle_start.value +
@@ -97,8 +98,8 @@ EnterResult newline_and_indent(Document& document, TextOffset caret,
     tx.insert(caret, "\n");
 
     DocumentSnapshot spec = tx.speculative_snapshot();
-    SyntaxTree tree = parse(spec.text());
-    const std::uint32_t new_line = spec.lines().position(TextOffset{caret.value + 1}).line;
+    SyntaxTree tree = parse(spec.content());
+    const std::uint32_t new_line = spec.content().position(TextOffset{caret.value + 1}).line;
 
     IndentDecision decision = compute_line_indent(spec, tree, new_line, style);
     decision.trace.insert(decision.trace.begin(), "enter handler: NewlineAndIndent (fallback)");
@@ -108,7 +109,7 @@ EnterResult newline_and_indent(Document& document, TextOffset caret,
         // Never write into a raw string; inside a block comment continue the
         // previous line's leading whitespace.
         ws = decision.role == FormatRole::PreservedBlockComment
-                 ? std::string(leading_whitespace_of(spec, new_line - 1))
+                 ? leading_whitespace_of(spec, new_line - 1)
                  : std::string();
     }
     tx.insert(TextOffset{caret.value + 1}, ws);
@@ -123,8 +124,8 @@ EnterResult newline_and_indent(Document& document, TextOffset caret,
 
 EnterResult press_enter(Document& document, TextOffset caret, const CppIndentStyle& style) {
     DocumentSnapshot snapshot = document.snapshot();
-    SyntaxTree tree = parse(snapshot.text());
-    if (between_braces(snapshot.text(), tree, caret)) {
+    SyntaxTree tree = parse(snapshot.content());
+    if (between_braces(snapshot, tree, caret)) {
         return enter_between_braces(document, caret, style);
     }
     return newline_and_indent(document, caret, style);
@@ -140,23 +141,22 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch,
 
     if (ch == '}' || ch == ':' || ch == '#') {
         DocumentSnapshot spec = tx.speculative_snapshot();
-        const std::uint32_t line = spec.lines().position(caret).line;
-        const TextOffset line_start = spec.lines().line_start(line);
-        std::string_view prefix = spec.text(TextRange{line_start, caret});
-        const bool first_content =
-            prefix.find_first_not_of(" \t") == std::string_view::npos;
+        const std::uint32_t line = spec.content().position(caret).line;
+        const TextOffset line_start = spec.content().line_start(line);
+        const std::string prefix = spec.substring(TextRange{line_start, caret});
+        const bool first_content = prefix.find_first_not_of(" \t") == std::string::npos;
 
         // ':' may complete a label anywhere on the line; '}' and '#' only
         // reindent when they are the line's first content.
         if (ch == ':' || first_content) {
-            SyntaxTree tree = parse(spec.text());
+            SyntaxTree tree = parse(spec.content());
             IndentDecision decision = compute_line_indent(spec, tree, line, style);
             const bool colon_completes_label =
                 decision.role == FormatRole::CaseLabel ||
                 decision.role == FormatRole::AccessSpecifierLabel ||
                 decision.role == FormatRole::ConstructorInitializerIntro;
             if (!decision.preserve && (ch != ':' || colon_completes_label)) {
-                std::string_view current = leading_whitespace_of(spec, line);
+                const std::string current = leading_whitespace_of(spec, line);
                 if (current != decision.indentation_text &&
                     caret.value >= line_start.value + current.size()) {
                     tx.replace(
@@ -183,14 +183,14 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch,
 
 IndentDecision indent_line(Document& document, std::uint32_t line, const CppIndentStyle& style) {
     DocumentSnapshot snapshot = document.snapshot();
-    SyntaxTree tree = parse(snapshot.text());
+    SyntaxTree tree = parse(snapshot.content());
     IndentDecision decision = compute_line_indent(snapshot, tree, line, style);
     if (decision.preserve) {
         return decision;
     }
-    std::string_view current = leading_whitespace_of(snapshot, line);
+    const std::string current = leading_whitespace_of(snapshot, line);
     if (current != decision.indentation_text) {
-        TextOffset start = snapshot.lines().line_start(line);
+        TextOffset start = snapshot.content().line_start(line);
         EditTransaction tx = document.begin_transaction();
         tx.replace(TextRange{start, TextOffset{start.value +
                                                static_cast<std::uint32_t>(current.size())}},

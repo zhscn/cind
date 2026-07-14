@@ -1,4 +1,5 @@
 #include "cpp_lexer/lexer.hpp"
+#include "document/char_source.hpp"
 #include "syntax/syntax_tree.hpp"
 
 #include <vector>
@@ -50,10 +51,12 @@ bool is_sync_introducer(TokenKind k) {
 
 } // namespace
 
-// In cpp-only scope; declared a friend of SyntaxTree.
+// Declared a friend of SyntaxTree. Source is a CharSource (char_source.hpp);
+// token text is only extracted at a few cold classification sites.
+template <typename Source>
 class Parser {
 public:
-    Parser(std::string_view text, LexOutput lexed) : text_(text) {
+    Parser(const Source& source, LexOutput lexed) : src_(source) {
         tree_.tokens_ = std::move(lexed.tokens);
     }
 
@@ -96,7 +99,8 @@ private:
     std::string_view token_text() {
         skip_trivia();
         const Token& t = tokens()[pos_];
-        return text_.substr(t.range.start.value, t.range.length());
+        src_.extract(t.range.start.value, t.range.length(), token_text_buffer_);
+        return token_text_buffer_;
     }
     // Declarator-suffix tokens between ')' (or ']') and '{' that keep a
     // function/lambda body possible: `) const {`, `) mutable -> T & {`.
@@ -906,13 +910,22 @@ private:
         close(n);
     }
 
-    std::string_view text_;
+    const Source& src_;
+    std::string token_text_buffer_;
     std::uint32_t pos_ = 0;
     bool enum_body_ = false; // directly inside an enum's ClassBody
     SyntaxTree tree_;
     std::vector<SyntaxNodeId> stack_;
 };
 
-SyntaxTree parse(std::string_view text) { return Parser(text, lex(text)).run(); }
+SyntaxTree parse(std::string_view text) {
+    StringCharSource source{text};
+    return Parser<StringCharSource>(source, lex(text)).run();
+}
+
+SyntaxTree parse(const Text& text) {
+    TextCharSource source(text);
+    return Parser<TextCharSource>(source, lex(text)).run();
+}
 
 } // namespace cind

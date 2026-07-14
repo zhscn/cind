@@ -453,6 +453,21 @@ std::optional<std::string> Text::validate() const {
     return validate_node(root_.get(), true);
 }
 
+bool operator==(const Text& a, std::string_view b) {
+    if (a.size_bytes() != b.size()) {
+        return false;
+    }
+    std::size_t pos = 0;
+    for (TextCursor cursor(a); !cursor.at_end(); cursor.advance_chunk()) {
+        const std::string_view chunk = cursor.chunk();
+        if (b.substr(pos, chunk.size()) != chunk) {
+            return false;
+        }
+        pos += chunk.size();
+    }
+    return true;
+}
+
 TextCursor::TextCursor(Text text, TextOffset start) : text_(std::move(text)) {
     std::uint32_t size = text_.size_bytes();
     if (start.value > size) {
