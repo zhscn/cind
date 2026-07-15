@@ -14,6 +14,10 @@ add_executable(green_tree_tests syntax/green_tree_tests.cpp)
 target_link_libraries(green_tree_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME green_tree_tests COMMAND green_tree_tests)
 
+add_executable(token_buffer_tests lexer/token_buffer_tests.cpp)
+target_link_libraries(token_buffer_tests PRIVATE cind_lexer doctest::doctest)
+add_test(NAME token_buffer_tests COMMAND token_buffer_tests)
+
 add_executable(relex_tests lexer/relex_tests.cpp)
 target_link_libraries(relex_tests PRIVATE cind_lexer doctest::doctest)
 add_test(NAME relex_tests COMMAND relex_tests)

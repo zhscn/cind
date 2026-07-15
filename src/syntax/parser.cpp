@@ -59,13 +59,19 @@ bool is_sync_introducer(TokenKind k) {
 template <typename Source>
 class Parser {
 public:
+    // A full parse reads the flat lexed vector (the hot O(n) build path
+    // stays raw-array fast); run() converts it into the tree's chunked
+    // TokenBuffer at the end.
     Parser(const Source& source, LexOutput lexed) : src_(source) {
-        tree_.tokens_ = std::move(lexed.tokens);
+        owned_flat_ = std::move(lexed.tokens);
+    }
+    Parser(const Source& source, TokenBuffer&& tokens) : src_(source) {
+        owned_flat_ = tokens.flatten();
     }
 
     // Sandbox mode for incremental block reparse: tokens are borrowed, not
     // owned, and parsing replays one container's item loop.
-    Parser(const Source& source, const std::vector<Token>& tokens)
+    Parser(const Source& source, const TokenBuffer& tokens)
         : src_(source), tokens_view_(&tokens) {}
 
     // Replays the guarded(parse_declaration_or_statement) loop of a
@@ -98,7 +104,7 @@ public:
             if (pos_ > boundaries.back()) {
                 break; // ran past every boundary: escalate
             }
-            const TokenKind k = tokens()[pos_].kind;
+            const TokenKind k = tok(pos_).kind;
             if (k == TokenKind::EndOfFile) {
                 break; // a legal EOF stop would have matched a boundary
             }
@@ -140,42 +146,60 @@ public:
                                      false, TokenKind::EndOfFile});
         stack_.push_back(0);
         run_container_items([&] { return at_eof(); });
-        pos_ = static_cast<std::uint32_t>(tree_.tokens_.size()); // include trailing trivia + EOF
+        pos_ = static_cast<std::uint32_t>(token_count()); // include trailing trivia + EOF
         nodes()[0].end_token = pos_;
         stack_.pop_back();
         tree_.pp_phantom_hi_ = pp_phantom_hi_;
+        // Conditional-directive index for the per-keystroke pp-safety check:
+        // one classification pass here replaces an every-token rescan there.
+        tree_.pp_dirs_.clear();
+        for (std::uint32_t i = 0; i < token_count(); ++i) {
+            if (tok(i).kind != TokenKind::PreprocessorHash) {
+                continue;
+            }
+            const PPCat cat = pp_category_at(i);
+            if (cat != PPCat::Other) {
+                tree_.pp_dirs_.push_back({i, cat});
+            }
+        }
+        tree_.tokens_ = TokenBuffer(owned_flat_);
         tree_.set_green(green_from_flat_subtree(build_, 0));
         return std::move(tree_);
     }
 
 private:
     std::vector<SyntaxNode>& nodes() { return build_; }
-    const std::vector<Token>& tokens() const {
-        return tokens_view_ != nullptr ? *tokens_view_ : tree_.tokens_;
+    // Token access dispatches on the parser's source: the owned flat vector
+    // (full parse) or the borrowed chunked buffer (sandbox reparse).
+    Token tok(std::size_t i) const {
+        return tokens_view_ != nullptr ? (*tokens_view_)[i] : owned_flat_[i];
+    }
+    std::size_t token_count() const {
+        return tokens_view_ != nullptr ? tokens_view_->size() : owned_flat_.size();
     }
 
     // -- cursor ------------------------------------------------------------
 
     void skip_trivia() {
-        while (is_trivia(tokens()[pos_].kind)) {
+        while (is_trivia(tok(pos_).kind)) {
             ++pos_;
         }
     }
     TokenKind kind() {
         skip_trivia();
-        return tokens()[pos_].kind;
+        return tok(pos_).kind;
     }
     bool at(TokenKind k) { return kind() == k; }
     bool at_eof() { return at(TokenKind::EndOfFile); }
     void advance() {
         skip_trivia();
-        if (tokens()[pos_].kind != TokenKind::EndOfFile) {
+        if (tok(pos_).kind != TokenKind::EndOfFile) {
             ++pos_;
         }
     }
     std::string_view token_text() {
         skip_trivia();
-        const Token& t = tokens()[pos_];
+        const Token& t = tok(pos_);
         src_.extract(t.range.start.value, t.range.length(), token_text_buffer_);
         return token_text_buffer_;
     }
@@ -192,7 +216,7 @@ private:
     bool at_line_start() {
         skip_trivia();
         for (std::uint32_t i = pos_; i > 0; --i) {
-            const TokenKind k = tokens()[i - 1].kind;
+            const TokenKind k = tok(i - 1).kind;
             if (k == TokenKind::Newline) {
                 return true;
             }
@@ -204,8 +228,8 @@ private:
     }
 
     bool newline_before_next_token() const {
-        for (std::uint32_t i = pos_; i < tokens().size(); ++i) {
-            const TokenKind k = tokens()[i].kind;
+        for (std::uint32_t i = pos_; i < token_count(); ++i) {
+            const TokenKind k = tok(i).kind;
             if (k == TokenKind::Newline || k == TokenKind::EndOfFile) {
                 return true;
             }
@@ -235,7 +259,7 @@ private:
         SyntaxNode& n = nodes()[id];
         std::uint32_t floor = n.children.empty() ? n.first_token : nodes()[n.children.back()].end_token;
         std::uint32_t end = pos_;
-        while (end > floor && is_trivia(tokens()[end - 1].kind)) {
+        while (end > floor && is_trivia(tok(end - 1).kind)) {
             --end;
         }
         n.end_token = end;
@@ -316,15 +340,15 @@ private:
     // group parsing never leaves the directive, so an unbalanced macro
     // (`#define LPAREN (`) stays bounded.
     bool pp_line_continues() const {
-        return pos_ + 1 < tokens().size() &&
-               has_flag(tokens()[pos_].flags, LexicalFlags::PreprocessorLine);
+        return pos_ + 1 < token_count() &&
+               has_flag(tok(pos_).flags, LexicalFlags::PreprocessorLine);
     }
 
     void parse_pp_group(TokenKind closer, SyntaxKind kind) {
         const SyntaxNodeId g = open(kind);
         ++pos_; // opener
         while (pp_line_continues()) {
-            const TokenKind k = tokens()[pos_].kind;
+            const TokenKind k = tok(pos_).kind;
             if (is_trivia(k)) {
                 ++pos_;
                 continue;
@@ -357,7 +381,7 @@ private:
     void parse_pp_directive() {
         const SyntaxNodeId d = open(SyntaxKind::PreprocessorDirective);
         while (pp_line_continues()) {
-            const TokenKind k = tokens()[pos_].kind;
+            const TokenKind k = tok(pos_).kind;
             if (is_trivia(k) || !parse_pp_body_token(k)) {
                 ++pos_;
             }
@@ -368,17 +392,17 @@ private:
     // Classify the preprocessor directive whose '#' is at `hash`.
     PPCat pp_category_at(std::uint32_t hash) {
         std::uint32_t i = hash + 1;
-        while (i < tokens().size() && is_trivia(tokens()[i].kind)) {
+        while (i < token_count() && is_trivia(tok(i).kind)) {
             ++i;
         }
-        if (i >= tokens().size()) {
+        if (i >= token_count()) {
             return PPCat::Other;
         }
-        const TokenKind k = tokens()[i].kind;
+        const TokenKind k = tok(i).kind;
         if (k != TokenKind::Identifier) {
             return pp_classify(k, {});
         }
-        const Token& t = tokens()[i];
+        const Token& t = tok(i);
         src_.extract(t.range.start.value, t.range.length(), token_text_buffer_);
         return pp_classify(k, token_text_buffer_);
     }
@@ -396,7 +420,7 @@ private:
     // and friends fall through to normal flat parsing.
     PPItem pp_open_item() {
         skip_trivia();
-        if (tokens()[pos_].kind != TokenKind::PreprocessorHash) {
+        if (tok(pos_).kind != TokenKind::PreprocessorHash) {
             return PPItem::Dispatch;
         }
         const std::uint32_t depth = static_cast<std::uint32_t>(stack_.size());
@@ -900,8 +924,8 @@ private:
             // as in calculateBraceTypes: consume the whole line and keep
             // classifying ("{a, \n#ifdef X\n b,\n#endif\n c}").
             if (k == TokenKind::PreprocessorHash) {
-                while (pos_ + 1 < tokens().size() &&
-                       has_flag(tokens()[pos_].flags, LexicalFlags::PreprocessorLine)) {
+                while (pos_ + 1 < token_count() &&
+                       has_flag(tok(pos_).flags, LexicalFlags::PreprocessorLine)) {
                     ++pos_;
                 }
                 continue;
@@ -924,8 +948,8 @@ private:
         int paren = 0;
         int bracket = 0;
         int significant = 0;
-        for (std::uint32_t i = from; i < tokens().size(); ++i) {
-            const Token& t = tokens()[i];
+        for (std::uint32_t i = from; i < token_count(); ++i) {
+            const Token& t = tok(i);
             if (is_trivia(t.kind)) {
                 continue;
             }
@@ -1189,7 +1213,8 @@ private:
     }
 
     const Source& src_;
-    const std::vector<Token>* tokens_view_ = nullptr; // sandbox mode
+    const TokenBuffer* tokens_view_ = nullptr; // sandbox mode
+    std::vector<Token> owned_flat_;            // full-parse mode: the lexed stream
     std::string token_text_buffer_;
     std::uint32_t pos_ = 0;
     bool enum_body_ = false; // directly inside an enum's ClassBody
@@ -1250,6 +1275,13 @@ SyntaxTree parse(const Text& text, LexOutput lexed) {
     return Parser<TextCharSource>(source, std::move(lexed)).run();
 }
 
+// Full parse over an already-relexed chunked token stream (the reparse
+// full-fallback path): no vector round-trip.
+SyntaxTree parse(const Text& text, TokenBuffer tokens) {
+    TextCharSource source(text);
+    return Parser<TextCharSource>(source, std::move(tokens)).run();
+}
+
 // ---- incremental reparse (design.md §17) -----------------------------------
 
 namespace {
@@ -1278,7 +1310,7 @@ struct RepairContext {
 // tok_hi) is the old-coordinate damage window (guard included); old index
 // j >= tok_hi lives at j + delta_tok in the new stream. Untouched child
 // GreenRefs are reused by pointer — their relative encoding is splice-invariant.
-GreenRef try_repair(const std::vector<Token>& toks, const RepairContext& ctx,
+GreenRef try_repair(const TokenBuffer& toks, const RepairContext& ctx,
                     const GreenRef& container_green, std::uint32_t container_first,
                     std::uint32_t guard_lo, std::uint32_t tok_hi, std::int64_t delta_tok,
                     const Text& new_text) {
@@ -1466,38 +1498,31 @@ GreenRef try_repair(const std::vector<Token>& toks, const RepairContext& ctx,
 // A file whose conditionals are all balanced-and-closed before guard_lo with no
 // alternative in reach parses identically to the flat baseline, so this returns
 // false and the fast incremental path runs. The caller full-reparses otherwise.
-bool pp_repair_unsafe(const std::vector<Token>& toks, std::uint32_t guard_lo, const Text& text) {
+// Walks the tree's conditional-directive index (maintained across splices)
+// instead of rescanning every token — O(#directives) per keystroke.
+bool pp_repair_unsafe(const std::vector<PPDirective>& dirs, std::uint32_t guard_lo) {
     int depth = 0;
-    for (std::uint32_t i = 0; i < toks.size(); ++i) {
-        if (i == guard_lo && depth > 0) {
-            return true; // window opens inside a conditional
+    for (const auto& d : dirs) {
+        if (d.token >= guard_lo) {
+            if (depth > 0) {
+                return true; // window opens inside a conditional
+            }
+            if (d.cat == PPCat::Alt) {
+                return true; // alternative branch within reach of the window
+            }
+            continue; // opens/closes past the window cannot affect it
         }
-        if (toks[i].kind != TokenKind::PreprocessorHash) {
-            continue;
-        }
-        std::uint32_t j = i + 1;
-        while (j < toks.size() && is_trivia(toks[j].kind)) {
-            ++j;
-        }
-        if (j >= toks.size()) {
-            continue;
-        }
-        const TokenKind kw = toks[j].kind;
-        const PPCat cat = kw == TokenKind::Identifier ? pp_classify(kw, text.substring(toks[j].range))
-                                                      : pp_classify(kw, {});
-        if (cat == PPCat::Alt && i >= guard_lo) {
-            return true; // alternative branch within reach of the window
-        }
-        if (cat == PPCat::Open) {
+        if (d.cat == PPCat::Open) {
             ++depth;
-        } else if (cat == PPCat::Close) {
+        } else if (d.cat == PPCat::Close) {
             depth = depth > 0 ? depth - 1 : 0;
         }
     }
-    return false;
+    return depth > 0; // guard at EOF inside an open conditional
 }
 
-bool splice_touches_pp_conditional(const std::vector<Token>& toks, std::size_t lo, std::size_t hi,
+template <typename Toks>
+bool splice_touches_pp_conditional(const Toks& toks, std::size_t lo, std::size_t hi,
                                    const Text& text) {
     for (std::size_t i = lo; i < hi && i < toks.size(); ++i) {
         if (toks[i].kind != TokenKind::PreprocessorHash) {
@@ -1559,13 +1584,54 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     relex_apply(tree.tokens_, line_states, std::move(s));
     tree.red_.clear(); // token indices shifted; drop stale materialized red nodes
     if (identical) {
-        return; // structure unchanged; green_root_ still valid
+        return; // structure unchanged (directive index included); green_root_ valid
     }
     if (pp_structure_changed) {
-        LexOutput lexed;
-        lexed.tokens = std::move(tree.tokens_);
-        tree = parse(new_text, std::move(lexed));
+        tree = parse(new_text, std::move(tree.tokens_));
         return;
+    }
+
+    // Maintain the conditional-directive index across the splice: prefix
+    // entries survive, the window is re-collected (empty here — a window
+    // touching a directive took the full reparse above), suffix entries
+    // shift by delta_tok. Directive '#' and keyword never straddle a splice
+    // boundary: relex restarts and converges only at default-state line
+    // starts, and a directive line (or its '\'-continuation) is not one.
+    {
+        std::vector<PPDirective> dirs;
+        dirs.reserve(tree.pp_dirs_.size() + 4);
+        const auto hi_new =
+            static_cast<std::uint32_t>(static_cast<std::int64_t>(tok_hi) + delta_tok);
+        for (const auto& d : tree.pp_dirs_) {
+            if (d.token < tok_lo) {
+                dirs.push_back(d);
+            }
+        }
+        for (std::uint32_t i = tok_lo; i < hi_new && i < tree.tokens_.size(); ++i) {
+            if (tree.tokens_[i].kind != TokenKind::PreprocessorHash) {
+                continue;
+            }
+            std::uint32_t j = i + 1;
+            while (j < tree.tokens_.size() && is_trivia(tree.tokens_[j].kind)) {
+                ++j;
+            }
+            if (j >= tree.tokens_.size()) {
+                continue;
+            }
+            const TokenKind kw = tree.tokens_[j].kind;
+            const PPCat cat = kw == TokenKind::Identifier
+                                  ? pp_classify(kw, new_text.substring(tree.tokens_[j].range))
+                                  : pp_classify(kw, {});
+            if (cat != PPCat::Other) {
+                dirs.push_back({i, cat});
+            }
+        }
+        for (const auto& d : tree.pp_dirs_) {
+            if (d.token >= tok_hi) {
+                dirs.push_back({static_cast<std::uint32_t>(d.token + delta_tok), d.cat});
+            }
+        }
+        tree.pp_dirs_ = std::move(dirs);
     }
 
     // match_angles may look up to 200 significant tokens ahead, stopped only
@@ -1594,10 +1660,8 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     // (PPReopenedScope) are #if-frame context too, and error recovery can
     // stretch one past its conditional's #endif where the token scan below
     // would call the window safe — the parser-measured extent is authoritative.
-    if (guard_lo < tree.pp_phantom_hi_ || pp_repair_unsafe(tree.tokens_, guard_lo, new_text)) {
-        LexOutput lexed;
-        lexed.tokens = std::move(tree.tokens_);
-        tree = parse(new_text, std::move(lexed));
+    if (guard_lo < tree.pp_phantom_hi_ || pp_repair_unsafe(tree.pp_dirs_, guard_lo)) {
+        tree = parse(new_text, std::move(tree.tokens_));
         return;
     }
 
@@ -1691,10 +1755,7 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     }
 
     // No bounded repair region: full reparse over the (already new) tokens.
-    LexOutput lexed;
-    lexed.tokens = std::move(tree.tokens_);
-    SyntaxTree fresh = parse(new_text, std::move(lexed));
-    tree = std::move(fresh);
+    tree = parse(new_text, std::move(tree.tokens_));
 }
 
 } // namespace cind

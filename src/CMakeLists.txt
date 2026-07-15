@@ -8,6 +8,7 @@ target_compile_features(cind_document PUBLIC cxx_std_23)
 
 add_library(cind_lexer STATIC
   cpp_lexer/lexer.cpp
+  cpp_lexer/token_buffer.cpp
 )
 target_link_libraries(cind_lexer PUBLIC cind_document)
 

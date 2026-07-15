@@ -1,5 +1,7 @@
 #include "commands/editor_commands.hpp"
 
+#include <algorithm>
+
 namespace cind {
 
 namespace {
@@ -22,21 +24,34 @@ std::string leading_whitespace_of(const DocumentSnapshot& snapshot, std::uint32_
 // predicate and fall through to plain newline-and-indent.
 bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, TextOffset caret) {
     const auto& tokens = tree.tokens();
-    std::size_t prev = tokens.size();
-    std::size_t next = tokens.size();
-    for (std::size_t i = 0; i < tokens.size(); ++i) {
-        const Token& t = tokens[i];
-        if (t.kind == TokenKind::EndOfFile) {
-            break;
-        }
+    // First token starting at or after the caret. The stream is contiguous
+    // and sorted, so only the token before `at` can straddle the caret, and
+    // every non-trivia token before it ends at or before the caret.
+    auto it = std::ranges::lower_bound(tokens, caret, {},
+                                       [](const Token& t) { return t.range.start; });
+    const auto at = static_cast<std::size_t>(it - tokens.begin());
+    if (at > 0) {
+        const Token t = tokens[at - 1];
         if (t.range.start < caret && caret < t.range.end) {
             return false; // caret inside a token (comment, literal, ...)
         }
-        if (!is_trivia(t.kind) && t.range.end <= caret) {
-            prev = i;
+    }
+    std::size_t prev = tokens.size();
+    for (std::size_t j = at; j-- > 0;) {
+        if (!is_trivia(tokens[j].kind)) {
+            prev = j;
+            break;
         }
-        if (!is_trivia(t.kind) && next == tokens.size() && t.range.start >= caret) {
-            next = i;
+    }
+    std::size_t next = tokens.size();
+    for (std::size_t j = at; j < tokens.size(); ++j) {
+        const Token t = tokens[j];
+        if (t.kind == TokenKind::EndOfFile) {
+            break;
+        }
+        if (!is_trivia(t.kind)) {
+            next = j;
+            break;
         }
     }
     if (prev == tokens.size() || next == tokens.size() || prev >= next) {

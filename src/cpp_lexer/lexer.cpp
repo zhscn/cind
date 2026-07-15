@@ -546,12 +546,19 @@ void splice_vector(std::vector<T>& v, std::size_t first, std::size_t last,
 
 // Index of the token starting exactly at `off`, or kNoToken. Tokens are
 // contiguous and sorted; only EndOfFile is zero-length.
-std::size_t token_index_at(const std::vector<Token>& tokens, std::size_t off) {
-    auto it = std::partition_point(tokens.begin(), tokens.end(), [&](const Token& t) {
-        return t.range.start.value < off;
-    });
-    if (it != tokens.end() && it->range.start.value == off) {
-        return static_cast<std::size_t>(it - tokens.begin());
+std::size_t token_index_at(const TokenBuffer& tokens, std::size_t off) {
+    std::size_t lo = 0;
+    std::size_t hi = tokens.size();
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (tokens[mid].range.start.value < off) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo < tokens.size() && tokens[lo].range.start.value == off) {
+        return lo;
     }
     return kNoToken;
 }
@@ -560,7 +567,7 @@ std::size_t token_index_at(const std::vector<Token>& tokens, std::size_t off) {
 // old offset is also a clean line start (default entry state) beginning a
 // token. From there on the old lex is valid verbatim, shifted by delta.
 struct AlignCheck final : StopCheck {
-    const std::vector<Token>* old_tokens = nullptr;
+    const TokenBuffer* old_tokens = nullptr;
     const std::vector<LexerState>* old_line_states = nullptr;
     const Text* old_text = nullptr;
     std::int64_t delta = 0;
@@ -590,7 +597,7 @@ struct AlignCheck final : StopCheck {
 
 } // namespace
 
-RelexSplice relex_scan(const std::vector<Token>& old_tokens,
+RelexSplice relex_scan(const TokenBuffer& old_tokens,
                        const std::vector<LexerState>& old_line_states, const Text& old_text,
                        const Text& new_text, std::span<const TextEdit> edits) {
     // Merged damage window: one hunk from the first edit to the last. The
@@ -647,7 +654,8 @@ LexOutput relex(const std::vector<Token>& old_tokens,
     if (edits.empty()) {
         return LexOutput{old_tokens, old_line_states};
     }
-    RelexSplice s = relex_scan(old_tokens, old_line_states, old_text, new_text, edits);
+    RelexSplice s =
+        relex_scan(TokenBuffer(old_tokens), old_line_states, old_text, new_text, edits);
 
     LexOutput result;
     result.tokens.reserve(s.keep_tokens + s.scanned.tokens.size() +
@@ -678,21 +686,16 @@ LexOutput relex(const std::vector<Token>& old_tokens,
     return result;
 }
 
-void relex_apply(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
-                 RelexSplice&& s) {
-    // Shift the surviving suffix first (safe: the splice below only moves
-    // elements, never reads their ranges).
-    for (std::size_t i = s.stop_token; i < tokens.size(); ++i) {
-        tokens[i].range.start.value =
-            static_cast<std::uint32_t>(tokens[i].range.start.value + s.delta);
-        tokens[i].range.end.value = static_cast<std::uint32_t>(tokens[i].range.end.value + s.delta);
-    }
-    splice_vector(tokens, s.keep_tokens, s.stop_token, s.scanned.tokens);
+void relex_apply(TokenBuffer& tokens, std::vector<LexerState>& line_states, RelexSplice&& s) {
+    // One structural pass: replace the window and rebase the suffix chunks by
+    // delta — O(chunk count + window), the flat vector's O(token count)
+    // suffix shift and memmove are gone (design.md §214).
+    tokens.splice(s.keep_tokens, s.stop_token, s.scanned.tokens, s.delta);
     splice_vector(line_states, s.restart_line + 1,
                   s.hit_eof ? line_states.size() : s.stop_line + 1, s.scanned.line_states);
 }
 
-RelexSplice relex_in_place(std::vector<Token>& tokens, std::vector<LexerState>& line_states,
+RelexSplice relex_in_place(TokenBuffer& tokens, std::vector<LexerState>& line_states,
                            const Text& old_text, const Text& new_text,
                            std::span<const TextEdit> edits) {
     if (edits.empty()) {

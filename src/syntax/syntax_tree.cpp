@@ -41,7 +41,7 @@ namespace {
 
 // Text range of a node spanning half-open token range [base, base+width).
 // Zero-width nodes (MissingToken) collapse to a zero-length range.
-TextRange span_range(std::uint32_t base, std::uint32_t width, const std::vector<Token>& toks) {
+TextRange span_range(std::uint32_t base, std::uint32_t width, const TokenBuffer& toks) {
     if (width == 0) {
         const std::uint32_t offset = base < toks.size()
                                          ? toks[base].range.start.value
@@ -118,7 +118,7 @@ namespace {
 
 // Preorder dump straight from the green tree (no red materialization). `base` is
 // the node's first token index; child offsets accumulate from relative leadings.
-void dump_green(const GreenNode* g, std::uint32_t base, const std::vector<Token>& toks, int depth,
+void dump_green(const GreenNode* g, std::uint32_t base, const TokenBuffer& toks, int depth,
                 std::string& out) {
     out.append(static_cast<std::size_t>(depth) * 2, ' ');
     if (g->kind == SyntaxKind::MissingToken) {

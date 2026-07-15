@@ -2,7 +2,9 @@
 
 #include "cpp_lexer/lexer_state.hpp"
 #include "cpp_lexer/token.hpp"
+#include "cpp_lexer/token_buffer.hpp"
 #include "syntax/green_node.hpp"
+#include "syntax/pp_conditional.hpp"
 #include "syntax/syntax_kind.hpp"
 
 #include <deque>
@@ -14,6 +16,13 @@
 namespace cind {
 
 class Text;
+
+// One conditional preprocessor directive ('#' token index + category) in a
+// parsed token stream — the unit of SyntaxTree's directive index.
+struct PPDirective {
+    std::uint32_t token;
+    PPCat cat;
+};
 
 // A red node: the position-aware view of one green node. It covers a half-open
 // range of token indices; tokens (including trivia) inside its range but outside
@@ -51,7 +60,7 @@ public:
     // Total node count of the tree (walks the green tree; not the lazily
     // materialized red count).
     std::size_t node_count() const { return green_count(green_root_); }
-    const std::vector<Token>& tokens() const { return tokens_; }
+    const TokenBuffer& tokens() const { return tokens_; }
 
     // Absolute text range covered by the node (zero-length for MissingToken).
     TextRange node_range(SyntaxNodeId id) const;
@@ -79,13 +88,18 @@ private:
     void expand(SyntaxNodeId id) const;
 
     GreenRef green_root_;
-    std::vector<Token> tokens_;
+    TokenBuffer tokens_;
     // One-past-the-last token covered by any PPReopenedScope (0 if none).
     // Phantom scopes reshape the tree from #if-frame context that a block
     // repair cannot rebuild, and error recovery can stretch them past their
     // conditional's #endif — so reparse falls back to a full parse whenever
     // the damage window opens before this point.
     std::uint32_t pp_phantom_hi_ = 0;
+    // Every '#' token classified as a conditional directive (Open/Alt/Close),
+    // ascending by token index. Built by the full parse, maintained across
+    // reparse splices, so the per-keystroke pp-safety check walks this list
+    // instead of rescanning every token (design.md §17 perf note).
+    std::vector<PPDirective> pp_dirs_;
     // Lazy red pool; index == SyntaxNodeId. deque so held `const SyntaxNode&`
     // stay valid as navigation materializes more nodes (no reallocation).
     mutable std::deque<SyntaxNode> red_;
@@ -98,8 +112,9 @@ struct LexOutput;
 SyntaxTree parse(std::string_view text);
 SyntaxTree parse(const Text& text);
 // Parse over an existing token stream (e.g. from an incremental relex);
-// `lexed` must be the lex of `text`.
+// the tokens must be the lex of `text`.
 SyntaxTree parse(const Text& text, LexOutput lexed);
+SyntaxTree parse(const Text& text, TokenBuffer tokens);
 
 // In-place incremental reparse (design.md §17): advances `tree` (the parse of
 // `old_text`, with `line_states` from its lex) to the parse of `new_text`,

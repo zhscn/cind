@@ -818,11 +818,11 @@ private:
 
     // ---- rendering --------------------------------------------------------
 
-    const std::vector<Token>& tokens() { return session_.analysis().tree.tokens(); }
+    const TokenBuffer& tokens() { return session_.analysis().tree.tokens(); }
 
     void render_line(const Text& text, std::uint32_t line, int width) {
         const TextRange content = text.line_content_range(line);
-        const std::vector<Token>& lexed = tokens();
+        const TokenBuffer& lexed = tokens();
         // First token overlapping the line.
         auto it = std::ranges::lower_bound(lexed, content.start,
                                            [](TextOffset a, TextOffset b) { return a < b; },

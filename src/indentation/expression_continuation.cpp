@@ -581,7 +581,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                                                   std::vector<std::string>& trace) {
     const Text& lines = snapshot.content();
     const TextCharSource text(snapshot.content());
-    const std::vector<Token>& tokens = tree.tokens();
+    const TokenBuffer& tokens = tree.tokens();
 
     // Region: climb to the node whose parent is a block-level scope — the
     // clang-format "unwrapped line" approximation.
