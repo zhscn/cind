@@ -18,24 +18,19 @@
 namespace cind::gui {
 
 struct ThemeInspection {
-    std::uint32_t background = 0;
-    std::uint32_t gutter_background = 0;
-    std::uint32_t status_background = 0;
-    std::uint32_t echo_background = 0;
-    std::uint32_t active_line_background = 0;
-    std::uint32_t selection_background = 0;
-    std::uint32_t divider = 0;
+    std::uint32_t canvas = 0;
+    std::uint32_t surface = 0;
+    std::uint32_t raised = 0;
+    std::uint32_t hairline = 0;
+    std::uint32_t active_line = 0;
+    std::uint32_t selection = 0;
     std::uint32_t text = 0;
-    std::uint32_t muted_text = 0;
-    std::uint32_t strong_text = 0;
+    std::uint32_t strong = 0;
+    std::uint32_t muted = 0;
+    std::uint32_t faint = 0;
     std::uint32_t accent = 0;
-    std::uint32_t popup_background = 0;
-    std::uint32_t popup_input_background = 0;
-    std::uint32_t popup_border = 0;
-    std::uint32_t popup_selection = 0;
-    std::uint32_t popup_scrim = 0;
-    std::uint32_t popup_shadow = 0;
     std::uint32_t cursor = 0;
+    std::uint32_t shadow = 0;
     std::uint32_t sign_added = 0;
     std::uint32_t sign_modified = 0;
     std::uint32_t sign_deleted = 0;
@@ -136,7 +131,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 10;
+    static constexpr int schema_version = 11;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

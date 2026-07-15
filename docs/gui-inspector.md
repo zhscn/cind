@@ -145,7 +145,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 - `scene`：cell 网格、cursor、活动文本行、region 几何和 display primitives。Scene
   region 使用 0-based cell 坐标并声明 vertical anchor；`grid_offset_rows` 表示顶部行的
   分数偏移；scene cursor 使用 1-based 坐标。Popup region 还携带结构化 title、input、
-  label 和 detail，供 GUI 进行独立于 cell 网格的浮层布局。
+  label 和 detail，供 GUI 进行独立于 cell 网格的浮层布局；StatusBar region 同样携带
+  结构化 path、dirty、line、column、line_count、revision、style_origin 和 key，供
+  GUI modeline 独立排版（TUI 仍消费 cell primitives）。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell
   大小、字体、主题、pixel hash、animation progress/velocity、damage 和 primitive
   diagnostics。
@@ -161,7 +163,8 @@ primitive 使用面向文档位置的 ID，例如 `line:4/number` 和 `line:4/by
 Renderer 坐标使用 device scale 之前的逻辑像素。物理 output 像素可以通过逻辑坐标
 乘以 `display_scale` 得到。`pick` 接受 window 坐标并转换到这一逻辑像素空间，优先
 命中最上层 renderer primitive 的 `layout_bounds`，因此能检查脱离 cell 网格的 GUI
-浮层。
+浮层。底部锚定的 region 使用 `ui::editor_footer_heights` 的逐 region 像素高
+（modeline = cell + 12，echo = cell + 8），`pick` 的行映射与 GUI 绘制保持一致。
 
 每个 renderer primitive 包含以下边界：
 

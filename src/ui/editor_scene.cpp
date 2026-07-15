@@ -125,6 +125,16 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         }
     }
 
+    status.status.emplace();
+    status.status->path = std::string(input.path);
+    status.status->dirty = input.dirty;
+    status.status->line = caret_position.line + 1;
+    status.status->column = static_cast<std::uint32_t>(caret_column + 1);
+    status.status->line_count = input.text.line_count();
+    status.status->revision = input.revision;
+    status.status->style_origin = std::string(input.style_origin);
+    status.status->key = std::string(input.last_key);
+
     std::string left =
         std::format(" {}{}  {}:{}  rev {}  style {} ", input.path, input.dirty ? " [+]" : "",
                     caret_position.line + 1, caret_column + 1, input.revision, input.style_origin);

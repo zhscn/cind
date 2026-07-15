@@ -103,7 +103,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .descent = 4.0F,
                          .leading = 1.0F,
                          .baseline_from_row_top = 15.0F},
-        .theme = {.background = 0xFF1E1E1E},
+        .theme = {.canvas = 0xFF1E1E1E},
         .pixel_hash = 42,
         .animation = {},
         .damage = {.full_repaint = false,
@@ -157,7 +157,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":10") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":11") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);

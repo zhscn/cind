@@ -694,17 +694,15 @@ private:
         const float cell_height = static_cast<float>(presenter_.cell_height());
         rows_ = std::max(3, static_cast<int>(std::ceil(logical_output_height_ / cell_height)));
         columns_ = std::max(20, static_cast<int>(std::ceil(logical_output_width_ / cell_width)));
-        const float text_height = std::max(0.0F, logical_output_height_ - 2.0F * cell_height);
+        const float footer_height = presenter_.status_bar_height() + presenter_.echo_area_height();
+        const float text_height = std::max(0.0F, logical_output_height_ - footer_height);
         const float visible_text_rows =
             std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows_ - 2));
         page_rows_ = std::clamp(static_cast<int>(std::floor(text_height / cell_height + 0.0001F)),
                                 1, rows_ - 2);
         editor_.set_frame_rows(rows_);
         ui::Scene scene = editor_.compose(rows_, columns_, visible_text_rows);
-        vertical_layout_.emplace(
-            scene,
-            ui::SceneVerticalMetrics{.cell_height = static_cast<float>(presenter_.cell_height()),
-                                     .viewport_height = logical_output_height_});
+        vertical_layout_.emplace(scene, presenter_.vertical_metrics(logical_output_height_));
 
         const std::size_t pixel_count =
             static_cast<std::size_t>(pixel_width) * static_cast<std::size_t>(pixel_height);
@@ -879,24 +877,19 @@ private:
                              .descent = diagnostics.descent,
                              .leading = diagnostics.leading,
                              .baseline_from_row_top = diagnostics.baseline_from_row_top},
-            .theme = {.background = theme.background,
-                      .gutter_background = theme.gutter_background,
-                      .status_background = theme.status_background,
-                      .echo_background = theme.echo_background,
-                      .active_line_background = theme.active_line_background,
-                      .selection_background = theme.selection_background,
-                      .divider = theme.divider,
+            .theme = {.canvas = theme.canvas,
+                      .surface = theme.surface,
+                      .raised = theme.raised,
+                      .hairline = theme.hairline,
+                      .active_line = theme.active_line,
+                      .selection = theme.selection,
                       .text = theme.text,
-                      .muted_text = theme.muted_text,
-                      .strong_text = theme.strong_text,
+                      .strong = theme.strong,
+                      .muted = theme.muted,
+                      .faint = theme.faint,
                       .accent = theme.accent,
-                      .popup_background = theme.popup_background,
-                      .popup_input_background = theme.popup_input_background,
-                      .popup_border = theme.popup_border,
-                      .popup_selection = theme.popup_selection,
-                      .popup_scrim = theme.popup_scrim,
-                      .popup_shadow = theme.popup_shadow,
                       .cursor = theme.cursor,
+                      .shadow = theme.shadow,
                       .sign_added = theme.sign_added,
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
@@ -1047,6 +1040,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
     if (inspector_socket) {
         inspection = std::make_unique<InspectionHub>();
         inspector = std::make_unique<InspectorServer>(*inspection, *inspector_socket);
+        presenter.set_show_debug_status(true);
         std::fprintf(stderr, "cind-gui inspector: %s\n", inspector->socket_path().c_str());
     }
     SdlWindow window(editor, presenter, inspection.get());

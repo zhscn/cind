@@ -125,7 +125,8 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
         {RegionRole::EchoArea, {3, 0, 1, 10}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom},
     };
 
-    const SceneVerticalLayout layout(scene, {.cell_height = 10.0F, .viewport_height = 35.0F});
+    const SceneVerticalLayout layout(
+        scene, {.cell_height = 10.0F, .viewport_height = 35.0F, .footer_heights = {}});
     REQUIRE(layout.bottom_anchor_row());
     CHECK(layout.bottom_anchor_row().value() == 2);
     CHECK(layout.grid_clip_bottom() == doctest::Approx(15.0F));
@@ -134,8 +135,29 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
     CHECK(layout.row_top(2) == doctest::Approx(15.0F));
     CHECK(layout.row_top(3) == doctest::Approx(25.0F));
     CHECK(layout.row_top(4) == doctest::Approx(35.0F));
+    CHECK(layout.row_height(1) == doctest::Approx(10.0F));
     CHECK(layout.row_at(0.0F) == 0);
     CHECK(layout.row_at(14.0F) == 1);
     CHECK(layout.row_at(15.0F) == 2);
     CHECK(layout.row_at(34.0F) == 3);
+
+    SUBCASE("footer height overrides stack from the viewport bottom") {
+        const SceneVerticalLayout chrome(scene, {.cell_height = 10.0F,
+                                                 .viewport_height = 60.0F,
+                                                 .footer_heights = editor_footer_heights(10.0F)});
+        // Footer = modeline (10 + 12) + echo (10 + 8) = 40, so the grid ends
+        // at 20 and the footer rows keep their overridden pixel heights.
+        CHECK(chrome.grid_clip_bottom() == doctest::Approx(20.0F));
+        CHECK(chrome.row_top(2) == doctest::Approx(20.0F));
+        CHECK(chrome.row_top(3) == doctest::Approx(42.0F));
+        CHECK(chrome.row_top(4) == doctest::Approx(60.0F));
+        CHECK(chrome.row_height(2) == doctest::Approx(22.0F));
+        CHECK(chrome.row_height(3) == doctest::Approx(18.0F));
+        CHECK(chrome.row_height(1) == doctest::Approx(10.0F));
+        CHECK(chrome.row_at(19.0F) == 1);
+        CHECK(chrome.row_at(20.0F) == 2);
+        CHECK(chrome.row_at(41.0F) == 2);
+        CHECK(chrome.row_at(42.0F) == 3);
+        CHECK(chrome.row_at(59.0F) == 3);
+    }
 }

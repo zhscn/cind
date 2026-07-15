@@ -86,6 +86,16 @@ struct Region {
         std::optional<std::string> input;
         std::vector<PopupItem> items;
     };
+    struct StatusContent {
+        std::string path;
+        bool dirty = false;
+        std::uint32_t line = 0;
+        std::uint32_t column = 0;
+        std::uint32_t line_count = 0;
+        std::uint64_t revision = 0;
+        std::string style_origin;
+        std::string key;
+    };
 
     Region() = default;
     Region(RegionRole role, Rect rect, std::vector<Prim> prims,
@@ -106,6 +116,10 @@ struct Region {
     // cell primitives above. Items correspond to primitives 1..N; primitive
     // zero is the popup title.
     std::optional<PopupContent> popup;
+
+    // Structured status-bar content for graphical presenters, mirroring the
+    // popup arrangement: terminal presenters keep consuming the primitives.
+    std::optional<StatusContent> status;
 };
 
 struct Scene {

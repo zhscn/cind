@@ -294,6 +294,23 @@ void append_region(std::string& output, const ui::Region& region) {
     } else {
         output += "null";
     }
+    output += ",\"status\":";
+    if (region.status) {
+        output += "{\"path\":";
+        append_json_string(output, region.status->path);
+        output += ",\"dirty\":";
+        append_bool(output, region.status->dirty);
+        output += std::format(",\"line\":{},\"column\":{},\"line_count\":{},\"revision\":{}",
+                              region.status->line, region.status->column, region.status->line_count,
+                              region.status->revision);
+        output += ",\"style_origin\":";
+        append_json_string(output, region.status->style_origin);
+        output += ",\"key\":";
+        append_json_string(output, region.status->key);
+        output.push_back('}');
+    } else {
+        output += "null";
+    }
     output += ",\"prims\":[";
     for (std::size_t index = 0; index < region.prims.size(); ++index) {
         if (index != 0) {
@@ -438,40 +455,30 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_json_string(output, render.font_family);
     output += std::format(",\"size\":{},\"metrics\":", render.font_size);
     append_font_metrics(output, render.font_metrics);
-    output += "},\"theme\":{\"background\":";
-    append_color(output, render.theme.background);
-    output += ",\"gutter_background\":";
-    append_color(output, render.theme.gutter_background);
-    output += ",\"status_background\":";
-    append_color(output, render.theme.status_background);
-    output += ",\"echo_background\":";
-    append_color(output, render.theme.echo_background);
-    output += ",\"active_line_background\":";
-    append_color(output, render.theme.active_line_background);
-    output += ",\"selection_background\":";
-    append_color(output, render.theme.selection_background);
-    output += ",\"divider\":";
-    append_color(output, render.theme.divider);
+    output += "},\"theme\":{\"canvas\":";
+    append_color(output, render.theme.canvas);
+    output += ",\"surface\":";
+    append_color(output, render.theme.surface);
+    output += ",\"raised\":";
+    append_color(output, render.theme.raised);
+    output += ",\"hairline\":";
+    append_color(output, render.theme.hairline);
+    output += ",\"active_line\":";
+    append_color(output, render.theme.active_line);
+    output += ",\"selection\":";
+    append_color(output, render.theme.selection);
     output += ",\"text\":";
     append_color(output, render.theme.text);
-    output += ",\"muted_text\":";
-    append_color(output, render.theme.muted_text);
-    output += ",\"strong_text\":";
-    append_color(output, render.theme.strong_text);
+    output += ",\"strong\":";
+    append_color(output, render.theme.strong);
+    output += ",\"muted\":";
+    append_color(output, render.theme.muted);
+    output += ",\"faint\":";
+    append_color(output, render.theme.faint);
     output += ",\"accent\":";
     append_color(output, render.theme.accent);
-    output += ",\"popup_background\":";
-    append_color(output, render.theme.popup_background);
-    output += ",\"popup_input_background\":";
-    append_color(output, render.theme.popup_input_background);
-    output += ",\"popup_border\":";
-    append_color(output, render.theme.popup_border);
-    output += ",\"popup_selection\":";
-    append_color(output, render.theme.popup_selection);
-    output += ",\"popup_scrim\":";
-    append_color(output, render.theme.popup_scrim);
-    output += ",\"popup_shadow\":";
-    append_color(output, render.theme.popup_shadow);
+    output += ",\"shadow\":";
+    append_color(output, render.theme.shadow);
     output += ",\"cursor\":";
     append_color(output, render.theme.cursor);
     output += ",\"sign_added\":";
@@ -629,7 +636,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 static_cast<float>(frame.render.output_height) / frame.render.display_scale;
             const ui::SceneVerticalLayout layout(
                 frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                              .viewport_height = logical_height});
+                              .viewport_height = logical_height,
+                              .footer_heights = ui::editor_footer_heights(
+                                  static_cast<float>(frame.render.cell_height))});
             const float top = layout.row_top(cursor_row);
             const float bottom = top + static_cast<float>(frame.render.cell_height);
             if (top < -0.01F || bottom > layout.grid_clip_bottom() + 0.01F) {
@@ -834,7 +843,9 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         static_cast<int>(std::floor(logical_x / static_cast<float>(frame.render.cell_width)));
     const ui::SceneVerticalLayout vertical_layout(
         frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                      .viewport_height = logical_height});
+                      .viewport_height = logical_height,
+                      .footer_heights =
+                          ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))});
     int cell_row = vertical_layout.row_at(logical_y);
     const int overlay_row =
         static_cast<int>(std::floor(logical_y / static_cast<float>(frame.render.cell_height)));

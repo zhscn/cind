@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <format>
+#include <string>
 #include <vector>
 
 using namespace cind::gui;
@@ -51,9 +53,9 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
     const int mid_x = presenter.cell_width() / 2;
     const int mid_y = presenter.cell_height() / 2;
 
-    CHECK(pixel(mid_x, mid_y) == theme.background);
-    CHECK(pixel(presenter.cell_width() * 2 + mid_x, mid_y) == theme.selection_background);
-    CHECK(pixel(mid_x, presenter.cell_height() + mid_y) == theme.status_background);
+    CHECK(pixel(mid_x, mid_y) == theme.canvas);
+    CHECK(pixel(presenter.cell_width() * 2 + mid_x, mid_y) == theme.selection);
+    CHECK(pixel(mid_x, presenter.cell_height() + mid_y) == theme.surface);
     CHECK(pixel(presenter.cell_width() * 6, mid_y) == theme.cursor);
 
     SUBCASE("fractional device scale") {
@@ -71,7 +73,7 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
             return scaled_pixels[static_cast<std::size_t>(pixel_y * scaled_width + pixel_x)];
         };
         CHECK(scaled_pixel(static_cast<float>(presenter.cell_width() * 2 + mid_x),
-                           static_cast<float>(mid_y)) == theme.selection_background);
+                           static_cast<float>(mid_y)) == theme.selection);
         CHECK(scaled_pixel(static_cast<float>(presenter.cell_width() * 6),
                            static_cast<float>(mid_y)) == theme.cursor);
     }
@@ -130,7 +132,7 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
     int second_row_ink = 0;
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < presenter.cell_width(); ++x) {
-            if (pixels[static_cast<std::size_t>(y * width + x)] != theme.gutter_background) {
+            if (pixels[static_cast<std::size_t>(y * width + x)] != theme.canvas) {
                 (y < presenter.cell_height() ? first_row_ink : second_row_ink) += 1;
             }
         }
@@ -182,9 +184,10 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
     scene.regions = {body, status, echo};
 
     const int width = presenter.cell_width() * scene.cols;
-    const int cell_height = presenter.cell_height();
-    const int partial_text_height = cell_height / 2;
-    const int height = partial_text_height + 2 * cell_height;
+    const int partial_text_height = presenter.cell_height() / 2;
+    const int status_height = static_cast<int>(presenter.status_bar_height());
+    const int echo_height = static_cast<int>(presenter.echo_area_height());
+    const int height = partial_text_height + status_height + echo_height;
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
     presenter.render(scene, width, height, pixels.data(),
                      static_cast<std::size_t>(width) * sizeof(std::uint32_t));
@@ -192,12 +195,14 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
     const auto pixel = [&](int y) {
         return pixels[static_cast<std::size_t>(y * width + width - 1)];
     };
-    CHECK(pixel(partial_text_height - 1) == theme.background);
-    CHECK(pixel(partial_text_height) == theme.divider);
-    CHECK(pixel(partial_text_height + 1) == theme.status_background);
-    CHECK(pixel(partial_text_height + cell_height - 1) == theme.status_background);
-    CHECK(pixel(partial_text_height + cell_height) == theme.echo_background);
-    CHECK(pixel(height - 1) == theme.echo_background);
+    CHECK(pixel(partial_text_height - 1) == theme.canvas);
+    // The modeline opens with a translucent hairline over its surface.
+    CHECK(pixel(partial_text_height) != theme.surface);
+    CHECK(pixel(partial_text_height) != theme.canvas);
+    CHECK(pixel(partial_text_height + 1) == theme.surface);
+    CHECK(pixel(partial_text_height + status_height - 1) == theme.surface);
+    CHECK(pixel(partial_text_height + status_height) == theme.canvas);
+    CHECK(pixel(height - 1) == theme.canvas);
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
@@ -239,7 +244,9 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
     const int cell_height = presenter.cell_height();
     const int partial_height = cell_height / 2;
     const int width = presenter.cell_width() * scene.cols;
-    const int height = partial_height + 3 * cell_height;
+    const int footer_height =
+        static_cast<int>(presenter.status_bar_height() + presenter.echo_area_height());
+    const int height = partial_height + 2 * cell_height + footer_height;
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
     SkiaRenderDiagnostics diagnostics;
     presenter.render(scene, width, height, pixels.data(),
@@ -347,8 +354,8 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
         presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
     REQUIRE(cursor);
     CHECK(cursor.value().y < static_cast<float>(popup.rect.row * presenter.cell_height()));
-    CHECK(std::ranges::find(retained, theme.popup_background) != retained.end());
-    CHECK(std::ranges::find(retained, theme.popup_selection) != retained.end());
+    CHECK(std::ranges::find(retained, theme.surface) != retained.end());
+    CHECK(std::ranges::find(retained, theme.raised) != retained.end());
 
     scene.regions.back().popup.value().input = "edi";
     const SceneDamage damage = tracker.update(scene);
@@ -486,8 +493,72 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
                                static_cast<std::size_t>(x)];
     };
     CHECK(pixel(presenter.cell_width() / 2, cell_height / 2) == theme.cursor);
-    CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.status_background);
-    CHECK(pixel(width - 1, cell_height * 3 + cell_height / 2) == theme.echo_background);
+    CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.surface);
+    CHECK(pixel(width - 1, cell_height * 3 + cell_height / 2) == theme.canvas);
+}
+
+TEST_CASE("Skia presenter lays the modeline out from structured status content") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    SceneDamageTracker tracker;
+
+    const auto make_scene = [](std::string key, bool dirty) {
+        Scene scene;
+        scene.rows = 4;
+        scene.cols = 40;
+        scene.cursor_visible = false;
+        Region body{RegionRole::TextArea, {0, 0, 2, 40}, {}};
+        Region status{
+            RegionRole::StatusBar, {2, 0, 1, 40}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+        // Cell primitives mirror what the TUI draws; the GUI paints from the
+        // structured content instead.
+        status.prims.push_back({0, 0, std::format("src/ui/editor_scene.cpp 12:5 {}", key),
+                                StyleClass::StatusBar, false});
+        status.status = Region::StatusContent{
+            .path = "src/ui/editor_scene.cpp",
+            .dirty = dirty,
+            .line = 12,
+            .column = 5,
+            .line_count = 48,
+            .revision = 7,
+            .style_origin = ".clang-format",
+            .key = std::move(key),
+        };
+        Region echo{
+            RegionRole::EchoArea, {3, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+        scene.regions = {std::move(body), std::move(status), std::move(echo)};
+        return scene;
+    };
+
+    Scene scene = make_scene("C-x", true);
+    const int width = presenter.cell_width() * scene.cols;
+    const int height =
+        presenter.cell_height() * 2 +
+        static_cast<int>(presenter.status_bar_height() + presenter.echo_area_height());
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+    REQUIRE(tracker.update(scene).full_repaint);
+    presenter.render(scene, width, height, retained.data(), row_bytes);
+
+    // The dirty dot and the key chip only exist in the structured layout.
+    CHECK(std::ranges::find(retained, theme.accent) != retained.end());
+    CHECK(std::ranges::find(retained, theme.raised) != retained.end());
+
+    scene = make_scene("C-x C-s", false);
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
+        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE_FALSE(rectangles.empty());
+    // Modeline segments move independently of the cell grid, so any status
+    // damage repaints the full bar.
+    CHECK(std::ranges::any_of(rectangles, [&](const SkiaLogicalRect& rect) {
+        return rect.width == doctest::Approx(static_cast<float>(width));
+    }));
+    presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles);
+    presenter.render(scene, width, height, reference.data(), row_bytes);
+    CHECK(retained == reference);
 }
 
 TEST_CASE("Skia partial rendering clears a cancelled cursor animation position") {

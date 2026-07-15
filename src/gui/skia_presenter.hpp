@@ -2,6 +2,7 @@
 
 #include "ui/scene.hpp"
 #include "ui/scene_damage.hpp"
+#include "ui/scene_layout.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,28 +14,26 @@
 
 namespace cind::gui {
 
+// One canvas, one surface: the editor body, gutter, and echo strip share the
+// canvas ground; the modeline and floating panels are the only raised
+// surfaces. Every separator is the same translucent hairline.
 struct SkiaTheme {
-    std::uint32_t background = 0xFF1C1D20;
-    std::uint32_t gutter_background = 0xFF18191C;
-    std::uint32_t status_background = 0xFF272A2F;
-    std::uint32_t echo_background = 0xFF1F2024;
-    std::uint32_t active_line_background = 0xFF222429;
-    std::uint32_t selection_background = 0xFF294B70;
-    std::uint32_t divider = 0xFF34373D;
-    std::uint32_t text = 0xFFDADDE2;
-    std::uint32_t muted_text = 0xFF8D949E;
-    std::uint32_t strong_text = 0xFFF3F5F7;
-    std::uint32_t accent = 0xFF70A8F8;
-    std::uint32_t popup_background = 0xFF292C31;
-    std::uint32_t popup_input_background = 0xFF202226;
-    std::uint32_t popup_border = 0xFF484C54;
-    std::uint32_t popup_selection = 0xFF30445F;
-    std::uint32_t popup_scrim = 0x26000000;
-    std::uint32_t popup_shadow = 0xA6000000;
-    std::uint32_t cursor = 0xFFE5E7EB;
-    std::uint32_t sign_added = 0xFF587C0C;
-    std::uint32_t sign_modified = 0xFF0C7D9D;
-    std::uint32_t sign_deleted = 0xFF94151B;
+    std::uint32_t canvas = 0xFF1B1D22;
+    std::uint32_t surface = 0xFF24262C;
+    std::uint32_t raised = 0xFF2F333B;
+    std::uint32_t hairline = 0x14FFFFFF;
+    std::uint32_t active_line = 0xFF22242A;
+    std::uint32_t selection = 0xFF2C4568;
+    std::uint32_t text = 0xFFD7DAE0;
+    std::uint32_t strong = 0xFFF2F4F8;
+    std::uint32_t muted = 0xFF8A919C;
+    std::uint32_t faint = 0xFF555B66;
+    std::uint32_t accent = 0xFF7AA8F5;
+    std::uint32_t cursor = 0xFFE8EAEE;
+    std::uint32_t shadow = 0x4D000000;
+    std::uint32_t sign_added = 0xFF6F9A1E;
+    std::uint32_t sign_modified = 0xFF1E93B4;
+    std::uint32_t sign_deleted = 0xFFB03038;
 };
 
 struct SkiaLogicalRect {
@@ -107,8 +106,16 @@ public:
     const std::string& font_family() const;
     float font_size() const;
     const SkiaTheme& theme() const;
-    // Returns the graphical caret bounds in logical pixels. Interactive
-    // popup input is placed in the overlay rather than the cell echo area.
+    float status_bar_height() const;
+    float echo_area_height() const;
+    // Vertical metrics with this presenter's footer heights, for callers that
+    // need the same row mapping the painter uses (mouse hits, inspection).
+    ui::SceneVerticalMetrics vertical_metrics(float viewport_height) const;
+    // Shows the faint revision segment at the modeline's right edge.
+    void set_show_debug_status(bool show);
+
+    // Returns the graphical caret bounds in logical pixels. A popup prompt
+    // owns the caret while an interactive picker is active.
     std::optional<SkiaLogicalRect> cursor_rect(const ui::Scene& scene, float viewport_width,
                                                float viewport_height) const;
     std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
