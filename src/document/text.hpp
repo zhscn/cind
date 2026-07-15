@@ -94,6 +94,10 @@ public:
     // O(changed bytes + log n)). Returns nullopt when the contents are
     // equal. The result is in a's coordinates.
     friend std::optional<TextEdit> diff_edit(const Text& a, const Text& b);
+    // Same scan, but returns the changed windows of both sides instead of
+    // materializing the replacement — for per-frame consumers (change signs)
+    // where copying the window would defeat the O(changed + log n) bound.
+    friend std::optional<DiffSpans> diff_spans(const Text& a, const Text& b);
 
 private:
     friend class TextCursor;

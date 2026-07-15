@@ -453,7 +453,12 @@ std::optional<std::string> Text::validate() const {
     return validate_node(root_.get(), true);
 }
 
-std::optional<TextEdit> diff_edit(const Text& a, const Text& b) {
+namespace {
+
+// Shared scan for the structural diffs below: the common prefix and suffix
+// of `a` and `b`, chunk-wise (pointer-equal chunks compare in O(1)).
+// Returns {prefix, suffix}; nullopt when the contents are equal.
+std::optional<std::pair<std::uint32_t, std::uint32_t>> diff_trim(const Text& a, const Text& b) {
     const std::uint32_t a_size = a.size_bytes();
     const std::uint32_t b_size = b.size_bytes();
     const std::uint32_t limit = std::min(a_size, b_size);
@@ -512,8 +517,29 @@ std::optional<TextEdit> diff_edit(const Text& a, const Text& b) {
         }
     }
 
-    return TextEdit{make_range(prefix, a_size - suffix),
-                    b.substring(make_range(prefix, b_size - suffix))};
+    return std::pair{prefix, suffix};
+}
+
+} // namespace
+
+std::optional<TextEdit> diff_edit(const Text& a, const Text& b) {
+    const auto trim = diff_trim(a, b);
+    if (!trim) {
+        return std::nullopt;
+    }
+    const auto [prefix, suffix] = *trim;
+    return TextEdit{make_range(prefix, a.size_bytes() - suffix),
+                    b.substring(make_range(prefix, b.size_bytes() - suffix))};
+}
+
+std::optional<DiffSpans> diff_spans(const Text& a, const Text& b) {
+    const auto trim = diff_trim(a, b);
+    if (!trim) {
+        return std::nullopt;
+    }
+    const auto [prefix, suffix] = *trim;
+    return DiffSpans{make_range(prefix, a.size_bytes() - suffix),
+                     make_range(prefix, b.size_bytes() - suffix)};
 }
 
 bool operator==(const Text& a, std::string_view b) {

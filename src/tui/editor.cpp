@@ -5,6 +5,11 @@
 #include "cpp_lexer/lexer.hpp"
 #include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
+#include "ui/ansi_renderer.hpp"
+#include "ui/char_width.hpp"
+#include "ui/compose_line.hpp"
+#include "ui/line_signs.hpp"
+#include "ui/scene.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -23,41 +28,6 @@ namespace cind::tui {
 namespace {
 
 bool is_continuation_byte(char c) { return (static_cast<unsigned char>(c) & 0xC0) == 0x80; }
-
-// SGR color per token kind — layer-1 highlighting straight off the lexer.
-std::string_view token_color(const Token& token) {
-    if (has_flag(token.flags, LexicalFlags::PreprocessorLine)) {
-        return "\x1b[33m"; // whole directive line: yellow
-    }
-    switch (token.kind) {
-    case TokenKind::LineComment:
-    case TokenKind::BlockComment: return "\x1b[90m";
-    case TokenKind::StringLiteral:
-    case TokenKind::RawStringLiteral:
-    case TokenKind::CharacterLiteral: return "\x1b[32m";
-    case TokenKind::Number: return "\x1b[35m";
-    case TokenKind::NamespaceKw:
-    case TokenKind::ClassKw:
-    case TokenKind::StructKw:
-    case TokenKind::EnumKw:
-    case TokenKind::UnionKw:
-    case TokenKind::SwitchKw:
-    case TokenKind::CaseKw:
-    case TokenKind::DefaultKw:
-    case TokenKind::PublicKw:
-    case TokenKind::ProtectedKw:
-    case TokenKind::PrivateKw:
-    case TokenKind::IfKw:
-    case TokenKind::ElseKw:
-    case TokenKind::ForKw:
-    case TokenKind::WhileKw:
-    case TokenKind::DoKw:
-    case TokenKind::ReturnKw:
-    case TokenKind::TemplateKw:
-    case TokenKind::OperatorKw: return "\x1b[1;34m";
-    default: return {};
-    }
-}
 
 // Key caption for the status line (screenkey-style, so recordings show
 // which key produced each reaction).
@@ -88,16 +58,6 @@ std::string describe_key(const Key& key) {
     case KeyKind::None: return {};
     }
     return {};
-}
-
-int caption_width(std::string_view s) {
-    int width = 0;
-    for (char c : s) {
-        if (!is_continuation_byte(c)) {
-            width += static_cast<unsigned char>(c) < 0x80 ? 1 : 2; // CJK 约两格
-        }
-    }
-    return width;
 }
 
 // Atomic save per buffer.md §6: temp file, fsync, rename, fsync the parent.
@@ -172,27 +132,39 @@ private:
 
     int text_rows() const { return std::max(1, term_.size().rows - 2); }
 
-    int gutter_width() const {
+    int gutter_digits() const {
         const std::uint32_t lines = session_.snapshot().content().line_count();
         int digits = 1;
         for (std::uint32_t n = lines; n >= 10; n /= 10) {
             ++digits;
         }
-        return digits + 1; // number + one space
+        return digits;
     }
 
-    // Display column of `offset` within its line (tabs expand, code points
-    // count 1 column — wide glyphs are out of scope for phase A).
+    // Columns left of the text area: line number + space + sign column.
+    int text_col0() const { return gutter_digits() + 2; }
+
+    // Visible text-area width for the current terminal size. A future
+    // minimap strip subtracts its columns here (the Scene already carries
+    // the model for it).
+    int text_width() const { return std::max(1, term_.size().cols - text_col0()); }
+
+    // Display column of `offset` within its line (tabs expand, glyphs measure
+    // via code_point_width, so CJK takes two cells here and on screen alike).
     int display_column(const Text& text, TextOffset offset) const {
         const std::uint32_t start = text.line_start(text.position(offset).line).value;
+        const std::string prefix = text.substring(make_range(start, offset.value));
         int col = 0;
-        for (std::uint32_t i = start; i < offset.value; ++i) {
-            const char c = text.byte_at(TextOffset{i});
-            if (c == '\t') {
+        std::string_view rest = prefix;
+        while (!rest.empty()) {
+            if (rest.front() == '\t') {
                 col += tab_width() - col % tab_width();
-            } else if (!is_continuation_byte(c)) {
-                ++col;
+                rest.remove_prefix(1);
+                continue;
             }
+            const ui::Utf8Decode d = ui::decode_utf8(rest);
+            col += ui::code_point_width(d.cp);
+            rest.remove_prefix(static_cast<std::size_t>(d.bytes));
         }
         return col;
     }
@@ -226,12 +198,21 @@ private:
     // Offset on `line` closest to the goal display column.
     TextOffset offset_at_display_column(const Text& text, std::uint32_t line, int goal) const {
         const TextRange content = text.line_content_range(line);
+        const std::string bytes = text.substring(content);
+        std::string_view rest = bytes;
         std::uint32_t p = content.start.value;
         int col = 0;
-        while (p < content.end.value && col < goal) {
-            const char c = text.byte_at(TextOffset{p});
-            col += c == '\t' ? tab_width() - col % tab_width() : 1;
-            p = next_code_point(text, TextOffset{p}).value;
+        while (!rest.empty() && col < goal) {
+            if (rest.front() == '\t') {
+                col += tab_width() - col % tab_width();
+                ++p;
+                rest.remove_prefix(1);
+                continue;
+            }
+            const ui::Utf8Decode d = ui::decode_utf8(rest);
+            col += ui::code_point_width(d.cp);
+            p += static_cast<std::uint32_t>(d.bytes);
+            rest.remove_prefix(static_cast<std::size_t>(d.bytes));
         }
         return TextOffset{p};
     }
@@ -752,6 +733,7 @@ private:
             return false;
         }
         saved_text_ = session_.snapshot().content();
+        ++save_gen_; // invalidate the change-sign cache
         message_ = std::format("wrote {} lines to {}", reported_lines(saved_text_), target);
         return true;
     }
@@ -820,66 +802,24 @@ private:
 
     const TokenBuffer& tokens() { return session_.analysis().tree.tokens(); }
 
-    void render_line(const Text& text, std::uint32_t line, int width) {
-        const TextRange content = text.line_content_range(line);
-        const TokenBuffer& lexed = tokens();
-        // First token overlapping the line.
-        auto it = std::ranges::lower_bound(lexed, content.start,
-                                           [](TextOffset a, TextOffset b) { return a < b; },
-                                           [](const Token& t) { return t.range.end; });
-
-        const std::optional<TextRange> sel = selection();
-        int col = 0;
-        std::string_view active_color;
-        bool active_sel = false;
-        for (std::uint32_t p = content.start.value; p < content.end.value;) {
-            while (it != lexed.end() && it->range.end.value <= p) {
-                ++it;
-            }
-            std::string_view color;
-            if (it != lexed.end() && it->range.start.value <= p) {
-                color = token_color(*it);
-            }
-            const char c = text.byte_at(TextOffset{p});
-            const int cell = c == '\t' ? tab_width() - col % tab_width()
-                                       : (is_continuation_byte(c) ? 0 : 1);
-            if (col + cell > left_col_ + width) {
-                break;
-            }
-            const bool visible = col >= left_col_ || (cell > 0 && col + cell > left_col_);
-            if (visible) {
-                if (color != active_color) {
-                    term_.queue(active_color.empty() ? "" : "\x1b[0m");
-                    term_.queue(color);
-                    active_color = color;
-                    active_sel = false; // SGR 0 above cleared the selection too
-                }
-                const bool in_sel = sel && sel->contains(TextOffset{p});
-                if (in_sel != active_sel) {
-                    term_.queue(in_sel ? "\x1b[7m" : "\x1b[27m");
-                    active_sel = in_sel;
-                }
-                if (c == '\t') {
-                    term_.queue(std::string(static_cast<std::size_t>(cell), ' '));
-                } else {
-                    term_.queue(std::string_view(&c, 1));
-                }
-            }
-            col += cell;
-            ++p;
+    // Unsaved-change signs, cached per (revision, save generation): the
+    // structural diff makes a miss O(changed bytes + log n).
+    ui::SignKind sign_at(std::uint32_t line) {
+        const RevisionId rev = session_.snapshot().revision();
+        if (signs_rev_ != rev || signs_gen_ != save_gen_) {
+            signs_ = ui::line_signs(saved_text_, session_.snapshot().content());
+            signs_rev_ = rev;
+            signs_gen_ = save_gen_;
         }
-        if (!active_color.empty() || active_sel) {
-            term_.queue("\x1b[0m");
-        }
+        return signs_.at(line);
     }
 
-    void render() {
+    ui::Scene compose() {
         const DocumentSnapshot snap = session_.snapshot();
         const Text& text = snap.content();
         const TermSize size = term_.size();
         const int rows = text_rows();
-        const int gutter = gutter_width();
-        const int width = std::max(1, size.cols - gutter);
+        const int width = text_width();
 
         // Keep the caret inside the viewport.
         const LinePosition caret_pos = text.position(session_.caret());
@@ -897,58 +837,61 @@ private:
             left_col_ = caret_col - width + 1;
         }
 
-        term_.queue("\x1b[?25l\x1b[H");
+        ui::Scene scene;
+        scene.rows = size.rows;
+        scene.cols = size.cols;
+        scene.gutter_digits = gutter_digits();
+        scene.show_signs = true;
+
+        const std::optional<TextRange> sel = selection();
+        const TokenBuffer& lexed = tokens();
         for (int row = 0; row < rows; ++row) {
             const std::uint32_t line = top_line_ + static_cast<std::uint32_t>(row);
-            term_.queue("\x1b[K");
-            if (line < text.line_count()) {
-                term_.queue(std::format("\x1b[90m{:>{}} \x1b[0m", line + 1, gutter - 1));
-                render_line(text, line, width);
-            } else {
-                term_.queue("\x1b[90m~\x1b[0m");
+            if (line >= text.line_count()) {
+                break;
             }
-            term_.queue("\r\n");
+            const TextRange content = text.line_content_range(line);
+            ui::LineView view;
+            view.line_no = line;
+            view.sign = sign_at(line);
+            const std::string bytes = text.substring(content);
+            view.runs = ui::build_line_runs(
+                {.text = bytes,
+                 .start_offset = content.start.value,
+                 .tab_width = tab_width(),
+                 .left_col = left_col_,
+                 .width = width,
+                 .selection = sel},
+                lexed);
+            scene.lines.push_back(std::move(view));
         }
 
-        // Status line (reverse video, keystroke caption on the right) +
-        // message line.
-        std::string status =
+        scene.status_left =
             std::format(" {}{}  {}:{}  rev {}  style {} ", path_, dirty() ? " [+]" : "",
                         caret_pos.line + 1, caret_col + 1, snap.revision(), style_origin_);
-        const std::string key_caption =
+        scene.status_key =
             last_key_.empty() ? std::string() : std::format("key: {} ", last_key_);
-        int fill = size.cols - caption_width(status) - caption_width(key_caption);
-        if (fill < 0) {
-            status.resize(std::max<std::size_t>(
-                0, status.size() + static_cast<std::size_t>(fill)));
-            fill = 0;
-        }
-        term_.queue("\x1b[7m");
-        term_.queue(status);
-        term_.queue(std::string(static_cast<std::size_t>(fill), ' '));
-        term_.queue("\x1b[1m");
-        term_.queue(key_caption);
-        term_.queue("\x1b[0m\r\n\x1b[K");
-        if (prompt_active_) {
-            term_.queue(prompt_label_);
-            term_.queue(prompt_input_);
-        } else {
-            term_.queue(message_.empty()
-                            ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  C-z/C-r undo  "
-                              "C-k kill  C-y yank  C-SPC mark  M-f/b sexp  M-? help"
-                            : message_);
-        }
+        scene.prompt_active = prompt_active_;
+        scene.prompt_label = prompt_label_;
+        scene.prompt_input = prompt_input_;
+        scene.message = message_.empty()
+                            ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
+                              "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  M-? help"
+                            : message_;
 
         if (prompt_active_) {
-            // Park the cursor at the prompt's input point.
-            const int pcol = caption_width(prompt_label_) + caption_width(prompt_input_) + 1;
-            term_.queue(std::format("\x1b[{};{}H\x1b[?25h", size.rows, pcol));
+            scene.cursor_row = size.rows;
+            scene.cursor_col =
+                ui::display_width(prompt_label_) + ui::display_width(prompt_input_) + 1;
         } else {
-            // Park the cursor on the caret.
-            const int crow = static_cast<int>(caret_pos.line - top_line_) + 1;
-            const int ccol = gutter + (caret_col - left_col_) + 1;
-            term_.queue(std::format("\x1b[{};{}H\x1b[?25h", crow, ccol));
+            scene.cursor_row = static_cast<int>(caret_pos.line - top_line_) + 1;
+            scene.cursor_col = text_col0() + (caret_col - left_col_) + 1;
         }
+        return scene;
+    }
+
+    void render() {
+        term_.queue(ui::render_ansi(compose()));
         term_.flush();
     }
 
@@ -961,6 +904,10 @@ private:
     std::uint32_t top_line_ = 0;
     int left_col_ = 0;
     int goal_col_ = -1;
+    std::uint32_t save_gen_ = 0;
+    ui::LineSigns signs_;
+    RevisionId signs_rev_ = static_cast<RevisionId>(-1);
+    std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
     bool keep_vertical_goal_ = false;
     std::string message_;
     std::string last_key_;

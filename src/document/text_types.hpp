@@ -50,6 +50,14 @@ struct TextEdit {
     std::string new_text;
 };
 
+// The changed windows of a structural diff, one range per side (see
+// diff_spans in text.hpp). Both ranges share their start offset; either may
+// be empty (pure insertion / pure deletion).
+struct DiffSpans {
+    TextRange a_range;
+    TextRange b_range;
+};
+
 struct DocumentChange {
     RevisionId old_revision = 0;
     RevisionId new_revision = 0;

@@ -263,6 +263,44 @@ TEST_CASE("text: structural diff between revisions") {
     }
 }
 
+TEST_CASE("text: diff_spans agrees with diff_edit without materializing") {
+    std::string base;
+    for (int i = 0; i < 2000; ++i) {
+        base += "line " + std::to_string(i) + "\n";
+    }
+    Text a(base);
+    CHECK(!diff_spans(a, a).has_value());
+    CHECK(!diff_spans(Text(), Text()).has_value());
+
+    auto check = [](const Text& x, const Text& y) {
+        std::optional<DiffSpans> s = diff_spans(x, y);
+        std::optional<TextEdit> e = diff_edit(x, y);
+        REQUIRE(s.has_value());
+        REQUIRE(e.has_value());
+        CHECK(s->a_range == e->old_range);
+        CHECK(s->b_range.start == e->old_range.start);
+        CHECK(s->b_range.length() == e->new_text.size());
+        CHECK(y.substring(s->b_range) == e->new_text);
+    };
+
+    check(a, a.replace(make_range(10000, 10005), "EDIT"));
+    check(a, a.insert(TextOffset{0}, "prefix"));
+    check(a, a.erase(make_range(0, 100)));
+    check(a, a.insert(a.end_offset(), "suffix"));
+    check(a, Text());
+    check(Text(), a);
+
+    std::mt19937 rng(7);
+    Text c = a;
+    std::uniform_int_distribution<std::uint32_t> dist(0, 1 << 30);
+    for (int i = 0; i < 20; ++i) {
+        std::uint32_t at = dist(rng) % (c.size_bytes() + 1);
+        std::uint32_t len = std::min(dist(rng) % 40, c.size_bytes() - at);
+        c = c.replace(make_range(at, at + len), i % 2 ? "" : "patchpatch");
+        check(a, c);
+    }
+}
+
 TEST_CASE("text: randomized edits match std::string model") {
     std::mt19937 rng(20260714);
     std::string model;

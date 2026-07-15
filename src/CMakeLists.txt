@@ -12,6 +12,14 @@ add_library(cind_lexer STATIC
 )
 target_link_libraries(cind_lexer PUBLIC cind_document)
 
+add_library(cind_ui STATIC
+  ui/char_width.cpp
+  ui/compose_line.cpp
+  ui/line_signs.cpp
+  ui/ansi_renderer.cpp
+)
+target_link_libraries(cind_ui PUBLIC cind_lexer)
+
 add_library(cind_syntax STATIC
   syntax/parser.cpp
   syntax/syntax_tree.cpp
@@ -39,4 +47,4 @@ add_executable(indent-core
   tui/terminal.cpp
   tui/editor.cpp
 )
-target_link_libraries(indent-core PRIVATE cind_indent)
+target_link_libraries(indent-core PRIVATE cind_indent cind_ui)
