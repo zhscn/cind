@@ -131,7 +131,7 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     CHECK(state.caret.value == 4);
 }
 
-TEST_CASE("prefix help and picker candidates compose as a fixed popup") {
+TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
 
     CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
@@ -139,6 +139,8 @@ TEST_CASE("prefix help and picker candidates compose as a fixed popup") {
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     CHECK(popup->vertical_anchor == ui::VerticalAnchor::Overlay);
+    REQUIRE(popup->popup);
+    CHECK_FALSE(popup->popup.value().input);
     CHECK(std::ranges::any_of(popup->prims, [](const ui::Prim& primitive) {
         return primitive.text.find("C-s") != std::string::npos &&
                primitive.text.find("file.save") != std::string::npos;
@@ -149,6 +151,9 @@ TEST_CASE("prefix help and picker candidates compose as a fixed popup") {
     scene = model.compose(16, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup);
+    REQUIRE(popup->popup.value().input);
+    CHECK(popup->popup.value().title == "Command: ");
     CHECK(std::ranges::any_of(popup->prims,
                               [](const ui::Prim& primitive) { return primitive.selected; }));
 }

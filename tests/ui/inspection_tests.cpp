@@ -119,7 +119,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
               .id = {},
               .region = {},
               .kind = {},
-              .cell_bounds = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
+              .layout_bounds = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
               .shape_bounds =
                   LogicalPixelRectSnapshot{.x = 0.0F, .y = -2.0F, .width = 30.0F, .height = 24.0F},
               .paint_bounds =
@@ -127,6 +127,17 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .x = 1.0F, .y = 2.0F, .width = 27.0F, .height = row_overflow ? 21.0F : 14.0F},
               .draw_bounds_cross_region_clip = false,
               .row_overflow = row_overflow,
+              .column_overflow = false},
+             {.region_index = 2,
+              .primitive_index = 0,
+              .id = {},
+              .region = {},
+              .kind = {},
+              .layout_bounds = {.x = 20.0F, .y = 40.0F, .width = 100.0F, .height = 30.0F},
+              .shape_bounds = std::nullopt,
+              .paint_bounds = std::nullopt,
+              .draw_bounds_cross_region_clip = false,
+              .row_overflow = false,
               .column_overflow = false}},
     };
     hub.publish(std::move(editor), std::move(scene), std::move(render), event);
@@ -146,7 +157,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":9") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":10") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -156,7 +167,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"render_driver\":\"gpu\"") != std::string::npos);
     CHECK(snapshot.find("\"scroll_velocity\":0") != std::string::npos);
     CHECK(snapshot.find("\"baseline_from_row_top\":15") != std::string::npos);
-    CHECK(snapshot.find("\"cell_bounds\":{\"x\":0") != std::string::npos);
+    CHECK(snapshot.find("\"layout_bounds\":{\"x\":0") != std::string::npos);
     CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
@@ -192,6 +203,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse popup_pick = run_inspection_query(hub, "pick 70 10");
     REQUIRE(popup_pick.ok);
     CHECK(popup_pick.payload.find("\"region\":\"region:popup\"") != std::string::npos);
+
+    const InspectionResponse visual_popup_pick = run_inspection_query(hub, "pick 30 50");
+    REQUIRE(visual_popup_pick.ok);
+    CHECK(visual_popup_pick.payload.find("\"region\":\"region:popup\"") != std::string::npos);
+    CHECK(visual_popup_pick.payload.find("\"local_cell\":null") != std::string::npos);
 
     const InspectionResponse metrics = run_inspection_query(hub, "get render.font_metrics");
     REQUIRE(metrics.ok);

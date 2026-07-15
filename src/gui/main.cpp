@@ -520,13 +520,18 @@ private:
         if (!scene.cursor_visible || !vertical_layout_) {
             return std::nullopt;
         }
-        return SkiaLogicalPoint{
-            .x = static_cast<float>(std::max(0, scene.cursor_col - 1) * presenter_.cell_width()),
-            .y = vertical_layout_->row_top(std::max(0, scene.cursor_row - 1)),
-        };
+        const std::optional<SkiaLogicalRect> cursor =
+            presenter_.cursor_rect(scene, logical_output_width_, logical_output_height_);
+        return cursor ? std::optional<SkiaLogicalPoint>(
+                            SkiaLogicalPoint{.x = cursor->x, .y = cursor->y})
+                      : std::nullopt;
     }
 
     bool scene_cursor_uses_grid_offset(const ui::Scene& scene) const {
+        if (const ui::Region* popup = scene.find(ui::RegionRole::Popup);
+            popup && popup->popup && popup->popup->input) {
+            return false;
+        }
         const int cursor_row = scene.cursor_row - 1;
         const int cursor_col = scene.cursor_col - 1;
         for (const ui::Region& region : scene.regions) {
@@ -820,7 +825,7 @@ private:
             PrimitiveRenderSnapshot snapshot;
             snapshot.region_index = primitive.region_index;
             snapshot.primitive_index = primitive.primitive_index;
-            snapshot.cell_bounds = snapshot_rect(primitive.cell_bounds);
+            snapshot.layout_bounds = snapshot_rect(primitive.layout_bounds);
             snapshot.draw_bounds_cross_region_clip = primitive.draw_bounds_cross_region_clip;
             snapshot.row_overflow = primitive.row_overflow;
             snapshot.column_overflow = primitive.column_overflow;
@@ -878,7 +883,19 @@ private:
                       .gutter_background = theme.gutter_background,
                       .status_background = theme.status_background,
                       .echo_background = theme.echo_background,
+                      .active_line_background = theme.active_line_background,
                       .selection_background = theme.selection_background,
+                      .divider = theme.divider,
+                      .text = theme.text,
+                      .muted_text = theme.muted_text,
+                      .strong_text = theme.strong_text,
+                      .accent = theme.accent,
+                      .popup_background = theme.popup_background,
+                      .popup_input_background = theme.popup_input_background,
+                      .popup_border = theme.popup_border,
+                      .popup_selection = theme.popup_selection,
+                      .popup_scrim = theme.popup_scrim,
+                      .popup_shadow = theme.popup_shadow,
                       .cursor = theme.cursor,
                       .sign_added = theme.sign_added,
                       .sign_modified = theme.sign_modified,
@@ -915,26 +932,17 @@ private:
             static_cast<float>(window_width) * scale / static_cast<float>(output.width);
         const float y_factor =
             static_cast<float>(window_height) * scale / static_cast<float>(output.height);
-        const ui::SceneVerticalLayout vertical_layout(
-            scene, {.cell_height = static_cast<float>(presenter_.cell_height()),
-                    .viewport_height = static_cast<float>(output.height) / scale});
-        const int cursor_row = std::max(0, scene.cursor_row - 1);
-        const float cursor_top = vertical_layout.row_top(cursor_row);
-        float cursor_bottom = std::min(static_cast<float>(output.height) / scale,
-                                       cursor_top + static_cast<float>(presenter_.cell_height()));
-        if (vertical_layout.bottom_anchor_row() &&
-            cursor_row < *vertical_layout.bottom_anchor_row()) {
-            cursor_bottom = std::min(cursor_bottom, vertical_layout.grid_clip_bottom());
+        const std::optional<SkiaLogicalRect> cursor =
+            presenter_.cursor_rect(scene, static_cast<float>(output.width) / scale,
+                                   static_cast<float>(output.height) / scale);
+        if (!cursor) {
+            return;
         }
         SDL_Rect area{
-            .x = static_cast<int>(std::floor(static_cast<float>(scene.cursor_col - 1) *
-                                             static_cast<float>(presenter_.cell_width()) *
-                                             x_factor)),
-            .y = static_cast<int>(std::floor(cursor_top * y_factor)),
-            .w = std::max(1, static_cast<int>(std::ceil(
-                                 static_cast<float>(presenter_.cell_width()) * x_factor))),
-            .h = std::max(1, static_cast<int>(
-                                 std::ceil(std::max(0.0F, cursor_bottom - cursor_top) * y_factor))),
+            .x = static_cast<int>(std::floor(cursor->x * x_factor)),
+            .y = static_cast<int>(std::floor(cursor->y * y_factor)),
+            .w = std::max(1, static_cast<int>(std::ceil(cursor->width * x_factor))),
+            .h = std::max(1, static_cast<int>(std::ceil(cursor->height * y_factor))),
         };
         SDL_SetTextInputArea(window_.get(), &area, 0);
     }

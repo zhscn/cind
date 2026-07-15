@@ -269,6 +269,31 @@ void append_region(std::string& output, const ui::Region& region) {
     append_json_string(output, vertical_anchor_name(region.vertical_anchor));
     output += ",\"rect\":";
     append_rect(output, region.rect);
+    output += ",\"popup\":";
+    if (region.popup) {
+        output += "{\"title\":";
+        append_json_string(output, region.popup->title);
+        output += ",\"input\":";
+        if (region.popup->input) {
+            append_json_string(output, *region.popup->input);
+        } else {
+            output += "null";
+        }
+        output += ",\"items\":[";
+        for (std::size_t index = 0; index < region.popup->items.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            output += "{\"label\":";
+            append_json_string(output, region.popup->items[index].label);
+            output += ",\"detail\":";
+            append_json_string(output, region.popup->items[index].detail);
+            output.push_back('}');
+        }
+        output += "]}";
+    } else {
+        output += "null";
+    }
     output += ",\"prims\":[";
     for (std::size_t index = 0; index < region.prims.size(); ++index) {
         if (index != 0) {
@@ -280,10 +305,15 @@ void append_region(std::string& output, const ui::Region& region) {
 }
 
 void append_scene(std::string& output, const ui::Scene& scene) {
-    output += std::format(
-        "{{\"rows\":{},\"cols\":{},\"grid_offset_rows\":{},\"cursor\":{{\"row\":{},"
-        "\"col\":{},\"visible\":",
-        scene.rows, scene.cols, scene.grid_offset_rows, scene.cursor_row, scene.cursor_col);
+    output += std::format("{{\"rows\":{},\"cols\":{},\"grid_offset_rows\":{},\"active_text_row\":",
+                          scene.rows, scene.cols, scene.grid_offset_rows);
+    if (scene.active_text_row) {
+        output += std::to_string(*scene.active_text_row);
+    } else {
+        output += "null";
+    }
+    output += std::format(",\"cursor\":{{\"row\":{},\"col\":{},\"visible\":", scene.cursor_row,
+                          scene.cursor_col);
     append_bool(output, scene.cursor_visible);
     output += "},\"regions\":[";
     for (std::size_t index = 0; index < scene.regions.size(); ++index) {
@@ -314,9 +344,9 @@ void append_render_primitive(std::string& output, const PrimitiveRenderSnapshot&
     append_json_string(output, primitive.kind);
     output +=
         std::format(",\"scene_index\":{{\"region\":{},\"primitive\":{}}},\"coordinate_space\":"
-                    "\"logical-pixels\",\"cell_bounds\":",
+                    "\"logical-pixels\",\"layout_bounds\":",
                     primitive.region_index, primitive.primitive_index);
-    append_logical_rect(output, primitive.cell_bounds);
+    append_logical_rect(output, primitive.layout_bounds);
     output += ",\"shape_bounds\":";
     if (primitive.shape_bounds) {
         append_logical_rect(output, *primitive.shape_bounds);
@@ -416,8 +446,32 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.status_background);
     output += ",\"echo_background\":";
     append_color(output, render.theme.echo_background);
+    output += ",\"active_line_background\":";
+    append_color(output, render.theme.active_line_background);
     output += ",\"selection_background\":";
     append_color(output, render.theme.selection_background);
+    output += ",\"divider\":";
+    append_color(output, render.theme.divider);
+    output += ",\"text\":";
+    append_color(output, render.theme.text);
+    output += ",\"muted_text\":";
+    append_color(output, render.theme.muted_text);
+    output += ",\"strong_text\":";
+    append_color(output, render.theme.strong_text);
+    output += ",\"accent\":";
+    append_color(output, render.theme.accent);
+    output += ",\"popup_background\":";
+    append_color(output, render.theme.popup_background);
+    output += ",\"popup_input_background\":";
+    append_color(output, render.theme.popup_input_background);
+    output += ",\"popup_border\":";
+    append_color(output, render.theme.popup_border);
+    output += ",\"popup_selection\":";
+    append_color(output, render.theme.popup_selection);
+    output += ",\"popup_scrim\":";
+    append_color(output, render.theme.popup_scrim);
+    output += ",\"popup_shadow\":";
+    append_color(output, render.theme.popup_shadow);
     output += ",\"cursor\":";
     append_color(output, render.theme.cursor);
     output += ",\"sign_added\":";
@@ -805,14 +859,30 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
 
     const ui::Region* hit_region = nullptr;
     std::size_t hit_region_index = frame.scene.regions.size();
-    for (std::size_t reverse = frame.scene.regions.size(); reverse > 0; --reverse) {
-        const std::size_t index = reverse - 1;
-        const ui::Region& region = frame.scene.regions[index];
-        if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
-            cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
-            hit_region = &region;
-            hit_region_index = index;
+    const PrimitiveRenderSnapshot* hit_render = nullptr;
+    for (auto iterator = frame.render.primitives.rbegin();
+         iterator != frame.render.primitives.rend(); ++iterator) {
+        const LogicalPixelRectSnapshot& bounds = iterator->layout_bounds;
+        if (logical_x >= bounds.x && logical_x < bounds.x + bounds.width && logical_y >= bounds.y &&
+            logical_y < bounds.y + bounds.height &&
+            iterator->region_index < frame.scene.regions.size() &&
+            iterator->primitive_index < frame.scene.regions[iterator->region_index].prims.size()) {
+            hit_render = &*iterator;
+            hit_region_index = iterator->region_index;
+            hit_region = &frame.scene.regions[hit_region_index];
             break;
+        }
+    }
+    if (!hit_region) {
+        for (std::size_t reverse = frame.scene.regions.size(); reverse > 0; --reverse) {
+            const std::size_t index = reverse - 1;
+            const ui::Region& region = frame.scene.regions[index];
+            if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
+                cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
+                hit_region = &region;
+                hit_region_index = index;
+                break;
+            }
         }
     }
 
@@ -825,7 +895,11 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     append_json_string(output, std::format("region:{}", region_role_name(hit_region->role)));
     const int local_row = cell_row - hit_region->rect.row;
     const int local_col = cell_col - hit_region->rect.col;
-    output += std::format(",\"local_cell\":{{\"row\":{},\"col\":{}}}", local_row, local_col);
+    if (hit_render && hit_region->vertical_anchor == ui::VerticalAnchor::Overlay) {
+        output += ",\"local_cell\":null";
+    } else {
+        output += std::format(",\"local_cell\":{{\"row\":{},\"col\":{}}}", local_row, local_col);
+    }
     if (hit_region->role == ui::RegionRole::TextArea ||
         hit_region->role == ui::RegionRole::LineNumbers ||
         hit_region->role == ui::RegionRole::ChangeSigns) {
@@ -836,12 +910,17 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
 
     const ui::Prim* hit_prim = nullptr;
     std::size_t hit_primitive_index = hit_region->prims.size();
-    for (std::size_t index = 0; index < hit_region->prims.size(); ++index) {
-        const ui::Prim& prim = hit_region->prims[index];
-        const int width = std::max(1, ui::display_width(prim.text));
-        if (prim.row == local_row && local_col >= prim.col && local_col < prim.col + width) {
-            hit_prim = &prim;
-            hit_primitive_index = index;
+    if (hit_render) {
+        hit_primitive_index = hit_render->primitive_index;
+        hit_prim = &hit_region->prims[hit_primitive_index];
+    } else {
+        for (std::size_t index = 0; index < hit_region->prims.size(); ++index) {
+            const ui::Prim& prim = hit_region->prims[index];
+            const int width = std::max(1, ui::display_width(prim.text));
+            if (prim.row == local_row && local_col >= prim.col && local_col < prim.col + width) {
+                hit_prim = &prim;
+                hit_primitive_index = index;
+            }
         }
     }
     output += ",\"prim\":";
@@ -853,7 +932,9 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     output += ",\"render\":";
     if (hit_prim) {
         if (const PrimitiveRenderSnapshot* rendered =
-                find_render_primitive(frame.render, hit_region_index, hit_primitive_index)) {
+                hit_render
+                    ? hit_render
+                    : find_render_primitive(frame.render, hit_region_index, hit_primitive_index)) {
             append_render_primitive(output, *rendered);
         } else {
             output += "null";
@@ -1089,8 +1170,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << '\n';
     for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
         if (primitive.row_overflow) {
-            output << "      ! " << printable(primitive.id) << " cell-y=" << primitive.cell_bounds.y
-                   << ".." << primitive.cell_bounds.y + primitive.cell_bounds.height;
+            output << "      ! " << printable(primitive.id)
+                   << " layout-y=" << primitive.layout_bounds.y << ".."
+                   << primitive.layout_bounds.y + primitive.layout_bounds.height;
             if (primitive.paint_bounds) {
                 output << " paint-y=" << primitive.paint_bounds->y << ".."
                        << primitive.paint_bounds->y + primitive.paint_bounds->height;

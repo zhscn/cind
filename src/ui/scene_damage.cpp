@@ -26,6 +26,23 @@ bool contains(const Rect& rect, int row, int col) {
            col < rect.col + rect.cols;
 }
 
+bool same_rect(const std::optional<Rect>& left, const std::optional<Rect>& right) {
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left || (left->row == right->row && left->col == right->col &&
+                     left->rows == right->rows && left->cols == right->cols);
+}
+
+std::optional<Rect> overlay_rect(const Scene& scene) {
+    for (const Region& region : scene.regions) {
+        if (region.vertical_anchor == VerticalAnchor::Overlay) {
+            return region.rect;
+        }
+    }
+    return std::nullopt;
+}
+
 std::size_t cell_index(int row, int col, int cols) {
     return static_cast<std::size_t>(row) * static_cast<std::size_t>(cols) +
            static_cast<std::size_t>(col);
@@ -60,6 +77,11 @@ std::vector<std::string> visual_cells(const Scene& scene) {
             for (int col = first_col; col < last_col; ++col) {
                 cells[cell_index(row, col, scene.cols)] = {
                     static_cast<char>(region.surface), static_cast<char>(region.vertical_anchor)};
+                if (scene.active_text_row == row && (region.role == RegionRole::TextArea ||
+                                                     region.role == RegionRole::LineNumbers ||
+                                                     region.role == RegionRole::ChangeSigns)) {
+                    cells[cell_index(row, col, scene.cols)].push_back('\x7f');
+                }
             }
         }
 
@@ -95,6 +117,22 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                 }
                 col += grapheme.width;
                 text.remove_prefix(static_cast<std::size_t>(grapheme.bytes));
+            }
+        }
+        if (!region.popup) {
+            continue;
+        }
+        if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&
+            region.rect.col < scene.cols) {
+            const std::optional<std::string> popup_input = region.popup.and_then(
+                [](const Region::PopupContent& popup) { return popup.input; });
+            std::string& signature =
+                cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+            signature.push_back('\x1e');
+            append_integer(signature, static_cast<std::uint32_t>(popup_input.has_value()));
+            if (popup_input) {
+                append_integer(signature, static_cast<std::uint32_t>(popup_input.value().size()));
+                signature.append(popup_input.value());
             }
         }
     }
@@ -165,9 +203,11 @@ std::vector<Rect> coalesce_cells(const std::vector<bool>& dirty, const Scene& sc
 SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repaint) {
     std::vector<std::string> next_cells = visual_cells(scene);
     const std::optional<CellPoint> next_cursor = visible_cursor(scene);
+    const std::optional<Rect> next_overlay_rect = overlay_rect(scene);
     const std::size_t total_cells = next_cells.size();
     const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols ||
-                                  std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F;
+                                  std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F ||
+                                  !same_rect(overlay_rect_, next_overlay_rect);
 
     SceneDamage damage;
     if (force_full_repaint || !initialized_ || geometry_changed) {
@@ -198,6 +238,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     initialized_ = true;
     cells_ = std::move(next_cells);
     cursor_ = next_cursor;
+    overlay_rect_ = next_overlay_rect;
     return damage;
 }
 
@@ -208,6 +249,7 @@ void SceneDamageTracker::reset() {
     initialized_ = false;
     cells_.clear();
     cursor_.reset();
+    overlay_rect_.reset();
 }
 
 } // namespace cind::ui

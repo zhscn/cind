@@ -59,6 +59,12 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     scene.rows = input.rows;
     scene.cols = input.cols;
     scene.grid_offset_rows = -viewport.top_line_offset;
+    if (caret_position.line >= viewport.top_line) {
+        const std::uint32_t row = caret_position.line - viewport.top_line;
+        if (row < static_cast<std::uint32_t>(text_rows)) {
+            scene.active_text_row = static_cast<int>(row);
+        }
+    }
 
     const int digits = gutter_digits(input.text.line_count());
     Region numbers{
@@ -151,6 +157,12 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         const int popup_col = std::max(0, (input.cols - popup_width) / 2);
         popup.emplace(RegionRole::Popup, Rect{popup_row, popup_col, popup_rows, popup_width},
                       std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay);
+        popup->popup.emplace();
+        popup->popup->title = input.popup_title;
+        if (input.popup_input) {
+            popup->popup->input = std::string(*input.popup_input);
+        }
+        popup->popup->items.reserve(visible_count);
 
         std::string title = std::string(clip_to_display_width(input.popup_title, popup_width));
         title.append(static_cast<std::size_t>(popup_width - display_width(title)), ' ');
@@ -159,6 +171,8 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         for (std::size_t offset = 0; offset < visible_count; ++offset) {
             const std::size_t index = first + offset;
             const EditorPopupItem& item = input.popup_items[index];
+            popup->popup->items.push_back(
+                {.label = std::string(item.label), .detail = std::string(item.detail)});
             std::string row = item.detail.empty()
                                   ? std::string(item.label)
                                   : std::format("{:<10} {}", item.label, item.detail);

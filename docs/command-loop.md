@@ -97,7 +97,10 @@ another request, which supports multi-step interactions without retaining a C++ 
 Candidate providers return semantic values, labels, details, and filter text. The controller applies
 case-insensitive, whitespace-separated orderless filtering and stable ranking. Command, key-binding,
 open-buffer, and filesystem providers implement the command palette, key help, buffer switching,
-and file opening. GUI and TUI render the same candidate state as a fixed popup over the editor grid.
+and file opening. GUI and TUI render the same candidate state through frontend-specific layout. The
+TUI places the prompt in the echo area and candidates in a cell popup. The GUI combines an
+interactive picker prompt and its candidates in an elevated logical-pixel overlay; prefix help uses
+the same structured popup content in a bottom-aligned overlay.
 
 ## Extension boundary
 
@@ -118,5 +121,6 @@ The GUI inspector exposes `editor.command_loop`, `editor.interaction`, and `edit
 Command-loop state includes active keymaps, pending keys, the owning keymap, repeat count, and last
 command. Interaction state includes prompt kind, input, provider, selection, generation, errors, and
 candidates. Buffer state includes buffer/view IDs, names, resources, modified and saving flags, and
-the active buffer. The popup is also represented as `scene.region.popup`, including its primitives,
-selection, geometry, surface, and overlay anchor.
+the active buffer. The popup is also represented as `scene.region.popup`, including structured
+title, input and item metadata alongside its terminal-compatible primitives, selection, cell
+geometry, surface, and overlay anchor.

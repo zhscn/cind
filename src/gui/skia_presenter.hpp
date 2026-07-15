@@ -14,12 +14,24 @@
 namespace cind::gui {
 
 struct SkiaTheme {
-    std::uint32_t background = 0xFF1E1E1E;
-    std::uint32_t gutter_background = 0xFF181818;
-    std::uint32_t status_background = 0xFF3A3D41;
-    std::uint32_t echo_background = 0xFF1E1E1E;
-    std::uint32_t selection_background = 0xFF264F78;
-    std::uint32_t cursor = 0xFFD4D4D4;
+    std::uint32_t background = 0xFF1C1D20;
+    std::uint32_t gutter_background = 0xFF18191C;
+    std::uint32_t status_background = 0xFF272A2F;
+    std::uint32_t echo_background = 0xFF1F2024;
+    std::uint32_t active_line_background = 0xFF222429;
+    std::uint32_t selection_background = 0xFF294B70;
+    std::uint32_t divider = 0xFF34373D;
+    std::uint32_t text = 0xFFDADDE2;
+    std::uint32_t muted_text = 0xFF8D949E;
+    std::uint32_t strong_text = 0xFFF3F5F7;
+    std::uint32_t accent = 0xFF70A8F8;
+    std::uint32_t popup_background = 0xFF292C31;
+    std::uint32_t popup_input_background = 0xFF202226;
+    std::uint32_t popup_border = 0xFF484C54;
+    std::uint32_t popup_selection = 0xFF30445F;
+    std::uint32_t popup_scrim = 0x26000000;
+    std::uint32_t popup_shadow = 0xA6000000;
+    std::uint32_t cursor = 0xFFE5E7EB;
     std::uint32_t sign_added = 0xFF587C0C;
     std::uint32_t sign_modified = 0xFF0C7D9D;
     std::uint32_t sign_deleted = 0xFF94151B;
@@ -58,7 +70,7 @@ struct SkiaAnimationFrame {
 struct SkiaPrimitiveRenderDiagnostics {
     std::size_t region_index = 0;
     std::size_t primitive_index = 0;
-    SkiaLogicalRect cell_bounds;
+    SkiaLogicalRect layout_bounds;
     std::optional<SkiaLogicalRect> shape_bounds;
     std::optional<SkiaLogicalRect> paint_bounds;
     bool draw_bounds_cross_region_clip = false;
@@ -95,6 +107,10 @@ public:
     const std::string& font_family() const;
     float font_size() const;
     const SkiaTheme& theme() const;
+    // Returns the graphical caret bounds in logical pixels. Interactive
+    // popup input is placed in the overlay rather than the cell echo area.
+    std::optional<SkiaLogicalRect> cursor_rect(const ui::Scene& scene, float viewport_width,
+                                               float viewport_height) const;
     std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
                                               float viewport_width, float viewport_height) const;
 

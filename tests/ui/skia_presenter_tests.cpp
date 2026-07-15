@@ -6,6 +6,7 @@
 #include <fontconfig/fontconfig.h>
 #include <skia/core/SkGraphics.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -142,11 +143,12 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
     const SkiaPrimitiveRenderDiagnostics& primitive = diagnostics.primitives.front();
     REQUIRE(primitive.shape_bounds);
     REQUIRE(primitive.paint_bounds);
-    CHECK(primitive.cell_bounds.y == doctest::Approx(0.0F));
-    CHECK(primitive.cell_bounds.height == doctest::Approx(presenter.cell_height()));
-    CHECK(primitive.paint_bounds->y >= primitive.cell_bounds.y);
-    CHECK(primitive.paint_bounds->y + primitive.paint_bounds->height <=
-          primitive.cell_bounds.y + primitive.cell_bounds.height);
+    const SkiaLogicalRect& paint_bounds = primitive.paint_bounds.value();
+    CHECK(primitive.layout_bounds.y == doctest::Approx(0.0F));
+    CHECK(primitive.layout_bounds.height == doctest::Approx(presenter.cell_height()));
+    CHECK(paint_bounds.y >= primitive.layout_bounds.y);
+    CHECK(paint_bounds.y + paint_bounds.height <=
+          primitive.layout_bounds.y + primitive.layout_bounds.height);
     CHECK_FALSE(primitive.row_overflow);
 
     constexpr float scale = 1.5F;
@@ -191,7 +193,8 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
         return pixels[static_cast<std::size_t>(y * width + width - 1)];
     };
     CHECK(pixel(partial_text_height - 1) == theme.background);
-    CHECK(pixel(partial_text_height) == theme.status_background);
+    CHECK(pixel(partial_text_height) == theme.divider);
+    CHECK(pixel(partial_text_height + 1) == theme.status_background);
     CHECK(pixel(partial_text_height + cell_height - 1) == theme.status_background);
     CHECK(pixel(partial_text_height + cell_height) == theme.echo_background);
     CHECK(pixel(height - 1) == theme.echo_background);
@@ -244,8 +247,8 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
 
     REQUIRE(diagnostics.primitives.size() == 2);
     const float half_cell = 0.5F * static_cast<float>(cell_height);
-    CHECK(diagnostics.primitives[0].cell_bounds.y == doctest::Approx(-half_cell));
-    CHECK(diagnostics.primitives[1].cell_bounds.y == doctest::Approx(half_cell));
+    CHECK(diagnostics.primitives[0].layout_bounds.y == doctest::Approx(-half_cell));
+    CHECK(diagnostics.primitives[1].layout_bounds.y == doctest::Approx(half_cell));
 
     const int cursor_x = (scene.cursor_col - 1) * presenter.cell_width();
     int cursor_pixels = 0;
@@ -285,7 +288,7 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
     REQUIRE(tracker.update(scene).full_repaint);
     presenter.render(scene, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
     REQUIRE(diagnostics.primitives.size() == 1);
-    CHECK(diagnostics.primitives.front().cell_bounds.y ==
+    CHECK(diagnostics.primitives.front().layout_bounds.y ==
           doctest::Approx(static_cast<float>(presenter.cell_height())));
 
     scene.regions.back().prims.front().text = "second";
@@ -294,6 +297,69 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
     const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
         scene, damage, static_cast<float>(width), static_cast<float>(height));
     REQUIRE_FALSE(rectangles.empty());
+    presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles);
+    presenter.render(scene, width, height, reference.data(), row_bytes);
+    CHECK(retained == reference);
+}
+
+TEST_CASE("Skia presenter gives interactive popup independent elevated layout") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    SceneDamageTracker tracker;
+
+    Scene scene;
+    scene.rows = 30;
+    scene.cols = 100;
+    scene.cursor_row = 30;
+    scene.cursor_col = 13;
+    scene.active_text_row = 4;
+    Region body{RegionRole::TextArea, {0, 8, 28, 92}, {}};
+    body.prims.push_back({4, 0, "active", StyleClass::Text, false});
+    Region status{
+        RegionRole::StatusBar, {28, 0, 1, 100}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {29, 0, 1, 100}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    echo.prims.push_back({0, 0, "Command: ed", StyleClass::Message, false});
+    Region popup{
+        RegionRole::Popup, {20, 6, 4, 88}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back({0, 0, "Command: ", StyleClass::StatusKey, false});
+    popup.prims.push_back({1, 0, "edit.undo command", StyleClass::Popup, true});
+    popup.prims.push_back({2, 0, "edit.redo command", StyleClass::Popup, false});
+    popup.prims.push_back({3, 0, "edit.yank command", StyleClass::Popup, false});
+    popup.popup = Region::PopupContent{
+        .title = "Command: ",
+        .input = "ed",
+        .items = {{.label = "edit.undo", .detail = "command"},
+                  {.label = "edit.redo", .detail = "command"},
+                  {.label = "edit.yank", .detail = "command"}},
+    };
+    scene.regions = {body, status, echo, popup};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+    REQUIRE(tracker.update(scene).full_repaint);
+    presenter.render(scene, width, height, retained.data(), row_bytes);
+
+    const std::optional<SkiaLogicalRect> cursor =
+        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE(cursor);
+    CHECK(cursor.value().y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+    CHECK(std::ranges::find(retained, theme.popup_background) != retained.end());
+    CHECK(std::ranges::find(retained, theme.popup_selection) != retained.end());
+
+    scene.regions.back().popup.value().input = "edi";
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    REQUIRE_FALSE(damage.cell_rects.empty());
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
+        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE_FALSE(rectangles.empty());
+    CHECK(std::ranges::any_of(rectangles, [&](const SkiaLogicalRect& rect) {
+        return rect.width > static_cast<float>(presenter.cell_width() * 50);
+    }));
     presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles);
     presenter.render(scene, width, height, reference.data(), row_bytes);
     CHECK(retained == reference);

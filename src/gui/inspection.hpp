@@ -22,7 +22,19 @@ struct ThemeInspection {
     std::uint32_t gutter_background = 0;
     std::uint32_t status_background = 0;
     std::uint32_t echo_background = 0;
+    std::uint32_t active_line_background = 0;
     std::uint32_t selection_background = 0;
+    std::uint32_t divider = 0;
+    std::uint32_t text = 0;
+    std::uint32_t muted_text = 0;
+    std::uint32_t strong_text = 0;
+    std::uint32_t accent = 0;
+    std::uint32_t popup_background = 0;
+    std::uint32_t popup_input_background = 0;
+    std::uint32_t popup_border = 0;
+    std::uint32_t popup_selection = 0;
+    std::uint32_t popup_scrim = 0;
+    std::uint32_t popup_shadow = 0;
     std::uint32_t cursor = 0;
     std::uint32_t sign_added = 0;
     std::uint32_t sign_modified = 0;
@@ -82,7 +94,7 @@ struct PrimitiveRenderSnapshot {
     std::string id;
     std::string region;
     std::string kind;
-    LogicalPixelRectSnapshot cell_bounds;
+    LogicalPixelRectSnapshot layout_bounds;
     std::optional<LogicalPixelRectSnapshot> shape_bounds;
     std::optional<LogicalPixelRectSnapshot> paint_bounds;
     bool draw_bounds_cross_region_clip = false;
@@ -124,7 +136,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 9;
+    static constexpr int schema_version = 10;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

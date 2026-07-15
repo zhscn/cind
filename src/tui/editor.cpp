@@ -359,12 +359,14 @@ private:
         std::vector<ui::EditorPopupItem> popup_items;
         std::string popup_title;
         std::optional<std::size_t> popup_selection;
+        std::optional<std::string_view> popup_input;
         if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
             popup_title = interaction->request.prompt;
             popup_selection = interaction->candidates.empty()
                                   ? std::nullopt
                                   : std::optional<std::size_t>(interaction->selected);
             popup_items.reserve(interaction->candidates.size());
+            popup_input = interaction->input;
             for (const InteractionCandidate& candidate : interaction->candidates) {
                 popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
             }
@@ -399,7 +401,8 @@ private:
                                                     .echo_cursor_column = echo_cursor,
                                                     .popup_title = popup_title,
                                                     .popup_items = popup_items,
-                                                    .popup_selection = popup_selection},
+                                                    .popup_selection = popup_selection,
+                                                    .popup_input = popup_input},
                                                    viewport);
         state.top_line = viewport.top_line;
         state.top_line_offset = viewport.top_line_offset;

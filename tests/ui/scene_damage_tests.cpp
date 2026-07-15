@@ -87,6 +87,33 @@ TEST_CASE("scene damage requests full repaint for geometry and broad changes") {
     CHECK(offset_tracker.update(shifted).full_repaint);
 }
 
+TEST_CASE("scene damage tracks active line and overlay geometry") {
+    SceneDamageTracker tracker;
+    Scene scene = text_scene("line");
+    scene.rows = 4;
+    scene.regions.front().rect.rows = 3;
+    scene.regions.back().rect.row = 3;
+    scene.active_text_row = 0;
+    CHECK(tracker.update(scene).full_repaint);
+
+    scene.active_text_row.reset();
+    const SceneDamage active_line = tracker.update(scene);
+    REQUIRE_FALSE(active_line.full_repaint);
+    REQUIRE(active_line.cell_rects.size() == 1);
+    CHECK(active_line.cell_rects.front().row == 0);
+    CHECK(active_line.cell_rects.front().cols == scene.cols);
+
+    Region popup{
+        RegionRole::Popup, {0, 2, 1, 8}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back({0, 0, "popup", StyleClass::Popup, false});
+    scene.regions.push_back(popup);
+    CHECK(tracker.update(scene).full_repaint);
+    scene.regions.back().rect.col = 3;
+    CHECK(tracker.update(scene).full_repaint);
+    scene.regions.pop_back();
+    CHECK(tracker.update(scene).full_repaint);
+}
+
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {
     Scene scene;
     scene.rows = 4;

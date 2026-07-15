@@ -3,6 +3,7 @@
 #include "ui/style.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,11 +77,35 @@ enum class VerticalAnchor : std::uint8_t {
 };
 
 struct Region {
+    struct PopupItem {
+        std::string label;
+        std::string detail;
+    };
+    struct PopupContent {
+        std::string title;
+        std::optional<std::string> input;
+        std::vector<PopupItem> items;
+    };
+
+    Region() = default;
+    Region(RegionRole role, Rect rect, std::vector<Prim> prims,
+           SurfaceClass surface = SurfaceClass::Editor,
+           VerticalAnchor vertical_anchor = VerticalAnchor::Grid,
+           std::optional<PopupContent> popup = std::nullopt)
+        : role(role), rect(rect), prims(std::move(prims)), surface(surface),
+          vertical_anchor(vertical_anchor), popup(std::move(popup)) {}
+
     RegionRole role = RegionRole::TextArea;
     Rect rect;
     std::vector<Prim> prims;
     SurfaceClass surface = SurfaceClass::Editor;
     VerticalAnchor vertical_anchor = VerticalAnchor::Grid;
+
+    // Structured popup content lets graphical presenters use independent
+    // spacing and typography while terminal presenters keep consuming the
+    // cell primitives above. Items correspond to primitives 1..N; primitive
+    // zero is the popup title.
+    std::optional<PopupContent> popup;
 };
 
 struct Scene {
@@ -89,6 +114,10 @@ struct Scene {
     int rows = 0;
     int cols = 0;
     float grid_offset_rows = 0.0F;
+
+    // Zero-based scene row occupied by the document caret. This remains
+    // available while an overlay owns the visible input cursor.
+    std::optional<int> active_text_row;
 
     std::vector<Region> regions;
 

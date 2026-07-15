@@ -4,6 +4,7 @@
 #include "ui/scene_layout.hpp"
 
 #include <modules/skshaper/include/SkShaper.h>
+#include <skia/core/SkBlurTypes.h>
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColor.h>
 #include <skia/core/SkFont.h>
@@ -11,7 +12,9 @@
 #include <skia/core/SkFontMgr.h>
 #include <skia/core/SkFontStyle.h>
 #include <skia/core/SkImageInfo.h>
+#include <skia/core/SkMaskFilter.h>
 #include <skia/core/SkPaint.h>
+#include <skia/core/SkRRect.h>
 #include <skia/core/SkRect.h>
 #include <skia/core/SkString.h>
 #include <skia/core/SkSurface.h>
@@ -21,6 +24,7 @@
 #include <skia/ports/SkFontScanner_FreeType.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -37,7 +41,7 @@ SkColor color(std::uint32_t argb) {
 SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
     switch (style) {
     case ui::StyleClass::Text:
-        return color(0xFFD4D4D4);
+        return color(theme.text);
     case ui::StyleClass::Keyword:
         return color(0xFF569CD6);
     case ui::StyleClass::String:
@@ -45,11 +49,11 @@ SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
     case ui::StyleClass::Number:
         return color(0xFFB5CEA8);
     case ui::StyleClass::Comment:
-        return color(0xFF808080);
+        return color(theme.muted_text);
     case ui::StyleClass::Preprocessor:
         return color(0xFFDCDCAA);
     case ui::StyleClass::Gutter:
-        return color(0xFF858585);
+        return color(theme.muted_text);
     case ui::StyleClass::SignAdded:
         return color(theme.sign_added);
     case ui::StyleClass::SignModified:
@@ -57,14 +61,14 @@ SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
     case ui::StyleClass::SignDeleted:
         return color(theme.sign_deleted);
     case ui::StyleClass::StatusBar:
-        return color(0xFFF0F0F0);
+        return color(theme.text);
     case ui::StyleClass::StatusKey:
-        return color(0xFFFFFFFF);
+        return color(theme.strong_text);
     case ui::StyleClass::Message:
     case ui::StyleClass::Popup:
-        return color(0xFFD4D4D4);
+        return color(theme.text);
     }
-    return color(0xFFD4D4D4);
+    return color(theme.text);
 }
 
 SkRect pixel_rect(const ui::Rect& rect, int cell_width, int cell_height) {
@@ -92,6 +96,139 @@ SkRect region_pixel_rect(const ui::Region& region, int cell_width, int cell_heig
         bounds = SkRect::MakeLTRB(bounds.left(), top, bounds.right(), std::max(top, bottom));
     }
     return bounds;
+}
+
+struct PopupLayout {
+    const ui::Region* region = nullptr;
+    const ui::Region::PopupContent* content = nullptr;
+    SkRect panel;
+    SkRect shadow;
+    SkRect header;
+    float row_height = 0.0F;
+    float rows_top = 0.0F;
+    std::size_t first_item = 0;
+    std::size_t item_count = 0;
+    bool input_active = false;
+    std::string input;
+};
+
+struct LogicalViewport {
+    float width = 0.0F;
+    float height = 0.0F;
+};
+
+struct CellMetrics {
+    int width = 1;
+    int height = 1;
+};
+
+std::string popup_label(std::string_view title) {
+    while (!title.empty() && std::isspace(static_cast<unsigned char>(title.back())) != 0) {
+        title.remove_suffix(1);
+    }
+    if (!title.empty() && title.back() == ':') {
+        title.remove_suffix(1);
+    }
+    return std::string(title);
+}
+
+std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport viewport,
+                                        int cell_height) {
+    const ui::Region* popup = scene.find(ui::RegionRole::Popup);
+    if (!popup || !popup->popup) {
+        return std::nullopt;
+    }
+    const ui::Region::PopupContent& content = popup->popup.value();
+
+    const ui::SceneVerticalLayout vertical_layout(
+        scene,
+        {.cell_height = static_cast<float>(cell_height), .viewport_height = viewport.height});
+    const float grid_bottom = vertical_layout.grid_clip_bottom();
+    const float margin = std::clamp(viewport.width * 0.03F, 12.0F, 24.0F);
+    const float available_width = viewport.width - 2.0F * margin;
+    const bool input_active = content.input.has_value();
+    const float desired_width = input_active ? std::clamp(viewport.width * 0.58F, 560.0F, 840.0F)
+                                             : std::clamp(viewport.width * 0.48F, 420.0F, 680.0F);
+    const float panel_width = std::min(desired_width, available_width);
+    const float header_height = std::max(42.0F, static_cast<float>(cell_height) + 18.0F);
+    const float row_height = std::max(32.0F, static_cast<float>(cell_height) + 10.0F);
+    const float padding = 8.0F;
+    const float gap = 6.0F;
+    const float picker_top = std::clamp(grid_bottom * 0.11F, margin, 96.0F);
+    const float available_height = grid_bottom - picker_top - margin;
+    const float fixed_height = padding + header_height + gap + padding;
+    if (panel_width < 240.0F || available_height < fixed_height + row_height) {
+        return std::nullopt;
+    }
+
+    const std::size_t available_items = content.items.size();
+    const std::size_t height_items = static_cast<std::size_t>(
+        std::max(1.0F, std::floor((available_height - fixed_height) / row_height)));
+    const std::size_t item_count = std::min({available_items, height_items, std::size_t{12}});
+    if (item_count == 0) {
+        return std::nullopt;
+    }
+
+    std::size_t selected = 0;
+    for (std::size_t index = 0; index < content.items.size(); ++index) {
+        const std::size_t primitive_index = index + 1;
+        if (primitive_index < popup->prims.size() && popup->prims[primitive_index].selected) {
+            selected = index;
+            break;
+        }
+    }
+    const std::size_t first_item =
+        selected < item_count ? 0
+                              : std::min(selected - item_count + 1, available_items - item_count);
+    const float panel_height = fixed_height + static_cast<float>(item_count) * row_height;
+    const float panel_x = (viewport.width - panel_width) * 0.5F;
+    const float panel_y = input_active ? picker_top : grid_bottom - margin - panel_height;
+    const SkRect panel = SkRect::MakeXYWH(panel_x, panel_y, panel_width, panel_height);
+    const SkRect header = SkRect::MakeXYWH(panel.left() + padding, panel.top() + padding,
+                                           panel.width() - 2.0F * padding, header_height);
+    SkRect shadow = panel;
+    shadow.outset(36.0F, 36.0F);
+    shadow.offset(0.0F, 5.0F);
+    shadow.intersect(SkRect::MakeWH(viewport.width, viewport.height));
+    return PopupLayout{.region = popup,
+                       .content = &content,
+                       .panel = panel,
+                       .shadow = shadow,
+                       .header = header,
+                       .row_height = row_height,
+                       .rows_top = header.bottom() + gap,
+                       .first_item = first_item,
+                       .item_count = item_count,
+                       .input_active = input_active,
+                       .input = content.input.value_or(std::string{})};
+}
+
+std::string popup_input_text(const ui::Region::PopupContent& popup, std::string_view input) {
+    std::string text = popup_label(popup.title);
+    text += "  ›  ";
+    text += input;
+    return text;
+}
+
+float popup_text_left(const PopupLayout& layout, std::string_view text, int cell_width) {
+    constexpr float horizontal_padding = 12.0F;
+    const float natural_width = static_cast<float>(ui::display_width(text) * cell_width);
+    const float available_width = layout.header.width() - 2.0F * horizontal_padding;
+    return layout.header.left() + horizontal_padding +
+           std::min(0.0F, available_width - natural_width);
+}
+
+std::optional<SkRect> popup_cursor_rect(const PopupLayout& layout, CellMetrics cell) {
+    if (!layout.input_active || layout.content == nullptr) {
+        return std::nullopt;
+    }
+    const std::string text = popup_input_text(*layout.content, layout.input);
+    const float left = popup_text_left(layout, text, cell.width);
+    const float x = std::clamp(left + static_cast<float>(ui::display_width(text) * cell.width),
+                               layout.header.left() + 8.0F, layout.header.right() - 3.0F);
+    const float y =
+        layout.header.top() + (layout.header.height() - static_cast<float>(cell.height)) * 0.5F;
+    return SkRect::MakeXYWH(x, y, 2.0F, static_cast<float>(cell.height));
 }
 
 bool contains(const ui::Rect& rect, int row, int col) {
@@ -291,6 +428,197 @@ struct SkiaPresenter::Impl {
         return handler.makeBlob();
     }
 
+    void paint_popup(SkCanvas& canvas, const ui::Scene& scene, const PopupLayout& layout,
+                     std::size_t region_index, LogicalViewport viewport, const RasterView& raster,
+                     SkiaRenderDiagnostics* diagnostics, const SkRect* damage_bounds) {
+        const ui::Region& region = *layout.region;
+        const ui::Region::PopupContent& popup = *layout.content;
+        const ui::SceneVerticalLayout vertical_layout(
+            scene,
+            {.cell_height = static_cast<float>(cell_height), .viewport_height = viewport.height});
+        const SkRect effect_bounds =
+            layout.input_active
+                ? SkRect::MakeLTRB(0.0F, 0.0F, viewport.width, vertical_layout.grid_clip_bottom())
+                : layout.shadow;
+        if (damage_bounds && !SkRect::Intersects(effect_bounds, *damage_bounds)) {
+            return;
+        }
+
+        if (layout.input_active) {
+            SkPaint scrim;
+            scrim.setColor(color(theme.popup_scrim));
+            canvas.drawRect(
+                SkRect::MakeLTRB(0.0F, 0.0F, viewport.width, vertical_layout.grid_clip_bottom()),
+                scrim);
+        }
+
+        constexpr float panel_radius = 10.0F;
+        const SkRRect panel_rrect = SkRRect::MakeRectXY(layout.panel, panel_radius, panel_radius);
+        SkPaint shadow;
+        shadow.setAntiAlias(true);
+        shadow.setColor(color(theme.popup_shadow));
+        shadow.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, 14.0F, false));
+        SkRect ambient_rect = layout.panel;
+        ambient_rect.offset(0.0F, 6.0F);
+        canvas.drawRRect(SkRRect::MakeRectXY(ambient_rect, panel_radius, panel_radius), shadow);
+        shadow.setColor(color(0x73000000));
+        shadow.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, 2.0F, false));
+        SkRect contact_rect = layout.panel;
+        contact_rect.offset(0.0F, 1.0F);
+        canvas.drawRRect(SkRRect::MakeRectXY(contact_rect, panel_radius, panel_radius), shadow);
+
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setColor(color(theme.popup_background));
+        canvas.drawRRect(panel_rrect, fill);
+
+        const SkRRect header_rrect = SkRRect::MakeRectXY(layout.header, 7.0F, 7.0F);
+        fill.setColor(color(theme.popup_input_background));
+        canvas.drawRRect(header_rrect, fill);
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(1.0F);
+        stroke.setColor(color(layout.input_active ? theme.accent : theme.divider));
+        canvas.drawRRect(header_rrect, stroke);
+
+        const auto join_bounds = [](std::optional<SkRect>& bounds, const SkRect& incoming) {
+            if (bounds) {
+                bounds->join(incoming);
+            } else {
+                bounds = incoming;
+            }
+        };
+        const auto draw_text = [&](std::string_view text, SkPoint origin, std::uint32_t text_color,
+                                   std::optional<SkRect>& shape_bounds) {
+            sk_sp<SkTextBlob> blob = shape_text(std::string(text), origin.x(), origin.y());
+            if (!blob) {
+                return;
+            }
+            SkPaint paint;
+            paint.setAntiAlias(true);
+            paint.setColor(color(text_color));
+            canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
+            join_bounds(shape_bounds, blob->bounds());
+        };
+        const auto append_diagnostics = [&](std::size_t primitive_index, const SkRect& cell_bounds,
+                                            const std::optional<SkRect>& shape_bounds,
+                                            const std::optional<PixelProbe>& probe) {
+            if (!diagnostics) {
+                return;
+            }
+            SkiaPrimitiveRenderDiagnostics primitive{
+                .region_index = region_index,
+                .primitive_index = primitive_index,
+                .layout_bounds = logical_rect(cell_bounds),
+                .shape_bounds = std::nullopt,
+                .paint_bounds = std::nullopt,
+                .draw_bounds_cross_region_clip = false,
+                .row_overflow = false,
+                .column_overflow = false,
+            };
+            if (shape_bounds) {
+                primitive.shape_bounds = logical_rect(*shape_bounds);
+                primitive.draw_bounds_cross_region_clip =
+                    extends_horizontally(*shape_bounds, layout.panel) ||
+                    extends_vertically(*shape_bounds, layout.panel);
+            }
+            if (probe) {
+                primitive.paint_bounds = changed_pixel_bounds(*probe, raster);
+            }
+            if (primitive.paint_bounds) {
+                const SkRect painted =
+                    SkRect::MakeXYWH(primitive.paint_bounds->x, primitive.paint_bounds->y,
+                                     primitive.paint_bounds->width, primitive.paint_bounds->height);
+                primitive.row_overflow = extends_vertically(painted, cell_bounds);
+                primitive.column_overflow = extends_horizontally(painted, cell_bounds);
+            }
+            diagnostics->primitives.push_back(primitive);
+        };
+
+        if (!region.prims.empty()) {
+            const float text_top =
+                layout.header.top() +
+                (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
+            std::optional<PixelProbe> probe;
+            if (diagnostics) {
+                probe = capture_probe(layout.header, raster);
+            }
+            std::optional<SkRect> shape_bounds;
+            canvas.save();
+            canvas.clipRRect(header_rrect, true);
+            if (layout.input_active) {
+                const std::string label = popup_label(popup.title);
+                const std::string separator = "  ›  ";
+                const std::string full_text = popup_input_text(popup, layout.input);
+                float text_x = popup_text_left(layout, full_text, cell_width);
+                draw_text(label, SkPoint::Make(text_x, text_top), theme.muted_text, shape_bounds);
+                text_x += static_cast<float>(ui::display_width(label) * cell_width);
+                draw_text(separator, SkPoint::Make(text_x, text_top), theme.accent, shape_bounds);
+                text_x += static_cast<float>(ui::display_width(separator) * cell_width);
+                draw_text(layout.input, SkPoint::Make(text_x, text_top), theme.strong_text,
+                          shape_bounds);
+            } else {
+                draw_text(popup_label(popup.title),
+                          SkPoint::Make(layout.header.left() + 12.0F, text_top), theme.strong_text,
+                          shape_bounds);
+            }
+            canvas.restore();
+            append_diagnostics(0, layout.header, shape_bounds, probe);
+        }
+
+        for (std::size_t visible_index = 0; visible_index < layout.item_count; ++visible_index) {
+            const std::size_t item_index = layout.first_item + visible_index;
+            const std::size_t primitive_index = item_index + 1;
+            if (item_index >= popup.items.size() || primitive_index >= region.prims.size()) {
+                break;
+            }
+            const ui::Region::PopupItem& item = popup.items[item_index];
+            const ui::Prim& primitive = region.prims[primitive_index];
+            const SkRect row = SkRect::MakeLTRB(
+                layout.panel.left() + 8.0F,
+                layout.rows_top + static_cast<float>(visible_index) * layout.row_height,
+                layout.panel.right() - 8.0F,
+                layout.rows_top + static_cast<float>(visible_index + 1) * layout.row_height);
+            if (primitive.selected) {
+                const SkRect selected = SkRect::MakeLTRB(row.left(), row.top() + 1.0F, row.right(),
+                                                         row.bottom() - 1.0F);
+                fill.setColor(color(theme.popup_selection));
+                canvas.drawRRect(SkRRect::MakeRectXY(selected, 6.0F, 6.0F), fill);
+                fill.setColor(color(theme.accent));
+                const SkRect accent =
+                    SkRect::MakeLTRB(selected.left() + 1.0F, selected.top() + 6.0F,
+                                     selected.left() + 3.0F, selected.bottom() - 6.0F);
+                canvas.drawRRect(SkRRect::MakeRectXY(accent, 1.0F, 1.0F), fill);
+            }
+
+            std::optional<PixelProbe> probe;
+            if (diagnostics) {
+                probe = capture_probe(row, raster);
+            }
+            const float text_top =
+                row.top() + (row.height() - static_cast<float>(cell_height)) * 0.5F;
+            const float label_x = row.left() + 12.0F;
+            std::optional<SkRect> shape_bounds;
+            canvas.save();
+            canvas.clipRect(row);
+            draw_text(item.label, SkPoint::Make(label_x, text_top),
+                      primitive.selected ? theme.strong_text : theme.text, shape_bounds);
+            if (!item.detail.empty()) {
+                const float detail_width =
+                    static_cast<float>(ui::display_width(item.detail) * cell_width);
+                const float detail_x = row.right() - 12.0F - detail_width;
+                draw_text(item.detail, SkPoint::Make(detail_x, text_top), theme.muted_text,
+                          shape_bounds);
+            }
+            canvas.restore();
+            append_diagnostics(primitive_index, row, shape_bounds, probe);
+        }
+
+        stroke.setColor(color(theme.popup_border));
+        canvas.drawRRect(panel_rrect, stroke);
+    }
+
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale, SkiaRenderDiagnostics* diagnostics,
                 std::span<const SkiaLogicalRect> damage, bool full_repaint,
@@ -341,6 +669,8 @@ struct SkiaPresenter::Impl {
                               .viewport_height = viewport_height});
             const SkRect grid_clip =
                 SkRect::MakeLTRB(0.0F, 0.0F, viewport_width, vertical_layout.grid_clip_bottom());
+            const std::optional<PopupLayout> modern_popup = popup_layout(
+                layer_scene, {.width = viewport_width, .height = viewport_height}, cell_height);
             SkPaint fill;
             fill.setAntiAlias(false);
             for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
@@ -348,6 +678,12 @@ struct SkiaPresenter::Impl {
                 const ui::Region& region = layer_scene.regions[region_index];
                 const bool moving_grid = region.vertical_anchor == ui::VerticalAnchor::Grid;
                 if ((moving_grid && !paint_grid) || (!moving_grid && !paint_footer)) {
+                    continue;
+                }
+                if (modern_popup && modern_popup->region == &region) {
+                    paint_popup(canvas, layer_scene, *modern_popup, region_index,
+                                {.width = viewport_width, .height = viewport_height}, raster,
+                                layer_diagnostics, damage_bounds);
                     continue;
                 }
                 SkRect bounds = region_pixel_rect(region, cell_width, cell_height, vertical_layout);
@@ -377,8 +713,35 @@ struct SkiaPresenter::Impl {
                 }
                 canvas.clipRect(bounds);
                 canvas.drawRect(bounds, fill);
+                if (layer_scene.active_text_row && moving_grid &&
+                    (region.role == ui::RegionRole::TextArea ||
+                     region.role == ui::RegionRole::LineNumbers ||
+                     region.role == ui::RegionRole::ChangeSigns)) {
+                    const float active_top =
+                        bounds.top() +
+                        static_cast<float>(*layer_scene.active_text_row - region.rect.row) *
+                            static_cast<float>(cell_height);
+                    fill.setColor(color(theme.active_line_background));
+                    canvas.drawRect(SkRect::MakeXYWH(bounds.left(), active_top, bounds.width(),
+                                                     static_cast<float>(cell_height)),
+                                    fill);
+                }
+                if (region.role == ui::RegionRole::TextArea) {
+                    fill.setColor(color(theme.divider));
+                    canvas.drawRect(
+                        SkRect::MakeXYWH(bounds.left(), bounds.top(), 1.0F, bounds.height()), fill);
+                } else if (region.role == ui::RegionRole::StatusBar) {
+                    fill.setColor(color(theme.divider));
+                    canvas.drawRect(
+                        SkRect::MakeXYWH(bounds.left(), bounds.top(), bounds.width(), 1.0F), fill);
+                }
+                const bool suppress_echo_text = modern_popup && modern_popup->input_active &&
+                                                region.role == ui::RegionRole::EchoArea;
                 for (std::size_t primitive_index = 0; primitive_index < region.prims.size();
                      ++primitive_index) {
+                    if (suppress_echo_text) {
+                        continue;
+                    }
                     const ui::Prim& prim = region.prims[primitive_index];
                     const SkScalar x = bounds.left() + static_cast<SkScalar>(prim.col * cell_width);
                     const SkScalar top =
@@ -404,7 +767,11 @@ struct SkiaPresenter::Impl {
 
                     SkPaint paint;
                     paint.setAntiAlias(true);
-                    paint.setColor(foreground(prim.style, theme));
+                    const bool active_line_number =
+                        layer_scene.active_text_row && region.role == ui::RegionRole::LineNumbers &&
+                        prim.row == *layer_scene.active_text_row - region.rect.row;
+                    paint.setColor(active_line_number ? color(theme.strong_text)
+                                                      : foreground(prim.style, theme));
                     std::optional<SkRect> draw_bounds;
                     std::optional<SkRect> shape_bounds;
                     sk_sp<SkTextBlob> blob;
@@ -440,7 +807,7 @@ struct SkiaPresenter::Impl {
                         SkiaPrimitiveRenderDiagnostics primitive{
                             .region_index = region_index,
                             .primitive_index = primitive_index,
-                            .cell_bounds = logical_rect(cell_bounds),
+                            .layout_bounds = logical_rect(cell_bounds),
                             .shape_bounds = std::nullopt,
                             .paint_bounds = std::nullopt,
                             .draw_bounds_cross_region_clip = false,
@@ -486,22 +853,37 @@ struct SkiaPresenter::Impl {
             const int cursor_col = std::max(0, scene.cursor_col - 1);
             std::optional<SkRect> cursor_clip;
             bool cursor_in_footer = false;
-            for (const ui::Region& region : scene.regions) {
-                if (contains(region.rect, cursor_row, cursor_col)) {
-                    cursor_in_footer = region.vertical_anchor != ui::VerticalAnchor::Grid;
-                    cursor_clip =
-                        region_pixel_rect(region, cell_width, cell_height, vertical_layout);
-                    if (!cursor_in_footer) {
-                        cursor_clip->offset(0.0F, grid_offset_y);
+            const std::optional<PopupLayout> modern_popup = popup_layout(
+                scene, {.width = viewport_width, .height = viewport_height}, cell_height);
+            const std::optional<SkRect> popup_cursor =
+                modern_popup
+                    ? popup_cursor_rect(*modern_popup, {.width = cell_width, .height = cell_height})
+                    : std::nullopt;
+            if (popup_cursor) {
+                cursor_in_footer = true;
+                cursor_clip = modern_popup->header;
+            } else {
+                for (const ui::Region& region : scene.regions) {
+                    if (contains(region.rect, cursor_row, cursor_col)) {
+                        cursor_in_footer = region.vertical_anchor != ui::VerticalAnchor::Grid;
+                        cursor_clip =
+                            region_pixel_rect(region, cell_width, cell_height, vertical_layout);
+                        if (!cursor_in_footer) {
+                            cursor_clip->offset(0.0F, grid_offset_y);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
-            const SkScalar cursor_x =
-                position ? position->x : static_cast<SkScalar>(cursor_col * cell_width);
+            const SkScalar cursor_x = position ? position->x
+                                      : popup_cursor
+                                          ? popup_cursor->left()
+                                          : static_cast<SkScalar>(cursor_col * cell_width);
             const SkScalar cursor_y = position ? position->y
-                                               : vertical_layout.row_top(cursor_row) +
-                                                     (cursor_in_footer ? 0.0F : grid_offset_y);
+                                      : popup_cursor
+                                          ? popup_cursor->top()
+                                          : vertical_layout.row_top(cursor_row) +
+                                                (cursor_in_footer ? 0.0F : grid_offset_y);
             const SkRect cursor_bounds =
                 SkRect::MakeXYWH(cursor_x, cursor_y, 2.0F, static_cast<SkScalar>(cell_height));
             if (damage_bounds && !SkRect::Intersects(cursor_bounds, *damage_bounds)) {
@@ -596,6 +978,32 @@ const SkiaTheme& SkiaPresenter::theme() const {
     return impl_->theme;
 }
 
+std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const ui::Scene& scene,
+                                                          float viewport_width,
+                                                          float viewport_height) const {
+    if (!scene.cursor_visible) {
+        return std::nullopt;
+    }
+    if (const std::optional<PopupLayout> popup = popup_layout(
+            scene, {.width = viewport_width, .height = viewport_height}, impl_->cell_height)) {
+        if (const std::optional<SkRect> cursor = popup_cursor_rect(
+                *popup, {.width = impl_->cell_width, .height = impl_->cell_height})) {
+            return logical_rect(*cursor);
+        }
+    }
+    const ui::SceneVerticalLayout vertical_layout(
+        scene, {.cell_height = static_cast<float>(impl_->cell_height),
+                .viewport_height = viewport_height});
+    const int row = std::max(0, scene.cursor_row - 1);
+    const int column = std::max(0, scene.cursor_col - 1);
+    return SkiaLogicalRect{
+        .x = static_cast<float>(column * impl_->cell_width),
+        .y = vertical_layout.row_top(row),
+        .width = 2.0F,
+        .height = static_cast<float>(impl_->cell_height),
+    };
+}
+
 std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
                                                          const ui::SceneDamage& damage,
                                                          float viewport_width,
@@ -678,6 +1086,12 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
                                            .width = expanded_right - expanded_left,
                                            .height = expanded_bottom - expanded_top});
             }
+        }
+    }
+    if ((!damage.cell_rects.empty() || !damage.cursor_cells.empty())) {
+        if (const std::optional<PopupLayout> popup = popup_layout(
+                scene, {.width = frame_width, .height = frame_height}, impl_->cell_height)) {
+            append_damage(rectangles, logical_rect(popup->shadow));
         }
     }
     for (const ui::CellPoint& cursor : damage.cursor_cells) {
