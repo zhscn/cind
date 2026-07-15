@@ -994,8 +994,7 @@ private:
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 
-int run_editor(const std::string& path, std::uint32_t initial_line,
-               const std::optional<std::filesystem::path>& inspector_socket) {
+std::string read_file(const std::string& path) {
     std::string initial;
     if (std::filesystem::exists(path)) {
         std::ifstream input(path, std::ios::binary);
@@ -1006,13 +1005,67 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
         contents << input.rdbuf();
         initial = contents.str();
     }
+    return initial;
+}
 
+std::pair<CppIndentStyle, std::string> load_style(const std::string& path) {
     CppIndentStyle style;
     std::string style_origin = "llvm (fallback)";
     if (auto loaded = load_clang_format_style(std::filesystem::absolute(path).parent_path())) {
         style = loaded->style;
         style_origin = loaded->config_path.filename().string();
     }
+    return {style, std::move(style_origin)};
+}
+
+// Renders one frame headless and writes the raw N32 (BGRA) pixels. No SDL, no
+// Wayland: the presenter rasterizes into an owned buffer, the reliable way to
+// capture the real chrome for font-smoothing comparisons. The vendored Skia is
+// built without encoders, so a tiny external step turns the dump into a PNG.
+int run_screenshot(const std::string& path, std::uint32_t initial_line,
+                   const std::filesystem::path& output, SkiaFontSmoothing smoothing,
+                   float font_size, int logical_width, int logical_height, float scale) {
+    auto [style, style_origin] = load_style(path);
+    EditorModel editor(path, read_file(path), style, std::move(style_origin), initial_line, {});
+    SkiaPresenter presenter("MonoLisaCode", font_size, {}, smoothing);
+
+    const float cell_height = static_cast<float>(presenter.cell_height());
+    const float cell_width = static_cast<float>(presenter.cell_width());
+    const float logical_w = static_cast<float>(logical_width);
+    const float logical_h = static_cast<float>(logical_height);
+    const int rows = std::max(3, static_cast<int>(std::ceil(logical_h / cell_height)));
+    const int columns = std::max(20, static_cast<int>(std::ceil(logical_w / cell_width)));
+    const float footer = presenter.status_bar_height() + presenter.echo_area_height();
+    const float text_height = std::max(0.0F, logical_h - footer);
+    const float visible_text_rows =
+        std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows - 2));
+    editor.set_frame_rows(rows);
+    ui::Scene scene = editor.compose(rows, columns, visible_text_rows);
+
+    const int pixel_width = static_cast<int>(std::lround(logical_w * scale));
+    const int pixel_height = static_cast<int>(std::lround(logical_h * scale));
+    const std::size_t row_bytes = static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(pixel_width) *
+                                      static_cast<std::size_t>(pixel_height));
+    presenter.render(scene, pixel_width, pixel_height, pixels.data(), row_bytes, scale);
+
+    std::ofstream out(output, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error(std::format("cannot write screenshot {}", output.string()));
+    }
+    out.write(reinterpret_cast<const char*>(pixels.data()),
+              static_cast<std::streamsize>(pixels.size() * sizeof(std::uint32_t)));
+    std::fprintf(stdout, "%d %d\n", pixel_width, pixel_height);
+    std::fprintf(stderr, "cind-gui screenshot: %s (%dx%d BGRA)\n", output.c_str(), pixel_width,
+                 pixel_height);
+    return 0;
+}
+
+int run_editor(const std::string& path, std::uint32_t initial_line,
+               const std::optional<std::filesystem::path>& inspector_socket,
+               SkiaFontSmoothing smoothing, float font_size) {
+    std::string initial = read_file(path);
+    auto [style, style_origin] = load_style(path);
 
     SdlRuntime runtime;
     EditorPlatformServices platform_services{
@@ -1034,7 +1087,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
         }};
     EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line,
                        std::move(platform_services));
-    SkiaPresenter presenter;
+    SkiaPresenter presenter("MonoLisaCode", font_size, {}, smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {
@@ -1057,6 +1110,9 @@ int main(int argc, char** argv) {
     bool inspect = false;
     std::optional<std::filesystem::path> inspector_socket;
     std::optional<std::string> file;
+    std::optional<std::filesystem::path> screenshot;
+    cind::gui::SkiaFontSmoothing smoothing = cind::gui::SkiaFontSmoothing::Smooth;
+    float font_size = 16.0F;
 
     try {
         for (int index = 1; index < argc; ++index) {
@@ -1064,8 +1120,8 @@ int main(int argc, char** argv) {
             if (argument == "--inspect") {
                 inspect = true;
             } else if (argument == "--help" || argument == "-h") {
-                std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] [+LINE] "
-                                     "<file>\n");
+                std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] "
+                                     "[--font-smoothing smooth|crisp|sharp|lcd] [+LINE] <file>\n");
                 return 0;
             } else if (argument == "--inspect-socket") {
                 if (++index >= argc) {
@@ -1073,6 +1129,24 @@ int main(int argc, char** argv) {
                 }
                 inspect = true;
                 inspector_socket = std::filesystem::absolute(argv[index]);
+            } else if (argument == "--font-smoothing") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--font-smoothing requires a mode");
+                }
+                smoothing = cind::gui::parse_font_smoothing(argv[index]);
+            } else if (argument == "--screenshot") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--screenshot requires a path");
+                }
+                screenshot = std::filesystem::absolute(argv[index]);
+            } else if (argument == "--font-size") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--font-size requires a value");
+                }
+                font_size = std::stof(argv[index]);
+                if (!(font_size > 0.0F)) {
+                    throw std::runtime_error("--font-size must be positive");
+                }
             } else if (argument.starts_with('+')) {
                 if (argument.size() == 1 || initial_line != 0) {
                     throw std::runtime_error("invalid +LINE argument");
@@ -1092,15 +1166,19 @@ int main(int argc, char** argv) {
             }
         }
         if (!file) {
-            std::fprintf(stderr,
-                         "usage: cind-gui [--inspect] [--inspect-socket PATH] [+LINE] <file>\n");
+            std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] "
+                                 "[--font-smoothing smooth|crisp|sharp|lcd] [+LINE] <file>\n");
             return 2;
+        }
+        if (screenshot) {
+            return cind::gui::run_screenshot(*file, initial_line, *screenshot, smoothing, font_size,
+                                             900, 600, 1.5F);
         }
         if (inspect && !inspector_socket) {
             inspector_socket =
                 cind::gui::default_inspector_socket_path(static_cast<int>(::getpid()));
         }
-        return cind::gui::run_editor(*file, initial_line, inspector_socket);
+        return cind::gui::run_editor(*file, initial_line, inspector_socket, smoothing, font_size);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "cind-gui: %s\n", error.what());
         return 1;

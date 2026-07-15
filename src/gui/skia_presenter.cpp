@@ -11,6 +11,7 @@
 #include <skia/core/SkFontMetrics.h>
 #include <skia/core/SkFontMgr.h>
 #include <skia/core/SkFontStyle.h>
+#include <skia/core/SkFontTypes.h>
 #include <skia/core/SkImageInfo.h>
 #include <skia/core/SkMaskFilter.h>
 #include <skia/core/SkPaint.h>
@@ -421,8 +422,10 @@ void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
 }
 
 struct SkiaPresenter::Impl {
-    Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme)
-        : family(std::move(requested_family)), size(requested_size), theme(requested_theme) {
+    Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme,
+         SkiaFontSmoothing requested_smoothing)
+        : family(std::move(requested_family)), size(requested_size), theme(requested_theme),
+          smoothing(requested_smoothing) {
         manager = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
         if (!manager) {
             throw std::runtime_error("Skia Fontconfig manager is unavailable");
@@ -458,10 +461,30 @@ struct SkiaPresenter::Impl {
         label_height = label_metrics.fDescent - label_metrics.fAscent + label_metrics.fLeading;
     }
 
-    static SkFont make_font(const sk_sp<SkTypeface>& face, float font_size) {
+    SkFont make_font(const sk_sp<SkTypeface>& face, float font_size) const {
         SkFont result(face, font_size);
-        result.setEdging(SkFont::Edging::kSubpixelAntiAlias);
-        result.setSubpixel(true);
+        switch (smoothing) {
+        case SkiaFontSmoothing::Smooth:
+            result.setEdging(SkFont::Edging::kAntiAlias);
+            result.setHinting(SkFontHinting::kNone);
+            result.setSubpixel(true);
+            break;
+        case SkiaFontSmoothing::Crisp:
+            result.setEdging(SkFont::Edging::kAntiAlias);
+            result.setHinting(SkFontHinting::kSlight);
+            result.setForceAutoHinting(true);
+            result.setSubpixel(true);
+            break;
+        case SkiaFontSmoothing::Sharp:
+            result.setEdging(SkFont::Edging::kAntiAlias);
+            result.setHinting(SkFontHinting::kFull);
+            result.setSubpixel(false);
+            break;
+        case SkiaFontSmoothing::LcdSubpixel:
+            result.setEdging(SkFont::Edging::kSubpixelAntiAlias);
+            result.setSubpixel(true);
+            break;
+        }
         return result;
     }
 
@@ -1147,6 +1170,7 @@ struct SkiaPresenter::Impl {
     SkFont font;
     SkFont label_font;
     std::unique_ptr<SkShaper> shaper;
+    SkiaFontSmoothing smoothing = SkiaFontSmoothing::Smooth;
     float ascent = 0.0F;
     float descent = 0.0F;
     float leading = 0.0F;
@@ -1156,8 +1180,22 @@ struct SkiaPresenter::Impl {
     bool show_debug_status = false;
 };
 
-SkiaPresenter::SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme)
-    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme)) {}
+SkiaFontSmoothing parse_font_smoothing(std::string_view name) {
+    if (name == "crisp") {
+        return SkiaFontSmoothing::Crisp;
+    }
+    if (name == "sharp" || name == "win") {
+        return SkiaFontSmoothing::Sharp;
+    }
+    if (name == "lcd" || name == "subpixel" || name == "legacy") {
+        return SkiaFontSmoothing::LcdSubpixel;
+    }
+    return SkiaFontSmoothing::Smooth;
+}
+
+SkiaPresenter::SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme,
+                             SkiaFontSmoothing smoothing)
+    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme, smoothing)) {}
 
 SkiaPresenter::~SkiaPresenter() = default;
 SkiaPresenter::SkiaPresenter(SkiaPresenter&&) noexcept = default;

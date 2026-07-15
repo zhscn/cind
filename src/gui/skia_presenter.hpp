@@ -14,6 +14,27 @@
 
 namespace cind::gui {
 
+// Glyph anti-aliasing strategy. Fractional HiDPI (e.g. 1.5x Wayland) makes LCD
+// subpixel AA muddy because RGB stripes cannot align to a fractional grid, so
+// the default renders grayscale coverage and lets slight hinting snap vertical
+// stems onto the pixel grid — closer to the macOS look than the fuzzy LCD path.
+enum class SkiaFontSmoothing : std::uint8_t {
+    // Grayscale, true outlines positioned at subpixel offsets, no grid fit.
+    // Softest; the pure macOS/CoreText look. The default — it won a blind
+    // preference test against the hinted and LCD alternatives at 16px.
+    Smooth,
+    // Grayscale with slight autohinting so vertical stems land on whole
+    // pixels. Reads a touch heavier and crisper.
+    Crisp,
+    // Grayscale, full grid-fit hinting, no subpixel positioning. Sharpest,
+    // most ClearType-grayscale/Windows-like.
+    Sharp,
+    // The historical LCD subpixel path, kept for comparison.
+    LcdSubpixel,
+};
+
+SkiaFontSmoothing parse_font_smoothing(std::string_view name);
+
 // One canvas, one surface: the editor body, gutter, and echo strip share the
 // canvas ground; the modeline and floating panels are the only raised
 // surfaces. Every separator is the same translucent hairline.
@@ -93,7 +114,8 @@ struct SkiaRenderDiagnostics {
 class SkiaPresenter {
 public:
     explicit SkiaPresenter(std::string font_family = "monospace", float font_size = 16.0F,
-                           SkiaTheme theme = {});
+                           SkiaTheme theme = {},
+                           SkiaFontSmoothing smoothing = SkiaFontSmoothing::Smooth);
     ~SkiaPresenter();
 
     SkiaPresenter(const SkiaPresenter&) = delete;
