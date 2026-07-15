@@ -19,6 +19,9 @@ public:
 
     ui::Scene compose(int rows, int columns, float visible_text_rows = 0.0F);
     bool handle_key(KeyStroke key, int page_rows);
+    bool has_pending_key_sequence() const {
+        return !application_.command_loop().pending_sequence().empty();
+    }
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);
     void click(ui::CellPoint point);
@@ -37,6 +40,7 @@ private:
 
     EditorApplication application_;
     ui::LineSigns signs_;
+    BufferId sign_buffer_;
     RevisionId sign_revision_ = static_cast<RevisionId>(-1);
     std::uint32_t sign_generation_ = static_cast<std::uint32_t>(-1);
     int last_rows_ = 24;

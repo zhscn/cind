@@ -137,6 +137,39 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     echo.prims.push_back(
         {0, 0, std::string(input.echo), StyleClass::Message, false, PrimKind::Text, "echo:main"});
 
+    std::optional<Region> popup;
+    if (!input.popup_items.empty() && input.cols >= 16 && text_rows >= 3) {
+        const std::size_t visible_count = std::min<std::size_t>(
+            input.popup_items.size(), static_cast<std::size_t>(std::min(14, text_rows - 1)));
+        std::size_t first = 0;
+        if (input.popup_selection && *input.popup_selection >= visible_count) {
+            first = *input.popup_selection - visible_count + 1;
+        }
+        const int popup_width = std::min(input.cols - 4, 88);
+        const int popup_rows = static_cast<int>(visible_count) + 1;
+        const int popup_row = std::max(0, text_rows - popup_rows);
+        const int popup_col = std::max(0, (input.cols - popup_width) / 2);
+        popup.emplace(RegionRole::Popup, Rect{popup_row, popup_col, popup_rows, popup_width},
+                      std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay);
+
+        std::string title = std::string(clip_to_display_width(input.popup_title, popup_width));
+        title.append(static_cast<std::size_t>(popup_width - display_width(title)), ' ');
+        popup->prims.push_back(
+            {0, 0, std::move(title), StyleClass::StatusKey, false, PrimKind::Text, "popup:title"});
+        for (std::size_t offset = 0; offset < visible_count; ++offset) {
+            const std::size_t index = first + offset;
+            const EditorPopupItem& item = input.popup_items[index];
+            std::string row = item.detail.empty()
+                                  ? std::string(item.label)
+                                  : std::format("{:<10} {}", item.label, item.detail);
+            row = std::string(clip_to_display_width(row, popup_width));
+            row.append(static_cast<std::size_t>(popup_width - display_width(row)), ' ');
+            popup->prims.push_back({static_cast<int>(offset) + 1, 0, std::move(row),
+                                    StyleClass::Popup, input.popup_selection == index,
+                                    PrimKind::Text, std::format("popup:item:{}", index)});
+        }
+    }
+
     if (input.echo_cursor_column) {
         scene.cursor_row = input.rows;
         scene.cursor_col = *input.echo_cursor_column + 1;
@@ -159,6 +192,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     scene.regions.push_back(std::move(body));
     scene.regions.push_back(std::move(status));
     scene.regions.push_back(std::move(echo));
+    if (popup) {
+        scene.regions.push_back(std::move(*popup));
+    }
     return scene;
 }
 

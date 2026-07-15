@@ -29,11 +29,7 @@ struct CommandLoopResult {
     std::optional<CommandId> command;
     std::string key_sequence;
     std::string message;
-};
-
-struct MinibufferState {
-    MinibufferRequest request;
-    std::string input;
+    std::optional<InteractionRequest> interaction;
 };
 
 // One input focus owns one command loop. Keymap layers are ordered from most
@@ -47,6 +43,8 @@ public:
     std::span<const KeymapId> keymaps() const { return keymaps_; }
 
     CommandLoopResult dispatch(KeyStroke key, CommandContext& context);
+    CommandLoopResult execute(CommandId command, CommandContext& context,
+                              const CommandInvocation& invocation = {});
     void cancel_pending();
     std::span<const KeyStroke> pending_sequence() const { return pending_; }
     std::string pending_sequence_text() const { return format_key_sequence(pending_); }
@@ -54,13 +52,6 @@ public:
 
     void set_repeat_count(std::optional<std::int64_t> count) { repeat_count_ = count; }
     std::optional<std::int64_t> repeat_count() const { return repeat_count_; }
-
-    bool minibuffer_active() const { return minibuffer_.has_value(); }
-    const MinibufferState* minibuffer() const { return minibuffer_ ? &*minibuffer_ : nullptr; }
-    void minibuffer_insert(std::string_view text);
-    bool minibuffer_erase_backward();
-    CommandLoopResult submit_minibuffer(CommandContext& context);
-    CommandLoopResult cancel_minibuffer();
 
 private:
     CommandLoopResult invoke(CommandId command, CommandContext& context,
@@ -72,7 +63,6 @@ private:
     KeySequence pending_;
     std::optional<KeymapId> pending_keymap_;
     std::optional<std::int64_t> repeat_count_;
-    std::optional<MinibufferState> minibuffer_;
 };
 
 } // namespace cind

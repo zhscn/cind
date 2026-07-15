@@ -297,6 +297,49 @@ KeymapMatch KeymapRegistry::resolve(KeymapId keymap, std::span<const KeyStroke> 
                                      : KeymapMatch{.kind = KeymapMatchKind::Prefix, .command = {}};
 }
 
+std::vector<KeymapCompletion> KeymapRegistry::completions(KeymapId keymap,
+                                                          std::span<const KeyStroke> prefix) const {
+    const StoredKeymap& map = stored(keymap);
+    std::uint32_t node_index = 0;
+    for (const KeyStroke key : prefix) {
+        const Node& node = map.nodes[node_index];
+        const auto child = std::ranges::find_if(
+            node.children, [&](const auto& entry) { return entry.first == key; });
+        if (child == node.children.end()) {
+            return {};
+        }
+        node_index = child->second;
+    }
+
+    std::vector<KeymapCompletion> result;
+    const Node& node = map.nodes[node_index];
+    result.reserve(node.children.size());
+    for (const auto& [key, child_index] : node.children) {
+        const Node& child = map.nodes[child_index];
+        result.push_back({.key = key, .command = child.command, .prefix = !child.children.empty()});
+    }
+    return result;
+}
+
+std::vector<KeymapBinding> KeymapRegistry::bindings(KeymapId keymap) const {
+    const StoredKeymap& map = stored(keymap);
+    std::vector<KeymapBinding> result;
+    KeySequence sequence;
+    const auto visit = [&](this const auto& self, std::uint32_t node_index) -> void {
+        const Node& node = map.nodes[node_index];
+        if (node.command) {
+            result.push_back({.sequence = sequence, .command = *node.command});
+        }
+        for (const auto& [key, child_index] : node.children) {
+            sequence.push_back(key);
+            self(child_index);
+            sequence.pop_back();
+        }
+    };
+    visit(0);
+    return result;
+}
+
 KeymapRegistry::StoredKeymap& KeymapRegistry::stored(KeymapId id) {
     if (!id.valid() || id.value >= definitions_.size()) {
         throw std::out_of_range("unknown keymap id");

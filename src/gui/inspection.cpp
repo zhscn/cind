@@ -77,6 +77,8 @@ std::string_view vertical_anchor_name(ui::VerticalAnchor anchor) {
         return "grid";
     case ui::VerticalAnchor::Bottom:
         return "bottom";
+    case ui::VerticalAnchor::Overlay:
+        return "overlay";
     }
     return "unknown";
 }
@@ -143,17 +145,67 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
     }
     output += ",\"last_command\":";
     append_json_string(output, command_loop.last_command);
-    output += ",\"minibuffer\":{\"active\":";
-    append_bool(output, command_loop.minibuffer.active);
+    output.push_back('}');
+}
+
+void append_interaction(std::string& output, const InteractionStateSnapshot& interaction) {
+    output += "{\"active\":";
+    append_bool(output, interaction.active);
+    output += ",\"kind\":";
+    append_json_string(output, interaction.kind);
     output += ",\"prompt\":";
-    append_json_string(output, command_loop.minibuffer.prompt);
+    append_json_string(output, interaction.prompt);
     output += ",\"input\":";
-    append_json_string(output, command_loop.minibuffer.input);
+    append_json_string(output, interaction.input);
     output += ",\"history\":";
-    append_json_string(output, command_loop.minibuffer.history);
-    output += ",\"completion_provider\":";
-    append_json_string(output, command_loop.minibuffer.completion_provider);
-    output += "}}";
+    append_json_string(output, interaction.history);
+    output += ",\"provider\":";
+    append_json_string(output, interaction.provider);
+    output += ",\"allow_custom_input\":";
+    append_bool(output, interaction.allow_custom_input);
+    output += std::format(",\"generation\":{},\"selected\":{},\"error\":", interaction.generation,
+                          interaction.selected);
+    append_json_string(output, interaction.error);
+    output += ",\"candidates\":[";
+    for (std::size_t index = 0; index < interaction.candidates.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const InteractionCandidateSnapshot& candidate = interaction.candidates[index];
+        output += "{\"value\":";
+        append_json_string(output, candidate.value);
+        output += ",\"label\":";
+        append_json_string(output, candidate.label);
+        output += ",\"detail\":";
+        append_json_string(output, candidate.detail);
+        output.push_back('}');
+    }
+    output += "]}";
+}
+
+void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapshot>& buffers) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < buffers.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const OpenBufferStateSnapshot& buffer = buffers[index];
+        output += std::format("{{\"buffer\":{{\"slot\":{},\"generation\":{}}},"
+                              "\"view\":{{\"slot\":{},\"generation\":{}}},\"name\":",
+                              buffer.buffer_slot, buffer.buffer_generation, buffer.view_slot,
+                              buffer.view_generation);
+        append_json_string(output, buffer.name);
+        output += ",\"resource\":";
+        append_json_string(output, buffer.resource);
+        output += ",\"modified\":";
+        append_bool(output, buffer.modified);
+        output += ",\"active\":";
+        append_bool(output, buffer.active);
+        output += ",\"saving\":";
+        append_bool(output, buffer.saving);
+        output.push_back('}');
+    }
+    output.push_back(']');
 }
 
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
@@ -181,6 +233,10 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.last_key);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
+    output += ",\"interaction\":";
+    append_interaction(output, editor.interaction);
+    output += ",\"buffers\":";
+    append_buffers(output, editor.buffers);
     output += ",\"quit_armed\":";
     append_bool(output, editor.quit_armed);
     output += ",\"quit\":";
@@ -655,6 +711,10 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_line_signs(output, frame.editor.line_signs);
     } else if (path == "editor.command_loop") {
         append_command_loop(output, frame.editor.command_loop);
+    } else if (path == "editor.interaction") {
+        append_interaction(output, frame.editor.interaction);
+    } else if (path == "editor.buffers") {
+        append_buffers(output, frame.editor.buffers);
     } else if (path == "scene") {
         append_scene(output, frame.scene);
     } else if (path == "scene.cursor") {
@@ -721,7 +781,19 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     const ui::SceneVerticalLayout vertical_layout(
         frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
                       .viewport_height = logical_height});
-    const int cell_row = vertical_layout.row_at(logical_y);
+    int cell_row = vertical_layout.row_at(logical_y);
+    const int overlay_row =
+        static_cast<int>(std::floor(logical_y / static_cast<float>(frame.render.cell_height)));
+    for (auto iterator = frame.scene.regions.rbegin(); iterator != frame.scene.regions.rend();
+         ++iterator) {
+        if (iterator->vertical_anchor == ui::VerticalAnchor::Overlay &&
+            overlay_row >= iterator->rect.row &&
+            overlay_row < iterator->rect.row + iterator->rect.rows &&
+            cell_col >= iterator->rect.col && cell_col < iterator->rect.col + iterator->rect.cols) {
+            cell_row = overlay_row;
+            break;
+        }
+    }
 
     std::string output =
         std::format("{{\"window\":{{\"x\":{},\"y\":{}}},\"cell\":{{\"row\":{},\"col\":{}}}",
@@ -733,7 +805,8 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
 
     const ui::Region* hit_region = nullptr;
     std::size_t hit_region_index = frame.scene.regions.size();
-    for (std::size_t index = 0; index < frame.scene.regions.size(); ++index) {
+    for (std::size_t reverse = frame.scene.regions.size(); reverse > 0; --reverse) {
+        const std::size_t index = reverse - 1;
         const ui::Region& region = frame.scene.regions[index];
         if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
             cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
@@ -880,6 +953,8 @@ std::string_view region_role_name(ui::RegionRole role) {
         return "status-bar";
     case ui::RegionRole::EchoArea:
         return "echo-area";
+    case ui::RegionRole::Popup:
+        return "popup";
     }
     return "unknown";
 }
@@ -912,6 +987,8 @@ std::string_view style_class_name(ui::StyleClass style) {
         return "status-key";
     case ui::StyleClass::Message:
         return "message";
+    case ui::StyleClass::Popup:
+        return "popup";
     }
     return "unknown";
 }
@@ -947,8 +1024,18 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
-           << printable(frame.editor.command_loop.last_command) << "\" minibuffer="
-           << (frame.editor.command_loop.minibuffer.active ? "active" : "inactive") << '\n';
+           << printable(frame.editor.command_loop.last_command) << "\"\n";
+    output << "    interaction=" << (frame.editor.interaction.active ? "active" : "inactive")
+           << " kind=" << printable(frame.editor.interaction.kind)
+           << " provider=" << printable(frame.editor.interaction.provider)
+           << " candidates=" << frame.editor.interaction.candidates.size() << '\n';
+    output << "    buffers=" << frame.editor.buffers.size() << '\n';
+    for (const OpenBufferStateSnapshot& buffer : frame.editor.buffers) {
+        output << "      buffer:" << buffer.buffer_slot << ':' << buffer.buffer_generation
+               << (buffer.active ? " active" : "") << (buffer.modified ? " modified" : "")
+               << " name=\"" << printable(buffer.name) << "\" resource=\""
+               << printable(buffer.resource) << "\"\n";
+    }
     output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
     if (frame.scene.cursor_visible) {
         output << frame.scene.cursor_row << ':' << frame.scene.cursor_col;

@@ -2,6 +2,7 @@
 
 #include "editor/buffer.hpp"
 #include "editor/command.hpp"
+#include "editor/interaction.hpp"
 #include "editor/keymap.hpp"
 #include "editor/mode.hpp"
 #include "editor/project.hpp"
@@ -35,6 +36,10 @@ public:
     const CommandRegistry& commands() const { return commands_; }
     KeymapRegistry& keymaps() { return keymaps_; }
     const KeymapRegistry& keymaps() const { return keymaps_; }
+    InteractionProviderRegistry& interaction_providers() { return interaction_providers_; }
+    const InteractionProviderRegistry& interaction_providers() const {
+        return interaction_providers_;
+    }
 
     // Freezes extension definitions after startup. Runtime values in explicit
     // application/buffer/view layers remain configurable.
@@ -55,6 +60,7 @@ private:
     ViewRegistry views_;
     CommandRegistry commands_;
     KeymapRegistry keymaps_;
+    InteractionProviderRegistry interaction_providers_;
     bool extensions_sealed_ = false;
 };
 

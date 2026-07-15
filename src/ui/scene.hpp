@@ -38,6 +38,7 @@ enum class PrimKind : std::uint8_t {
 // expanded, and grapheme widths are measured before the scene is published.
 struct Prim {
     Prim() = default;
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     Prim(int row, int col, std::string text, StyleClass style, bool selected,
          PrimKind kind = PrimKind::Text, std::string id = {})
         : row(row), col(col), text(std::move(text)), style(style), selected(selected), kind(kind),
@@ -65,11 +66,13 @@ enum class RegionRole : std::uint8_t {
     ChangeSigns,
     StatusBar,
     EchoArea, // message / prompt line
+    Popup,
 };
 
 enum class VerticalAnchor : std::uint8_t {
     Grid,
     Bottom,
+    Overlay,
 };
 
 struct Region {

@@ -20,6 +20,7 @@ void EditorRuntime::seal_extensions() {
     modes_.seal();
     commands_.seal();
     keymaps_.seal();
+    interaction_providers_.seal();
     extensions_sealed_ = true;
 }
 

@@ -257,6 +257,48 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
     CHECK(cursor_pixels == cell_height);
 }
 
+TEST_CASE("Skia presenter keeps popup painting and damage independent of fractional scrolling") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    SceneDamageTracker tracker;
+
+    Scene scene;
+    scene.rows = 5;
+    scene.cols = 16;
+    scene.grid_offset_rows = -0.5F;
+    scene.cursor_visible = false;
+    Region body{RegionRole::TextArea, {0, 0, 3, 16}, {}};
+    Region status{
+        RegionRole::StatusBar, {3, 0, 1, 16}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {4, 0, 1, 16}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    Region popup{
+        RegionRole::Popup, {1, 2, 2, 12}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back({0, 0, "first", StyleClass::Popup, false});
+    scene.regions = {body, status, echo, popup};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+    SkiaRenderDiagnostics diagnostics;
+    REQUIRE(tracker.update(scene).full_repaint);
+    presenter.render(scene, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
+    REQUIRE(diagnostics.primitives.size() == 1);
+    CHECK(diagnostics.primitives.front().cell_bounds.y ==
+          doctest::Approx(static_cast<float>(presenter.cell_height())));
+
+    scene.regions.back().prims.front().text = "second";
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
+        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE_FALSE(rectangles.empty());
+    presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles);
+    presenter.render(scene, width, height, reference.data(), row_bytes);
+    CHECK(retained == reference);
+}
+
 TEST_CASE("Skia damage rendering matches a full reference frame") {
     SkiaPresenter presenter("monospace", 16.0F);
     SceneDamageTracker tracker;

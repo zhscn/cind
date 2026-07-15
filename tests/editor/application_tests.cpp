@@ -3,6 +3,7 @@
 
 #include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
+#include "editor/interaction.hpp"
 #include "editor/runtime.hpp"
 
 #include <cstdint>
@@ -280,6 +281,11 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     loop.set_keymaps({local_map, base_map});
     const KeySequence chord = *parse_key_sequence("C-x C-f");
     CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
+    const std::vector<KeymapCompletion> completions =
+        runtime.keymaps().completions(base_map, std::span(chord).first(1));
+    REQUIRE(completions.size() == 1);
+    CHECK(format_key_stroke(completions.front().key) == "C-f");
+    CHECK(completions.front().command == base);
     loop.set_repeat_count(4);
     const CommandLoopResult chord_result = loop.dispatch(chord[1], context);
     CHECK(chord_result.status == CommandLoopStatus::Executed);
@@ -305,7 +311,7 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-a C-b", local), std::invalid_argument);
 }
 
-TEST_CASE("command loop owns non-blocking minibuffer input") {
+TEST_CASE("interaction controller owns non-blocking command input") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "prompt",
                                                       .initial_text = "",
@@ -325,12 +331,14 @@ TEST_CASE("command loop owns non-blocking minibuffer input") {
         });
     const CommandId start = runtime.commands().define(
         "prompt.start", [accept](CommandContext&, const CommandInvocation&) -> CommandResult {
-            return MinibufferRequest{.prompt = "find: ",
-                                     .initial_input = "needle",
-                                     .history = "search",
-                                     .completion_provider = "buffer-text",
-                                     .accept_command = accept,
-                                     .arguments = {}};
+            return InteractionRequest{.kind = InteractionKind::Text,
+                                      .prompt = "find: ",
+                                      .initial_input = "needle",
+                                      .history = "search",
+                                      .provider = {},
+                                      .allow_custom_input = true,
+                                      .accept_command = accept,
+                                      .arguments = {}};
         });
     const KeymapId keymap = runtime.keymaps().define("prompt-test");
     runtime.keymaps().bind(keymap, "C-f", start);
@@ -339,14 +347,20 @@ TEST_CASE("command loop owns non-blocking minibuffer input") {
     loop.set_keymaps({keymap});
     const CommandLoopResult started = loop.dispatch(parse_key_sequence("C-f")->front(), context);
     CHECK(started.status == CommandLoopStatus::AwaitingInput);
-    REQUIRE(loop.minibuffer() != nullptr);
-    CHECK(loop.minibuffer()->input == "needle");
+    REQUIRE(started.interaction.has_value());
+    InteractionController interaction(runtime.interaction_providers());
+    REQUIRE(interaction.start(*started.interaction, context).has_value());
+    REQUIRE(interaction.state() != nullptr);
+    CHECK(interaction.state()->input == "needle");
 
-    loop.minibuffer_insert("é");
-    CHECK(loop.minibuffer_erase_backward());
-    CHECK(loop.minibuffer()->input == "needle");
-    loop.minibuffer_insert("-next");
-    CHECK(loop.submit_minibuffer(context).status == CommandLoopStatus::Executed);
+    interaction.insert("é", context);
+    CHECK(interaction.erase_backward(context));
+    CHECK(interaction.state()->input == "needle");
+    interaction.insert("-next", context);
+    const std::expected<InteractionSubmission, std::string> submission = interaction.submit();
+    REQUIRE(submission.has_value());
+    CHECK(loop.execute(submission->accept_command, context, submission->invocation).status ==
+          CommandLoopStatus::Executed);
     CHECK(submitted == "needle-next");
-    CHECK_FALSE(loop.minibuffer_active());
+    CHECK_FALSE(interaction.active());
 }

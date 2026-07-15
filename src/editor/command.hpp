@@ -44,19 +44,27 @@ struct CommandCompleted {
     std::optional<SettingValue> value = std::nullopt;
 };
 
-// Commands request interactive input with data rather than retaining a
+enum class InteractionKind : std::uint8_t {
+    Text,
+    Picker,
+};
+
+// Commands request interactive input as data rather than retaining a
 // language- or frontend-specific continuation. The accept command receives
-// `arguments` followed by the submitted string and may request another input.
-struct MinibufferRequest {
+// `arguments` followed by the submitted string and may request another
+// interaction.
+struct InteractionRequest {
+    InteractionKind kind = InteractionKind::Text;
     std::string prompt;
     std::string initial_input;
     std::string history;
-    std::string completion_provider;
+    std::string provider;
+    bool allow_custom_input = true;
     CommandId accept_command;
     std::vector<SettingValue> arguments;
 };
 
-using CommandAction = std::variant<CommandCompleted, MinibufferRequest>;
+using CommandAction = std::variant<CommandCompleted, InteractionRequest>;
 using CommandResult = std::expected<CommandAction, CommandError>;
 
 class CommandContext {
@@ -95,6 +103,7 @@ public:
     bool sealed() const { return sealed_; }
 
     const Definition& definition(CommandId id) const;
+    std::vector<CommandId> all() const;
     std::optional<CommandId> find(std::string_view name) const;
     bool enabled(CommandId id, const CommandContext& context) const;
     CommandResult invoke(CommandId id, CommandContext& context,

@@ -38,6 +38,7 @@ struct Key {
     KeyKind kind = KeyKind::None;
     char ch = 0;
     std::string text;
+    bool control = false;
 };
 
 // Raw-mode terminal (RAII): alternate screen, no echo, no canonical input,

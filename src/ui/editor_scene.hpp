@@ -6,6 +6,8 @@
 #include "ui/scene.hpp"
 
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
 
 namespace cind::ui {
@@ -14,6 +16,11 @@ struct EditorViewport {
     std::uint32_t top_line = 0;
     float top_line_offset = 0.0F;
     int left_column = 0;
+};
+
+struct EditorPopupItem {
+    std::string_view label;
+    std::string_view detail;
 };
 
 struct EditorSceneInput {
@@ -39,6 +46,10 @@ struct EditorSceneInput {
 
     // A present value puts the caret on the echo line at this zero-based cell.
     std::optional<int> echo_cursor_column;
+
+    std::string_view popup_title;
+    std::span<const EditorPopupItem> popup_items;
+    std::optional<std::size_t> popup_selection;
 };
 
 // Composes the editor's standard five-region frame and scrolls `viewport` just

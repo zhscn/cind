@@ -48,6 +48,7 @@ add_library(cind_application STATIC
   editor/command_loop.cpp
   editor/cpp_mode.cpp
   editor/default_keymap.cpp
+  editor/interaction.cpp
   editor/keymap.cpp
   editor/language.cpp
   editor/mode.cpp

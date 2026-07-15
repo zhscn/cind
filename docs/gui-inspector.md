@@ -29,8 +29,9 @@ swapchain image，因为 swapchain image 不保留上一帧内容。
 Scene 网格对 output 可容纳的 cell 数向上取整。Status 和 echo region 使用 bottom
 anchor，在 Skia 逻辑像素空间保持完整行高并贴合 output 底边；正文、行号和 change
 sign region 裁剪到 footer 顶边。拖拽 resize 的不足一行余量因此显示为正文的部分 cell，
-不会裁掉 footer 或留下未布局区域。最后一列直接由 output 右边界裁剪。同一个垂直布局
-映射用于 raster、damage、鼠标 hit-test、IME 输入位置和 inspector `pick`。
+不会裁掉 footer 或留下未布局区域。Picker 和 which-key 窗口使用 overlay anchor，不随
+正文的分数滚动位置移动。最后一列直接由 output 右边界裁剪。同一个垂直布局映射用于
+raster、damage、鼠标 hit-test、IME 输入位置和 inspector `pick`。
 
 `SkiaPresenter` 在 inspector 启用时采集字体指标和每个 primitive 的渲染边界。增量帧还
 会绘制一份独立的完整参考 raster，并与 retained raster 比较。`InspectionHub` 在完成
@@ -106,7 +107,9 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.caret` | caret 的 byte、line 和 column |
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
-| `editor.command_loop` | active keymap、pending key sequence、repeat、last command 和 minibuffer 状态 |
+| `editor.command_loop` | active keymap、pending key sequence、repeat 和 last command |
+| `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation 和错误 |
+| `editor.buffers` | 所有打开 buffer 的资源、buffer/view ID、modified、saving 和 active 状态 |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor |
 | `scene.region.<role>` | 指定 region，例如 `scene.region.line-numbers` |
@@ -123,6 +126,8 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 ```sh
 cmk run -p gui cind-ui-inspect -- get scene.region.line-numbers
 cmk run -p gui cind-ui-inspect -- get editor.command_loop
+cmk run -p gui cind-ui-inspect -- get editor.interaction
+cmk run -p gui cind-ui-inspect -- get editor.buffers
 cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
 cmk run -p gui cind-ui-inspect -- get render.damage
@@ -134,8 +139,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 
 完整快照使用带版本号的 JSON schema。顶层包含：
 
-- `editor`：文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的 viewport、
-  line signs、tab width、style 来源、消息、最近按键以及 command loop/minibuffer 状态。
+- `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的
+  viewport、line signs、tab width、style 来源、消息、最近按键、command loop、交互状态
+  和打开的 buffer 列表。
 - `scene`：cell 网格、cursor、region 几何和 display primitives。Scene region 使用
   0-based cell 坐标并声明 vertical anchor；`grid_offset_rows` 表示顶部行的分数偏移；
   scene cursor 使用 1-based 坐标。

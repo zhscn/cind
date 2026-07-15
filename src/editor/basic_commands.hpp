@@ -10,6 +10,8 @@ namespace cind {
 
 class EditorRuntime;
 
+using EditSessionResolver = std::function<EditSession&(ViewId)>;
+
 struct BasicEditorCommandHooks {
     std::function<int()> page_rows;
     std::function<void(std::string)> show_message;
@@ -19,21 +21,22 @@ struct BasicEditorCommandHooks {
 
 class BasicEditorCommands {
 public:
-    BasicEditorCommands(EditorRuntime& runtime, EditSession& session,
+    BasicEditorCommands(EditorRuntime& runtime, EditSessionResolver session,
                         BasicEditorCommandHooks hooks);
 
-    void reset_preferred_column();
+    void reset_preferred_column(ViewId view);
 
 private:
-    void move_horizontal(bool forward, const CommandInvocation& invocation);
-    void move_vertical(int direction, bool page, const CommandInvocation& invocation);
-    void move_line_boundary(bool end);
-    void soft_delete(bool forward);
+    EditSession& session(ViewId view) const { return session_(view); }
+    void move_horizontal(ViewId view, bool forward, const CommandInvocation& invocation);
+    void move_vertical(ViewId view, int direction, bool page, const CommandInvocation& invocation);
+    void move_line_boundary(ViewId view, bool end);
+    void soft_delete(ViewId view, bool forward);
     void notify_edited();
     void notify_caret_moved();
 
     EditorRuntime* runtime_;
-    EditSession* session_;
+    EditSessionResolver session_;
     BasicEditorCommandHooks hooks_;
 };
 

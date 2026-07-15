@@ -47,8 +47,27 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .pending_keys = "C-x",
                          .pending_keymap = "editor.default",
                          .repeat_count = 4,
-                         .last_command = "edit.insert",
-                         .minibuffer = {}},
+                         .last_command = "edit.insert"},
+        .interaction =
+            {.active = true,
+             .kind = "picker",
+             .prompt = "Command: ",
+             .input = {},
+             .history = {},
+             .provider = "commands",
+             .allow_custom_input = false,
+             .generation = 1,
+             .selected = 0,
+             .error = {},
+             .candidates = {{.value = "file.save", .label = "file.save", .detail = "command"}}},
+        .buffers = {{.buffer_slot = 0,
+                     .buffer_generation = 1,
+                     .view_slot = 0,
+                     .view_generation = 1,
+                     .name = "sample.cc",
+                     .resource = "/tmp/sample.cc",
+                     .modified = true,
+                     .active = true}},
     };
     Scene scene;
     scene.rows = 2;
@@ -60,7 +79,11 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
     Region status{
         RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
-    scene.regions = {body, status};
+    Region popup{
+        RegionRole::Popup, {0, 5, 1, 5}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back(
+        {0, 0, "help ", StyleClass::Popup, false, PrimKind::Text, "popup:item:0"});
+    scene.regions = {body, status, popup};
     RenderStateSnapshot render{
         .video_driver = "wayland",
         .render_driver = "gpu",
@@ -123,7 +146,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":8") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":9") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -148,6 +171,14 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(command_loop.ok);
     CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
 
+    const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
+    REQUIRE(interaction.ok);
+    CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
+
+    const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
+    REQUIRE(buffers.ok);
+    CHECK(buffers.payload.find("\"name\":\"sample.cc\"") != std::string::npos);
+
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);
     CHECK(pick.payload.find("\"region\":\"region:text-area\"") != std::string::npos);
@@ -157,6 +188,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse footer_pick = run_inspection_query(hub, "pick 20 90");
     REQUIRE(footer_pick.ok);
     CHECK(footer_pick.payload.find("\"region\":\"region:status-bar\"") != std::string::npos);
+
+    const InspectionResponse popup_pick = run_inspection_query(hub, "pick 70 10");
+    REQUIRE(popup_pick.ok);
+    CHECK(popup_pick.payload.find("\"region\":\"region:popup\"") != std::string::npos);
 
     const InspectionResponse metrics = run_inspection_query(hub, "get render.font_metrics");
     REQUIRE(metrics.ok);

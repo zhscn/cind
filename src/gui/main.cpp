@@ -159,7 +159,15 @@ KeyModifiers key_modifiers(SDL_Keymod modifiers) {
 }
 
 std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers) {
-    const KeyModifiers mods = key_modifiers(modifiers);
+    KeyModifiers mods = key_modifiers(modifiers);
+    const auto punctuation = [&](char32_t plain, char32_t shifted) {
+        char32_t character = plain;
+        if (has_modifier(mods, KeyModifier::Shift)) {
+            character = shifted;
+            mods.bits &= ~static_cast<std::uint8_t>(KeyModifier::Shift);
+        }
+        return KeyStroke::character_key(character, mods);
+    };
     if (scancode >= SDL_SCANCODE_A && scancode <= SDL_SCANCODE_Z) {
         const char32_t character = U'a' + static_cast<char32_t>(scancode - SDL_SCANCODE_A);
         return KeyStroke::character_key(character, mods);
@@ -194,6 +202,14 @@ std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers)
         return KeyStroke::named(KeyCode::Escape, mods);
     case SDL_SCANCODE_SPACE:
         return KeyStroke::character_key(U' ', mods);
+    case SDL_SCANCODE_SLASH:
+        return punctuation(U'/', U'?');
+    case SDL_SCANCODE_MINUS:
+        return punctuation(U'-', U'_');
+    case SDL_SCANCODE_EQUALS:
+        return punctuation(U'=', U'+');
+    case SDL_SCANCODE_5:
+        return punctuation(U'5', U'%');
     default:
         return std::nullopt;
     }
@@ -350,11 +366,22 @@ private:
         case SDL_EVENT_WINDOW_RESTORED:
             return {true, true};
         case SDL_EVENT_KEY_DOWN: {
+            suppress_text_input_ = false;
+            const bool continued_sequence = editor_.has_pending_key_sequence();
             const std::optional<KeyStroke> key = editor_key(event.key.scancode, event.key.mod);
             const bool handled = key && editor_.handle_key(*key, page_rows_);
+            constexpr SDL_Keymod command_modifiers = static_cast<SDL_Keymod>(
+                SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI);
+            suppress_text_input_ = handled && continued_sequence && key &&
+                                   key->code == KeyCode::Character &&
+                                   (event.key.mod & command_modifiers) == 0;
             return {handled, handled};
         }
         case SDL_EVENT_TEXT_INPUT:
+            if (suppress_text_input_) {
+                suppress_text_input_ = false;
+                return {true, false};
+            }
             editor_.insert_text(event.text.text ? event.text.text : "");
             return {true, true};
         case SDL_EVENT_TEXT_EDITING:
@@ -921,6 +948,7 @@ private:
     int columns_ = 80;
     int page_rows_ = 22;
     float wheel_scroll_accumulator_ = 0.0F;
+    bool suppress_text_input_ = false;
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 

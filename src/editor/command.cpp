@@ -55,6 +55,15 @@ const CommandRegistry::Definition& CommandRegistry::definition(CommandId id) con
     return definitions_[id.value];
 }
 
+std::vector<CommandId> CommandRegistry::all() const {
+    std::vector<CommandId> result;
+    result.reserve(definitions_.size());
+    for (std::uint32_t value = 0; value < definitions_.size(); ++value) {
+        result.push_back(CommandId{value});
+    }
+    return result;
+}
+
 std::optional<CommandId> CommandRegistry::find(std::string_view name) const {
     auto it = by_name_.find(std::string(name));
     if (it == by_name_.end()) {

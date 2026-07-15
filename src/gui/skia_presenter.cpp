@@ -61,6 +61,7 @@ SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
     case ui::StyleClass::StatusKey:
         return color(0xFFFFFFFF);
     case ui::StyleClass::Message:
+    case ui::StyleClass::Popup:
         return color(0xFFD4D4D4);
     }
     return color(0xFFD4D4D4);
@@ -76,6 +77,9 @@ SkRect pixel_rect(const ui::Rect& rect, int cell_width, int cell_height) {
 SkRect region_pixel_rect(const ui::Region& region, int cell_width, int cell_height,
                          const ui::SceneVerticalLayout& layout) {
     SkRect bounds = pixel_rect(region.rect, cell_width, cell_height);
+    if (region.vertical_anchor == ui::VerticalAnchor::Overlay) {
+        return bounds;
+    }
     if (region.vertical_anchor == ui::VerticalAnchor::Bottom) {
         bounds.offset(0.0F, layout.row_top(region.rect.row) -
                                 static_cast<float>(region.rect.row * cell_height));
@@ -320,12 +324,12 @@ struct SkiaPresenter::Impl {
             for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
                  ++region_index) {
                 const ui::Region& region = layer_scene.regions[region_index];
-                const bool footer = region.vertical_anchor == ui::VerticalAnchor::Bottom;
-                if ((footer && !paint_footer) || (!footer && !paint_grid)) {
+                const bool moving_grid = region.vertical_anchor == ui::VerticalAnchor::Grid;
+                if ((moving_grid && !paint_grid) || (!moving_grid && !paint_footer)) {
                     continue;
                 }
                 SkRect bounds = region_pixel_rect(region, cell_width, cell_height, vertical_layout);
-                if (!footer) {
+                if (moving_grid) {
                     bounds.offset(0.0F, grid_offset_y);
                 }
                 if (damage_bounds && !SkRect::Intersects(bounds, *damage_bounds)) {
@@ -346,7 +350,7 @@ struct SkiaPresenter::Impl {
                     break;
                 }
                 canvas.save();
-                if (!footer) {
+                if (moving_grid) {
                     canvas.clipRect(grid_clip);
                 }
                 canvas.clipRect(bounds);
@@ -462,7 +466,7 @@ struct SkiaPresenter::Impl {
             bool cursor_in_footer = false;
             for (const ui::Region& region : scene.regions) {
                 if (contains(region.rect, cursor_row, cursor_col)) {
-                    cursor_in_footer = region.vertical_anchor == ui::VerticalAnchor::Bottom;
+                    cursor_in_footer = region.vertical_anchor != ui::VerticalAnchor::Grid;
                     cursor_clip =
                         region_pixel_rect(region, cell_width, cell_height, vertical_layout);
                     if (!cursor_in_footer) {
@@ -623,6 +627,36 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
                       .rows = last_row - *anchor_row,
                       .cols = cells.cols},
                      frame_height);
+    }
+    for (const ui::Rect& cells : damage.cell_rects) {
+        for (const ui::Region& region : scene.regions) {
+            if (region.vertical_anchor != ui::VerticalAnchor::Overlay) {
+                continue;
+            }
+            const int first_row = std::max(cells.row, region.rect.row);
+            const int last_row =
+                std::min(cells.row + cells.rows, region.rect.row + region.rect.rows);
+            const int first_col = std::max(cells.col, region.rect.col);
+            const int last_col =
+                std::min(cells.col + cells.cols, region.rect.col + region.rect.cols);
+            if (first_row >= last_row || first_col >= last_col) {
+                continue;
+            }
+            const float left = static_cast<float>(first_col * impl_->cell_width);
+            const float top = static_cast<float>(first_row * impl_->cell_height);
+            const float right = static_cast<float>(last_col * impl_->cell_width);
+            const float bottom = static_cast<float>(last_row * impl_->cell_height);
+            const float expanded_left = std::max(0.0F, left - 2.0F * cell_width);
+            const float expanded_top = std::max(0.0F, top - cell_height);
+            const float expanded_right = std::min(frame_width, right + 2.0F * cell_width);
+            const float expanded_bottom = std::min(frame_height, bottom + cell_height);
+            if (expanded_right > expanded_left && expanded_bottom > expanded_top) {
+                append_damage(rectangles, {.x = expanded_left,
+                                           .y = expanded_top,
+                                           .width = expanded_right - expanded_left,
+                                           .height = expanded_bottom - expanded_top});
+            }
+        }
     }
     for (const ui::CellPoint& cursor : damage.cursor_cells) {
         const float top = vertical_layout.row_top(cursor.row);

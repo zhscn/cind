@@ -1,7 +1,6 @@
 #pragma once
 
-#include "cli/session.hpp"
-#include "editor/command.hpp"
+#include "editor/basic_commands.hpp"
 
 #include <functional>
 #include <string>
@@ -16,18 +15,18 @@ class SearchCommands {
 public:
     using MessageSink = std::function<void(std::string)>;
 
-    SearchCommands(EditorRuntime& runtime, EditSession& session, MessageSink message_sink);
+    SearchCommands(EditorRuntime& runtime, EditSessionResolver session, MessageSink message_sink);
 
     std::string_view query() const { return query_; }
     void set_query(std::string query) { query_ = std::move(query); }
-    bool move(bool forward);
+    bool move(bool forward, ViewId view);
 
 private:
-    CommandResult begin(CommandContext&, const CommandInvocation&) const;
+    CommandResult begin(bool forward) const;
     CommandResult accept(CommandContext&, const CommandInvocation& invocation);
 
     EditorRuntime* runtime_;
-    EditSession* session_;
+    EditSessionResolver session_;
     MessageSink message_sink_;
     CommandId accept_command_;
     std::string query_;

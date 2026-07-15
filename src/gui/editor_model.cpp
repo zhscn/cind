@@ -18,23 +18,47 @@ EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle s
                     .style = style,
                     .style_origin = std::move(style_origin),
                     .initial_line = initial_line}) {
-    application_.set_message("SDL3 Wayland · Skia · C-s save · C-q quit");
+    application_.set_message("SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
 }
 
 ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
-    std::string minibuffer_echo;
+    std::string interaction_echo;
     std::optional<int> echo_cursor;
+    const InteractionState* interaction = application_.interaction().state();
     const std::string_view echo = [&]() -> std::string_view {
-        if (const MinibufferState* minibuffer = application_.command_loop().minibuffer()) {
-            minibuffer_echo = minibuffer->request.prompt + minibuffer->input;
-            echo_cursor = ui::display_width(minibuffer_echo);
-            return minibuffer_echo;
+        if (interaction != nullptr) {
+            interaction_echo = interaction->request.prompt + interaction->input;
+            echo_cursor = ui::display_width(interaction_echo);
+            return interaction_echo;
         }
         return preedit_.empty() ? std::string_view(application_.message())
                                 : std::string_view(preedit_);
     }();
+    const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
+    std::vector<ui::EditorPopupItem> popup_items;
+    std::string popup_title;
+    std::optional<std::size_t> popup_selection;
+    if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
+        popup_title = interaction->request.prompt;
+        popup_selection = interaction->candidates.empty()
+                              ? std::nullopt
+                              : std::optional<std::size_t>(interaction->selected);
+        popup_items.reserve(interaction->candidates.size());
+        for (const InteractionCandidate& candidate : interaction->candidates) {
+            popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
+        }
+    } else if (!key_hints.empty()) {
+        popup_title = application_.command_loop().pending_sequence_text() + " …";
+        popup_items.reserve(key_hints.size());
+        for (const KeyBindingHint& hint : key_hints) {
+            const std::string_view detail = hint.command.empty() && hint.prefix
+                                                ? std::string_view("prefix")
+                                                : std::string_view(hint.command);
+            popup_items.push_back({.label = hint.key, .detail = detail});
+        }
+    }
     ViewportState& state = session.view().viewport();
     ui::EditorViewport viewport{.top_line = state.top_line,
                                 .top_line_offset = state.top_line_offset,
@@ -43,7 +67,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                                 .tokens = session.analysis().tree.tokens(),
                                                 .signs = signs(),
                                                 .caret = session.caret(),
-                                                .selection = std::nullopt,
+                                                .selection = session.selection(),
                                                 .rows = rows,
                                                 .cols = columns,
                                                 .visible_text_rows = visible_text_rows,
@@ -55,7 +79,10 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                                 .last_key = application_.last_key(),
                                                 .echo = echo,
                                                 .reveal_caret = application_.reveal_caret(),
-                                                .echo_cursor_column = echo_cursor},
+                                                .echo_cursor_column = echo_cursor,
+                                                .popup_title = popup_title,
+                                                .popup_items = popup_items,
+                                                .popup_selection = popup_selection},
                                                viewport);
     state.top_line = viewport.top_line;
     state.top_line_offset = viewport.top_line_offset;
@@ -77,6 +104,10 @@ void EditorModel::set_preedit(std::string_view text) {
 }
 
 void EditorModel::click(ui::CellPoint point) {
+    if (application_.interaction().active() ||
+        !application_.command_loop().pending_sequence().empty()) {
+        return;
+    }
     application_.reset_preferred_column();
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
@@ -128,20 +159,44 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .pending_keys = command_loop.pending_sequence_text(),
                                            .pending_keymap = {},
                                            .repeat_count = command_loop.repeat_count(),
-                                           .last_command = application_.last_command(),
-                                           .minibuffer = {}};
+                                           .last_command = application_.last_command()};
     for (const KeymapId keymap : command_loop.keymaps()) {
         command_state.keymaps.push_back(runtime.keymaps().definition(keymap).name);
     }
     if (const std::optional<KeymapId> keymap = command_loop.pending_keymap()) {
         command_state.pending_keymap = runtime.keymaps().definition(*keymap).name;
     }
-    if (const MinibufferState* minibuffer = command_loop.minibuffer()) {
-        command_state.minibuffer = {.active = true,
-                                    .prompt = minibuffer->request.prompt,
-                                    .input = minibuffer->input,
-                                    .history = minibuffer->request.history,
-                                    .completion_provider = minibuffer->request.completion_provider};
+    InteractionStateSnapshot interaction_state;
+    if (const InteractionState* interaction = application_.interaction().state()) {
+        interaction_state = {.active = true,
+                             .kind = interaction->request.kind == InteractionKind::Picker ? "picker"
+                                                                                          : "text",
+                             .prompt = interaction->request.prompt,
+                             .input = interaction->input,
+                             .history = interaction->request.history,
+                             .provider = interaction->request.provider,
+                             .allow_custom_input = interaction->request.allow_custom_input,
+                             .generation = interaction->generation,
+                             .selected = interaction->selected,
+                             .error = interaction->error,
+                             .candidates = {}};
+        interaction_state.candidates.reserve(interaction->candidates.size());
+        for (const InteractionCandidate& candidate : interaction->candidates) {
+            interaction_state.candidates.push_back(
+                {.value = candidate.value, .label = candidate.label, .detail = candidate.detail});
+        }
+    }
+    std::vector<OpenBufferStateSnapshot> buffers;
+    for (const OpenBufferSnapshot& buffer : application_.open_buffers()) {
+        buffers.push_back({.buffer_slot = buffer.buffer.slot,
+                           .buffer_generation = buffer.buffer.generation,
+                           .view_slot = buffer.view.slot,
+                           .view_generation = buffer.view.generation,
+                           .name = buffer.name,
+                           .resource = buffer.resource.value_or(std::string()),
+                           .modified = buffer.modified,
+                           .active = buffer.active,
+                           .saving = buffer.saving});
     }
     return {.path = application_.path(),
             .revision = snapshot.revision(),
@@ -161,15 +216,18 @@ EditorStateSnapshot EditorModel::inspect() {
             .preedit = preedit_,
             .last_key = application_.last_key(),
             .command_loop = std::move(command_state),
+            .interaction = std::move(interaction_state),
+            .buffers = std::move(buffers),
             .quit_armed = application_.quit_armed(),
             .quit = application_.should_quit()};
 }
 
 const ui::LineSigns& EditorModel::signs() {
     const DocumentSnapshot snapshot = application_.session().snapshot();
-    if (sign_revision_ != snapshot.revision() ||
+    if (sign_buffer_ != application_.buffer_id() || sign_revision_ != snapshot.revision() ||
         sign_generation_ != application_.save_generation()) {
         signs_ = ui::line_signs(application_.session().buffer().save_point(), snapshot.content());
+        sign_buffer_ = application_.buffer_id();
         sign_revision_ = snapshot.revision();
         sign_generation_ = application_.save_generation();
     }

@@ -38,9 +38,17 @@ Terminal::Terminal() {
 
 Terminal::~Terminal() {
     out_.clear();
-    queue("\x1b[?25h");
-    queue("\x1b[?1049l");
-    flush();
+    std::string_view restore = "\x1b[?25h\x1b[?1049l";
+    while (!restore.empty()) {
+        const ssize_t count = ::write(STDOUT_FILENO, restore.data(), restore.size());
+        if (count > 0) {
+            restore.remove_prefix(static_cast<std::size_t>(count));
+        } else if (count < 0 && errno == EINTR) {
+            continue;
+        } else {
+            break;
+        }
+    }
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_);
 }
 
@@ -97,7 +105,10 @@ Key Terminal::read_escape_sequence() {
     if (b1 != '[' && b1 != 'O') {
         // Meta chord: ESC + letter (Alt-x) or ESC + control byte (Ctrl-Alt-x).
         if (b1 > 0 && b1 <= 26) {
-            return Key{KeyKind::Alt, static_cast<char>('a' + b1 - 1), {}};
+            return Key{KeyKind::Alt, static_cast<char>('a' + b1 - 1), {}, true};
+        }
+        if (b1 == 31) {
+            return Key{KeyKind::Alt, '/', {}, true};
         }
         if (b1 >= 0x20 && b1 < 0x7f) {
             return Key{KeyKind::Alt, static_cast<char>(b1), {}};
@@ -162,11 +173,14 @@ Key Terminal::read_key() {
     if (b == '\t') {
         return Key{KeyKind::Tab, 0, {}};
     }
-    if (b == 127 || b == 8) {
+    if (b == 127) {
         return Key{KeyKind::Backspace, 0, {}};
     }
     if (b == 0) {
         return Key{KeyKind::Ctrl, ' ', {}}; // Ctrl-Space
+    }
+    if (b == 31) {
+        return Key{KeyKind::Ctrl, '/', {}}; // Ctrl-/ and Ctrl-_ share this terminal byte
     }
     if (b < 0x20) {
         return Key{KeyKind::Ctrl, static_cast<char>('a' + b - 1), {}};

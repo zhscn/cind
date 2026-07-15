@@ -36,6 +36,8 @@ std::string_view sgr_of(StyleClass style) {
         return "\x1b[7m\x1b[1m";
     case StyleClass::Message:
         return "";
+    case StyleClass::Popup:
+        return "\x1b[48;5;236m";
     }
     return "";
 }

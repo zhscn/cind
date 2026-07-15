@@ -15,14 +15,6 @@ void CommandLoop::set_keymaps(std::vector<KeymapId> keymaps) {
 }
 
 CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) {
-    if (minibuffer_) {
-        return {.status = CommandLoopStatus::AwaitingInput,
-                .consumed = false,
-                .command = std::nullopt,
-                .key_sequence = {},
-                .message = "minibuffer is awaiting input"};
-    }
-
     const bool continued_sequence = !pending_.empty();
     pending_.push_back(key);
     const std::string sequence_text = format_key_sequence(pending_);
@@ -46,7 +38,8 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
                 .consumed = true,
                 .command = std::nullopt,
                 .key_sequence = sequence_text,
-                .message = sequence_text + " …"};
+                .message = sequence_text + " …",
+                .interaction = std::nullopt};
     }
     if (match.kind == KeymapMatchKind::None) {
         pending_.clear();
@@ -56,7 +49,8 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
                 .consumed = continued_sequence,
                 .command = std::nullopt,
                 .key_sequence = sequence_text,
-                .message = continued_sequence ? "undefined key: " + sequence_text : std::string()};
+                .message = continued_sequence ? "undefined key: " + sequence_text : std::string(),
+                .interaction = std::nullopt};
     }
 
     pending_.clear();
@@ -66,52 +60,16 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
     return invoke(match.command, context, invocation, sequence_text);
 }
 
+CommandLoopResult CommandLoop::execute(CommandId command, CommandContext& context,
+                                       const CommandInvocation& invocation) {
+    cancel_pending();
+    return invoke(command, context, invocation, {});
+}
+
 void CommandLoop::cancel_pending() {
     pending_.clear();
     pending_keymap_.reset();
     repeat_count_.reset();
-}
-
-void CommandLoop::minibuffer_insert(std::string_view text) {
-    if (minibuffer_) {
-        minibuffer_->input.append(text);
-    }
-}
-
-bool CommandLoop::minibuffer_erase_backward() {
-    if (!minibuffer_ || minibuffer_->input.empty()) {
-        return false;
-    }
-    std::size_t start = minibuffer_->input.size() - 1;
-    while (start > 0 && (static_cast<unsigned char>(minibuffer_->input[start]) & 0xC0U) == 0x80U) {
-        --start;
-    }
-    minibuffer_->input.resize(start);
-    return true;
-}
-
-CommandLoopResult CommandLoop::submit_minibuffer(CommandContext& context) {
-    if (!minibuffer_) {
-        return {};
-    }
-    MinibufferState state = std::move(*minibuffer_);
-    minibuffer_.reset();
-    CommandInvocation invocation{.arguments = std::move(state.request.arguments),
-                                 .repeat_count = std::nullopt};
-    invocation.arguments.emplace_back(std::move(state.input));
-    return invoke(state.request.accept_command, context, invocation, {});
-}
-
-CommandLoopResult CommandLoop::cancel_minibuffer() {
-    if (!minibuffer_) {
-        return {};
-    }
-    minibuffer_.reset();
-    return {.status = CommandLoopStatus::Cancelled,
-            .consumed = true,
-            .command = std::nullopt,
-            .key_sequence = {},
-            .message = "cancelled"};
 }
 
 CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context,
@@ -123,7 +81,8 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                 .consumed = true,
                 .command = command,
                 .key_sequence = std::move(key_sequence),
-                .message = "command is disabled in this context"};
+                .message = "command is disabled in this context",
+                .interaction = std::nullopt};
     }
     return finish(command, commands.invoke(command, context, invocation), std::move(key_sequence));
 }
@@ -135,30 +94,31 @@ CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
                 .consumed = true,
                 .command = command,
                 .key_sequence = std::move(key_sequence),
-                .message = std::move(result.error().message)};
+                .message = std::move(result.error().message),
+                .interaction = std::nullopt};
     }
-    if (MinibufferRequest* request = std::get_if<MinibufferRequest>(&*result)) {
+    if (InteractionRequest* request = std::get_if<InteractionRequest>(&*result)) {
         if (!request->accept_command) {
             return {.status = CommandLoopStatus::Error,
                     .consumed = true,
                     .command = command,
                     .key_sequence = std::move(key_sequence),
-                    .message = "minibuffer request has no accept command"};
+                    .message = "interaction request has no accept command",
+                    .interaction = std::nullopt};
         }
-        std::string input = request->initial_input;
-        minibuffer_.emplace(
-            MinibufferState{.request = std::move(*request), .input = std::move(input)});
         return {.status = CommandLoopStatus::AwaitingInput,
                 .consumed = true,
                 .command = command,
                 .key_sequence = std::move(key_sequence),
-                .message = {}};
+                .message = {},
+                .interaction = std::move(*request)};
     }
     return {.status = CommandLoopStatus::Executed,
             .consumed = true,
             .command = command,
             .key_sequence = std::move(key_sequence),
-            .message = {}};
+            .message = {},
+            .interaction = std::nullopt};
 }
 
 } // namespace cind

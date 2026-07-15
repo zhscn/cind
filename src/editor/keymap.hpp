@@ -100,6 +100,17 @@ struct KeymapMatch {
     CommandId command;
 };
 
+struct KeymapCompletion {
+    KeyStroke key;
+    std::optional<CommandId> command;
+    bool prefix = false;
+};
+
+struct KeymapBinding {
+    KeySequence sequence;
+    CommandId command;
+};
+
 class KeymapRegistry {
 public:
     struct Definition {
@@ -116,6 +127,9 @@ public:
     const Definition& definition(KeymapId id) const;
     std::optional<KeymapId> find(std::string_view name) const;
     KeymapMatch resolve(KeymapId keymap, std::span<const KeyStroke> sequence) const;
+    std::vector<KeymapCompletion> completions(KeymapId keymap,
+                                              std::span<const KeyStroke> prefix) const;
+    std::vector<KeymapBinding> bindings(KeymapId keymap) const;
 
 private:
     struct Node {

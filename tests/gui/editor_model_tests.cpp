@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -113,21 +114,43 @@ TEST_CASE("vertical movement preserves the shared preferred display column") {
     CHECK(model.inspect().caret_display_column == 3);
 }
 
-TEST_CASE("search uses the shared non-blocking minibuffer command state") {
+TEST_CASE("search uses the shared non-blocking interaction state") {
     EditorModel model("sample.cc", "one two one", CppIndentStyle{}, "test", 1);
 
-    CHECK(model.handle_key(KeyStroke::character_key(U'f', KeyModifier::Control), 10));
+    CHECK(model.handle_key(KeyStroke::character_key(U's', KeyModifier::Control), 10));
     EditorStateSnapshot state = model.inspect();
-    CHECK(state.command_loop.minibuffer.active);
-    CHECK(state.command_loop.minibuffer.prompt == "search: ");
+    CHECK(state.interaction.active);
+    CHECK(state.interaction.prompt == "search: ");
     CHECK(state.command_loop.last_command == "search.prompt");
 
     model.insert_text("two");
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Enter), 10));
     state = model.inspect();
-    CHECK_FALSE(state.command_loop.minibuffer.active);
+    CHECK_FALSE(state.interaction.active);
     CHECK(state.command_loop.last_command == "search.accept");
     CHECK(state.caret.value == 4);
+}
+
+TEST_CASE("prefix help and picker candidates compose as a fixed popup") {
+    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+
+    CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
+    ui::Scene scene = model.compose(16, 100);
+    const ui::Region* popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    CHECK(popup->vertical_anchor == ui::VerticalAnchor::Overlay);
+    CHECK(std::ranges::any_of(popup->prims, [](const ui::Prim& primitive) {
+        return primitive.text.find("C-s") != std::string::npos &&
+               primitive.text.find("file.save") != std::string::npos;
+    }));
+
+    CHECK(model.handle_key(KeyStroke::character_key(U'g', KeyModifier::Control), 10));
+    CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
+    scene = model.compose(16, 100);
+    popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    CHECK(std::ranges::any_of(popup->prims,
+                              [](const ui::Prim& primitive) { return primitive.selected; }));
 }
 
 TEST_CASE("background save captures one revision without blocking newer edits") {
@@ -140,6 +163,7 @@ TEST_CASE("background save captures one revision without blocking newer edits") 
     {
         EditorModel model(path.string(), "old", CppIndentStyle{}, "test", 1);
         model.insert_text("x");
+        CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
         CHECK(model.handle_key(KeyStroke::character_key(U's', KeyModifier::Control), 10));
         model.insert_text("y");
 
