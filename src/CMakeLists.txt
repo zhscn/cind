@@ -62,9 +62,13 @@ add_library(cind_editor STATIC
   cli/session.cpp
   cli/style_loader.cpp
   editor/basic_commands.cpp
+  editor/editor_application.cpp
   editor/search_commands.cpp
 )
-target_link_libraries(cind_editor PUBLIC cind_indent cind_application)
+target_link_libraries(cind_editor
+  PUBLIC cind_indent cind_application
+  PRIVATE cind_ui Threads::Threads
+)
 
 add_executable(indent-core
   cli/main.cpp

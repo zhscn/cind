@@ -10,6 +10,10 @@ add_executable(application_tests editor/application_tests.cpp)
 target_link_libraries(application_tests PRIVATE cind_application doctest::doctest)
 add_test(NAME application_tests COMMAND application_tests)
 
+add_executable(editor_application_tests editor/editor_application_tests.cpp)
+target_link_libraries(editor_application_tests PRIVATE cind_editor doctest::doctest)
+add_test(NAME editor_application_tests COMMAND editor_application_tests)
+
 add_executable(reparse_tests syntax/reparse_tests.cpp)
 target_link_libraries(reparse_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME reparse_tests COMMAND reparse_tests)

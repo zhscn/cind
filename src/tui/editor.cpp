@@ -1,14 +1,9 @@
 #include "tui/editor.hpp"
 
-#include "cli/session.hpp"
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "cpp_lexer/lexer.hpp"
-#include "editor/basic_commands.hpp"
-#include "editor/command_loop.hpp"
-#include "editor/cpp_mode.hpp"
-#include "editor/default_keymap.hpp"
-#include "editor/search_commands.hpp"
+#include "editor/editor_application.hpp"
 #include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
 #include "ui/ansi_renderer.hpp"
@@ -32,64 +27,6 @@ namespace {
 
 bool is_utf8_continuation(char byte) {
     return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
-}
-
-BufferId create_file_buffer(EditorRuntime& runtime, const std::string& path, std::string initial) {
-    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
-    const BufferId buffer = runtime.buffers().create(BufferSpec{.name = {},
-                                                                .initial_text = std::move(initial),
-                                                                .kind = BufferKind::File,
-                                                                .resource_uri = path,
-                                                                .read_only = false});
-    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
-    return buffer;
-}
-
-// Key caption for the status line (screenkey-style, so recordings show
-// which key produced each reaction).
-std::string describe_key(const Key& key) {
-    switch (key.kind) {
-    case KeyKind::Char:
-        return key.text;
-    case KeyKind::Ctrl:
-        if (key.ch == ' ') {
-            return "Ctrl-Space";
-        }
-        return std::format("Ctrl-{}",
-                           static_cast<char>(std::toupper(static_cast<unsigned char>(key.ch))));
-    case KeyKind::Alt:
-        return std::format("Alt-{}", key.ch);
-    case KeyKind::Enter:
-        return "Enter";
-    case KeyKind::Tab:
-        return "Tab";
-    case KeyKind::Backspace:
-        return "Backspace";
-    case KeyKind::Delete:
-        return "Delete";
-    case KeyKind::Up:
-        return "Up";
-    case KeyKind::Down:
-        return "Down";
-    case KeyKind::Left:
-        return "Left";
-    case KeyKind::Right:
-        return "Right";
-    case KeyKind::Home:
-        return "Home";
-    case KeyKind::End:
-        return "End";
-    case KeyKind::PageUp:
-        return "PgUp";
-    case KeyKind::PageDown:
-        return "PgDn";
-    case KeyKind::Escape:
-        return "Esc";
-    case KeyKind::Eof:
-    case KeyKind::None:
-        return {};
-    }
-    return {};
 }
 
 std::optional<KeyStroke> normalize_key(const Key& key) {
@@ -143,39 +80,25 @@ class Editor {
 public:
     Editor(const std::string& path, std::string initial, CppIndentStyle style,
            std::string style_origin, std::uint32_t initial_line)
-        : buffer_id_(create_file_buffer(runtime_, path, std::move(initial))),
-          view_id_(runtime_.views().create(buffer_id_)),
-          session_(runtime_, buffer_id_, view_id_, style),
-          basic_commands_(runtime_, session_,
-                          {.page_rows = [this] { return text_rows(); },
-                           .show_message =
-                               [this](std::string message) {
-                                   message_ = std::move(message);
-                                   command_keep_message_ = true;
-                               },
-                           .edited = {},
-                           .caret_moved = {}}),
-          search_commands_(runtime_, session_,
-                           [this](std::string message) {
-                               message_ = std::move(message);
-                               command_keep_message_ = true;
-                           }),
-          command_loop_(runtime_), style_origin_(std::move(style_origin)) {
+        : application_({.path = path,
+                        .initial_text = std::move(initial),
+                        .style = style,
+                        .style_origin = std::move(style_origin),
+                        .initial_line = initial_line}),
+          session_(application_.session()), basic_commands_(application_.basic_commands()),
+          search_commands_(application_.search_commands()),
+          command_loop_(application_.command_loop()), style_origin_(application_.style_origin()),
+          message_(application_.message()) {
         register_commands();
-        keymap_ = runtime_.keymaps().define("editor.default");
-        (void)bind_default_editor_keys(runtime_, keymap_);
-        command_loop_.set_keymaps({keymap_});
+        application_.refresh_default_keymap();
         const DocumentSnapshot snap = session_.snapshot();
         const Text& text = snap.content();
         message_ = std::format("read {} lines", reported_lines(text));
-        if (initial_line > 0) {
-            const std::uint32_t line = std::min(initial_line - 1, text.line_count() - 1);
-            session_.set_caret(text.line_start(line));
-        }
     }
 
     int run() {
-        while (!quit_) {
+        while (!application_.should_quit()) {
+            (void)application_.poll_background_work();
             render();
             handle_key(term_.read_key());
         }
@@ -199,50 +122,19 @@ private:
     void handle_key(const Key& key) {
         const RevisionId rev_before = session_.snapshot().revision();
         command_keep_message_ = false;
-        if (std::string caption = describe_key(key); !caption.empty()) {
-            last_key_ = std::move(caption);
-        }
 
-        if (command_loop_.minibuffer_active()) {
-            CommandContext context(runtime_, buffer_id_, view_id_);
-            CommandLoopResult result;
-            if (key.kind == KeyKind::Char) {
-                command_loop_.minibuffer_insert(key.text);
-                command_keep_message_ = true;
-            } else if (key.kind == KeyKind::Backspace) {
-                (void)command_loop_.minibuffer_erase_backward();
-                command_keep_message_ = true;
-            } else if (key.kind == KeyKind::Enter) {
-                result = command_loop_.submit_minibuffer(context);
-            } else if (key.kind == KeyKind::Escape ||
-                       (key.kind == KeyKind::Ctrl && key.ch == 'g')) {
-                result = command_loop_.cancel_minibuffer();
-            }
-            if (!result.message.empty()) {
-                message_ = result.message;
-                command_keep_message_ = true;
-            }
-        } else if (key.kind == KeyKind::Char) {
-            basic_commands_.reset_preferred_column();
-            if (key.text.size() == 1) {
-                session_.type_text(key.text); // full typed-char pipeline
-            } else {
-                session_.insert_text(key.text); // one undo unit per code point
-            }
+        if (key.kind == KeyKind::Char) {
+            const bool minibuffer_active = command_loop_.minibuffer_active();
+            application_.insert_text(key.text);
+            command_keep_message_ = minibuffer_active;
         } else if (key.kind == KeyKind::Eof) {
-            quit_ = true;
+            application_.request_quit(true);
         } else if (const std::optional<KeyStroke> stroke = normalize_key(key)) {
-            CommandContext context(runtime_, buffer_id_, view_id_);
-            const CommandLoopResult result = command_loop_.dispatch(*stroke, context);
-            if (result.status == CommandLoopStatus::Prefix ||
-                result.status == CommandLoopStatus::Error ||
-                result.status == CommandLoopStatus::Disabled ||
-                (result.status == CommandLoopStatus::NotHandled && result.consumed)) {
-                if (!result.message.empty()) {
-                    message_ = result.message;
-                }
-                command_keep_message_ = true;
-            }
+            message_.clear();
+            const bool handled = application_.handle_key(*stroke, text_rows());
+            command_keep_message_ =
+                handled && (!message_.empty() || command_loop_.minibuffer_active() ||
+                            !command_loop_.pending_sequence().empty());
         } else {
             command_keep_message_ = true;
         }
@@ -258,7 +150,7 @@ private:
 
     void register_commands() {
         auto define = [this](std::string name, auto execute) {
-            runtime_.commands().define(
+            application_.runtime().commands().define(
                 std::move(name),
                 [execute = std::move(execute)](CommandContext&,
                                                const CommandInvocation&) mutable -> CommandResult {
@@ -267,8 +159,6 @@ private:
                 });
         };
 
-        define("application.quit", [this] { handle_ctrl('q', command_keep_message_); });
-        define("file.save", [this] { handle_ctrl('s', command_keep_message_); });
         define("file.save-as", [this] { handle_ctrl('o', command_keep_message_); });
         define("editor.position", [this] { handle_ctrl('c', command_keep_message_); });
         define("keyboard.quit", [this] { handle_ctrl('g', command_keep_message_); });
@@ -369,12 +259,6 @@ private:
         basic_commands_.reset_preferred_column();
         keep_message = true;
         switch (ch) {
-        case 'q':
-            command_quit();
-            break;
-        case 's':
-            save_to(path());
-            break;
         case 'o':
             command_save_as();
             break;
@@ -423,15 +307,9 @@ private:
         }
     }
 
-    bool dirty() const { return session_.buffer().modified(); }
+    bool dirty() const { return application_.dirty(); }
 
-    const std::string& path() const {
-        const std::optional<std::string>& resource = session_.buffer().resource_uri();
-        if (!resource) {
-            throw std::logic_error("file buffer has no resource URI");
-        }
-        return *resource;
-    }
+    const std::string& path() const { return application_.path(); }
 
     // ---- minibuffer -------------------------------------------------------
 
@@ -603,8 +481,7 @@ private:
             message_ = std::format("save failed: {}", ec.message());
             return false;
         }
-        session_.buffer().mark_saved(session_.snapshot().content());
-        ++save_gen_; // invalidate the change-sign cache
+        application_.mark_saved(session_.snapshot().content());
         message_ = std::format("wrote {} lines to {}",
                                reported_lines(session_.buffer().save_point()), target);
         return true;
@@ -617,24 +494,10 @@ private:
             return;
         }
         if (save_to(*target)) {
-            runtime_.buffers().set_resource(buffer_id_, target, BufferKind::File);
-            runtime_.buffers().rename(buffer_id_,
-                                      std::filesystem::path(*target).filename().string());
-        }
-    }
-
-    void command_quit() {
-        if (!dirty()) {
-            quit_ = true;
-            return;
-        }
-        const char answer = ask("save modified buffer? (y/n, Ctrl-G cancel) ");
-        if (answer == 'y') {
-            quit_ = save_to(path());
-        } else if (answer == 'n') {
-            quit_ = true;
-        } else {
-            message_ = "cancelled";
+            application_.runtime().buffers().set_resource(application_.buffer_id(), target,
+                                                          BufferKind::File);
+            application_.runtime().buffers().rename(
+                application_.buffer_id(), std::filesystem::path(*target).filename().string());
         }
     }
 
@@ -680,10 +543,10 @@ private:
     // structural diff makes a miss O(changed bytes + log n).
     const ui::LineSigns& signs() {
         const RevisionId rev = session_.snapshot().revision();
-        if (signs_rev_ != rev || signs_gen_ != save_gen_) {
+        if (signs_rev_ != rev || signs_gen_ != application_.save_generation()) {
             signs_ = ui::line_signs(session_.buffer().save_point(), session_.snapshot().content());
             signs_rev_ = rev;
-            signs_gen_ = save_gen_;
+            signs_gen_ = application_.save_generation();
         }
         return signs_;
     }
@@ -720,7 +583,7 @@ private:
                                                     .dirty = dirty(),
                                                     .revision = snap.revision(),
                                                     .style_origin = style_origin_,
-                                                    .last_key = last_key_,
+                                                    .last_key = application_.last_key(),
                                                     .echo = echo_text,
                                                     .echo_cursor_column = echo_cursor},
                                                    viewport);
@@ -735,30 +598,24 @@ private:
         term_.flush();
     }
 
-    EditorRuntime runtime_;
-    BufferId buffer_id_;
-    ViewId view_id_;
-    EditSession session_;
-    BasicEditorCommands basic_commands_;
-    SearchCommands search_commands_;
-    CommandLoop command_loop_;
-    KeymapId keymap_;
-    std::string style_origin_;
+    EditorApplication application_;
+    EditSession& session_;
+    BasicEditorCommands& basic_commands_;
+    SearchCommands& search_commands_;
+    CommandLoop& command_loop_;
+    const std::string& style_origin_;
+    std::string& message_;
     Terminal term_;
 
-    std::uint32_t save_gen_ = 0;
     ui::LineSigns signs_;
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
     bool command_keep_message_ = false;
-    std::string message_;
-    std::string last_key_;
     std::vector<TextRange> expand_stack_;
     std::string kill_slot_;
     bool prompt_active_ = false;
     std::string prompt_label_;
     std::string prompt_input_;
-    bool quit_ = false;
 };
 
 } // namespace
