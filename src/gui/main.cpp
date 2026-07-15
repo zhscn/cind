@@ -349,7 +349,9 @@ private:
             static_cast<std::size_t>(pixel_width) * static_cast<std::size_t>(pixel_height);
         pixels_.resize(pixel_count);
         const std::size_t row_bytes = static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
-        presenter_.render(scene, pixel_width, pixel_height, pixels_.data(), row_bytes, scale);
+        SkiaRenderDiagnostics render_diagnostics;
+        presenter_.render(scene, pixel_width, pixel_height, pixels_.data(), row_bytes, scale,
+                          inspection_ ? &render_diagnostics : nullptr);
 
         ensure_texture(pixel_width, pixel_height);
         if (!SDL_UpdateTexture(texture_.get(), nullptr, pixels_.data(),
@@ -360,10 +362,12 @@ private:
         }
         update_text_input_area(scene, pixel_width, pixel_height, scale);
         SDL_RenderPresent(renderer_.get());
-        publish_inspection(std::move(scene), pixel_width, pixel_height, scale);
+        publish_inspection(std::move(scene), pixel_width, pixel_height, scale,
+                           std::move(render_diagnostics));
     }
 
-    void publish_inspection(ui::Scene scene, int pixel_width, int pixel_height, float scale) {
+    void publish_inspection(ui::Scene scene, int pixel_width, int pixel_height, float scale,
+                            SkiaRenderDiagnostics diagnostics) {
         if (!inspection_) {
             return;
         }
@@ -371,6 +375,28 @@ private:
         int window_height = 0;
         SDL_GetWindowSize(window_.get(), &window_width, &window_height);
         const SkiaTheme& theme = presenter_.theme();
+        const auto snapshot_rect = [](const SkiaLogicalRect& rect) {
+            return LogicalPixelRectSnapshot{
+                .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height};
+        };
+        std::vector<PrimitiveRenderSnapshot> primitives;
+        primitives.reserve(diagnostics.primitives.size());
+        for (const SkiaPrimitiveRenderDiagnostics& primitive : diagnostics.primitives) {
+            PrimitiveRenderSnapshot snapshot;
+            snapshot.region_index = primitive.region_index;
+            snapshot.primitive_index = primitive.primitive_index;
+            snapshot.cell_bounds = snapshot_rect(primitive.cell_bounds);
+            snapshot.draw_bounds_cross_region_clip = primitive.draw_bounds_cross_region_clip;
+            snapshot.row_overflow = primitive.row_overflow;
+            snapshot.column_overflow = primitive.column_overflow;
+            if (primitive.shape_bounds) {
+                snapshot.shape_bounds = snapshot_rect(*primitive.shape_bounds);
+            }
+            if (primitive.paint_bounds) {
+                snapshot.paint_bounds = snapshot_rect(*primitive.paint_bounds);
+            }
+            primitives.push_back(std::move(snapshot));
+        }
         RenderStateSnapshot render{
             .video_driver = SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "",
             .window_width = window_width,
@@ -385,6 +411,10 @@ private:
             .texture_format = "ARGB8888",
             .font_family = presenter_.font_family(),
             .font_size = presenter_.font_size(),
+            .font_metrics = {.ascent = diagnostics.ascent,
+                             .descent = diagnostics.descent,
+                             .leading = diagnostics.leading,
+                             .baseline_from_row_top = diagnostics.baseline_from_row_top},
             .theme = {.background = theme.background,
                       .gutter_background = theme.gutter_background,
                       .status_background = theme.status_background,
@@ -395,6 +425,7 @@ private:
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
             .pixel_hash = hash_pixels(),
+            .primitives = std::move(primitives),
         };
         inspection_->publish(editor_.inspect(), std::move(scene), std::move(render),
                              last_repaint_event_sequence_);

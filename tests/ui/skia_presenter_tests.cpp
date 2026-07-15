@@ -121,8 +121,9 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
     const int width = presenter.cell_width() * scene.cols;
     const int height = presenter.cell_height() * scene.rows;
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    SkiaRenderDiagnostics diagnostics;
     presenter.render(scene, width, height, pixels.data(),
-                     static_cast<std::size_t>(width) * sizeof(std::uint32_t));
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t), 1.0F, &diagnostics);
 
     int first_row_ink = 0;
     int second_row_ink = 0;
@@ -136,4 +137,28 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
 
     CHECK(first_row_ink > 0);
     CHECK(second_row_ink == 0);
+
+    REQUIRE(diagnostics.primitives.size() == 1);
+    const SkiaPrimitiveRenderDiagnostics& primitive = diagnostics.primitives.front();
+    REQUIRE(primitive.shape_bounds);
+    REQUIRE(primitive.paint_bounds);
+    CHECK(primitive.cell_bounds.y == doctest::Approx(0.0F));
+    CHECK(primitive.cell_bounds.height == doctest::Approx(presenter.cell_height()));
+    CHECK(primitive.paint_bounds->y >= primitive.cell_bounds.y);
+    CHECK(primitive.paint_bounds->y + primitive.paint_bounds->height <=
+          primitive.cell_bounds.y + primitive.cell_bounds.height);
+    CHECK_FALSE(primitive.row_overflow);
+
+    constexpr float scale = 1.5F;
+    const int scaled_width = static_cast<int>(std::ceil(static_cast<float>(width) * scale));
+    const int scaled_height = static_cast<int>(std::ceil(static_cast<float>(height) * scale));
+    std::vector<std::uint32_t> scaled_pixels(
+        static_cast<std::size_t>(scaled_width * scaled_height));
+    SkiaRenderDiagnostics scaled_diagnostics;
+    presenter.render(scene, scaled_width, scaled_height, scaled_pixels.data(),
+                     static_cast<std::size_t>(scaled_width) * sizeof(std::uint32_t), scale,
+                     &scaled_diagnostics);
+    REQUIRE(scaled_diagnostics.primitives.size() == 1);
+    REQUIRE(scaled_diagnostics.primitives.front().paint_bounds);
+    CHECK_FALSE(scaled_diagnostics.primitives.front().row_overflow);
 }

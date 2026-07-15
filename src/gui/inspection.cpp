@@ -81,9 +81,22 @@ std::string_view prim_kind_name(ui::PrimKind kind) {
     return "unknown";
 }
 
+std::string primitive_id(const ui::Region& region, const ui::Prim& prim) {
+    if (!prim.id.empty()) {
+        return prim.id;
+    }
+    return std::format("region:{}/cell:{}:{}/{}", region_role_name(region.role), prim.row, prim.col,
+                       prim_kind_name(prim.kind));
+}
+
 void append_rect(std::string& output, const ui::Rect& rect) {
     output += std::format("{{\"row\":{},\"col\":{},\"rows\":{},\"cols\":{}}}", rect.row, rect.col,
                           rect.rows, rect.cols);
+}
+
+void append_logical_rect(std::string& output, const LogicalPixelRectSnapshot& rect) {
+    output += std::format("{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", rect.x, rect.y,
+                          rect.width, rect.height);
 }
 
 void append_line_signs(std::string& output, const ui::LineSigns& signs) {
@@ -123,13 +136,7 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
 
 void append_prim(std::string& output, const ui::Region& region, const ui::Prim& prim) {
     output += "{\"id\":";
-    if (prim.id.empty()) {
-        append_json_string(output,
-                           std::format("region:{}/cell:{}:{}/{}", region_role_name(region.role),
-                                       prim.row, prim.col, prim_kind_name(prim.kind)));
-    } else {
-        append_json_string(output, prim.id);
-    }
+    append_json_string(output, primitive_id(region, prim));
     output += std::format(",\"row\":{},\"col\":{},\"text\":", prim.row, prim.col);
     append_json_string(output, prim.text);
     output += ",\"style\":";
@@ -179,6 +186,57 @@ void append_color(std::string& output, std::uint32_t argb) {
     append_json_string(output, std::format("#{:08X}", argb));
 }
 
+void append_font_metrics(std::string& output, const FontMetricsSnapshot& metrics) {
+    output += std::format(
+        "{{\"ascent\":{},\"descent\":{},\"leading\":{},\"baseline_from_row_top\":{}}}",
+        metrics.ascent, metrics.descent, metrics.leading, metrics.baseline_from_row_top);
+}
+
+void append_render_primitive(std::string& output, const PrimitiveRenderSnapshot& primitive) {
+    output += "{\"id\":";
+    append_json_string(output, primitive.id);
+    output += ",\"region\":";
+    append_json_string(output, primitive.region);
+    output += ",\"kind\":";
+    append_json_string(output, primitive.kind);
+    output +=
+        std::format(",\"scene_index\":{{\"region\":{},\"primitive\":{}}},\"coordinate_space\":"
+                    "\"logical-pixels\",\"cell_bounds\":",
+                    primitive.region_index, primitive.primitive_index);
+    append_logical_rect(output, primitive.cell_bounds);
+    output += ",\"shape_bounds\":";
+    if (primitive.shape_bounds) {
+        append_logical_rect(output, *primitive.shape_bounds);
+    } else {
+        output += "null";
+    }
+    output += ",\"paint_bounds\":";
+    if (primitive.paint_bounds) {
+        append_logical_rect(output, *primitive.paint_bounds);
+    } else {
+        output += "null";
+    }
+    output += ",\"draw_bounds_cross_region_clip\":";
+    append_bool(output, primitive.draw_bounds_cross_region_clip);
+    output += ",\"row_overflow\":";
+    append_bool(output, primitive.row_overflow);
+    output += ",\"column_overflow\":";
+    append_bool(output, primitive.column_overflow);
+    output.push_back('}');
+}
+
+void append_render_primitives(std::string& output,
+                              const std::vector<PrimitiveRenderSnapshot>& primitives) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < primitives.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_render_primitive(output, primitives[index]);
+    }
+    output.push_back(']');
+}
+
 void append_render(std::string& output, const RenderStateSnapshot& render) {
     output += "{\"video_driver\":";
     append_json_string(output, render.video_driver);
@@ -191,7 +249,9 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_json_string(output, render.texture_format);
     output += ",\"font\":{\"family\":";
     append_json_string(output, render.font_family);
-    output += std::format(",\"size\":{}}},\"theme\":{{\"background\":", render.font_size);
+    output += std::format(",\"size\":{},\"metrics\":", render.font_size);
+    append_font_metrics(output, render.font_metrics);
+    output += "},\"theme\":{\"background\":";
     append_color(output, render.theme.background);
     output += ",\"gutter_background\":";
     append_color(output, render.theme.gutter_background);
@@ -209,7 +269,9 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.sign_modified);
     output += ",\"sign_deleted\":";
     append_color(output, render.theme.sign_deleted);
-    output += std::format("}},\"pixel_hash\":\"0x{:016X}\"}}", render.pixel_hash);
+    output += std::format("}},\"pixel_hash\":\"0x{:016X}\",\"primitives\":", render.pixel_hash);
+    append_render_primitives(output, render.primitives);
+    output.push_back('}');
 }
 
 void append_event(std::string& output, const InputEventSnapshot& event) {
@@ -266,6 +328,22 @@ void append_strings(std::string& output, const std::vector<std::string>& values)
     output.push_back(']');
 }
 
+void identify_render_primitives(const ui::Scene& scene, RenderStateSnapshot& render) {
+    for (PrimitiveRenderSnapshot& primitive : render.primitives) {
+        if (primitive.region_index >= scene.regions.size()) {
+            continue;
+        }
+        const ui::Region& region = scene.regions[primitive.region_index];
+        primitive.region = std::format("region:{}", region_role_name(region.role));
+        if (primitive.primitive_index >= region.prims.size()) {
+            continue;
+        }
+        const ui::Prim& scene_primitive = region.prims[primitive.primitive_index];
+        primitive.id = primitive_id(region, scene_primitive);
+        primitive.kind = std::string(prim_kind_name(scene_primitive.kind));
+    }
+}
+
 std::vector<std::string> validate_frame(const FrameInspection& frame) {
     std::vector<std::string> violations;
     if (frame.editor.line_count == 0) {
@@ -314,6 +392,17 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.render.rows != frame.scene.rows || frame.render.columns != frame.scene.cols) {
         violations.emplace_back("render grid does not match scene geometry");
     }
+    for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
+        if (primitive.region_index >= frame.scene.regions.size() ||
+            primitive.primitive_index >= frame.scene.regions[primitive.region_index].prims.size()) {
+            violations.emplace_back("render primitive refers to a missing scene primitive");
+            continue;
+        }
+        if (primitive.row_overflow) {
+            violations.push_back(
+                std::format("render primitive '{}' crosses its scene row", primitive.id));
+        }
+    }
     return violations;
 }
 
@@ -358,6 +447,28 @@ const ui::Region* find_region(const ui::Scene& scene, std::string_view name) {
     return nullptr;
 }
 
+const PrimitiveRenderSnapshot* find_render_primitive(const RenderStateSnapshot& render,
+                                                     std::string_view id) {
+    for (const PrimitiveRenderSnapshot& primitive : render.primitives) {
+        if (primitive.id == id) {
+            return &primitive;
+        }
+    }
+    return nullptr;
+}
+
+const PrimitiveRenderSnapshot* find_render_primitive(const RenderStateSnapshot& render,
+                                                     std::size_t region_index,
+                                                     std::size_t primitive_index) {
+    for (const PrimitiveRenderSnapshot& primitive : render.primitives) {
+        if (primitive.region_index == region_index &&
+            primitive.primitive_index == primitive_index) {
+            return &primitive;
+        }
+    }
+    return nullptr;
+}
+
 InspectionResponse get_query(const FrameInspection& frame, std::string_view path) {
     path = trim(path);
     if (path == "frame.id") {
@@ -388,6 +499,17 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
                              frame.scene.cursor_col, frame.scene.cursor_visible);
     } else if (path == "render") {
         append_render(output, frame.render);
+    } else if (path == "render.font_metrics") {
+        append_font_metrics(output, frame.render.font_metrics);
+    } else if (path == "render.primitives") {
+        append_render_primitives(output, frame.render.primitives);
+    } else if (path.starts_with("render.primitive.")) {
+        const std::string_view id = path.substr(std::string_view("render.primitive.").size());
+        const PrimitiveRenderSnapshot* primitive = find_render_primitive(frame.render, id);
+        if (!primitive) {
+            return {false, std::format("unknown rendered primitive '{}'", id)};
+        }
+        append_render_primitive(output, *primitive);
     } else if (path.starts_with("scene.region.")) {
         const std::string_view name = path.substr(std::string_view("scene.region.").size());
         const ui::Region* region = find_region(frame.scene, name);
@@ -409,7 +531,8 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         return {false, "usage: pick <window-x> <window-y>"};
     }
     if (frame.render.window_width <= 0 || frame.render.window_height <= 0 ||
-        frame.scene.cols <= 0 || frame.scene.rows <= 0) {
+        frame.render.cell_width <= 0 || frame.render.cell_height <= 0 || frame.scene.cols <= 0 ||
+        frame.scene.rows <= 0) {
         return {false, "frame has no usable window geometry"};
     }
     if (window_x < 0.0F || window_y < 0.0F ||
@@ -418,29 +541,31 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         return {false, "point is outside the window"};
     }
 
-    const int cell_col =
-        std::clamp(static_cast<int>(window_x / static_cast<float>(frame.render.window_width) *
-                                    static_cast<float>(frame.scene.cols)),
-                   0, frame.scene.cols - 1);
-    const int cell_row =
-        std::clamp(static_cast<int>(window_y / static_cast<float>(frame.render.window_height) *
-                                    static_cast<float>(frame.scene.rows)),
-                   0, frame.scene.rows - 1);
-
-    const ui::Region* hit_region = nullptr;
-    for (const ui::Region& region : frame.scene.regions) {
-        if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
-            cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
-            hit_region = &region;
-            break;
-        }
-    }
+    const int cell_col = static_cast<int>(window_x / static_cast<float>(frame.render.cell_width));
+    const int cell_row = static_cast<int>(window_y / static_cast<float>(frame.render.cell_height));
 
     std::string output =
         std::format("{{\"window\":{{\"x\":{},\"y\":{}}},\"cell\":{{\"row\":{},\"col\":{}}}",
                     window_x, window_y, cell_row, cell_col);
+    if (cell_row >= frame.scene.rows || cell_col >= frame.scene.cols) {
+        output += ",\"region\":null,\"prim\":null,\"render\":null}";
+        return {true, std::move(output)};
+    }
+
+    const ui::Region* hit_region = nullptr;
+    std::size_t hit_region_index = frame.scene.regions.size();
+    for (std::size_t index = 0; index < frame.scene.regions.size(); ++index) {
+        const ui::Region& region = frame.scene.regions[index];
+        if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
+            cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
+            hit_region = &region;
+            hit_region_index = index;
+            break;
+        }
+    }
+
     if (!hit_region) {
-        output += ",\"region\":null,\"prim\":null}";
+        output += ",\"region\":null,\"prim\":null,\"render\":null}";
         return {true, std::move(output)};
     }
 
@@ -458,16 +583,29 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     }
 
     const ui::Prim* hit_prim = nullptr;
+    std::size_t hit_primitive_index = hit_region->prims.size();
     for (std::size_t index = 0; index < hit_region->prims.size(); ++index) {
         const ui::Prim& prim = hit_region->prims[index];
         const int width = std::max(1, ui::display_width(prim.text));
         if (prim.row == local_row && local_col >= prim.col && local_col < prim.col + width) {
             hit_prim = &prim;
+            hit_primitive_index = index;
         }
     }
     output += ",\"prim\":";
     if (hit_prim) {
         append_prim(output, *hit_region, *hit_prim);
+    } else {
+        output += "null";
+    }
+    output += ",\"render\":";
+    if (hit_prim) {
+        if (const PrimitiveRenderSnapshot* rendered =
+                find_render_primitive(frame.render, hit_region_index, hit_primitive_index)) {
+            append_render_primitive(output, *rendered);
+        } else {
+            output += "null";
+        }
     } else {
         output += "null";
     }
@@ -494,6 +632,7 @@ std::uint64_t InspectionHub::record_event(InputEventSnapshot event) {
 
 void InspectionHub::publish(EditorStateSnapshot editor, ui::Scene scene, RenderStateSnapshot render,
                             std::uint64_t cause_event_sequence) {
+    identify_render_primitives(scene, render);
     {
         std::scoped_lock lock(mutex_);
         auto frame = std::make_shared<FrameInspection>();
@@ -649,7 +788,27 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << 'x' << frame.render.window_height << " output=" << frame.render.output_width << 'x'
            << frame.render.output_height << " cell=" << frame.render.cell_width << 'x'
            << frame.render.cell_height << " font=\"" << printable(frame.render.font_family)
-           << "\"\n";
+           << "\" baseline=" << frame.render.font_metrics.baseline_from_row_top << '\n';
+    std::size_t row_overflows = 0;
+    std::size_t draw_bounds_clip_crossings = 0;
+    for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
+        row_overflows += primitive.row_overflow ? 1 : 0;
+        draw_bounds_clip_crossings += primitive.draw_bounds_cross_region_clip ? 1 : 0;
+    }
+    output << "    primitives=" << frame.render.primitives.size()
+           << " row-overflows=" << row_overflows
+           << " draw-bounds-cross-clip=" << draw_bounds_clip_crossings << '\n';
+    for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
+        if (primitive.row_overflow) {
+            output << "      ! " << printable(primitive.id) << " cell-y=" << primitive.cell_bounds.y
+                   << ".." << primitive.cell_bounds.y + primitive.cell_bounds.height;
+            if (primitive.paint_bounds) {
+                output << " paint-y=" << primitive.paint_bounds->y << ".."
+                       << primitive.paint_bounds->y + primitive.paint_bounds->height;
+            }
+            output << '\n';
+        }
+    }
     output << "  violations=" << frame.violations.size() << '\n';
     for (const std::string& violation : frame.violations) {
         output << "    ! " << violation << '\n';

@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -72,6 +73,88 @@ SkRect pixel_rect(const ui::Rect& rect, int cell_width, int cell_height) {
                             static_cast<SkScalar>(rect.rows * cell_height));
 }
 
+SkiaLogicalRect logical_rect(const SkRect& rect) {
+    return {.x = rect.x(), .y = rect.y(), .width = rect.width(), .height = rect.height()};
+}
+
+bool extends_horizontally(const SkRect& bounds, const SkRect& cell) {
+    constexpr SkScalar tolerance = 0.01F;
+    return bounds.left() < cell.left() - tolerance || bounds.right() > cell.right() + tolerance;
+}
+
+bool extends_vertically(const SkRect& bounds, const SkRect& cell) {
+    constexpr SkScalar tolerance = 0.01F;
+    return bounds.top() < cell.top() - tolerance || bounds.bottom() > cell.bottom() + tolerance;
+}
+
+struct PixelProbe {
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+    std::vector<std::uint32_t> before;
+};
+
+std::uint32_t read_pixel(const void* pixels, std::size_t row_bytes, int x, int y) {
+    const auto* address = static_cast<const std::byte*>(pixels) +
+                          static_cast<std::size_t>(y) * row_bytes +
+                          static_cast<std::size_t>(x) * sizeof(std::uint32_t);
+    std::uint32_t pixel = 0;
+    std::memcpy(&pixel, address, sizeof(pixel));
+    return pixel;
+}
+
+PixelProbe capture_probe(const SkRect& logical_bounds, const void* pixels, std::size_t row_bytes,
+                         int pixel_width, int pixel_height, float device_scale) {
+    PixelProbe probe{
+        .left = std::clamp(static_cast<int>(std::floor(logical_bounds.left() * device_scale)) - 1,
+                           0, pixel_width),
+        .top = std::clamp(static_cast<int>(std::floor(logical_bounds.top() * device_scale)) - 1, 0,
+                          pixel_height),
+        .right = std::clamp(static_cast<int>(std::ceil(logical_bounds.right() * device_scale)) + 1,
+                            0, pixel_width),
+        .bottom =
+            std::clamp(static_cast<int>(std::ceil(logical_bounds.bottom() * device_scale)) + 1, 0,
+                       pixel_height),
+        .before = {},
+    };
+    probe.before.reserve(static_cast<std::size_t>(probe.right - probe.left) *
+                         static_cast<std::size_t>(probe.bottom - probe.top));
+    for (int y = probe.top; y < probe.bottom; ++y) {
+        for (int x = probe.left; x < probe.right; ++x) {
+            probe.before.push_back(read_pixel(pixels, row_bytes, x, y));
+        }
+    }
+    return probe;
+}
+
+std::optional<SkiaLogicalRect> changed_pixel_bounds(const PixelProbe& probe, const void* pixels,
+                                                    std::size_t row_bytes, float device_scale) {
+    int left = probe.right;
+    int top = probe.bottom;
+    int right = probe.left;
+    int bottom = probe.top;
+    std::size_t index = 0;
+    for (int y = probe.top; y < probe.bottom; ++y) {
+        for (int x = probe.left; x < probe.right; ++x, ++index) {
+            if (read_pixel(pixels, row_bytes, x, y) == probe.before[index]) {
+                continue;
+            }
+            left = std::min(left, x);
+            top = std::min(top, y);
+            right = std::max(right, x + 1);
+            bottom = std::max(bottom, y + 1);
+        }
+    }
+    if (left >= right || top >= bottom) {
+        return std::nullopt;
+    }
+    return SkiaLogicalRect{.x = static_cast<float>(left) / device_scale,
+                           .y = static_cast<float>(top) / device_scale,
+                           .width = static_cast<float>(right - left) / device_scale,
+                           .height = static_cast<float>(bottom - top) / device_scale};
+}
+
 } // namespace
 
 struct SkiaPresenter::Impl {
@@ -99,6 +182,9 @@ struct SkiaPresenter::Impl {
 
         SkFontMetrics metrics{};
         font.getMetrics(&metrics);
+        ascent = metrics.fAscent;
+        descent = metrics.fDescent;
+        leading = metrics.fLeading;
         const SkScalar advance = font.measureText("M", 1, SkTextEncoding::kUTF8, nullptr, nullptr);
         cell_width = std::max(1, static_cast<int>(std::ceil(advance)));
         cell_height = std::max(
@@ -112,22 +198,31 @@ struct SkiaPresenter::Impl {
         return result;
     }
 
-    void draw_text(SkCanvas& canvas, std::string_view text, SkScalar x, SkScalar y,
-                   const SkPaint& paint) {
+    sk_sp<SkTextBlob> shape_text(std::string_view text, SkScalar x, SkScalar y) {
         if (text.empty()) {
-            return;
+            return nullptr;
         }
         SkTextBlobBuilderRunHandler handler(text.data(), SkPoint::Make(x, y));
         shaper->shape(text.data(), text.size(), font, true, SK_ScalarMax, &handler);
-        if (sk_sp<SkTextBlob> blob = handler.makeBlob()) {
-            canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
-        }
+        return handler.makeBlob();
     }
 
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
-                std::size_t row_bytes, float device_scale) {
+                std::size_t row_bytes, float device_scale, SkiaRenderDiagnostics* diagnostics) {
         if (!(device_scale > 0.0F)) {
             throw std::invalid_argument("SkiaPresenter received an invalid device scale");
+        }
+        if (diagnostics) {
+            diagnostics->ascent = ascent;
+            diagnostics->descent = descent;
+            diagnostics->leading = leading;
+            diagnostics->baseline_from_row_top = -ascent;
+            diagnostics->primitives.clear();
+            std::size_t primitive_count = 0;
+            for (const ui::Region& region : scene.regions) {
+                primitive_count += region.prims.size();
+            }
+            diagnostics->primitives.reserve(primitive_count);
         }
         const SkImageInfo info = SkImageInfo::MakeN32Premul(pixel_width, pixel_height);
         sk_sp<SkSurface> surface = SkSurfaces::WrapPixels(info, pixels, row_bytes);
@@ -140,7 +235,8 @@ struct SkiaPresenter::Impl {
 
         SkPaint fill;
         fill.setAntiAlias(false);
-        for (const ui::Region& region : scene.regions) {
+        for (std::size_t region_index = 0; region_index < scene.regions.size(); ++region_index) {
+            const ui::Region& region = scene.regions[region_index];
             const SkRect bounds = pixel_rect(region.rect, cell_width, cell_height);
             switch (region.surface) {
             case ui::SurfaceClass::Gutter:
@@ -160,11 +256,17 @@ struct SkiaPresenter::Impl {
 
             canvas.save();
             canvas.clipRect(bounds);
-            for (const ui::Prim& prim : region.prims) {
+            for (std::size_t primitive_index = 0; primitive_index < region.prims.size();
+                 ++primitive_index) {
+                const ui::Prim& prim = region.prims[primitive_index];
                 const int absolute_column = region.rect.col + prim.col;
                 const int absolute_row = region.rect.row + prim.row;
                 const SkScalar x = static_cast<SkScalar>(absolute_column * cell_width);
                 const SkScalar top = static_cast<SkScalar>(absolute_row * cell_height);
+                const SkRect cell_bounds = SkRect::MakeXYWH(
+                    x, top,
+                    static_cast<SkScalar>(std::max(1, ui::display_width(prim.text)) * cell_width),
+                    static_cast<SkScalar>(cell_height));
 
                 if (prim.selected) {
                     fill.setColor(color(theme.selection_background));
@@ -178,20 +280,68 @@ struct SkiaPresenter::Impl {
                 SkPaint paint;
                 paint.setAntiAlias(true);
                 paint.setColor(foreground(prim.style, theme));
+                std::optional<SkRect> draw_bounds;
+                std::optional<SkRect> shape_bounds;
+                sk_sp<SkTextBlob> blob;
                 if (prim.kind != ui::PrimKind::Text) {
                     if (prim.kind == ui::PrimKind::ChangeDeletion) {
-                        canvas.drawRect(SkRect::MakeXYWH(x + 1.0F, top + 1.0F,
-                                                         static_cast<SkScalar>(cell_width - 2),
-                                                         2.0F),
-                                        paint);
+                        draw_bounds = SkRect::MakeXYWH(x + 1.0F, top + 1.0F,
+                                                       static_cast<SkScalar>(cell_width - 2), 2.0F);
                     } else {
-                        canvas.drawRect(SkRect::MakeXYWH(x + 1.0F, top + 1.0F, 3.0F,
-                                                         static_cast<SkScalar>(cell_height - 2)),
-                                        paint);
+                        draw_bounds = SkRect::MakeXYWH(x + 1.0F, top + 1.0F, 3.0F,
+                                                       static_cast<SkScalar>(cell_height - 2));
                     }
-                    continue;
+                } else if ((blob = shape_text(prim.text, x, top))) {
+                    shape_bounds = blob->bounds();
+                    draw_bounds = shape_bounds;
                 }
-                draw_text(canvas, prim.text, x, top, paint);
+
+                std::optional<PixelProbe> probe;
+                if (diagnostics && draw_bounds) {
+                    SkRect probe_bounds = cell_bounds;
+                    probe_bounds.join(*draw_bounds);
+                    probe = capture_probe(probe_bounds, pixels, row_bytes, pixel_width,
+                                          pixel_height, device_scale);
+                }
+                if (prim.kind != ui::PrimKind::Text && draw_bounds) {
+                    canvas.drawRect(*draw_bounds, paint);
+                } else if (blob) {
+                    canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
+                }
+
+                if (diagnostics) {
+                    SkiaPrimitiveRenderDiagnostics primitive{
+                        .region_index = region_index,
+                        .primitive_index = primitive_index,
+                        .cell_bounds = logical_rect(cell_bounds),
+                        .shape_bounds = std::nullopt,
+                        .paint_bounds = std::nullopt,
+                        .draw_bounds_cross_region_clip = false,
+                        .row_overflow = false,
+                        .column_overflow = false,
+                    };
+                    if (shape_bounds) {
+                        primitive.shape_bounds = logical_rect(*shape_bounds);
+                    }
+                    if (draw_bounds) {
+                        primitive.draw_bounds_cross_region_clip =
+                            extends_horizontally(*draw_bounds, bounds) ||
+                            extends_vertically(*draw_bounds, bounds);
+                    }
+                    if (probe) {
+                        primitive.paint_bounds =
+                            changed_pixel_bounds(*probe, pixels, row_bytes, device_scale);
+                    }
+                    if (primitive.paint_bounds) {
+                        const SkRect raster_bounds = SkRect::MakeXYWH(
+                            primitive.paint_bounds->x, primitive.paint_bounds->y,
+                            primitive.paint_bounds->width, primitive.paint_bounds->height);
+                        primitive.row_overflow = extends_vertically(raster_bounds, cell_bounds);
+                        primitive.column_overflow =
+                            extends_horizontally(raster_bounds, cell_bounds);
+                    }
+                    diagnostics->primitives.push_back(std::move(primitive));
+                }
             }
             canvas.restore();
         }
@@ -216,6 +366,9 @@ struct SkiaPresenter::Impl {
     sk_sp<SkTypeface> typeface;
     SkFont font;
     std::unique_ptr<SkShaper> shaper;
+    float ascent = 0.0F;
+    float descent = 0.0F;
+    float leading = 0.0F;
     int cell_width = 1;
     int cell_height = 1;
 };
@@ -247,8 +400,9 @@ const SkiaTheme& SkiaPresenter::theme() const {
 }
 
 void SkiaPresenter::render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
-                           std::size_t row_bytes, float device_scale) {
-    impl_->render(scene, pixel_width, pixel_height, pixels, row_bytes, device_scale);
+                           std::size_t row_bytes, float device_scale,
+                           SkiaRenderDiagnostics* diagnostics) {
+    impl_->render(scene, pixel_width, pixel_height, pixels, row_bytes, device_scale, diagnostics);
 }
 
 } // namespace cind::gui

@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,6 +29,34 @@ struct ThemeInspection {
     std::uint32_t sign_deleted = 0;
 };
 
+struct LogicalPixelRectSnapshot {
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+};
+
+struct FontMetricsSnapshot {
+    float ascent = 0.0F;
+    float descent = 0.0F;
+    float leading = 0.0F;
+    float baseline_from_row_top = 0.0F;
+};
+
+struct PrimitiveRenderSnapshot {
+    std::size_t region_index = 0;
+    std::size_t primitive_index = 0;
+    std::string id;
+    std::string region;
+    std::string kind;
+    LogicalPixelRectSnapshot cell_bounds;
+    std::optional<LogicalPixelRectSnapshot> shape_bounds;
+    std::optional<LogicalPixelRectSnapshot> paint_bounds;
+    bool draw_bounds_cross_region_clip = false;
+    bool row_overflow = false;
+    bool column_overflow = false;
+};
+
 struct RenderStateSnapshot {
     std::string video_driver;
     int window_width = 0;
@@ -42,8 +71,10 @@ struct RenderStateSnapshot {
     std::string texture_format;
     std::string font_family;
     float font_size = 0.0F;
+    FontMetricsSnapshot font_metrics;
     ThemeInspection theme;
     std::uint64_t pixel_hash = 0;
+    std::vector<PrimitiveRenderSnapshot> primitives;
 };
 
 struct InputEventSnapshot {
@@ -57,7 +88,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 2;
+    static constexpr int schema_version = 3;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

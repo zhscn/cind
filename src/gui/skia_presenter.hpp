@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace cind::gui {
 
@@ -19,6 +21,32 @@ struct SkiaTheme {
     std::uint32_t sign_added = 0xFF587C0C;
     std::uint32_t sign_modified = 0xFF0C7D9D;
     std::uint32_t sign_deleted = 0xFF94151B;
+};
+
+struct SkiaLogicalRect {
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+};
+
+struct SkiaPrimitiveRenderDiagnostics {
+    std::size_t region_index = 0;
+    std::size_t primitive_index = 0;
+    SkiaLogicalRect cell_bounds;
+    std::optional<SkiaLogicalRect> shape_bounds;
+    std::optional<SkiaLogicalRect> paint_bounds;
+    bool draw_bounds_cross_region_clip = false;
+    bool row_overflow = false;
+    bool column_overflow = false;
+};
+
+struct SkiaRenderDiagnostics {
+    float ascent = 0.0F;
+    float descent = 0.0F;
+    float leading = 0.0F;
+    float baseline_from_row_top = 0.0F;
+    std::vector<SkiaPrimitiveRenderDiagnostics> primitives;
 };
 
 // Raster Skia presenter for the backend-independent cell Scene. The caller
@@ -44,7 +72,8 @@ public:
     const SkiaTheme& theme() const;
 
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
-                std::size_t row_bytes, float device_scale = 1.0F);
+                std::size_t row_bytes, float device_scale = 1.0F,
+                SkiaRenderDiagnostics* diagnostics = nullptr);
 
 private:
     struct Impl;
