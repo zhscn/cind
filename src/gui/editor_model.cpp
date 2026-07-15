@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <new>
 #include <optional>
@@ -65,7 +66,7 @@ EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle s
     message_ = "SDL3 Wayland · Skia · C-s save · C-q quit";
 }
 
-ui::Scene EditorModel::compose(int rows, int columns) {
+ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     const DocumentSnapshot snapshot = session_.snapshot();
     std::string minibuffer_echo;
     std::optional<int> echo_cursor;
@@ -78,7 +79,9 @@ ui::Scene EditorModel::compose(int rows, int columns) {
         return preedit_.empty() ? std::string_view(message_) : std::string_view(preedit_);
     }();
     ViewportState& state = session_.view().viewport();
-    ui::EditorViewport viewport{.top_line = state.top_line, .left_column = state.left_column};
+    ui::EditorViewport viewport{.top_line = state.top_line,
+                                .top_line_offset = state.top_line_offset,
+                                .left_column = state.left_column};
     ui::Scene scene = ui::compose_editor_scene({.text = snapshot.content(),
                                                 .tokens = session_.analysis().tree.tokens(),
                                                 .signs = signs(),
@@ -86,6 +89,7 @@ ui::Scene EditorModel::compose(int rows, int columns) {
                                                 .selection = std::nullopt,
                                                 .rows = rows,
                                                 .cols = columns,
+                                                .visible_text_rows = visible_text_rows,
                                                 .tab_width = session_.style().tab_width,
                                                 .path = path(),
                                                 .dirty = dirty(),
@@ -97,6 +101,7 @@ ui::Scene EditorModel::compose(int rows, int columns) {
                                                 .echo_cursor_column = echo_cursor},
                                                viewport);
     state.top_line = viewport.top_line;
+    state.top_line_offset = viewport.top_line_offset;
     state.left_column = viewport.left_column;
     return scene;
 }
@@ -204,8 +209,13 @@ void EditorModel::scroll_lines(int delta) {
     const DocumentSnapshot snapshot = session_.snapshot();
     const int last_line = static_cast<int>(snapshot.content().line_count()) - 1;
     ViewportState& viewport = session_.view().viewport();
-    viewport.top_line = static_cast<std::uint32_t>(
-        std::clamp(static_cast<int>(viewport.top_line) + delta, 0, last_line));
+    const double position = static_cast<double>(viewport.top_line) +
+                            static_cast<double>(viewport.top_line_offset) +
+                            static_cast<double>(delta);
+    const double clamped = std::clamp(position, 0.0, static_cast<double>(last_line));
+    const double integral = std::floor(clamped);
+    viewport.top_line = static_cast<std::uint32_t>(integral);
+    viewport.top_line_offset = static_cast<float>(clamped - integral);
     reveal_caret_ = false;
 }
 
@@ -278,7 +288,9 @@ EditorStateSnapshot EditorModel::inspect() {
             .caret = caret,
             .caret_position = text.position(caret),
             .caret_display_column = ui::display_column(text, caret, session_.style().tab_width),
-            .viewport = {.top_line = view.top_line, .left_column = view.left_column},
+            .viewport = {.top_line = view.top_line,
+                         .top_line_offset = view.top_line_offset,
+                         .left_column = view.left_column},
             .line_signs = signs(),
             .tab_width = session_.style().tab_width,
             .style_origin = style_origin_,

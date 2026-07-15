@@ -294,9 +294,9 @@ private:
 
     struct ScrollAnimation {
         ui::Scene source;
-        float source_top_line = 0.0F;
-        float from_top_line = 0.0F;
-        float target_top_line = 0.0F;
+        float source_scroll_top = 0.0F;
+        float from_scroll_top = 0.0F;
+        float target_scroll_top = 0.0F;
         AnimationClock::time_point started;
     };
 
@@ -346,9 +346,8 @@ private:
         case SDL_EVENT_WINDOW_RESTORED:
             return {true, true};
         case SDL_EVENT_KEY_DOWN: {
-            const int page_rows = std::max(1, rows_ - 2);
             const std::optional<KeyStroke> key = editor_key(event.key.scancode, event.key.mod);
-            const bool handled = key && editor_.handle_key(*key, page_rows);
+            const bool handled = key && editor_.handle_key(*key, page_rows_);
             return {handled, handled};
         }
         case SDL_EVENT_TEXT_INPUT:
@@ -468,7 +467,7 @@ private:
     float scroll_position(const ScrollAnimation& animation, AnimationClock::time_point now) const {
         const float progress =
             ease_out_cubic(animation_progress(animation.started, scroll_animation_duration, now));
-        return interpolate(animation.from_top_line, animation.target_top_line, progress);
+        return interpolate(animation.from_scroll_top, animation.target_scroll_top, progress);
     }
 
     SkiaLogicalPoint cursor_position(const CursorAnimation& animation,
@@ -488,30 +487,29 @@ private:
         };
     }
 
-    void update_animation_targets(const ui::Scene& scene, std::uint32_t top_line,
-                                  bool geometry_changed, AnimationClock::time_point now) {
+    void update_animation_targets(const ui::Scene& scene, float scroll_top, bool geometry_changed,
+                                  AnimationClock::time_point now) {
         const std::optional<SkiaLogicalPoint> target_cursor = scene_cursor_position(scene);
-        if (geometry_changed || !last_scene_ || !last_top_line_) {
+        if (geometry_changed || !last_scene_ || !last_scroll_top_) {
             scroll_animation_.reset();
             cursor_animation_.reset();
-        } else if (*last_top_line_ != top_line) {
-            const auto line_delta =
-                static_cast<std::int64_t>(top_line) - static_cast<std::int64_t>(*last_top_line_);
+        } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
+            const float line_delta = scroll_top - *last_scroll_top_;
             if (std::abs(line_delta) <= 4) {
                 const float visual_top = scroll_animation_
                                              ? scroll_position(*scroll_animation_, now)
-                                             : static_cast<float>(*last_top_line_);
+                                             : *last_scroll_top_;
                 ui::Scene source_scene = *last_scene_;
-                float source_top_line = static_cast<float>(*last_top_line_);
+                float source_scroll_top = *last_scroll_top_;
                 if (scroll_animation_) {
                     source_scene = scroll_animation_->source;
-                    source_top_line = scroll_animation_->source_top_line;
+                    source_scroll_top = scroll_animation_->source_scroll_top;
                 }
                 scroll_animation_ = ScrollAnimation{
                     .source = std::move(source_scene),
-                    .source_top_line = source_top_line,
-                    .from_top_line = visual_top,
-                    .target_top_line = static_cast<float>(top_line),
+                    .source_scroll_top = source_scroll_top,
+                    .from_scroll_top = visual_top,
+                    .target_scroll_top = scroll_top,
                     .started = now,
                 };
             } else {
@@ -536,7 +534,7 @@ private:
         }
 
         last_scene_ = scene;
-        last_top_line_ = top_line;
+        last_scroll_top_ = scroll_top;
         last_cursor_target_ = target_cursor;
     }
 
@@ -550,10 +548,10 @@ private:
             presentation.scroll_finished = linear_progress >= 1.0F;
             presentation.frame.scroll_source = &scroll_animation_->source;
             presentation.frame.source_grid_offset_y =
-                (scroll_animation_->source_top_line - visual_top) *
+                (scroll_animation_->source_scroll_top - visual_top) *
                 static_cast<float>(presenter_.cell_height());
             presentation.frame.target_grid_offset_y =
-                (scroll_animation_->target_top_line - visual_top) *
+                (scroll_animation_->target_scroll_top - visual_top) *
                 static_cast<float>(presenter_.cell_height());
             if (!presentation.scroll_finished) {
                 presentation.snapshot.active = true;
@@ -605,16 +603,19 @@ private:
         }
 
         const float scale = display_scale();
-        rows_ = std::max(
-            3, static_cast<int>(std::ceil(static_cast<float>(pixel_height) /
-                                          (static_cast<float>(presenter_.cell_height()) * scale))));
-        columns_ = std::max(
-            20, static_cast<int>(std::ceil(static_cast<float>(pixel_width) /
-                                           (static_cast<float>(presenter_.cell_width()) * scale))));
-        editor_.set_frame_rows(rows_);
-        ui::Scene scene = editor_.compose(rows_, columns_);
         logical_output_width_ = static_cast<float>(pixel_width) / scale;
         logical_output_height_ = static_cast<float>(pixel_height) / scale;
+        const float cell_width = static_cast<float>(presenter_.cell_width());
+        const float cell_height = static_cast<float>(presenter_.cell_height());
+        rows_ = std::max(3, static_cast<int>(std::ceil(logical_output_height_ / cell_height)));
+        columns_ = std::max(20, static_cast<int>(std::ceil(logical_output_width_ / cell_width)));
+        const float text_height = std::max(0.0F, logical_output_height_ - 2.0F * cell_height);
+        const float visible_text_rows =
+            std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows_ - 2));
+        page_rows_ = std::clamp(static_cast<int>(std::floor(text_height / cell_height + 0.0001F)),
+                                1, rows_ - 2);
+        editor_.set_frame_rows(rows_);
+        ui::Scene scene = editor_.compose(rows_, columns_, visible_text_rows);
         vertical_layout_.emplace(
             scene,
             ui::SceneVerticalMetrics{.cell_height = static_cast<float>(presenter_.cell_height()),
@@ -633,7 +634,9 @@ private:
 
         const AnimationClock::time_point now = AnimationClock::now();
         EditorStateSnapshot editor_snapshot = editor_.inspect();
-        update_animation_targets(scene, editor_snapshot.viewport.top_line, geometry_changed, now);
+        const float scroll_top = static_cast<float>(editor_snapshot.viewport.top_line) +
+                                 editor_snapshot.viewport.top_line_offset;
+        update_animation_targets(scene, scroll_top, geometry_changed, now);
         const AnimationPresentation animation = animation_presentation(now);
         const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
         std::vector<SkiaLogicalRect> logical_damage;
@@ -890,7 +893,7 @@ private:
     std::optional<ScrollAnimation> scroll_animation_;
     std::optional<CursorAnimation> cursor_animation_;
     std::optional<ui::Scene> last_scene_;
-    std::optional<std::uint32_t> last_top_line_;
+    std::optional<float> last_scroll_top_;
     std::optional<SkiaLogicalPoint> last_cursor_target_;
     int texture_width_ = 0;
     int texture_height_ = 0;
@@ -899,6 +902,7 @@ private:
     float logical_output_height_ = 0.0F;
     int rows_ = 24;
     int columns_ = 80;
+    int page_rows_ = 22;
     float wheel_scroll_accumulator_ = 0.0F;
     std::uint64_t last_repaint_event_sequence_ = 0;
 };

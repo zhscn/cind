@@ -166,8 +166,10 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
         ",\"caret\":{{\"byte\":{},\"line\":{},\"byte_column\":{},\"display_column\":{}}}",
         editor.caret.value, editor.caret_position.line, editor.caret_position.byte_column,
         editor.caret_display_column);
-    output += std::format(",\"viewport\":{{\"top_line\":{},\"left_column\":{}}},\"line_signs\":",
-                          editor.viewport.top_line, editor.viewport.left_column);
+    output += std::format(
+        ",\"viewport\":{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}},"
+        "\"line_signs\":",
+        editor.viewport.top_line, editor.viewport.top_line_offset, editor.viewport.left_column);
     append_line_signs(output, editor.line_signs);
     output += std::format(",\"tab_width\":{},\"style_origin\":", editor.tab_width);
     append_json_string(output, editor.style_origin);
@@ -223,8 +225,9 @@ void append_region(std::string& output, const ui::Region& region) {
 
 void append_scene(std::string& output, const ui::Scene& scene) {
     output += std::format(
-        "{{\"rows\":{},\"cols\":{},\"cursor\":{{\"row\":{},\"col\":{},\"visible\":", scene.rows,
-        scene.cols, scene.cursor_row, scene.cursor_col);
+        "{{\"rows\":{},\"cols\":{},\"grid_offset_rows\":{},\"cursor\":{{\"row\":{},"
+        "\"col\":{},\"visible\":",
+        scene.rows, scene.cols, scene.grid_offset_rows, scene.cursor_row, scene.cursor_col);
     append_bool(output, scene.cursor_visible);
     output += "},\"regions\":[";
     for (std::size_t index = 0; index < scene.regions.size(); ++index) {
@@ -457,8 +460,20 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.editor.line_count > 0 && frame.editor.viewport.top_line >= frame.editor.line_count) {
         violations.emplace_back("editor viewport starts past the document end");
     }
+    if (!std::isfinite(frame.editor.viewport.top_line_offset) ||
+        frame.editor.viewport.top_line_offset < 0.0F ||
+        frame.editor.viewport.top_line_offset >= 1.0F) {
+        violations.emplace_back("editor viewport line offset is outside [0, 1)");
+    }
     if (frame.scene.rows <= 0 || frame.scene.cols <= 0) {
         violations.emplace_back("scene geometry must be positive");
+    }
+    if (!std::isfinite(frame.scene.grid_offset_rows) || frame.scene.grid_offset_rows > 0.0F ||
+        frame.scene.grid_offset_rows <= -1.0F) {
+        violations.emplace_back("scene grid offset is outside (-1, 0]");
+    }
+    if (std::abs(frame.scene.grid_offset_rows + frame.editor.viewport.top_line_offset) > 0.0001F) {
+        violations.emplace_back("scene grid offset does not match editor viewport");
     }
     if (frame.scene.cursor_visible &&
         (frame.scene.cursor_row < 1 || frame.scene.cursor_row > frame.scene.rows ||
@@ -493,6 +508,24 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     if (frame.render.rows != frame.scene.rows || frame.render.columns != frame.scene.cols) {
         violations.emplace_back("render grid does not match scene geometry");
+    }
+    const ui::Region* text_area = frame.scene.find(ui::RegionRole::TextArea);
+    if (!frame.render.animation.scroll && frame.scene.cursor_visible && text_area) {
+        const int cursor_row = frame.scene.cursor_row - 1;
+        if (cursor_row >= text_area->rect.row &&
+            cursor_row < text_area->rect.row + text_area->rect.rows &&
+            frame.render.display_scale > 0.0F && frame.render.cell_height > 0) {
+            const float logical_height =
+                static_cast<float>(frame.render.output_height) / frame.render.display_scale;
+            const ui::SceneVerticalLayout layout(
+                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
+                              .viewport_height = logical_height});
+            const float top = layout.row_top(cursor_row);
+            const float bottom = top + static_cast<float>(frame.render.cell_height);
+            if (top < -0.01F || bottom > layout.grid_clip_bottom() + 0.01F) {
+                violations.emplace_back("rendered text cursor row is clipped");
+            }
+        }
     }
     const RenderAnimationSnapshot& animation = frame.render.animation;
     if (animation.scroll_progress < 0.0F || animation.scroll_progress > 1.0F ||
@@ -612,8 +645,9 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
                         frame.editor.caret.value, frame.editor.caret_position.line,
                         frame.editor.caret_position.byte_column, frame.editor.caret_display_column);
     } else if (path == "editor.viewport") {
-        output = std::format("{{\"top_line\":{},\"left_column\":{}}}",
-                             frame.editor.viewport.top_line, frame.editor.viewport.left_column);
+        output = std::format("{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}}",
+                             frame.editor.viewport.top_line, frame.editor.viewport.top_line_offset,
+                             frame.editor.viewport.left_column);
     } else if (path == "editor.line_signs") {
         append_line_signs(output, frame.editor.line_signs);
     } else if (path == "editor.command_loop") {
@@ -904,6 +938,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << "\" dirty=" << (frame.editor.dirty ? "true" : "false")
            << " caret=" << frame.editor.caret_position.line << ':'
            << frame.editor.caret_display_column << " byte=" << frame.editor.caret.value << '\n';
+    output << "    viewport=" << frame.editor.viewport.top_line << '+'
+           << frame.editor.viewport.top_line_offset
+           << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""

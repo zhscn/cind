@@ -24,6 +24,7 @@ public:
 private:
     int rows_ = 0;
     int cols_ = 0;
+    float grid_offset_rows_ = 0.0F;
     bool initialized_ = false;
     std::vector<std::string> cells_;
     std::optional<CellPoint> cursor_;

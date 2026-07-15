@@ -38,6 +38,24 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(revealed.cursor_visible);
 }
 
+TEST_CASE("caret reveal moves a fractional row to the top edge") {
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
+    model.compose(6, 80, 3.5F);
+
+    for (int line = 0; line < 3; ++line) {
+        CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 3));
+    }
+
+    const ui::Scene scene = model.compose(6, 80, 3.5F);
+    const EditorStateSnapshot state = model.inspect();
+    CHECK(state.caret_position.line == 3);
+    CHECK(state.viewport.top_line == 0);
+    CHECK(state.viewport.top_line_offset == doctest::Approx(0.5F));
+    CHECK(scene.grid_offset_rows == doctest::Approx(-0.5F));
+    CHECK(scene.cursor_visible);
+    CHECK(scene.cursor_row == 4);
+}
+
 TEST_CASE("cursor movement and deletion operate on extended grapheme clusters") {
     EditorModel model("sample.cc", "e\u0301x", CppIndentStyle{}, "test", 1);
 

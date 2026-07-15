@@ -79,12 +79,19 @@ TEST_CASE("scene damage requests full repaint for geometry and broad changes") {
 
     tracker.reset();
     CHECK(tracker.update(resized).full_repaint);
+
+    SceneDamageTracker offset_tracker;
+    Scene shifted = text_scene("abcdefghijkl");
+    CHECK(offset_tracker.update(shifted).full_repaint);
+    shifted.grid_offset_rows = -0.5F;
+    CHECK(offset_tracker.update(shifted).full_repaint);
 }
 
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {
     Scene scene;
     scene.rows = 4;
     scene.cols = 10;
+    scene.grid_offset_rows = -0.5F;
     scene.regions = {
         {RegionRole::TextArea, {0, 0, 2, 10}, {}},
         {RegionRole::StatusBar, {2, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom},
@@ -95,11 +102,12 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
     REQUIRE(layout.bottom_anchor_row());
     CHECK(layout.bottom_anchor_row().value() == 2);
     CHECK(layout.grid_clip_bottom() == doctest::Approx(15.0F));
-    CHECK(layout.row_top(0) == doctest::Approx(0.0F));
-    CHECK(layout.row_top(1) == doctest::Approx(10.0F));
+    CHECK(layout.row_top(0) == doctest::Approx(-5.0F));
+    CHECK(layout.row_top(1) == doctest::Approx(5.0F));
     CHECK(layout.row_top(2) == doctest::Approx(15.0F));
     CHECK(layout.row_top(3) == doctest::Approx(25.0F));
     CHECK(layout.row_top(4) == doctest::Approx(35.0F));
+    CHECK(layout.row_at(0.0F) == 0);
     CHECK(layout.row_at(14.0F) == 1);
     CHECK(layout.row_at(15.0F) == 2);
     CHECK(layout.row_at(34.0F) == 3);

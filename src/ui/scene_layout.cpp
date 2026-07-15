@@ -8,7 +8,8 @@ namespace cind::ui {
 
 SceneVerticalLayout::SceneVerticalLayout(const Scene& scene, SceneVerticalMetrics metrics)
     : rows_(std::max(0, scene.rows)), cell_height_(metrics.cell_height),
-      viewport_height_(std::max(0.0F, metrics.viewport_height)) {
+      viewport_height_(std::max(0.0F, metrics.viewport_height)),
+      grid_offset_y_(scene.grid_offset_rows * metrics.cell_height) {
     if (!(metrics.cell_height > 0.0F)) {
         throw std::invalid_argument("scene layout requires a positive cell height");
     }
@@ -25,6 +26,8 @@ float SceneVerticalLayout::row_top(int row) const {
     float top = static_cast<float>(row) * cell_height_;
     if (bottom_anchor_row_ && row >= *bottom_anchor_row_) {
         top += viewport_height_ - static_cast<float>(rows_) * cell_height_;
+    } else {
+        top += grid_offset_y_;
     }
     return top;
 }
@@ -42,7 +45,10 @@ int SceneVerticalLayout::row_at(float y) const {
         row = *bottom_anchor_row_ +
               static_cast<int>(std::floor((y - grid_clip_bottom()) / cell_height_));
     } else {
-        row = static_cast<int>(std::floor(y / cell_height_));
+        row = static_cast<int>(std::floor((y - grid_offset_y_) / cell_height_));
+        if (bottom_anchor_row_) {
+            row = std::min(row, std::max(0, *bottom_anchor_row_ - 1));
+        }
     }
     return std::clamp(row, 0, rows_ - 1);
 }

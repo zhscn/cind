@@ -13,7 +13,11 @@
 namespace cind {
 
 struct ViewportState {
+    // The first intersecting document line and the fraction of that line
+    // clipped above the viewport. Together they form a continuous vertical
+    // scroll position in line-height units.
     std::uint32_t top_line = 0;
+    float top_line_offset = 0.0F;
     int left_column = 0;
     std::optional<int> preferred_column;
 };

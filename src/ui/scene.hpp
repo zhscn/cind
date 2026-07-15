@@ -81,9 +81,11 @@ struct Region {
 };
 
 struct Scene {
-    // Full terminal geometry in cells.
+    // Full frame geometry in cells. Grid regions may start at a fractional
+    // row above the viewport; bottom-anchored regions remain fixed.
     int rows = 0;
     int cols = 0;
+    float grid_offset_rows = 0.0F;
 
     std::vector<Region> regions;
 

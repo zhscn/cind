@@ -23,7 +23,7 @@ public:
     EditorModel(std::string path, std::string initial, CppIndentStyle style,
                 std::string style_origin, std::uint32_t initial_line);
 
-    ui::Scene compose(int rows, int columns);
+    ui::Scene compose(int rows, int columns, float visible_text_rows = 0.0F);
     bool handle_key(KeyStroke key, int page_rows);
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);

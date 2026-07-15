@@ -12,6 +12,7 @@ namespace cind::ui {
 
 struct EditorViewport {
     std::uint32_t top_line = 0;
+    float top_line_offset = 0.0F;
     int left_column = 0;
 };
 
@@ -24,6 +25,9 @@ struct EditorSceneInput {
 
     int rows = 24;
     int cols = 80;
+    // Text viewport height in line-height units. Zero uses the scene's text
+    // row count, which is appropriate for a terminal presenter.
+    float visible_text_rows = 0.0F;
     int tab_width = 4;
     std::string_view path;
     bool dirty = false;
@@ -37,9 +41,10 @@ struct EditorSceneInput {
     std::optional<int> echo_cursor_column;
 };
 
-// Composes the editor's standard five-region frame and scrolls `viewport`
-// just enough to keep the caret visible. All geometry is in monospace cells;
-// presenters decide how those cells map to terminal positions or pixels.
+// Composes the editor's standard five-region frame and scrolls `viewport` just
+// enough to reveal the complete caret line. A fractional viewport position is
+// represented as a negative grid offset, allowing either edge to contain a
+// partial row. All geometry is in monospace line and cell units.
 Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport);
 
 } // namespace cind::ui

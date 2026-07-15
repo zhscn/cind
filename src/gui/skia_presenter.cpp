@@ -79,10 +79,13 @@ SkRect region_pixel_rect(const ui::Region& region, int cell_width, int cell_heig
     if (region.vertical_anchor == ui::VerticalAnchor::Bottom) {
         bounds.offset(0.0F, layout.row_top(region.rect.row) -
                                 static_cast<float>(region.rect.row * cell_height));
-    } else if (layout.bottom_anchor_row()) {
-        const float footer_top = layout.grid_clip_bottom();
-        bounds = SkRect::MakeLTRB(bounds.left(), bounds.top(), bounds.right(),
-                                  std::max(bounds.top(), std::min(bounds.bottom(), footer_top)));
+    } else {
+        const float top = layout.row_top(region.rect.row);
+        float bottom = layout.row_top(region.rect.row + region.rect.rows);
+        if (layout.bottom_anchor_row()) {
+            bottom = std::min(bottom, layout.grid_clip_bottom());
+        }
+        bounds = SkRect::MakeLTRB(bounds.left(), top, bounds.right(), std::max(top, bottom));
     }
     return bounds;
 }

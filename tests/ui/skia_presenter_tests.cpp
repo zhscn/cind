@@ -214,6 +214,49 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
     CHECK(pixels == reference);
 }
 
+TEST_CASE("Skia presenter clips the top row when the bottom caret row is complete") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+
+    Scene scene;
+    scene.rows = 4;
+    scene.cols = 12;
+    scene.grid_offset_rows = -0.5F;
+    scene.cursor_row = 2;
+    scene.cursor_col = 12;
+    Region body{RegionRole::TextArea, {0, 0, 2, 12}, {}};
+    body.prims.push_back({0, 0, "top", StyleClass::Text, false});
+    body.prims.push_back({1, 0, "bottom", StyleClass::Text, false});
+    Region status{
+        RegionRole::StatusBar, {2, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {3, 0, 1, 12}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    scene.regions = {body, status, echo};
+
+    const int cell_height = presenter.cell_height();
+    const int partial_height = cell_height / 2;
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = partial_height + 3 * cell_height;
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(scene, width, height, pixels.data(),
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t), 1.0F, &diagnostics);
+
+    REQUIRE(diagnostics.primitives.size() == 2);
+    const float half_cell = 0.5F * static_cast<float>(cell_height);
+    CHECK(diagnostics.primitives[0].cell_bounds.y == doctest::Approx(-half_cell));
+    CHECK(diagnostics.primitives[1].cell_bounds.y == doctest::Approx(half_cell));
+
+    const int cursor_x = (scene.cursor_col - 1) * presenter.cell_width();
+    int cursor_pixels = 0;
+    for (int y = 0; y < height; ++y) {
+        const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                                  static_cast<std::size_t>(cursor_x);
+        cursor_pixels += pixels[index] == theme.cursor;
+    }
+    CHECK(cursor_pixels == cell_height);
+}
+
 TEST_CASE("Skia damage rendering matches a full reference frame") {
     SkiaPresenter presenter("monospace", 16.0F);
     SceneDamageTracker tracker;

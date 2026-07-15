@@ -12,8 +12,8 @@ struct SceneVerticalMetrics {
 };
 
 // Maps scene rows into a viewport whose height may contain a fractional cell.
-// Grid-anchored regions keep their top coordinates and end at the footer;
-// bottom-anchored regions retain their full cell height at the viewport edge.
+// Grid-anchored regions use the Scene's fractional row offset and end at the
+// footer; bottom-anchored regions retain their full cell height at the edge.
 class SceneVerticalLayout {
 public:
     SceneVerticalLayout(const Scene& scene, SceneVerticalMetrics metrics);
@@ -27,6 +27,7 @@ private:
     int rows_ = 0;
     float cell_height_ = 1.0F;
     float viewport_height_ = 0.0F;
+    float grid_offset_y_ = 0.0F;
     std::optional<int> bottom_anchor_row_;
 };
 

@@ -5,25 +5,49 @@
 #include "ui/text_position.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
+#include <limits>
 
 namespace cind::ui {
 
 Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport) {
     const int text_rows = std::max(1, input.rows - 2);
+    const double visible_text_rows =
+        std::clamp(input.visible_text_rows > 0.0F ? static_cast<double>(input.visible_text_rows)
+                                                  : static_cast<double>(text_rows),
+                   1.0, static_cast<double>(text_rows));
     const int text_column = text_area_column(input.text.line_count());
     const int text_width = std::max(1, input.cols - text_column);
     const LinePosition caret_position = input.text.position(input.caret);
     const int caret_column = display_column(input.text, input.caret, input.tab_width);
 
+    double scroll_top =
+        static_cast<double>(viewport.top_line) +
+        std::clamp(static_cast<double>(viewport.top_line_offset), 0.0, std::nextafter(1.0, 0.0));
     if (input.reveal_caret) {
-        if (caret_position.line < viewport.top_line) {
-            viewport.top_line = caret_position.line;
-        }
-        if (caret_position.line >= viewport.top_line + static_cast<std::uint32_t>(text_rows)) {
-            viewport.top_line = caret_position.line - static_cast<std::uint32_t>(text_rows) + 1;
+        const double caret_top = static_cast<double>(caret_position.line);
+        const double caret_bottom = caret_top + 1.0;
+        if (caret_top < scroll_top) {
+            scroll_top = caret_top;
+        } else if (caret_bottom > scroll_top + visible_text_rows) {
+            scroll_top = caret_bottom - visible_text_rows;
         }
     }
+    scroll_top = std::max(0.0, scroll_top);
+    double integral_scroll = std::floor(scroll_top);
+    double line_offset = scroll_top - integral_scroll;
+    constexpr double offset_tolerance = 0.0001;
+    if (line_offset < offset_tolerance) {
+        line_offset = 0.0;
+    } else if (line_offset > 1.0 - offset_tolerance) {
+        integral_scroll += 1.0;
+        line_offset = 0.0;
+    }
+    const double maximum_line = static_cast<double>(std::numeric_limits<std::uint32_t>::max());
+    viewport.top_line = static_cast<std::uint32_t>(std::min(integral_scroll, maximum_line));
+    viewport.top_line_offset = static_cast<float>(line_offset);
+
     if (caret_column < viewport.left_column) {
         viewport.left_column = caret_column;
     }
@@ -34,6 +58,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     Scene scene;
     scene.rows = input.rows;
     scene.cols = input.cols;
+    scene.grid_offset_rows = -viewport.top_line_offset;
 
     const int digits = gutter_digits(input.text.line_count());
     Region numbers{
@@ -116,9 +141,13 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         scene.cursor_row = input.rows;
         scene.cursor_col = *input.echo_cursor_column + 1;
     } else {
+        const double caret_top = static_cast<double>(caret_position.line);
+        const double caret_bottom = caret_top + 1.0;
+        scroll_top =
+            static_cast<double>(viewport.top_line) + static_cast<double>(viewport.top_line_offset);
         const bool vertical_visible =
-            caret_position.line >= viewport.top_line &&
-            caret_position.line < viewport.top_line + static_cast<std::uint32_t>(text_rows);
+            caret_top + offset_tolerance >= scroll_top &&
+            caret_bottom <= scroll_top + visible_text_rows + offset_tolerance;
         scene.cursor_visible = vertical_visible;
         scene.cursor_row =
             vertical_visible ? static_cast<int>(caret_position.line - viewport.top_line) + 1 : 1;

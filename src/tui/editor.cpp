@@ -705,7 +705,9 @@ private:
             echo_cursor = ui::display_width(echo_text);
         }
         ViewportState& state = session_.view().viewport();
-        ui::EditorViewport viewport{.top_line = state.top_line, .left_column = state.left_column};
+        ui::EditorViewport viewport{.top_line = state.top_line,
+                                    .top_line_offset = state.top_line_offset,
+                                    .left_column = state.left_column};
         ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
                                                     .tokens = tokens(),
                                                     .signs = signs(),
@@ -723,6 +725,7 @@ private:
                                                     .echo_cursor_column = echo_cursor},
                                                    viewport);
         state.top_line = viewport.top_line;
+        state.top_line_offset = viewport.top_line_offset;
         state.left_column = viewport.left_column;
         return scene;
     }

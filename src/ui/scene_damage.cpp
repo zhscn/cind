@@ -3,6 +3,7 @@
 #include "ui/char_width.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
@@ -165,7 +166,8 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     std::vector<std::string> next_cells = visual_cells(scene);
     const std::optional<CellPoint> next_cursor = visible_cursor(scene);
     const std::size_t total_cells = next_cells.size();
-    const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols;
+    const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols ||
+                                  std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F;
 
     SceneDamage damage;
     if (force_full_repaint || !initialized_ || geometry_changed) {
@@ -192,6 +194,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
 
     rows_ = scene.rows;
     cols_ = scene.cols;
+    grid_offset_rows_ = scene.grid_offset_rows;
     initialized_ = true;
     cells_ = std::move(next_cells);
     cursor_ = next_cursor;
@@ -201,6 +204,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
 void SceneDamageTracker::reset() {
     rows_ = 0;
     cols_ = 0;
+    grid_offset_rows_ = 0.0F;
     initialized_ = false;
     cells_.clear();
     cursor_.reset();
