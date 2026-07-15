@@ -1,0 +1,57 @@
+#pragma once
+
+#include "editor/buffer.hpp"
+#include "editor/command.hpp"
+#include "editor/mode.hpp"
+#include "editor/project.hpp"
+#include "editor/settings.hpp"
+#include "editor/view.hpp"
+
+namespace cind {
+
+// Owns one editor application's registries. Nothing in this object is a
+// process-global singleton; callers pass the runtime or a CommandContext
+// explicitly at every extension boundary.
+class EditorRuntime {
+public:
+    EditorRuntime();
+
+    SettingRegistry& setting_definitions() { return setting_definitions_; }
+    const SettingRegistry& setting_definitions() const { return setting_definitions_; }
+    SettingsLayer& application_settings() { return application_settings_; }
+    const SettingsLayer& application_settings() const { return application_settings_; }
+    LanguageRegistry& languages() { return languages_; }
+    const LanguageRegistry& languages() const { return languages_; }
+    ModeRegistry& modes() { return modes_; }
+    const ModeRegistry& modes() const { return modes_; }
+    BufferRegistry& buffers() { return buffers_; }
+    const BufferRegistry& buffers() const { return buffers_; }
+    ProjectRegistry& projects() { return projects_; }
+    const ProjectRegistry& projects() const { return projects_; }
+    ViewRegistry& views() { return views_; }
+    const ViewRegistry& views() const { return views_; }
+    CommandRegistry& commands() { return commands_; }
+    const CommandRegistry& commands() const { return commands_; }
+
+    // Freezes extension definitions after startup. Runtime values in explicit
+    // application/buffer/view layers remain configurable.
+    void seal_extensions();
+    bool extensions_sealed() const { return extensions_sealed_; }
+
+    SettingsResolver settings_for(BufferId buffer, ViewId view) const;
+
+private:
+    void append_mode_layers(std::vector<const SettingsLayer*>& layers, ModeId mode) const;
+
+    SettingRegistry setting_definitions_;
+    SettingsLayer application_settings_;
+    LanguageRegistry languages_;
+    ModeRegistry modes_;
+    BufferRegistry buffers_;
+    ProjectRegistry projects_;
+    ViewRegistry views_;
+    CommandRegistry commands_;
+    bool extensions_sealed_ = false;
+};
+
+} // namespace cind

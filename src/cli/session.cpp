@@ -1,32 +1,66 @@
 #include "cli/session.hpp"
 
+#include "editor/cpp_mode.hpp"
+
 #include <charconv>
 #include <stdexcept>
 
 namespace cind {
 
+namespace {
+
+BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text) {
+    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
+    const BufferId buffer =
+        runtime.buffers().create(BufferSpec{.name = "*session*",
+                                            .initial_text = std::move(initial_text),
+                                            .kind = BufferKind::Scratch,
+                                            .resource_uri = std::nullopt,
+                                            .read_only = false});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
+    return buffer;
+}
+
+} // namespace
+
 EditSession::EditSession(std::string initial_text, CppIndentStyle style)
-    : document_(std::move(initial_text)), style_(style) {}
+    : owned_runtime_(std::make_unique<EditorRuntime>()), runtime_(owned_runtime_.get()),
+      buffer_id_(create_session_buffer(*runtime_, std::move(initial_text))),
+      view_id_(runtime_->views().create(buffer_id_)), style_(style) {}
+
+EditSession::EditSession(EditorRuntime& runtime, BufferId buffer_id, ViewId view_id,
+                         CppIndentStyle style)
+    : runtime_(&runtime), buffer_id_(buffer_id), view_id_(view_id), style_(style) {
+    if (runtime_->views().get(view_id_).buffer_id() != buffer_id_) {
+        throw std::invalid_argument("EditSession: view does not display the buffer");
+    }
+}
+
+Document& EditSession::mutable_document() {
+    Buffer& target = buffer();
+    target.require_writable();
+    return target.document_;
+}
 
 void EditSession::set_caret(TextOffset caret) {
     if (caret.value > snapshot().size_bytes()) {
         throw std::out_of_range("EditSession: caret out of range");
     }
-    caret_ = caret;
+    runtime_->views().set_caret(view_id_, caret);
 }
 
 // Ties the undo-tree node the last command created to its caret motion.
 void EditSession::record_caret(TextOffset before) {
-    undo_carets_[document_.undo_position()] = CaretPair{before, caret_};
+    undo_carets_[buffer().document_.undo_position()] = CaretPair{before, caret()};
 }
 
 void EditSession::type_text(std::string_view text) {
     // Character by character through the typed-char pipeline, exactly like
     // an editor delivering keystrokes; each character is one undo unit.
     for (char ch : text) {
-        const TextOffset before = caret_;
-        TypeCharResult result = type_char(document_, caret_, ch, style_, analyzer_);
-        caret_ = result.caret;
+        const TextOffset before = caret();
+        TypeCharResult result = type_char(mutable_document(), before, ch, style_, analyzer_);
+        set_caret(result.caret);
         record_caret(before);
     }
 }
@@ -35,19 +69,19 @@ void EditSession::insert_text(std::string_view text) {
     if (text.empty()) {
         return;
     }
-    const TextOffset before = caret_;
-    EditTransaction tx = document_.begin_transaction();
-    tx.insert(caret_, text);
+    const TextOffset before = caret();
+    EditTransaction tx = mutable_document().begin_transaction();
+    tx.insert(before, text);
     CommitResult commit = tx.commit();
     analyzer_.apply(commit.change, commit.snapshot);
-    caret_.value += static_cast<std::uint32_t>(text.size());
+    set_caret(TextOffset{before.value + static_cast<std::uint32_t>(text.size())});
     record_caret(before);
 }
 
 EnterResult EditSession::enter() {
-    const TextOffset before = caret_;
-    EnterResult result = press_enter(document_, caret_, style_, analyzer_);
-    caret_ = result.caret;
+    const TextOffset before = caret();
+    EnterResult result = press_enter(mutable_document(), before, style_, analyzer_);
+    set_caret(result.caret);
     record_caret(before);
     return result;
 }
@@ -56,18 +90,19 @@ void EditSession::erase(TextRange range) {
     if (range.empty()) {
         return;
     }
-    const TextOffset before = caret_;
-    EditTransaction tx = document_.begin_transaction();
+    const TextOffset before = caret();
+    EditTransaction tx = mutable_document().begin_transaction();
     tx.erase(range);
     CommitResult commit = tx.commit();
     analyzer_.apply(commit.change, commit.snapshot);
-    caret_ = range.start;
+    set_caret(range.start);
     record_caret(before);
 }
 
 IndentDecision EditSession::indent() {
     DocumentSnapshot snap = snapshot();
-    const std::uint32_t line = snap.content().position(caret_).line;
+    const TextOffset caret_before = caret();
+    const std::uint32_t line = snap.content().position(caret_before).line;
     const TextOffset line_start = snap.content().line_start(line);
     const std::string content = snap.substring(snap.content().line_content_range(line));
     std::uint32_t old_len = 0;
@@ -75,15 +110,16 @@ IndentDecision EditSession::indent() {
         ++old_len;
     }
 
-    const TextOffset before = caret_;
-    const RevisionId revision_before = document_.revision();
-    IndentDecision decision = indent_line(document_, line, style_, analyzer_);
-    if (document_.revision() != revision_before) {
+    const TextOffset before = caret_before;
+    Document& document = mutable_document();
+    const RevisionId revision_before = document.revision();
+    IndentDecision decision = indent_line(document, line, style_, analyzer_);
+    if (document.revision() != revision_before) {
         const auto new_len = static_cast<std::uint32_t>(decision.indentation_text.size());
-        if (caret_.value >= line_start.value + old_len) {
-            caret_.value = caret_.value - old_len + new_len;
+        if (caret_before.value >= line_start.value + old_len) {
+            set_caret(TextOffset{caret_before.value - old_len + new_len});
         } else {
-            caret_.value = line_start.value + new_len;
+            set_caret(TextOffset{line_start.value + new_len});
         }
         record_caret(before);
     }
@@ -91,40 +127,49 @@ IndentDecision EditSession::indent() {
 }
 
 bool EditSession::undo() {
-    const UndoNodeId leaving = document_.undo_position();
-    std::optional<DocumentChange> change = document_.undo();
+    Buffer& target = buffer();
+    const UndoNodeId leaving = target.document_.undo_position();
+    std::optional<DocumentChange> change = target.undo();
     if (!change) {
         return false;
     }
-    analyzer_.apply(*change, document_.snapshot());
+    analyzer_.apply(*change, target.snapshot());
     if (auto it = undo_carets_.find(leaving); it != undo_carets_.end()) {
-        caret_ = it->second.before;
+        set_caret(it->second.before);
     }
     clamp_caret();
     return true;
 }
 
 bool EditSession::redo() {
-    std::optional<DocumentChange> change = document_.redo();
+    Buffer& target = buffer();
+    std::optional<DocumentChange> change = target.redo();
     if (!change) {
         return false;
     }
-    analyzer_.apply(*change, document_.snapshot());
-    if (auto it = undo_carets_.find(document_.undo_position()); it != undo_carets_.end()) {
-        caret_ = it->second.after;
+    analyzer_.apply(*change, target.snapshot());
+    if (auto it = undo_carets_.find(target.document_.undo_position()); it != undo_carets_.end()) {
+        set_caret(it->second.after);
     }
     clamp_caret();
     return true;
 }
 
+void EditSession::clamp_caret() {
+    TextOffset position = caret();
+    position.value = std::min(position.value, snapshot().size_bytes());
+    set_caret(position);
+}
+
 IndentDecision EditSession::explain() const {
     DocumentSnapshot snap = snapshot();
-    return compute_line_indent(snap, analysis().tree, snap.content().position(caret_).line, style_);
+    return compute_line_indent(snap, analysis().tree, snap.content().position(caret()).line,
+                               style_);
 }
 
 std::string EditSession::render_with_caret() const {
     std::string out = snapshot().content().to_string();
-    out.insert(caret_.value, "^");
+    out.insert(caret().value, "^");
     return out;
 }
 

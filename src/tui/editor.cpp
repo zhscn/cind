@@ -4,6 +4,7 @@
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "cpp_lexer/lexer.hpp"
+#include "editor/cpp_mode.hpp"
 #include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
 #include "ui/ansi_renderer.hpp"
@@ -19,6 +20,7 @@
 #include <format>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 namespace cind::tui {
 
@@ -26,6 +28,17 @@ namespace {
 
 bool is_utf8_continuation(char byte) {
     return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
+}
+
+BufferId create_file_buffer(EditorRuntime& runtime, const std::string& path, std::string initial) {
+    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
+    const BufferId buffer = runtime.buffers().create(BufferSpec{.name = {},
+                                                                .initial_text = std::move(initial),
+                                                                .kind = BufferKind::File,
+                                                                .resource_uri = path,
+                                                                .read_only = false});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
+    return buffer;
 }
 
 // Key caption for the status line (screenkey-style, so recordings show
@@ -77,10 +90,11 @@ std::string describe_key(const Key& key) {
 
 class Editor {
 public:
-    Editor(std::string path, std::string initial, CppIndentStyle style, std::string style_origin,
-           std::uint32_t initial_line)
-        : path_(std::move(path)), session_(std::move(initial), style),
-          style_origin_(std::move(style_origin)), saved_text_(session_.snapshot().content()) {
+    Editor(const std::string& path, std::string initial, CppIndentStyle style,
+           std::string style_origin, std::uint32_t initial_line)
+        : buffer_id_(create_file_buffer(runtime_, path, std::move(initial))),
+          view_id_(runtime_.views().create(buffer_id_)),
+          session_(runtime_, buffer_id_, view_id_, style), style_origin_(std::move(style_origin)) {
         const DocumentSnapshot snap = session_.snapshot();
         const Text& text = snap.content();
         message_ = std::format("read {} lines", reported_lines(text));
@@ -212,21 +226,12 @@ private:
             message_.clear();
         }
         if (session_.snapshot().revision() != rev_before) {
-            mark_.reset(); // edits invalidate the selection
+            session_.clear_selection(); // edits invalidate the selection
             expand_stack_.clear();
         }
     }
 
-    std::optional<TextRange> selection() const {
-        if (!mark_) {
-            return std::nullopt;
-        }
-        const TextOffset caret = session_.caret();
-        if (*mark_ == caret) {
-            return std::nullopt;
-        }
-        return *mark_ < caret ? TextRange{*mark_, caret} : TextRange{caret, *mark_};
-    }
+    std::optional<TextRange> selection() const { return session_.selection(); }
 
     void kill_range(TextRange range) {
         kill_slot_ = session_.snapshot().substring(range);
@@ -260,8 +265,7 @@ private:
                 if (selection()) {
                     expand_stack_.push_back(current);
                 }
-                mark_ = next->start;
-                session_.set_caret(next->end);
+                session_.set_selection({.anchor = next->start, .head = next->end});
             }
             break;
         }
@@ -269,16 +273,15 @@ private:
             if (!expand_stack_.empty()) {
                 TextRange prev = expand_stack_.back();
                 expand_stack_.pop_back();
-                mark_ = prev.start;
-                session_.set_caret(prev.end);
+                session_.set_selection({.anchor = prev.start, .head = prev.end});
             } else {
-                mark_.reset();
+                session_.clear_selection();
             }
             break;
         case 'w': // copy region
             if (auto sel = selection()) {
                 kill_slot_ = snap.substring(*sel);
-                mark_.reset();
+                session_.clear_selection();
                 message_ = "copied";
             }
             break;
@@ -379,7 +382,7 @@ private:
             command_quit();
             break;
         case 's':
-            save_to(path_);
+            save_to(path());
             break;
         case 'o':
             command_save_as();
@@ -391,7 +394,7 @@ private:
             command_position();
             break;
         case 'g': // cancel: mark, pending states, message
-            mark_.reset();
+            session_.clear_selection();
             expand_stack_.clear();
             message_ = "cancelled";
             break;
@@ -422,11 +425,11 @@ private:
             message_ = session_.redo() ? "redo" : "nothing to redo";
             break;
         case ' ': // set/clear mark
-            if (mark_ && *mark_ == session_.caret()) {
-                mark_.reset();
+            if (session_.mark() && *session_.mark() == session_.caret()) {
+                session_.clear_selection();
                 message_ = "mark cleared";
             } else {
-                mark_ = session_.caret();
+                session_.set_selection({.anchor = session_.caret(), .head = session_.caret()});
                 expand_stack_.clear();
                 message_ = "mark set";
             }
@@ -458,7 +461,15 @@ private:
         }
     }
 
-    bool dirty() const { return diff_edit(saved_text_, session_.snapshot().content()).has_value(); }
+    bool dirty() const { return session_.buffer().modified(); }
+
+    const std::string& path() const {
+        const std::optional<std::string>& resource = session_.buffer().resource_uri();
+        if (!resource) {
+            throw std::logic_error("file buffer has no resource URI");
+        }
+        return *resource;
+    }
 
     // ---- minibuffer -------------------------------------------------------
 
@@ -677,20 +688,23 @@ private:
             message_ = std::format("save failed: {}", ec.message());
             return false;
         }
-        saved_text_ = session_.snapshot().content();
+        session_.buffer().mark_saved(session_.snapshot().content());
         ++save_gen_; // invalidate the change-sign cache
-        message_ = std::format("wrote {} lines to {}", reported_lines(saved_text_), target);
+        message_ = std::format("wrote {} lines to {}",
+                               reported_lines(session_.buffer().save_point()), target);
         return true;
     }
 
     void command_save_as() {
-        std::optional<std::string> target = prompt("write file: ", path_);
+        std::optional<std::string> target = prompt("write file: ", path());
         if (!target || target->empty()) {
             message_ = "cancelled";
             return;
         }
         if (save_to(*target)) {
-            path_ = *target;
+            runtime_.buffers().set_resource(buffer_id_, target, BufferKind::File);
+            runtime_.buffers().rename(buffer_id_,
+                                      std::filesystem::path(*target).filename().string());
         }
     }
 
@@ -701,7 +715,7 @@ private:
         }
         const char answer = ask("save modified buffer? (y/n, Ctrl-G cancel) ");
         if (answer == 'y') {
-            quit_ = save_to(path_);
+            quit_ = save_to(path());
         } else if (answer == 'n') {
             quit_ = true;
         } else {
@@ -752,7 +766,7 @@ private:
     const ui::LineSigns& signs() {
         const RevisionId rev = session_.snapshot().revision();
         if (signs_rev_ != rev || signs_gen_ != save_gen_) {
-            signs_ = ui::line_signs(saved_text_, session_.snapshot().content());
+            signs_ = ui::line_signs(session_.buffer().save_point(), session_.snapshot().content());
             signs_rev_ = rev;
             signs_gen_ = save_gen_;
         }
@@ -773,22 +787,27 @@ private:
         if (prompt_active_) {
             echo_cursor = ui::display_width(prompt_label_) + ui::display_width(prompt_input_);
         }
-        return ui::compose_editor_scene({.text = snap.content(),
-                                         .tokens = tokens(),
-                                         .signs = signs(),
-                                         .caret = session_.caret(),
-                                         .selection = selection(),
-                                         .rows = size.rows,
-                                         .cols = size.cols,
-                                         .tab_width = tab_width(),
-                                         .path = path_,
-                                         .dirty = dirty(),
-                                         .revision = snap.revision(),
-                                         .style_origin = style_origin_,
-                                         .last_key = last_key_,
-                                         .echo = echo_text,
-                                         .echo_cursor_column = echo_cursor},
-                                        viewport_);
+        ViewportState& state = session_.view().viewport();
+        ui::EditorViewport viewport{.top_line = state.top_line, .left_column = state.left_column};
+        ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
+                                                    .tokens = tokens(),
+                                                    .signs = signs(),
+                                                    .caret = session_.caret(),
+                                                    .selection = selection(),
+                                                    .rows = size.rows,
+                                                    .cols = size.cols,
+                                                    .tab_width = tab_width(),
+                                                    .path = path(),
+                                                    .dirty = dirty(),
+                                                    .revision = snap.revision(),
+                                                    .style_origin = style_origin_,
+                                                    .last_key = last_key_,
+                                                    .echo = echo_text,
+                                                    .echo_cursor_column = echo_cursor},
+                                                   viewport);
+        state.top_line = viewport.top_line;
+        state.left_column = viewport.left_column;
+        return scene;
     }
 
     void render() {
@@ -796,13 +815,13 @@ private:
         term_.flush();
     }
 
-    std::string path_;
+    EditorRuntime runtime_;
+    BufferId buffer_id_;
+    ViewId view_id_;
     EditSession session_;
     std::string style_origin_;
-    Text saved_text_;
     Terminal term_;
 
-    ui::EditorViewport viewport_;
     int goal_col_ = -1;
     std::uint32_t save_gen_ = 0;
     ui::LineSigns signs_;
@@ -811,7 +830,6 @@ private:
     bool keep_vertical_goal_ = false;
     std::string message_;
     std::string last_key_;
-    std::optional<TextOffset> mark_;
     std::vector<TextRange> expand_stack_;
     std::string kill_slot_;
     std::string last_search_;

@@ -2,6 +2,7 @@
 
 #include "commands/file_io.hpp"
 #include "document/text.hpp"
+#include "editor/cpp_mode.hpp"
 #include "ui/text_position.hpp"
 
 #include <algorithm>
@@ -15,6 +16,17 @@
 namespace cind::gui {
 
 namespace {
+
+BufferId create_file_buffer(EditorRuntime& runtime, const std::string& path, std::string initial) {
+    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
+    const BufferId buffer = runtime.buffers().create(BufferSpec{.name = {},
+                                                                .initial_text = std::move(initial),
+                                                                .kind = BufferKind::File,
+                                                                .resource_uri = path,
+                                                                .read_only = false});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
+    return buffer;
+}
 
 std::string_view key_name(EditorKey key) {
     switch (key) {
@@ -70,8 +82,9 @@ std::string_view key_name(EditorKey key) {
 
 EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle style,
                          std::string style_origin, std::uint32_t initial_line)
-    : path_(std::move(path)), session_(std::move(initial), style),
-      style_origin_(std::move(style_origin)), saved_text_(session_.snapshot().content()) {
+    : buffer_id_(create_file_buffer(runtime_, path, std::move(initial))),
+      view_id_(runtime_.views().create(buffer_id_)),
+      session_(runtime_, buffer_id_, view_id_, style), style_origin_(std::move(style_origin)) {
     const DocumentSnapshot snapshot = session_.snapshot();
     if (initial_line > 0) {
         const std::uint32_t line = std::min(initial_line - 1, snapshot.content().line_count() - 1);
@@ -84,23 +97,28 @@ ui::Scene EditorModel::compose(int rows, int columns) {
     const DocumentSnapshot snapshot = session_.snapshot();
     const std::string_view echo =
         preedit_.empty() ? std::string_view(message_) : std::string_view(preedit_);
-    return ui::compose_editor_scene({.text = snapshot.content(),
-                                     .tokens = session_.analysis().tree.tokens(),
-                                     .signs = signs(),
-                                     .caret = session_.caret(),
-                                     .selection = std::nullopt,
-                                     .rows = rows,
-                                     .cols = columns,
-                                     .tab_width = session_.style().tab_width,
-                                     .path = path_,
-                                     .dirty = dirty(),
-                                     .revision = snapshot.revision(),
-                                     .style_origin = style_origin_,
-                                     .last_key = last_key_,
-                                     .echo = echo,
-                                     .reveal_caret = reveal_caret_,
-                                     .echo_cursor_column = std::nullopt},
-                                    viewport_);
+    ViewportState& state = session_.view().viewport();
+    ui::EditorViewport viewport{.top_line = state.top_line, .left_column = state.left_column};
+    ui::Scene scene = ui::compose_editor_scene({.text = snapshot.content(),
+                                                .tokens = session_.analysis().tree.tokens(),
+                                                .signs = signs(),
+                                                .caret = session_.caret(),
+                                                .selection = std::nullopt,
+                                                .rows = rows,
+                                                .cols = columns,
+                                                .tab_width = session_.style().tab_width,
+                                                .path = path(),
+                                                .dirty = dirty(),
+                                                .revision = snapshot.revision(),
+                                                .style_origin = style_origin_,
+                                                .last_key = last_key_,
+                                                .echo = echo,
+                                                .reveal_caret = reveal_caret_,
+                                                .echo_cursor_column = std::nullopt},
+                                               viewport);
+    state.top_line = viewport.top_line;
+    state.left_column = viewport.left_column;
+    return scene;
 }
 
 bool EditorModel::handle_key(EditorKey key, KeyModifiers modifiers, int page_rows) {
@@ -233,13 +251,15 @@ void EditorModel::click(ui::CellPoint point) {
         return;
     }
     const std::uint32_t line =
-        std::min(viewport_.top_line + static_cast<std::uint32_t>(point.row), text.line_count() - 1);
+        std::min(session_.view().viewport().top_line + static_cast<std::uint32_t>(point.row),
+                 text.line_count() - 1);
     if (point.column < text_column) {
         session_.set_caret(text.line_start(line));
         reveal_caret_ = true;
         return;
     }
-    const int display_column = viewport_.left_column + std::max(0, point.column - text_column);
+    const int display_column =
+        session_.view().viewport().left_column + std::max(0, point.column - text_column);
     session_.set_caret(ui::offset_at_display_column(text, {.line = line, .column = display_column},
                                                     session_.style().tab_width));
     reveal_caret_ = true;
@@ -248,8 +268,9 @@ void EditorModel::click(ui::CellPoint point) {
 void EditorModel::scroll_lines(int delta) {
     const DocumentSnapshot snapshot = session_.snapshot();
     const int last_line = static_cast<int>(snapshot.content().line_count()) - 1;
-    viewport_.top_line = static_cast<std::uint32_t>(
-        std::clamp(static_cast<int>(viewport_.top_line) + delta, 0, last_line));
+    ViewportState& viewport = session_.view().viewport();
+    viewport.top_line = static_cast<std::uint32_t>(
+        std::clamp(static_cast<int>(viewport.top_line) + delta, 0, last_line));
     reveal_caret_ = false;
 }
 
@@ -271,11 +292,11 @@ bool EditorModel::poll_background_work() {
     if (error) {
         message_ = std::format("save failed: {}", error.message());
     } else {
-        saved_text_ = std::move(pending_save_->content);
+        session_.buffer().mark_saved(std::move(pending_save_->content));
         ++save_generation_;
         quit_armed_ = false;
-        message_ = dirty() ? std::format("saved {} · newer edits remain", path_)
-                           : std::format("saved {}", path_);
+        message_ = dirty() ? std::format("saved {} · newer edits remain", path())
+                           : std::format("saved {}", path());
     }
     pending_save_.reset();
     return true;
@@ -294,7 +315,8 @@ EditorStateSnapshot EditorModel::inspect() {
     const DocumentSnapshot snapshot = session_.snapshot();
     const Text& text = snapshot.content();
     const TextOffset caret = session_.caret();
-    return {.path = path_,
+    const ViewportState& view = session_.view().viewport();
+    return {.path = path(),
             .revision = snapshot.revision(),
             .document_bytes = text.size_bytes(),
             .line_count = text.line_count(),
@@ -302,7 +324,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .caret = caret,
             .caret_position = text.position(caret),
             .caret_display_column = ui::display_column(text, caret, session_.style().tab_width),
-            .viewport = viewport_,
+            .viewport = {.top_line = view.top_line, .left_column = view.left_column},
             .line_signs = signs(),
             .tab_width = session_.style().tab_width,
             .style_origin = style_origin_,
@@ -314,13 +336,21 @@ EditorStateSnapshot EditorModel::inspect() {
 }
 
 bool EditorModel::dirty() const {
-    return diff_edit(saved_text_, session_.snapshot().content()).has_value();
+    return session_.buffer().modified();
+}
+
+const std::string& EditorModel::path() const {
+    const std::optional<std::string>& resource = session_.buffer().resource_uri();
+    if (!resource) {
+        throw std::logic_error("file buffer has no resource URI");
+    }
+    return *resource;
 }
 
 const ui::LineSigns& EditorModel::signs() {
     const DocumentSnapshot snapshot = session_.snapshot();
     if (sign_revision_ != snapshot.revision() || sign_generation_ != save_generation_) {
-        signs_ = ui::line_signs(saved_text_, snapshot.content());
+        signs_ = ui::line_signs(session_.buffer().save_point(), snapshot.content());
         sign_revision_ = snapshot.revision();
         sign_generation_ = save_generation_;
     }
@@ -341,22 +371,22 @@ void EditorModel::save() {
     }
     const DocumentSnapshot snapshot = session_.snapshot();
     Text content = snapshot.content();
-    std::string path = path_;
+    std::string target_path = path();
     try {
         pending_save_.emplace(PendingSave{
-            content, std::async(std::launch::async,
-                                [path = std::move(path), content = std::move(content)]() noexcept {
-                                    try {
-                                        return save_file_atomically(path, content);
-                                    } catch (const std::system_error& exception) {
-                                        return exception.code();
-                                    } catch (const std::bad_alloc&) {
-                                        return std::make_error_code(std::errc::not_enough_memory);
-                                    } catch (...) {
-                                        return std::make_error_code(std::errc::io_error);
-                                    }
-                                })});
-        message_ = std::format("saving {}…", path_);
+            content, std::async(std::launch::async, [path = std::move(target_path),
+                                                     content = std::move(content)]() noexcept {
+                try {
+                    return save_file_atomically(path, content);
+                } catch (const std::system_error& exception) {
+                    return exception.code();
+                } catch (const std::bad_alloc&) {
+                    return std::make_error_code(std::errc::not_enough_memory);
+                } catch (...) {
+                    return std::make_error_code(std::errc::io_error);
+                }
+            })});
+        message_ = std::format("saving {}…", path());
     } catch (const std::system_error& exception) {
         message_ = std::format("save failed: {}", exception.code().message());
     } catch (const std::bad_alloc&) {

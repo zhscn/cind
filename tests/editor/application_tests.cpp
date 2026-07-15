@@ -1,0 +1,245 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include "editor/cpp_mode.hpp"
+#include "editor/runtime.hpp"
+
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+using namespace cind;
+
+TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
+    EditorRuntime runtime;
+    const SettingId tab_width = runtime.setting_definitions().define(
+        "editor.tab-width", std::int64_t{4},
+        SettingScope::Application | SettingScope::Project | SettingScope::Mode |
+            SettingScope::Buffer | SettingScope::View);
+    const SettingId internal = runtime.setting_definitions().define(
+        "editor.internal", false, setting_scope_bit(SettingScope::Application));
+
+    const ModeId text_mode = runtime.modes().define("text", ModeKind::Major);
+    runtime.modes().definition_for_configuration(text_mode).defaults.set(tab_width,
+                                                                         std::int64_t{2});
+    const BufferId buffer = runtime.buffers().create({.name = "notes",
+                                                      .initial_text = "hello",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), text_mode);
+    const ViewId view = runtime.views().create(buffer);
+
+    CHECK(runtime.settings_for(buffer, view).get_as<std::int64_t>(tab_width) == 2);
+    runtime.application_settings().set(tab_width, std::int64_t{8});
+    CHECK(runtime.settings_for(buffer, view).get_as<std::int64_t>(tab_width) == 8);
+    runtime.buffers().get(buffer).settings().set(tab_width, std::int64_t{3});
+    CHECK(runtime.settings_for(buffer, view).get_as<std::int64_t>(tab_width) == 3);
+    runtime.views().get(view).settings().set(tab_width, std::int64_t{6});
+    CHECK(runtime.settings_for(buffer, view).get_as<std::int64_t>(tab_width) == 6);
+
+    CHECK_THROWS_AS(runtime.views().get(view).settings().set(internal, true),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(runtime.buffers().get(buffer).settings().set(tab_width, true),
+                    std::invalid_argument);
+
+    runtime.seal_extensions();
+    CHECK_THROWS_AS(runtime.setting_definitions().define("late.value", false), std::logic_error);
+    CHECK_THROWS_AS(runtime.modes().define("late", ModeKind::Minor), std::logic_error);
+    CHECK_THROWS_AS(runtime.modes().definition_for_configuration(text_mode), std::logic_error);
+
+    // Explicit runtime preference layers remain configurable after schemas
+    // and extension definitions are frozen.
+    runtime.application_settings().set(tab_width, std::int64_t{10});
+    CHECK(runtime.application_settings().find(tab_width) != nullptr);
+}
+
+TEST_CASE("major modes select composed language profiles instead of inheriting parsers") {
+    EditorRuntime runtime;
+    const SettingId dialect = runtime.setting_definitions().define(
+        "language.c-family.dialect", std::string("c++"),
+        SettingScope::Language | SettingScope::Project | SettingScope::Buffer);
+
+    const LanguageProviderId lexer =
+        runtime.languages().define_provider("cind.c-family.lexer", LanguageFacet::Lexing);
+    const LanguageProviderId syntax =
+        runtime.languages().define_provider("cind.c-family.syntax", LanguageFacet::Syntax);
+    const LanguageProviderId indentation = runtime.languages().define_provider(
+        "cind.c-family.indentation", LanguageFacet::Indentation);
+    const LanguageProviderId editing = runtime.languages().define_provider(
+        "cind.c-family.structural-editing", LanguageFacet::StructuralEditing);
+
+    const LanguageProfileId cpp = runtime.languages().define_profile("cpp");
+    for (const auto [facet, provider] :
+         {std::pair{LanguageFacet::Lexing, lexer}, std::pair{LanguageFacet::Syntax, syntax},
+          std::pair{LanguageFacet::Indentation, indentation},
+          std::pair{LanguageFacet::StructuralEditing, editing}}) {
+        runtime.languages().bind(cpp, facet, provider);
+    }
+    runtime.languages().profile_for_configuration(cpp).defaults.set(dialect, std::string("c++"));
+
+    const LanguageProfileId c = runtime.languages().define_profile("c");
+    runtime.languages().bind(c, LanguageFacet::Lexing, lexer);
+    runtime.languages().bind(c, LanguageFacet::Syntax, syntax);
+    runtime.languages().bind(c, LanguageFacet::Indentation, indentation);
+    runtime.languages().bind(c, LanguageFacet::StructuralEditing, editing);
+    runtime.languages().profile_for_configuration(c).defaults.set(dialect, std::string("c"));
+
+    const ModeId cpp_mode = runtime.modes().define("cpp", ModeKind::Major, cpp);
+    CHECK_THROWS_AS(runtime.modes().define("bad-minor", ModeKind::Minor, cpp),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(runtime.languages().bind(cpp, LanguageFacet::Formatting, syntax),
+                    std::invalid_argument);
+
+    const BufferId buffer = runtime.buffers().create({.name = "main.cpp",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp_mode);
+    const ViewId view = runtime.views().create(buffer);
+    CHECK(runtime.settings_for(buffer, view).get_as<std::string>(dialect) == "c++");
+    CHECK(runtime.languages().profile(cpp).provider(LanguageFacet::Syntax) == syntax);
+    CHECK(runtime.languages().profile(c).provider(LanguageFacet::Syntax) == syntax);
+}
+
+TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
+    EditorRuntime runtime;
+    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
+    const LanguageRegistry::ProfileDefinition& profile = runtime.languages().profile(cpp.language);
+
+    CHECK(profile.provider(LanguageFacet::Lexing).has_value());
+    CHECK(profile.provider(LanguageFacet::Syntax).has_value());
+    CHECK(profile.provider(LanguageFacet::Indentation).has_value());
+    CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
+    CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
+    CHECK(ensure_cpp_mode(runtime).mode == cpp.mode);
+}
+
+TEST_CASE("buffers have stable identities and outlive their views") {
+    EditorRuntime runtime;
+    const BufferId first = runtime.buffers().create({.name = "main.cc",
+                                                     .initial_text = "abc",
+                                                     .kind = BufferKind::File,
+                                                     .resource_uri = "file:///tmp/main.cc"});
+    const BufferId second = runtime.buffers().create({.name = "main.cc",
+                                                      .initial_text = "generated",
+                                                      .kind = BufferKind::Generated,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+
+    CHECK(runtime.buffers().get(first).name() == "main.cc");
+    CHECK(runtime.buffers().get(second).name() == "main.cc<2>");
+    CHECK(runtime.buffers().find_by_resource("file:///tmp/main.cc") == first);
+
+    const ViewId view = runtime.views().create(first, TextOffset{1});
+    CHECK_FALSE(runtime.buffers().erase(first));
+    CHECK(runtime.views().erase(view));
+    CHECK(runtime.buffers().erase(first));
+    CHECK(runtime.buffers().try_get(first) == nullptr);
+
+    const BufferId replacement = runtime.buffers().create({.name = "other",
+                                                           .initial_text = "",
+                                                           .kind = BufferKind::Scratch,
+                                                           .resource_uri = std::nullopt,
+                                                           .read_only = false});
+    CHECK(replacement.slot == first.slot);
+    CHECK(replacement.generation != first.generation);
+    CHECK_THROWS_AS(runtime.buffers().get(first), std::out_of_range);
+}
+
+TEST_CASE("views keep independent positions backed by document anchors") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "shared",
+                                                      .initial_text = "abcd",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId left = runtime.views().create(buffer, TextOffset{1});
+    const ViewId right = runtime.views().create(buffer, TextOffset{3});
+
+    auto transaction = runtime.buffers().get(buffer).begin_transaction();
+    transaction.insert(TextOffset{1}, "X");
+    transaction.commit();
+
+    CHECK(runtime.views().caret(left).value == 2);
+    CHECK(runtime.views().caret(right).value == 4);
+
+    runtime.views().set_selection(left, {.anchor = TextOffset{1}, .head = TextOffset{4}});
+    const std::optional<TextRange> selected = runtime.views().selection(left);
+    REQUIRE(selected.has_value());
+    CHECK(selected.value() == make_range(1, 4));
+    CHECK_FALSE(runtime.views().selection(right).has_value());
+}
+
+TEST_CASE("projects own tooling scope without owning editor windows") {
+    EditorRuntime runtime;
+    const SettingId server = runtime.setting_definitions().define(
+        "language.server", std::string("default"),
+        SettingScope::Application | SettingScope::Project | SettingScope::Buffer);
+    const ProjectId outer = runtime.projects().create({.name = "outer", .roots = {"file:///work"}});
+    const ProjectId inner =
+        runtime.projects().create({.name = "inner", .roots = {"file:///work/sub"}});
+    runtime.projects().get(inner).settings().set(server, std::string("clangd"));
+
+    const BufferId buffer = runtime.buffers().create({.name = "main.cc",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::File,
+                                                      .resource_uri = "file:///work/sub/main.cc",
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+
+    CHECK(runtime.projects().find_for_resource("file:///work/readme") == outer);
+    CHECK(runtime.projects().find_for_resource("file:///work/sub/main.cc") == inner);
+    runtime.projects().assign(buffer, inner);
+    CHECK(runtime.settings_for(buffer, view).get_as<std::string>(server) == "clangd");
+    CHECK_FALSE(runtime.projects().erase(inner));
+    runtime.projects().assign(buffer, std::nullopt);
+    CHECK(runtime.projects().erase(inner));
+    CHECK(runtime.projects().try_get(inner) == nullptr);
+}
+
+TEST_CASE("commands receive explicit runtime buffer and view context") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "command",
+                                                      .initial_text = "ab",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId first = runtime.views().create(buffer, TextOffset{0});
+    const ViewId second = runtime.views().create(buffer, TextOffset{2});
+
+    const CommandId insert = runtime.commands().define(
+        "editor.insert",
+        [](CommandContext& context, const CommandInvocation& invocation) -> CommandResult {
+            if (invocation.arguments.size() != 1 ||
+                !std::holds_alternative<std::string>(invocation.arguments.front())) {
+                return std::unexpected(CommandError{"expected one string argument"});
+            }
+            const std::string& text = std::get<std::string>(invocation.arguments.front());
+            auto transaction = context.buffer().begin_transaction();
+            transaction.insert(context.runtime().views().caret(context.view_id()), text);
+            transaction.commit();
+            return std::nullopt;
+        });
+
+    CommandContext context(runtime, buffer, first);
+    CommandResult result = runtime.commands().invoke(
+        insert, context,
+        CommandInvocation{.arguments = {std::string("X")}, .repeat_count = std::nullopt});
+    REQUIRE(result.has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content() == "Xab");
+    CHECK(runtime.views().caret(first).value == 1);
+    CHECK(runtime.views().caret(second).value == 3);
+
+    runtime.buffers().get(buffer).set_read_only(true);
+    CHECK_THROWS_AS(
+        [&] {
+            (void)runtime.commands().invoke(
+                insert, context,
+                CommandInvocation{.arguments = {std::string("forbidden")},
+                                  .repeat_count = std::nullopt});
+        }(),
+        std::logic_error);
+}

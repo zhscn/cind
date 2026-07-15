@@ -1,9 +1,11 @@
 #pragma once
 
 #include "commands/editor_commands.hpp"
+#include "editor/runtime.hpp"
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -15,10 +17,23 @@ namespace cind {
 class EditSession {
 public:
     explicit EditSession(std::string initial_text, CppIndentStyle style = {});
+    EditSession(EditorRuntime& runtime, BufferId buffer, ViewId view, CppIndentStyle style = {});
 
-    const DocumentSnapshot snapshot() const { return document_.snapshot(); }
-    TextOffset caret() const { return caret_; }
+    const DocumentSnapshot snapshot() const { return buffer().snapshot(); }
+    TextOffset caret() const { return runtime_->views().caret(view_id_); }
     void set_caret(TextOffset caret);
+    std::optional<TextRange> selection() const { return runtime_->views().selection(view_id_); }
+    std::optional<TextOffset> mark() const { return runtime_->views().mark(view_id_); }
+    void set_selection(SelectionEndpoints selection) {
+        runtime_->views().set_selection(view_id_, selection);
+    }
+    void clear_selection() { runtime_->views().clear_selection(view_id_); }
+    BufferId buffer_id() const { return buffer_id_; }
+    ViewId view_id() const { return view_id_; }
+    Buffer& buffer() { return runtime_->buffers().get(buffer_id_); }
+    const Buffer& buffer() const { return runtime_->buffers().get(buffer_id_); }
+    View& view() { return runtime_->views().get(view_id_); }
+    const View& view() const { return runtime_->views().get(view_id_); }
     CppIndentStyle& style() { return style_; }
     const CppIndentStyle& style() const { return style_; }
 
@@ -38,7 +53,7 @@ public:
 
     // Analysis of the current revision (cached; incrementally maintained
     // across every command). Valid until the next mutation.
-    const Analysis& analysis() const { return analyzer_.analyze(document_.snapshot()); }
+    const Analysis& analysis() const { return analyzer_.analyze(snapshot()); }
 
     std::string render_with_caret() const;
 
@@ -49,10 +64,13 @@ private:
     };
 
     void record_caret(TextOffset before);
-    void clamp_caret() { caret_.value = std::min(caret_.value, snapshot().size_bytes()); }
+    Document& mutable_document();
+    void clamp_caret();
 
-    Document document_;
-    TextOffset caret_{0};
+    std::unique_ptr<EditorRuntime> owned_runtime_;
+    EditorRuntime* runtime_ = nullptr;
+    BufferId buffer_id_;
+    ViewId view_id_;
     CppIndentStyle style_;
     std::map<UndoNodeId, CaretPair> undo_carets_;
     mutable Analyzer analyzer_; // memo of a pure function — const-safe

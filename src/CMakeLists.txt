@@ -40,11 +40,24 @@ add_library(cind_indent STATIC
 )
 target_link_libraries(cind_indent PUBLIC cind_syntax)
 
+add_library(cind_application STATIC
+  editor/buffer.cpp
+  editor/command.cpp
+  editor/cpp_mode.cpp
+  editor/language.cpp
+  editor/mode.cpp
+  editor/project.cpp
+  editor/runtime.cpp
+  editor/settings.cpp
+  editor/view.cpp
+)
+target_link_libraries(cind_application PUBLIC cind_document)
+
 add_library(cind_editor STATIC
   cli/session.cpp
   cli/style_loader.cpp
 )
-target_link_libraries(cind_editor PUBLIC cind_indent)
+target_link_libraries(cind_editor PUBLIC cind_indent cind_application)
 
 add_executable(indent-core
   cli/main.cpp

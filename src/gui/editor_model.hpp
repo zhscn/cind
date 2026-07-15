@@ -68,6 +68,7 @@ public:
 
 private:
     bool dirty() const;
+    const std::string& path() const;
     const ui::LineSigns& signs();
     void after_edit();
     void save();
@@ -77,11 +78,11 @@ private:
     void move_end();
     void erase_grapheme(bool forward);
 
-    std::string path_;
+    EditorRuntime runtime_;
+    BufferId buffer_id_;
+    ViewId view_id_;
     EditSession session_;
     std::string style_origin_;
-    Text saved_text_;
-    ui::EditorViewport viewport_;
     ui::LineSigns signs_;
     RevisionId sign_revision_ = static_cast<RevisionId>(-1);
     std::uint32_t save_generation_ = 0;
