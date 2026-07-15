@@ -11,6 +11,7 @@
 #include <skia/core/SkImageInfo.h>
 #include <skia/core/SkPaint.h>
 #include <skia/core/SkRect.h>
+#include <skia/core/SkString.h>
 #include <skia/core/SkSurface.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/ports/SkFontMgr_fontconfig.h>
@@ -91,6 +92,9 @@ struct SkiaPresenter::Impl {
         if (!typeface) {
             throw std::runtime_error("Skia could not resolve a system typeface");
         }
+        SkString resolved_name;
+        typeface->getFamilyName(&resolved_name);
+        resolved_family = resolved_name.c_str();
         font = make_font(typeface);
 
         SkFontMetrics metrics{};
@@ -234,6 +238,7 @@ struct SkiaPresenter::Impl {
     }
 
     std::string family;
+    std::string resolved_family;
     float size;
     SkiaTheme theme;
     sk_sp<SkFontMgr> manager;
@@ -257,6 +262,18 @@ int SkiaPresenter::cell_width() const {
 }
 int SkiaPresenter::cell_height() const {
     return impl_->cell_height;
+}
+
+const std::string& SkiaPresenter::font_family() const {
+    return impl_->resolved_family;
+}
+
+float SkiaPresenter::font_size() const {
+    return impl_->size;
+}
+
+const SkiaTheme& SkiaPresenter::theme() const {
+    return impl_->theme;
 }
 
 void SkiaPresenter::render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,

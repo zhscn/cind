@@ -39,6 +39,9 @@ public:
 
     int cell_width() const;
     int cell_height() const;
+    const std::string& font_family() const;
+    float font_size() const;
+    const SkiaTheme& theme() const;
 
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale = 1.0F);

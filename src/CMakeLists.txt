@@ -58,6 +58,14 @@ target_link_libraries(indent-core PRIVATE cind_editor cind_ui)
 
 if (CIND_BUILD_GUI)
   find_package(SDL3 CONFIG REQUIRED)
+  find_package(Threads REQUIRED)
+
+  add_library(cind_inspection STATIC
+    gui/inspection.cpp
+    gui/inspect_server.cpp
+  )
+  target_include_directories(cind_inspection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(cind_inspection PUBLIC cind_ui Threads::Threads)
 
   add_library(cind_skia_ui STATIC
     gui/skia_presenter.cpp
@@ -67,7 +75,18 @@ if (CIND_BUILD_GUI)
   target_link_libraries(cind_skia_ui PUBLIC cind_ui PRIVATE Skia::Skia)
 
   add_executable(cind-gui
+    gui/editor_model.cpp
     gui/main.cpp
   )
-  target_link_libraries(cind-gui PRIVATE cind_editor cind_skia_ui SDL3::SDL3)
+  target_link_libraries(cind-gui PRIVATE
+    cind_editor
+    cind_inspection
+    cind_skia_ui
+    SDL3::SDL3
+  )
+
+  add_executable(cind-ui-inspect
+    gui/inspect_cli.cpp
+  )
+  target_link_libraries(cind-ui-inspect PRIVATE cind_inspection)
 endif()

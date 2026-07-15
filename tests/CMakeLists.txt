@@ -23,6 +23,10 @@ target_link_libraries(ui_tests PRIVATE cind_ui doctest::doctest)
 add_test(NAME ui_tests COMMAND ui_tests)
 
 if (CIND_BUILD_GUI)
+  add_executable(inspection_tests ui/inspection_tests.cpp)
+  target_link_libraries(inspection_tests PRIVATE cind_inspection doctest::doctest)
+  add_test(NAME inspection_tests COMMAND inspection_tests)
+
   add_executable(skia_presenter_tests ui/skia_presenter_tests.cpp)
   target_link_libraries(skia_presenter_tests PRIVATE
     cind_skia_ui

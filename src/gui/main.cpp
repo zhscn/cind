@@ -1,16 +1,15 @@
-#include "cli/session.hpp"
 #include "cli/style_loader.hpp"
-#include "commands/file_io.hpp"
-#include "document/text.hpp"
+#include "gui/editor_model.hpp"
+#include "gui/inspect_server.hpp"
+#include "gui/inspection.hpp"
 #include "gui/skia_presenter.hpp"
-#include "ui/editor_scene.hpp"
-#include "ui/line_signs.hpp"
-#include "ui/text_position.hpp"
 
 #include <SDL3/SDL.h>
 
+#include <unistd.h>
+
 #include <algorithm>
-#include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +17,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -30,286 +30,6 @@
 namespace cind::gui {
 
 namespace {
-
-class EditorModel {
-public:
-    EditorModel(std::string path, std::string initial, CppIndentStyle style,
-                std::string style_origin, std::uint32_t initial_line)
-        : path_(std::move(path)), session_(std::move(initial), style),
-          style_origin_(std::move(style_origin)), saved_text_(session_.snapshot().content()) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        if (initial_line > 0) {
-            const std::uint32_t line =
-                std::min(initial_line - 1, snapshot.content().line_count() - 1);
-            session_.set_caret(snapshot.content().line_start(line));
-        }
-        message_ = "SDL3 Wayland · Skia · Ctrl-S save · Ctrl-Q quit";
-    }
-
-    ui::Scene compose(int rows, int columns) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const std::string_view echo =
-            preedit_.empty() ? std::string_view(message_) : std::string_view(preedit_);
-        return ui::compose_editor_scene({.text = snapshot.content(),
-                                         .tokens = session_.analysis().tree.tokens(),
-                                         .signs = signs(),
-                                         .caret = session_.caret(),
-                                         .selection = std::nullopt,
-                                         .rows = rows,
-                                         .cols = columns,
-                                         .tab_width = session_.style().tab_width,
-                                         .path = path_,
-                                         .dirty = dirty(),
-                                         .revision = snapshot.revision(),
-                                         .style_origin = style_origin_,
-                                         .last_key = last_key_,
-                                         .echo = echo,
-                                         .echo_cursor_column = std::nullopt},
-                                        viewport_);
-    }
-
-    bool handle_key(SDL_Scancode scancode, SDL_Keymod modifiers, int page_rows) {
-        const bool control = (modifiers & SDL_KMOD_CTRL) != 0;
-        const bool alt = (modifiers & SDL_KMOD_ALT) != 0;
-        const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
-        bool handled = true;
-        bool edited = false;
-
-        if (const char* name = SDL_GetScancodeName(scancode); name && *name) {
-            last_key_ = name;
-        }
-
-        if (control) {
-            switch (scancode) {
-            case SDL_SCANCODE_S:
-                save();
-                return true;
-            case SDL_SCANCODE_Q:
-                request_quit(shift);
-                return true;
-            case SDL_SCANCODE_Z:
-                session_.undo();
-                edited = true;
-                break;
-            case SDL_SCANCODE_R:
-                session_.redo();
-                edited = true;
-                break;
-            case SDL_SCANCODE_A:
-                move_home();
-                break;
-            case SDL_SCANCODE_E:
-                move_end();
-                break;
-            case SDL_SCANCODE_N:
-                move_vertical(1);
-                break;
-            case SDL_SCANCODE_P:
-                move_vertical(-1);
-                break;
-            case SDL_SCANCODE_V:
-                move_vertical(page_rows);
-                break;
-            default:
-                handled = false;
-                break;
-            }
-        } else if (alt && scancode == SDL_SCANCODE_V) {
-            move_vertical(-page_rows);
-        } else if (!alt) {
-            switch (scancode) {
-            case SDL_SCANCODE_LEFT:
-                move_horizontal(false);
-                break;
-            case SDL_SCANCODE_RIGHT:
-                move_horizontal(true);
-                break;
-            case SDL_SCANCODE_UP:
-                move_vertical(-1);
-                break;
-            case SDL_SCANCODE_DOWN:
-                move_vertical(1);
-                break;
-            case SDL_SCANCODE_HOME:
-                move_home();
-                break;
-            case SDL_SCANCODE_END:
-                move_end();
-                break;
-            case SDL_SCANCODE_PAGEUP:
-                move_vertical(-page_rows);
-                break;
-            case SDL_SCANCODE_PAGEDOWN:
-                move_vertical(page_rows);
-                break;
-            case SDL_SCANCODE_BACKSPACE:
-                erase_code_point(false);
-                edited = true;
-                break;
-            case SDL_SCANCODE_DELETE:
-                erase_code_point(true);
-                edited = true;
-                break;
-            case SDL_SCANCODE_RETURN:
-            case SDL_SCANCODE_KP_ENTER:
-                session_.enter();
-                edited = true;
-                break;
-            case SDL_SCANCODE_TAB:
-                session_.indent();
-                edited = true;
-                break;
-            default:
-                handled = false;
-                break;
-            }
-        } else {
-            handled = false;
-        }
-
-        if (handled && edited) {
-            after_edit();
-        }
-        return handled;
-    }
-
-    void insert_text(std::string_view text) {
-        if (text.empty()) {
-            return;
-        }
-        if (text.size() == 1 && static_cast<unsigned char>(text.front()) >= 0x20U) {
-            session_.type_text(text);
-        } else {
-            session_.insert_text(text);
-        }
-        last_key_ = "text";
-        after_edit();
-    }
-
-    void set_preedit(std::string_view text) {
-        preedit_ = text.empty() ? std::string() : std::format("IME · {}", text);
-    }
-
-    void click(int cell_row, int cell_column) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const Text& text = snapshot.content();
-        const int text_column = ui::text_area_column(text.line_count());
-        const int visible_rows = std::max(1, last_rows_ - 2);
-        if (cell_row < 0 || cell_row >= visible_rows) {
-            return;
-        }
-        const std::uint32_t line = std::min(
-            viewport_.top_line + static_cast<std::uint32_t>(cell_row), text.line_count() - 1);
-        if (cell_column < text_column) {
-            session_.set_caret(text.line_start(line));
-            return;
-        }
-        const int display_column = viewport_.left_column + std::max(0, cell_column - text_column);
-        session_.set_caret(
-            ui::offset_at_display_column(text, line, display_column, session_.style().tab_width));
-    }
-
-    void set_frame_rows(int rows) { last_rows_ = rows; }
-    void scroll_lines(int delta) { move_vertical(delta); }
-    bool should_quit() const { return quit_; }
-
-    void request_quit(bool force = false) {
-        if (!dirty() || force || quit_armed_) {
-            quit_ = true;
-            return;
-        }
-        quit_armed_ = true;
-        message_ = "unsaved changes · Ctrl-S saves · Ctrl-Q again or Ctrl-Shift-Q discards";
-    }
-
-private:
-    bool dirty() const { return diff_edit(saved_text_, session_.snapshot().content()).has_value(); }
-
-    const ui::LineSigns& signs() {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        if (sign_revision_ != snapshot.revision() || sign_generation_ != save_generation_) {
-            signs_ = ui::line_signs(saved_text_, snapshot.content());
-            sign_revision_ = snapshot.revision();
-            sign_generation_ = save_generation_;
-        }
-        return signs_;
-    }
-
-    void after_edit() {
-        quit_armed_ = false;
-        message_.clear();
-        preedit_.clear();
-    }
-
-    void save() {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        if (std::error_code error = save_file_atomically(path_, snapshot.content())) {
-            message_ = std::format("save failed: {}", error.message());
-            return;
-        }
-        saved_text_ = snapshot.content();
-        ++save_generation_;
-        quit_armed_ = false;
-        message_ = std::format("saved {}", path_);
-    }
-
-    void move_horizontal(bool forward) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        session_.set_caret(forward ? ui::next_code_point(snapshot.content(), session_.caret())
-                                   : ui::previous_code_point(snapshot.content(), session_.caret()));
-    }
-
-    void move_vertical(int delta) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const Text& text = snapshot.content();
-        const LinePosition position = text.position(session_.caret());
-        const int current_column =
-            ui::display_column(text, session_.caret(), session_.style().tab_width);
-        const int last_line = static_cast<int>(text.line_count()) - 1;
-        const int target = std::clamp(static_cast<int>(position.line) + delta, 0, last_line);
-        session_.set_caret(ui::offset_at_display_column(
-            text, static_cast<std::uint32_t>(target), current_column, session_.style().tab_width));
-    }
-
-    void move_home() {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const Text& text = snapshot.content();
-        session_.set_caret(text.line_start(text.position(session_.caret()).line));
-    }
-
-    void move_end() {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const Text& text = snapshot.content();
-        session_.set_caret(text.line_content_end(text.position(session_.caret()).line));
-    }
-
-    void erase_code_point(bool forward) {
-        const DocumentSnapshot snapshot = session_.snapshot();
-        const Text& text = snapshot.content();
-        const TextOffset caret = session_.caret();
-        if (forward) {
-            session_.erase(TextRange{caret, ui::next_code_point(text, caret)});
-        } else {
-            session_.erase(TextRange{ui::previous_code_point(text, caret), caret});
-        }
-    }
-
-    std::string path_;
-    EditSession session_;
-    std::string style_origin_;
-    Text saved_text_;
-    ui::EditorViewport viewport_;
-    ui::LineSigns signs_;
-    RevisionId sign_revision_ = static_cast<RevisionId>(-1);
-    std::uint32_t save_generation_ = 0;
-    std::uint32_t sign_generation_ = static_cast<std::uint32_t>(-1);
-    int last_rows_ = 24;
-    std::string message_;
-    std::string preedit_;
-    std::string last_key_;
-    bool quit_armed_ = false;
-    bool quit_ = false;
-};
 
 class SdlRuntime {
 public:
@@ -356,8 +76,8 @@ struct TextureDeleter {
 
 class SdlWindow {
 public:
-    SdlWindow(EditorModel& editor, SkiaPresenter& presenter)
-        : editor_(editor), presenter_(presenter) {
+    SdlWindow(EditorModel& editor, SkiaPresenter& presenter, InspectionHub* inspection)
+        : editor_(editor), presenter_(presenter), inspection_(inspection) {
         constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
         window_.reset(SDL_CreateWindow("cind · Skia · Wayland", 1100, 760, flags));
         if (!window_) {
@@ -383,9 +103,9 @@ public:
             if (!SDL_WaitEvent(&event)) {
                 throw std::runtime_error(std::format("SDL event wait failed: {}", SDL_GetError()));
             }
-            bool repaint = handle_event(event);
+            bool repaint = dispatch_event(event).repaint;
             while (SDL_PollEvent(&event)) {
-                repaint = handle_event(event) || repaint;
+                repaint = dispatch_event(event).repaint || repaint;
             }
             if (repaint && !editor_.should_quit()) {
                 paint();
@@ -394,35 +114,59 @@ public:
     }
 
 private:
-    bool handle_event(const SDL_Event& event) {
+    struct EventResult {
+        bool handled = false;
+        bool repaint = false;
+    };
+
+    EventResult dispatch_event(const SDL_Event& event) {
+        const RevisionId revision_before = editor_.revision();
+        const EventResult result = handle_event(event);
+        if (inspection_) {
+            const std::uint64_t sequence =
+                inspection_->record_event({.type = event_type(event),
+                                           .detail = event_detail(event),
+                                           .handled = result.handled,
+                                           .repaint = result.repaint,
+                                           .revision_before = revision_before,
+                                           .revision_after = editor_.revision()});
+            if (result.repaint) {
+                last_repaint_event_sequence_ = sequence;
+            }
+        }
+        return result;
+    }
+
+    EventResult handle_event(const SDL_Event& event) {
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             editor_.request_quit();
-            return !editor_.should_quit();
+            return {true, !editor_.should_quit()};
         case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
         case SDL_EVENT_WINDOW_RESTORED:
-            return true;
+            return {true, true};
         case SDL_EVENT_KEY_DOWN: {
             const int page_rows = std::max(1, rows_ - 2);
-            return editor_.handle_key(event.key.scancode, event.key.mod, page_rows);
+            const bool handled = editor_.handle_key(event.key.scancode, event.key.mod, page_rows);
+            return {handled, handled};
         }
         case SDL_EVENT_TEXT_INPUT:
             editor_.insert_text(event.text.text ? event.text.text : "");
-            return true;
+            return {true, true};
         case SDL_EVENT_TEXT_EDITING:
             editor_.set_preedit(event.edit.text ? event.edit.text : "");
-            return true;
+            return {true, true};
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (event.button.button == SDL_BUTTON_LEFT) {
                 editor_.click(mouse_cell_row(event.button.y), mouse_cell_column(event.button.x));
-                return true;
+                return {true, true};
             }
-            return false;
+            return {};
         case SDL_EVENT_MOUSE_WHEEL: {
             float amount = event.wheel.y;
             if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
@@ -433,10 +177,70 @@ private:
             } else if (amount < 0.0F) {
                 editor_.scroll_lines(std::max(1, static_cast<int>(std::ceil(-amount))));
             }
-            return amount != 0.0F;
+            const bool handled = amount != 0.0F;
+            return {handled, handled};
         }
         default:
-            return false;
+            return {};
+        }
+    }
+
+    static std::string event_type(const SDL_Event& event) {
+        switch (event.type) {
+        case SDL_EVENT_QUIT:
+            return "quit";
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            return "window-close";
+        case SDL_EVENT_WINDOW_EXPOSED:
+            return "window-exposed";
+        case SDL_EVENT_WINDOW_RESIZED:
+            return "window-resized";
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            return "window-pixel-size-changed";
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+            return "window-display-changed";
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+            return "window-display-scale-changed";
+        case SDL_EVENT_WINDOW_RESTORED:
+            return "window-restored";
+        case SDL_EVENT_KEY_DOWN:
+            return "key-down";
+        case SDL_EVENT_TEXT_INPUT:
+            return "text-input";
+        case SDL_EVENT_TEXT_EDITING:
+            return "text-editing";
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            return "mouse-button-down";
+        case SDL_EVENT_MOUSE_WHEEL:
+            return "mouse-wheel";
+        default:
+            return std::format("sdl-event-{}", event.type);
+        }
+    }
+
+    std::string event_detail(const SDL_Event& event) const {
+        switch (event.type) {
+        case SDL_EVENT_KEY_DOWN:
+            return std::format(
+                "scancode={} name={} modifiers={}", static_cast<int>(event.key.scancode),
+                SDL_GetScancodeName(event.key.scancode), static_cast<unsigned int>(event.key.mod));
+        case SDL_EVENT_TEXT_INPUT:
+            return std::format("text={}", event.text.text ? event.text.text : "");
+        case SDL_EVENT_TEXT_EDITING:
+            return std::format("preedit={}", event.edit.text ? event.edit.text : "");
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            return std::format("button={} window=({}, {}) cell=({}, {})",
+                               static_cast<int>(event.button.button), event.button.x,
+                               event.button.y, mouse_cell_row(event.button.y),
+                               mouse_cell_column(event.button.x));
+        case SDL_EVENT_MOUSE_WHEEL:
+            return std::format("delta=({}, {}) direction={}", event.wheel.x, event.wheel.y,
+                               static_cast<int>(event.wheel.direction));
+        case SDL_EVENT_WINDOW_RESIZED:
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            return std::format("size={}x{}", event.window.data1, event.window.data2);
+        default:
+            return {};
         }
     }
 
@@ -492,6 +296,53 @@ private:
         }
         update_text_input_area(scene, pixel_width, pixel_height, scale);
         SDL_RenderPresent(renderer_.get());
+        publish_inspection(std::move(scene), pixel_width, pixel_height, scale);
+    }
+
+    void publish_inspection(ui::Scene scene, int pixel_width, int pixel_height, float scale) {
+        if (!inspection_) {
+            return;
+        }
+        int window_width = 0;
+        int window_height = 0;
+        SDL_GetWindowSize(window_.get(), &window_width, &window_height);
+        const SkiaTheme& theme = presenter_.theme();
+        RenderStateSnapshot render{
+            .video_driver = SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "",
+            .window_width = window_width,
+            .window_height = window_height,
+            .output_width = pixel_width,
+            .output_height = pixel_height,
+            .display_scale = scale,
+            .cell_width = presenter_.cell_width(),
+            .cell_height = presenter_.cell_height(),
+            .rows = rows_,
+            .columns = columns_,
+            .texture_format = "ARGB8888",
+            .font_family = presenter_.font_family(),
+            .font_size = presenter_.font_size(),
+            .theme = {.background = theme.background,
+                      .gutter_background = theme.gutter_background,
+                      .status_background = theme.status_background,
+                      .echo_background = theme.echo_background,
+                      .selection_background = theme.selection_background,
+                      .cursor = theme.cursor,
+                      .sign_added = theme.sign_added,
+                      .sign_modified = theme.sign_modified,
+                      .sign_deleted = theme.sign_deleted},
+            .pixel_hash = hash_pixels(),
+        };
+        inspection_->publish(editor_.inspect(), std::move(scene), std::move(render),
+                             last_repaint_event_sequence_);
+    }
+
+    std::uint64_t hash_pixels() const {
+        std::uint64_t hash = 1469598103934665603ULL;
+        for (const std::uint32_t pixel : pixels_) {
+            hash ^= pixel;
+            hash *= 1099511628211ULL;
+        }
+        return hash;
     }
 
     void update_text_input_area(const ui::Scene& scene, int pixel_width, int pixel_height,
@@ -547,6 +398,7 @@ private:
 
     EditorModel& editor_;
     SkiaPresenter& presenter_;
+    InspectionHub* inspection_ = nullptr;
     std::unique_ptr<SDL_Window, WindowDeleter> window_;
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
@@ -555,9 +407,11 @@ private:
     int texture_height_ = 0;
     int rows_ = 24;
     int columns_ = 80;
+    std::uint64_t last_repaint_event_sequence_ = 0;
 };
 
-int run_editor(const std::string& path, std::uint32_t initial_line) {
+int run_editor(const std::string& path, std::uint32_t initial_line,
+               const std::optional<std::filesystem::path>& inspector_socket) {
     std::string initial;
     if (std::filesystem::exists(path)) {
         std::ifstream input(path, std::ios::binary);
@@ -579,7 +433,14 @@ int run_editor(const std::string& path, std::uint32_t initial_line) {
     EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line);
     SkiaPresenter presenter;
     SdlRuntime runtime;
-    SdlWindow window(editor, presenter);
+    std::unique_ptr<InspectionHub> inspection;
+    std::unique_ptr<InspectorServer> inspector;
+    if (inspector_socket) {
+        inspection = std::make_unique<InspectionHub>();
+        inspector = std::make_unique<InspectorServer>(*inspection, *inspector_socket);
+        std::fprintf(stderr, "cind-gui inspector: %s\n", inspector->socket_path().c_str());
+    }
+    SdlWindow window(editor, presenter, inspection.get());
     window.run();
     return 0;
 }
@@ -589,18 +450,54 @@ int run_editor(const std::string& path, std::uint32_t initial_line) {
 } // namespace cind::gui
 
 int main(int argc, char** argv) {
-    if (argc < 2 || argc > 3) {
-        std::fprintf(stderr, "usage: cind-gui [+LINE] <file>\n");
-        return 2;
-    }
     std::uint32_t initial_line = 0;
-    int file_argument = 1;
-    if (argc == 3 && argv[1][0] == '+') {
-        initial_line = static_cast<std::uint32_t>(std::strtoul(argv[1] + 1, nullptr, 10));
-        file_argument = 2;
-    }
+    bool inspect = false;
+    std::optional<std::filesystem::path> inspector_socket;
+    std::optional<std::string> file;
+
     try {
-        return cind::gui::run_editor(argv[file_argument], initial_line);
+        for (int index = 1; index < argc; ++index) {
+            const std::string_view argument = argv[index];
+            if (argument == "--inspect") {
+                inspect = true;
+            } else if (argument == "--help" || argument == "-h") {
+                std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] [+LINE] "
+                                     "<file>\n");
+                return 0;
+            } else if (argument == "--inspect-socket") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--inspect-socket requires a path");
+                }
+                inspect = true;
+                inspector_socket = std::filesystem::absolute(argv[index]);
+            } else if (argument.starts_with('+')) {
+                if (argument.size() == 1 || initial_line != 0) {
+                    throw std::runtime_error("invalid +LINE argument");
+                }
+                char* end = nullptr;
+                errno = 0;
+                const unsigned long parsed = std::strtoul(argument.data() + 1, &end, 10);
+                if (errno != 0 || !end || *end != '\0' || parsed == 0 ||
+                    parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    throw std::runtime_error("invalid +LINE argument");
+                }
+                initial_line = static_cast<std::uint32_t>(parsed);
+            } else if (!file) {
+                file = std::string(argument);
+            } else {
+                throw std::runtime_error("more than one file was provided");
+            }
+        }
+        if (!file) {
+            std::fprintf(stderr,
+                         "usage: cind-gui [--inspect] [--inspect-socket PATH] [+LINE] <file>\n");
+            return 2;
+        }
+        if (inspect && !inspector_socket) {
+            inspector_socket =
+                cind::gui::default_inspector_socket_path(static_cast<int>(::getpid()));
+        }
+        return cind::gui::run_editor(*file, initial_line, inspector_socket);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "cind-gui: %s\n", error.what());
         return 1;
