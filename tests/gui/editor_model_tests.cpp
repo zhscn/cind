@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "gui/editor_model.hpp"
+#include "gui/motion.hpp"
 
 #include <unistd.h>
 
@@ -15,6 +16,39 @@
 
 using namespace cind;
 using namespace cind::gui;
+
+TEST_CASE("critical spring preserves motion when its target changes") {
+    constexpr float frequency = 32.0F;
+    const SpringState moving = advance_critical_spring(
+        {.position = 0.0F, .velocity = 0.0F},
+        {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.05F});
+    REQUIRE(moving.position > 0.0F);
+    REQUIRE(moving.velocity > 0.0F);
+
+    const SpringState retargeted = advance_critical_spring(
+        moving, {.target = 2.0F, .angular_frequency = frequency, .elapsed_seconds = 0.0F});
+    CHECK(retargeted.position == doctest::Approx(moving.position));
+    CHECK(retargeted.velocity == doctest::Approx(moving.velocity));
+}
+
+TEST_CASE("critical spring integration is stable across frame splits") {
+    constexpr float frequency = 32.0F;
+    const SpringState single = advance_critical_spring(
+        {.position = 0.0F, .velocity = 0.0F},
+        {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.1F});
+    SpringState split = advance_critical_spring(
+        {.position = 0.0F, .velocity = 0.0F},
+        {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.04F});
+    split = advance_critical_spring(
+        split, {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.06F});
+
+    CHECK(split.position == doctest::Approx(single.position).epsilon(0.0001));
+    CHECK(split.velocity == doctest::Approx(single.velocity).epsilon(0.0001));
+    const SpringState settled = advance_critical_spring(
+        single, {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.4F});
+    CHECK(spring_at_rest(
+        settled, {.target = 1.0F, .position_tolerance = 0.001F, .velocity_tolerance = 0.01F}));
+}
 
 TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     std::string source;

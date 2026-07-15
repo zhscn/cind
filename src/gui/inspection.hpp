@@ -63,6 +63,7 @@ struct RenderAnimationSnapshot {
     bool cursor = false;
     float scroll_progress = 1.0F;
     float cursor_progress = 1.0F;
+    float scroll_velocity = 0.0F;
     float source_grid_offset_y = 0.0F;
     float target_grid_offset_y = 0.0F;
     std::optional<LogicalPixelRectSnapshot> cursor_rect;
@@ -123,7 +124,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 7;
+    static constexpr int schema_version = 8;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

@@ -2,6 +2,7 @@
 #include "gui/editor_model.hpp"
 #include "gui/inspect_server.hpp"
 #include "gui/inspection.hpp"
+#include "gui/motion.hpp"
 #include "gui/skia_presenter.hpp"
 #include "ui/scene_layout.hpp"
 
@@ -47,8 +48,10 @@ struct OutputSize {
 
 using AnimationClock = std::chrono::steady_clock;
 
-constexpr std::chrono::milliseconds scroll_animation_duration{120};
 constexpr std::chrono::milliseconds cursor_animation_duration{70};
+constexpr float scroll_spring_frequency = 32.0F;
+constexpr float scroll_position_tolerance = 0.001F;
+constexpr float scroll_velocity_tolerance = 0.01F;
 constexpr float wheel_lines_per_step = 3.0F;
 
 float animation_progress(AnimationClock::time_point started, std::chrono::milliseconds duration,
@@ -295,9 +298,10 @@ private:
     struct ScrollAnimation {
         ui::Scene source;
         float source_scroll_top = 0.0F;
-        float from_scroll_top = 0.0F;
+        SpringState motion;
         float target_scroll_top = 0.0F;
-        AnimationClock::time_point started;
+        float initial_distance = 0.0F;
+        AnimationClock::time_point sampled_at;
     };
 
     struct CursorAnimation {
@@ -464,10 +468,13 @@ private:
         return scroll_animation_.has_value() || cursor_animation_.has_value();
     }
 
-    float scroll_position(const ScrollAnimation& animation, AnimationClock::time_point now) const {
-        const float progress =
-            ease_out_cubic(animation_progress(animation.started, scroll_animation_duration, now));
-        return interpolate(animation.from_scroll_top, animation.target_scroll_top, progress);
+    SpringState scroll_state(const ScrollAnimation& animation,
+                             AnimationClock::time_point now) const {
+        const float elapsed = std::chrono::duration<float>(now - animation.sampled_at).count();
+        return advance_critical_spring(animation.motion,
+                                       {.target = animation.target_scroll_top,
+                                        .angular_frequency = scroll_spring_frequency,
+                                        .elapsed_seconds = elapsed});
     }
 
     SkiaLogicalPoint cursor_position(const CursorAnimation& animation,
@@ -496,9 +503,9 @@ private:
         } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
             const float line_delta = scroll_top - *last_scroll_top_;
             if (std::abs(line_delta) <= 4) {
-                const float visual_top = scroll_animation_
-                                             ? scroll_position(*scroll_animation_, now)
-                                             : *last_scroll_top_;
+                const SpringState motion = scroll_animation_
+                                               ? scroll_state(*scroll_animation_, now)
+                                               : SpringState{.position = *last_scroll_top_};
                 ui::Scene source_scene = *last_scene_;
                 float source_scroll_top = *last_scroll_top_;
                 if (scroll_animation_) {
@@ -508,9 +515,10 @@ private:
                 scroll_animation_ = ScrollAnimation{
                     .source = std::move(source_scene),
                     .source_scroll_top = source_scroll_top,
-                    .from_scroll_top = visual_top,
+                    .motion = motion,
                     .target_scroll_top = scroll_top,
-                    .started = now,
+                    .initial_distance = std::abs(scroll_top - motion.position),
+                    .sampled_at = now,
                 };
             } else {
                 scroll_animation_.reset();
@@ -541,11 +549,15 @@ private:
     AnimationPresentation animation_presentation(AnimationClock::time_point now) const {
         AnimationPresentation presentation;
         if (scroll_animation_) {
-            const float linear_progress =
-                animation_progress(scroll_animation_->started, scroll_animation_duration, now);
-            const float visual_top = scroll_position(*scroll_animation_, now);
+            const SpringState state = scroll_state(*scroll_animation_, now);
+            const bool at_rest =
+                spring_at_rest(state, {.target = scroll_animation_->target_scroll_top,
+                                       .position_tolerance = scroll_position_tolerance,
+                                       .velocity_tolerance = scroll_velocity_tolerance});
+            const float visual_top =
+                at_rest ? scroll_animation_->target_scroll_top : state.position;
             presentation.active = true;
-            presentation.scroll_finished = linear_progress >= 1.0F;
+            presentation.scroll_finished = at_rest;
             presentation.frame.scroll_source = &scroll_animation_->source;
             presentation.frame.source_grid_offset_y =
                 (scroll_animation_->source_scroll_top - visual_top) *
@@ -556,7 +568,12 @@ private:
             if (!presentation.scroll_finished) {
                 presentation.snapshot.active = true;
                 presentation.snapshot.scroll = true;
-                presentation.snapshot.scroll_progress = ease_out_cubic(linear_progress);
+                presentation.snapshot.scroll_progress = std::clamp(
+                    1.0F - std::abs(state.position - scroll_animation_->target_scroll_top) /
+                               std::max(scroll_animation_->initial_distance,
+                                        scroll_position_tolerance),
+                    0.0F, 1.0F);
+                presentation.snapshot.scroll_velocity = state.velocity;
                 presentation.snapshot.source_grid_offset_y =
                     presentation.frame.source_grid_offset_y;
                 presentation.snapshot.target_grid_offset_y =

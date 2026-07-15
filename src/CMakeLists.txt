@@ -88,6 +88,7 @@ if (CIND_BUILD_GUI)
 
   add_library(cind_gui_model STATIC
     gui/editor_model.cpp
+    gui/motion.cpp
   )
   target_include_directories(cind_gui_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(cind_gui_model PUBLIC cind_editor cind_ui)

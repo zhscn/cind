@@ -324,9 +324,9 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
     output += ",\"cursor\":";
     append_bool(output, animation.cursor);
     output +=
-        std::format(",\"scroll_progress\":{},\"cursor_progress\":{},\"source_grid_offset_y\":{},"
-                    "\"target_grid_offset_y\":{},\"cursor_rect\":",
-                    animation.scroll_progress, animation.cursor_progress,
+        std::format(",\"scroll_progress\":{},\"cursor_progress\":{},\"scroll_velocity\":{},"
+                    "\"source_grid_offset_y\":{},\"target_grid_offset_y\":{},\"cursor_rect\":",
+                    animation.scroll_progress, animation.cursor_progress, animation.scroll_velocity,
                     animation.source_grid_offset_y, animation.target_grid_offset_y);
     if (animation.cursor_rect) {
         append_logical_rect(output, *animation.cursor_rect);
@@ -531,6 +531,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (animation.scroll_progress < 0.0F || animation.scroll_progress > 1.0F ||
         animation.cursor_progress < 0.0F || animation.cursor_progress > 1.0F) {
         violations.emplace_back("render animation progress is outside [0, 1]");
+    }
+    if (!std::isfinite(animation.scroll_velocity)) {
+        violations.emplace_back("render scroll velocity is not finite");
     }
     if (animation.active != (animation.scroll || animation.cursor)) {
         violations.emplace_back("render animation activity flags are inconsistent");
@@ -988,6 +991,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " scroll=" << (frame.render.animation.scroll ? "true" : "false")
            << " cursor=" << (frame.render.animation.cursor ? "true" : "false")
            << " scroll-progress=" << frame.render.animation.scroll_progress
+           << " scroll-velocity=" << frame.render.animation.scroll_velocity
            << " cursor-progress=" << frame.render.animation.cursor_progress << '\n';
     output << "    damage=" << (frame.render.damage.full_repaint ? "full" : "partial")
            << " rects=" << frame.render.damage.rects.size()

@@ -140,7 +140,8 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   0-based cell 坐标并声明 vertical anchor；`grid_offset_rows` 表示顶部行的分数偏移；
   scene cursor 使用 1-based 坐标。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell
-  大小、字体、主题、pixel hash、animation、damage 和 primitive diagnostics。
+  大小、字体、主题、pixel hash、animation progress/velocity、damage 和 primitive
+  diagnostics。
 - `recent_events`：事件序号、类型、细节、处理结果、重绘标记和 revision 转换。
 - `violations`：模型、scene 与 renderer 之间的 invariant 违规。
 

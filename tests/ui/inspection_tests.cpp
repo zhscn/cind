@@ -123,7 +123,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":7") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":8") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -131,6 +131,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"grid_offset_rows\":0") != std::string::npos);
     CHECK(snapshot.find("\"top_line_offset\":0") != std::string::npos);
     CHECK(snapshot.find("\"render_driver\":\"gpu\"") != std::string::npos);
+    CHECK(snapshot.find("\"scroll_velocity\":0") != std::string::npos);
     CHECK(snapshot.find("\"baseline_from_row_top\":15") != std::string::npos);
     CHECK(snapshot.find("\"cell_bounds\":{\"x\":0") != std::string::npos);
     CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
