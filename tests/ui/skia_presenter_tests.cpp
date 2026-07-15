@@ -32,8 +32,8 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
     scene.cols = 10;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
     body.prims.push_back({0, 2, " ", StyleClass::Text, true});
-    Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}};
-    Region echo{RegionRole::EchoArea, {2, 0, 1, 10}, {}};
+    Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status};
+    Region echo{RegionRole::EchoArea, {2, 0, 1, 10}, {}, SurfaceClass::Echo};
     scene.regions = {body, status, echo};
     scene.cursor_row = 1;
     scene.cursor_col = 7;
@@ -83,10 +83,10 @@ TEST_CASE("Skia presenter paints semantic change-sign colors") {
     Scene scene;
     scene.rows = 3;
     scene.cols = 2;
-    Region signs{RegionRole::ChangeSigns, {0, 0, 3, 1}, {}};
-    signs.prims.push_back({0, 0, " ", StyleClass::SignAdded, false});
-    signs.prims.push_back({1, 0, " ", StyleClass::SignModified, false});
-    signs.prims.push_back({2, 0, " ", StyleClass::SignDeleted, false});
+    Region signs{RegionRole::ChangeSigns, {0, 0, 3, 1}, {}, SurfaceClass::Gutter};
+    signs.prims.push_back({0, 0, " ", StyleClass::SignAdded, false, PrimKind::ChangeBar});
+    signs.prims.push_back({1, 0, " ", StyleClass::SignModified, false, PrimKind::ChangeBar});
+    signs.prims.push_back({2, 0, " ", StyleClass::SignDeleted, false, PrimKind::ChangeDeletion});
     scene.regions = {signs};
     scene.cursor_row = 1;
     scene.cursor_col = 2;

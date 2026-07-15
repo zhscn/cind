@@ -15,6 +15,7 @@ namespace cind::ui {
 // primitives by stamping the visual row.
 struct Run {
     int col = 0;
+    std::uint32_t source_offset = 0;
     std::string text;
     StyleClass style = StyleClass::Text;
     bool selected = false;

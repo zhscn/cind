@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -78,7 +79,8 @@ std::string receive_request_line(int socket) {
     return request;
 }
 
-std::string receive_line(int socket, std::size_t limit) {
+std::string receive_line(int socket) {
+    constexpr std::size_t limit = 128;
     std::string line;
     while (line.size() <= limit) {
         char byte = 0;
@@ -184,25 +186,25 @@ InspectorServer::InspectorServer(InspectionHub& hub, std::filesystem::path socke
         throw socket_error("cannot inspect existing inspector socket");
     }
 
-    socket_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (socket_ < 0) {
+    const int socket = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket < 0) {
         throw socket_error("cannot create inspector socket");
     }
+    socket_.store(socket);
     try {
         const sockaddr_un address = socket_address(socket_path_);
-        if (::bind(socket_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+        if (::bind(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
             throw socket_error("cannot bind inspector socket");
         }
         if (::chmod(socket_path_.c_str(), S_IRUSR | S_IWUSR) != 0) {
             throw socket_error("cannot secure inspector socket");
         }
-        if (::listen(socket_, 8) != 0) {
+        if (::listen(socket, 8) != 0) {
             throw socket_error("cannot listen on inspector socket");
         }
         thread_ = std::thread(&InspectorServer::serve, this);
     } catch (...) {
-        ::close(socket_);
-        socket_ = -1;
+        ::close(socket_.exchange(-1));
         ::unlink(socket_path_.c_str());
         throw;
     }
@@ -210,20 +212,25 @@ InspectorServer::InspectorServer(InspectionHub& hub, std::filesystem::path socke
 
 InspectorServer::~InspectorServer() {
     stopping_.store(true);
-    if (socket_ >= 0) {
-        ::shutdown(socket_, SHUT_RDWR);
-        ::close(socket_);
-        socket_ = -1;
+    const int socket = socket_.exchange(-1);
+    if (socket >= 0) {
+        ::shutdown(socket, SHUT_RDWR);
+        ::close(socket);
     }
     if (thread_.joinable()) {
         thread_.join();
     }
+    clients_.clear(); // async futures join their workers
     ::unlink(socket_path_.c_str());
 }
 
 void InspectorServer::serve() {
     while (!stopping_.load()) {
-        const int client = ::accept4(socket_, nullptr, nullptr, SOCK_CLOEXEC);
+        const int listening = socket_.load();
+        if (listening < 0) {
+            return;
+        }
+        const int client = ::accept4(listening, nullptr, nullptr, SOCK_CLOEXEC);
         if (client < 0) {
             if (errno == EINTR) {
                 continue;
@@ -236,8 +243,18 @@ void InspectorServer::serve() {
         const timeval timeout{.tv_sec = 1, .tv_usec = 0};
         ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-        handle_client(client);
-        ::close(client);
+        std::erase_if(clients_, [](std::future<void>& worker) {
+            return worker.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        });
+        try {
+            clients_.push_back(std::async(std::launch::async, [this, client] {
+                handle_client(client);
+                ::close(client);
+            }));
+        } catch (...) {
+            ::close(client);
+            continue;
+        }
     }
 }
 
@@ -255,6 +272,7 @@ void InspectorServer::handle_client(int client) const {
             send_all(client, std::format("ERR {}\n", payload.size()));
             send_all(client, payload);
         } catch (...) {
+            return;
         }
     }
 }
@@ -275,7 +293,7 @@ InspectionResponse send_inspector_request(const std::filesystem::path& socket_pa
         send_all(socket, line);
         ::shutdown(socket, SHUT_WR);
 
-        const std::string header = receive_line(socket, 128);
+        const std::string header = receive_line(socket);
         const std::size_t separator = header.find(' ');
         if (separator == std::string::npos) {
             throw std::runtime_error("invalid inspector response header");
@@ -287,7 +305,8 @@ InspectionResponse send_inspector_request(const std::filesystem::path& socket_pa
         } catch (const std::exception&) {
             throw std::runtime_error("invalid inspector response size");
         }
-        if (payload_size > 64U * 1024U * 1024U) {
+        constexpr std::size_t max_payload_size = 64ULL * 1024ULL * 1024ULL;
+        if (payload_size > max_payload_size) {
             throw std::runtime_error("inspector response exceeds 64 MiB");
         }
         InspectionResponse response{status == "OK", receive_exact(socket, payload_size)};

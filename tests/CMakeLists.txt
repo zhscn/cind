@@ -14,6 +14,10 @@ add_executable(green_tree_tests syntax/green_tree_tests.cpp)
 target_link_libraries(green_tree_tests PRIVATE cind_syntax doctest::doctest)
 add_test(NAME green_tree_tests COMMAND green_tree_tests)
 
+add_executable(syntax_concurrency_tests syntax/concurrency_tests.cpp)
+target_link_libraries(syntax_concurrency_tests PRIVATE cind_syntax doctest::doctest Threads::Threads)
+add_test(NAME syntax_concurrency_tests COMMAND syntax_concurrency_tests)
+
 add_executable(token_buffer_tests lexer/token_buffer_tests.cpp)
 target_link_libraries(token_buffer_tests PRIVATE cind_lexer doctest::doctest)
 add_test(NAME token_buffer_tests COMMAND token_buffer_tests)
@@ -23,6 +27,10 @@ target_link_libraries(ui_tests PRIVATE cind_ui doctest::doctest)
 add_test(NAME ui_tests COMMAND ui_tests)
 
 if (CIND_BUILD_GUI)
+  add_executable(editor_model_tests gui/editor_model_tests.cpp)
+  target_link_libraries(editor_model_tests PRIVATE cind_gui_model doctest::doctest)
+  add_test(NAME editor_model_tests COMMAND editor_model_tests)
+
   add_executable(inspection_tests ui/inspection_tests.cpp)
   target_link_libraries(inspection_tests PRIVATE cind_inspection doctest::doctest)
   add_test(NAME inspection_tests COMMAND inspection_tests)
@@ -60,5 +68,9 @@ add_test(NAME clang_format_style_tests COMMAND clang_format_style_tests)
 add_executable(indentation_tests indentation/indentation_tests.cpp)
 target_link_libraries(indentation_tests PRIVATE cind_indent doctest::doctest)
 add_test(NAME indentation_tests COMMAND indentation_tests)
+
+add_executable(file_io_tests commands/file_io_tests.cpp)
+target_link_libraries(file_io_tests PRIVATE cind_indent doctest::doctest)
+add_test(NAME file_io_tests COMMAND file_io_tests)
 
 add_test(NAME fixture_tests COMMAND indent-core test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures)

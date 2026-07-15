@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <future>
 #include <thread>
 #include <vector>
 
@@ -29,9 +30,10 @@ private:
 
     InspectionHub& hub_;
     std::filesystem::path socket_path_;
-    int socket_ = -1;
+    std::atomic_int socket_ = -1;
     std::atomic_bool stopping_ = false;
     std::thread thread_;
+    std::vector<std::future<void>> clients_;
 };
 
 InspectionResponse send_inspector_request(const std::filesystem::path& socket_path,

@@ -121,8 +121,8 @@ private:
         }
         const auto line_count = static_cast<int>(text.line_count());
         const int target = std::clamp(static_cast<int>(pos.line) + delta, 0, line_count - 1);
-        session_.set_caret(ui::offset_at_display_column(text, static_cast<std::uint32_t>(target),
-                                                        goal_col_, tab_width()));
+        session_.set_caret(ui::offset_at_display_column(
+            text, {.line = static_cast<std::uint32_t>(target), .column = goal_col_}, tab_width()));
     }
 
     // ---- editing ----------------------------------------------------------
@@ -162,10 +162,10 @@ private:
             soft_delete(true);
             break;
         case KeyKind::Left:
-            session_.set_caret(ui::previous_code_point(text, caret));
+            session_.set_caret(ui::previous_grapheme(text, caret));
             break;
         case KeyKind::Right:
-            session_.set_caret(ui::next_code_point(text, caret));
+            session_.set_caret(ui::next_grapheme(text, caret));
             break;
         case KeyKind::Up:
             move_vertical(-1);
@@ -316,7 +316,7 @@ private:
         if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
             return;
         }
-        const TextOffset target = forward ? caret : ui::previous_code_point(text, caret);
+        const TextOffset target = forward ? caret : ui::previous_grapheme(text, caret);
         const char c = text.byte_at(target);
         auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
         auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
@@ -368,8 +368,8 @@ private:
             message_ = "soft delete: literal not empty (moved over)";
             return;
         }
-        session_.erase(forward ? TextRange{caret, ui::next_code_point(text, caret)}
-                               : TextRange{ui::previous_code_point(text, caret), caret});
+        session_.erase(forward ? TextRange{caret, ui::next_grapheme(text, caret)}
+                               : TextRange{ui::previous_grapheme(text, caret), caret});
     }
 
     void handle_ctrl(char ch, bool& keep_message) {
@@ -638,8 +638,8 @@ private:
         const std::uint32_t target = std::min(line - 1, text.line_count() - 1);
         TextOffset offset = text.line_start(target);
         if (column > 1) {
-            offset = ui::offset_at_display_column(text, target, static_cast<int>(column - 1),
-                                                  tab_width());
+            offset = ui::offset_at_display_column(
+                text, {.line = target, .column = static_cast<int>(column - 1)}, tab_width());
         }
         session_.set_caret(offset);
     }

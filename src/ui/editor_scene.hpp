@@ -31,6 +31,7 @@ struct EditorSceneInput {
     std::string_view style_origin;
     std::string_view last_key;
     std::string_view echo;
+    bool reveal_caret = true;
 
     // A present value puts the caret on the echo line at this zero-based cell.
     std::optional<int> echo_cursor_column;

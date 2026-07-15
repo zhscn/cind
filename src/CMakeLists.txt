@@ -20,7 +20,7 @@ add_library(cind_ui STATIC
   ui/ansi_renderer.cpp
   ui/text_position.cpp
 )
-target_link_libraries(cind_ui PUBLIC cind_lexer)
+target_link_libraries(cind_ui PUBLIC cind_lexer PkgConfig::Utf8Proc)
 
 add_library(cind_syntax STATIC
   syntax/parser.cpp
@@ -58,7 +58,6 @@ target_link_libraries(indent-core PRIVATE cind_editor cind_ui)
 
 if (CIND_BUILD_GUI)
   find_package(SDL3 CONFIG REQUIRED)
-  find_package(Threads REQUIRED)
 
   add_library(cind_inspection STATIC
     gui/inspection.cpp
@@ -67,19 +66,23 @@ if (CIND_BUILD_GUI)
   target_include_directories(cind_inspection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(cind_inspection PUBLIC cind_ui Threads::Threads)
 
+  add_library(cind_gui_model STATIC
+    gui/editor_model.cpp
+  )
+  target_include_directories(cind_gui_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(cind_gui_model PUBLIC cind_editor cind_ui)
+
   add_library(cind_skia_ui STATIC
     gui/skia_presenter.cpp
   )
   target_include_directories(cind_skia_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_options(cind_skia_ui PRIVATE -Wno-conversion -Wno-shadow)
   target_link_libraries(cind_skia_ui PUBLIC cind_ui PRIVATE Skia::Skia)
 
   add_executable(cind-gui
-    gui/editor_model.cpp
     gui/main.cpp
   )
   target_link_libraries(cind-gui PRIVATE
-    cind_editor
+    cind_gui_model
     cind_inspection
     cind_skia_ui
     SDL3::SDL3

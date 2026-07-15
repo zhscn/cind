@@ -2,36 +2,54 @@
 
 #include "ui/char_width.hpp"
 
+#include <algorithm>
+#include <vector>
+
 namespace cind::ui {
 
 namespace {
 
-bool is_continuation_byte(char byte) {
-    return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
+std::vector<std::uint32_t> grapheme_boundaries(std::string_view text) {
+    std::vector<std::uint32_t> boundaries{0};
+    std::uint32_t at = 0;
+    while (at < text.size()) {
+        const GraphemeDecode decoded = decode_grapheme(text.substr(at));
+        at += static_cast<std::uint32_t>(decoded.bytes);
+        boundaries.push_back(at);
+    }
+    return boundaries;
 }
 
 } // namespace
 
-TextOffset previous_code_point(const Text& text, TextOffset offset) {
+TextOffset previous_grapheme(const Text& text, TextOffset offset) {
     if (offset.value == 0) {
         return offset;
     }
-    std::uint32_t at = offset.value - 1;
-    while (at > 0 && is_continuation_byte(text.byte_at(TextOffset{at}))) {
-        --at;
+    const LinePosition position = text.position(offset);
+    const TextOffset line_start = text.line_start(position.line);
+    if (offset == line_start) {
+        return TextOffset{offset.value - 1};
     }
-    return TextOffset{at};
+    const std::string prefix = text.substring(TextRange{line_start, offset});
+    const std::vector<std::uint32_t> boundaries = grapheme_boundaries(prefix);
+    return TextOffset{line_start.value + boundaries[boundaries.size() - 2]};
 }
 
-TextOffset next_code_point(const Text& text, TextOffset offset) {
+TextOffset next_grapheme(const Text& text, TextOffset offset) {
     if (offset.value >= text.size_bytes()) {
         return offset;
     }
-    std::uint32_t at = offset.value + 1;
-    while (at < text.size_bytes() && is_continuation_byte(text.byte_at(TextOffset{at}))) {
-        ++at;
+    const LinePosition position = text.position(offset);
+    const TextRange content = text.line_content_range(position.line);
+    if (offset >= content.end) {
+        return TextOffset{offset.value + 1};
     }
-    return TextOffset{at};
+    const std::string line = text.substring(content);
+    const std::vector<std::uint32_t> boundaries = grapheme_boundaries(line);
+    const std::uint32_t relative = offset.value - content.start.value;
+    const auto next = std::ranges::upper_bound(boundaries, relative);
+    return TextOffset{content.start.value + *next};
 }
 
 int display_column(const Text& text, TextOffset offset, int tab_width) {
@@ -45,29 +63,28 @@ int display_column(const Text& text, TextOffset offset, int tab_width) {
             rest.remove_prefix(1);
             continue;
         }
-        const Utf8Decode decoded = decode_utf8(rest);
-        column += code_point_width(decoded.cp);
+        const GraphemeDecode decoded = decode_grapheme(rest);
+        column += decoded.width;
         rest.remove_prefix(static_cast<std::size_t>(decoded.bytes));
     }
     return column;
 }
 
-TextOffset offset_at_display_column(const Text& text, std::uint32_t line, int column,
-                                    int tab_width) {
-    const TextRange content = text.line_content_range(line);
+TextOffset offset_at_display_column(const Text& text, DisplayPosition position, int tab_width) {
+    const TextRange content = text.line_content_range(position.line);
     const std::string bytes = text.substring(content);
     std::string_view rest = bytes;
     std::uint32_t offset = content.start.value;
     int current = 0;
-    while (!rest.empty() && current < column) {
+    while (!rest.empty() && current < position.column) {
         if (rest.front() == '\t') {
             current += tab_width - current % tab_width;
             ++offset;
             rest.remove_prefix(1);
             continue;
         }
-        const Utf8Decode decoded = decode_utf8(rest);
-        current += code_point_width(decoded.cp);
+        const GraphemeDecode decoded = decode_grapheme(rest);
+        current += decoded.width;
         offset += static_cast<std::uint32_t>(decoded.bytes);
         rest.remove_prefix(static_cast<std::size_t>(decoded.bytes));
     }

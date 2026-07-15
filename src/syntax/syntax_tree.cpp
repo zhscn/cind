@@ -81,69 +81,88 @@ TextRange span_range(std::uint32_t base, std::uint32_t width, const TokenBuffer&
 } // namespace
 
 SyntaxNodeId SyntaxTree::root() const {
-    if (red_.empty() && green_root_) {
-        red_.push_back(SyntaxNode{green_root_->kind,
-                                  0,
-                                  green_root_->width,
-                                  kInvalidNode,
-                                  {},
-                                  green_root_->incomplete,
-                                  green_root_->reclassified,
-                                  green_root_->expected,
-                                  green_root_.get(),
-                                  false});
-    }
+    std::scoped_lock lock(red_cache_->mutex);
+    ensure_root_unlocked(*red_cache_);
     return 0;
 }
 
-void SyntaxTree::expand(SyntaxNodeId id) const {
-    SyntaxNode& n = red_[id];
+void SyntaxTree::ensure_root_unlocked(RedCache& cache) const {
+    if (cache.nodes.empty() && green_root_) {
+        cache.nodes.push_back(std::make_unique<SyntaxNode>(SyntaxNode{green_root_->kind,
+                                                                      0,
+                                                                      green_root_->width,
+                                                                      kInvalidNode,
+                                                                      {},
+                                                                      green_root_->incomplete,
+                                                                      green_root_->reclassified,
+                                                                      green_root_->expected,
+                                                                      green_root_.get(),
+                                                                      false}));
+    }
+}
+
+void SyntaxTree::expand_unlocked(RedCache& cache, SyntaxNodeId id) const {
+    SyntaxNode& n = *cache.nodes[id];
     if (n.expanded) {
         return;
     }
-    n.expanded = true;
     const GreenNode* g = n.green;
     std::uint32_t cursor = n.first_token;
     std::vector<SyntaxNodeId> kids;
     kids.reserve(g->children.size());
     for (const GreenChild& gc : g->children) {
         const std::uint32_t cf = cursor + gc.leading;
-        kids.push_back(static_cast<SyntaxNodeId>(red_.size()));
-        red_.push_back(SyntaxNode{gc.node->kind,
-                                  cf,
-                                  cf + gc.node->width,
-                                  id,
-                                  {},
-                                  gc.node->incomplete,
-                                  gc.node->reclassified,
-                                  gc.node->expected,
-                                  gc.node.get(),
-                                  false});
+        kids.push_back(static_cast<SyntaxNodeId>(cache.nodes.size()));
+        cache.nodes.push_back(std::make_unique<SyntaxNode>(SyntaxNode{gc.node->kind,
+                                                                      cf,
+                                                                      cf + gc.node->width,
+                                                                      id,
+                                                                      {},
+                                                                      gc.node->incomplete,
+                                                                      gc.node->reclassified,
+                                                                      gc.node->expected,
+                                                                      gc.node.get(),
+                                                                      false}));
         cursor = cf + gc.node->width;
     }
-    red_[id].children = std::move(kids);
+    n.children = std::move(kids);
+    n.expanded = true;
 }
 
 const SyntaxNode& SyntaxTree::node(SyntaxNodeId id) const {
-    expand(id);
-    return red_[id];
+    SyntaxNode* result = nullptr;
+    {
+        std::scoped_lock lock(red_cache_->mutex);
+        ensure_root_unlocked(*red_cache_);
+        expand_unlocked(*red_cache_, id);
+        result = red_cache_->nodes[id].get();
+    }
+    return *result;
 }
 
 TextRange SyntaxTree::node_range(SyntaxNodeId id) const {
-    const SyntaxNode& n = red_[id];
+    std::scoped_lock lock(red_cache_->mutex);
+    ensure_root_unlocked(*red_cache_);
+    return node_range_unlocked(*red_cache_, id);
+}
+
+TextRange SyntaxTree::node_range_unlocked(const RedCache& cache, SyntaxNodeId id) const {
+    const SyntaxNode& n = *cache.nodes[id];
     return span_range(n.first_token, n.end_token - n.first_token, tokens_);
 }
 
 SyntaxNodeId SyntaxTree::node_at(TextOffset offset) const {
-    SyntaxNodeId current = root();
+    std::scoped_lock lock(red_cache_->mutex);
+    ensure_root_unlocked(*red_cache_);
+    SyntaxNodeId current = 0;
     while (true) {
-        expand(current);
+        expand_unlocked(*red_cache_, current);
         bool descended = false;
-        for (SyntaxNodeId child : red_[current].children) {
-            if (red_[child].kind == SyntaxKind::MissingToken) {
+        for (SyntaxNodeId child : red_cache_->nodes[current]->children) {
+            if (red_cache_->nodes[child]->kind == SyntaxKind::MissingToken) {
                 continue;
             }
-            if (node_range(child).contains(offset)) {
+            if (node_range_unlocked(*red_cache_, child).contains(offset)) {
                 current = child;
                 descended = true;
                 break;

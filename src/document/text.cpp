@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <format>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -62,6 +63,9 @@ std::vector<NodePtr> build_leaves(std::string_view text) {
 }
 
 NodePtr build_tree(std::string_view text) {
+    if (text.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("Text exceeds the 32-bit byte-offset limit");
+    }
     std::vector<NodePtr> level = build_leaves(text);
     while (level.size() > 1) {
         std::vector<NodePtr> parents;
@@ -256,6 +260,9 @@ std::optional<std::string> validate_node(const TextNode* node, bool is_root) {
 } // namespace
 
 TextSummary TextSummary::of(std::string_view text) {
+    if (text.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("TextSummary exceeds the 32-bit byte-offset limit");
+    }
     TextSummary summary;
     summary.bytes = static_cast<std::uint32_t>(text.size());
     for (char byte : text) {
@@ -442,6 +449,11 @@ Text Text::replace(TextRange range, std::string_view replacement) const {
     std::uint32_t size = size_bytes();
     if (range.start > range.end || range.end.value > size) {
         throw std::out_of_range("Text: range out of range");
+    }
+    const std::uint64_t result_size = static_cast<std::uint64_t>(size) - range.length() +
+                                      static_cast<std::uint64_t>(replacement.size());
+    if (result_size > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("Text replacement exceeds the 32-bit byte-offset limit");
     }
     NodePtr prefix = range.start.value > 0 ? slice_node(root_, 0, range.start.value) : nullptr;
     NodePtr middle = replacement.empty() ? nullptr : build_tree(replacement);

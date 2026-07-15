@@ -4,23 +4,15 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cind::ui {
 
-// Backend-independent frame model, decomposed the way UI stacks are:
-// *layout* partitions the screen into regions (boxes with a role), *paint*
-// fills each region with a display list of styled primitives in local
-// coordinates. The editor composes a Scene per frame; a presenter renders
-// it — ANSI today, a pixel canvas (Skia) or a wire protocol (remote frame
-// diffs) later.
-//
-// Extensibility contract: a new widget (minimap, scroll bar, fold strip,
-// tooltip panel, ...) is a new region role painted with the same primitives
-// — compose lays it out, presenters render it with zero changes. A
-// presenter specializes on a role only when it wants native drawing (e.g.
-// Skia painting a pixel minimap from richer editor-side data instead of the
-// cell-grid primitives).
+// Backend-independent frame model. Layout partitions the screen into regions;
+// each region carries a surface class and a display list in local coordinates.
+// Region roles remain semantic inspection and input-routing metadata, while
+// presenters render only surface classes and primitive kinds.
 
 // Cell-unit rectangle in scene coordinates (0-based row/col). A GUI
 // presenter maps cells to pixels with its font metrics.
@@ -31,16 +23,40 @@ struct Rect {
     int cols = 0;
 };
 
-// One painted primitive: styled text at a region-local position. Layout is
-// done — the text is clipped, tabs are expanded, wide glyphs measured.
-// StyleClass is the semantic hook: pixel presenters may key on it (draw a
-// change sign as a colored bar) and ignore the glyph text.
+struct CellPoint {
+    int row = 0;
+    int column = 0;
+};
+
+enum class PrimKind : std::uint8_t {
+    Text,
+    ChangeBar,
+    ChangeDeletion,
+};
+
+// One painted primitive at a region-local position. Text is clipped, tabs are
+// expanded, and grapheme widths are measured before the scene is published.
 struct Prim {
+    Prim() = default;
+    Prim(int row, int col, std::string text, StyleClass style, bool selected,
+         PrimKind kind = PrimKind::Text, std::string id = {})
+        : row(row), col(col), text(std::move(text)), style(style), selected(selected), kind(kind),
+          id(std::move(id)) {}
+
     int row = 0; // region-local
     int col = 0;
     std::string text;
     StyleClass style = StyleClass::Text;
     bool selected = false;
+    PrimKind kind = PrimKind::Text;
+    std::string id;
+};
+
+enum class SurfaceClass : std::uint8_t {
+    Editor,
+    Gutter,
+    Status,
+    Echo,
 };
 
 enum class RegionRole : std::uint8_t {
@@ -55,6 +71,7 @@ struct Region {
     RegionRole role = RegionRole::TextArea;
     Rect rect;
     std::vector<Prim> prims;
+    SurfaceClass surface = SurfaceClass::Editor;
 };
 
 struct Scene {
@@ -68,6 +85,7 @@ struct Scene {
     // (text caret or prompt input point).
     int cursor_row = 1;
     int cursor_col = 1;
+    bool cursor_visible = true;
 
     const Region* find(RegionRole role) const {
         for (const Region& r : regions) {

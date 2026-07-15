@@ -18,12 +18,14 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
         current = Run{};
         open = false;
     };
-    const auto emit = [&](std::string_view glyph, int col, StyleClass style, bool selected) {
+    const auto emit = [&](std::string_view glyph, StyleClass style, int col, bool selected,
+                          std::uint32_t source_offset) {
         if (open && (style != current.style || selected != current.selected)) {
             flush();
         }
         if (!open) {
             current.col = col - in.left_col;
+            current.source_offset = source_offset;
             current.style = style;
             current.selected = selected;
             open = true;
@@ -58,7 +60,7 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
                     break;
                 }
                 if (col + k >= in.left_col) {
-                    emit(" ", col + k, style, selected);
+                    emit(" ", style, col + k, selected, offset);
                 }
             }
             col += cell;
@@ -66,10 +68,10 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
             continue;
         }
 
-        const Utf8Decode d = decode_utf8(in.text.substr(at));
-        const int cell = code_point_width(d.cp);
+        const GraphemeDecode d = decode_grapheme(in.text.substr(at));
+        const int cell = d.width;
         if (cell == 0) {
-            // Combining mark: attach to the open run when visible.
+            // A standalone zero-width cluster attaches to the open run.
             if (open) {
                 current.text.append(in.text.substr(at, static_cast<std::size_t>(d.bytes)));
             }
@@ -80,10 +82,11 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
             break; // a wide glyph that would cross the right edge is dropped
         }
         if (col >= in.left_col) {
-            emit(in.text.substr(at, static_cast<std::size_t>(d.bytes)), col, style, selected);
+            emit(in.text.substr(at, static_cast<std::size_t>(d.bytes)), style, col, selected,
+                 offset);
         } else if (col + cell > in.left_col) {
             // Wide glyph straddling the left clip edge: pad its visible half.
-            emit(" ", in.left_col, style, selected);
+            emit(" ", style, in.left_col, selected, offset);
         }
         col += cell;
         at += static_cast<std::size_t>(d.bytes);

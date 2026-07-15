@@ -65,7 +65,9 @@ std::string render_ansi(const Scene& scene) {
         }
     }
 
-    out += std::format("\x1b[{};{}H\x1b[?25h", scene.cursor_row, scene.cursor_col);
+    if (scene.cursor_visible) {
+        out += std::format("\x1b[{};{}H\x1b[?25h", scene.cursor_row, scene.cursor_col);
+    }
     return out;
 }
 

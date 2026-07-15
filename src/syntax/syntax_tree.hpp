@@ -7,7 +7,8 @@
 #include "syntax/pp_conditional.hpp"
 #include "syntax/syntax_kind.hpp"
 
-#include <deque>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,9 +29,9 @@ struct PPDirective {
 // range of token indices; tokens (including trivia) inside its range but outside
 // all children belong to the node itself, so every token belongs to exactly one
 // deepest node. Leading/trailing trivia of a construct stays with its parent.
-// Red nodes are computed lazily from the green tree on demand (design.md §607):
-// `green`/`expanded` are the cache bookkeeping; all other fields are the
-// consumer-visible view and are stable once the node exists.
+// Red nodes are computed lazily from the green tree on demand. Each node is
+// allocated independently and becomes immutable before a reference is exposed;
+// cache lookup and expansion are serialized for concurrent const queries.
 struct SyntaxNode {
     SyntaxKind kind = SyntaxKind::Error;
     std::uint32_t first_token = 0;
@@ -82,10 +83,16 @@ private:
     // Sets the green source of truth and drops any materialized red nodes.
     void set_green(GreenRef root) {
         green_root_ = std::move(root);
-        red_.clear();
+        reset_red_cache();
     }
-    // Materializes id's children (one level) if not already done.
-    void expand(SyntaxNodeId id) const;
+    struct RedCache {
+        std::mutex mutex;
+        std::vector<std::unique_ptr<SyntaxNode>> nodes;
+    };
+    void ensure_root_unlocked(RedCache& cache) const;
+    void expand_unlocked(RedCache& cache, SyntaxNodeId id) const;
+    TextRange node_range_unlocked(const RedCache& cache, SyntaxNodeId id) const;
+    void reset_red_cache() { red_cache_ = std::make_shared<RedCache>(); }
 
     GreenRef green_root_;
     TokenBuffer tokens_;
@@ -100,9 +107,9 @@ private:
     // reparse splices, so the per-keystroke pp-safety check walks this list
     // instead of rescanning every token (design.md §17 perf note).
     std::vector<PPDirective> pp_dirs_;
-    // Lazy red pool; index == SyntaxNodeId. deque so held `const SyntaxNode&`
-    // stay valid as navigation materializes more nodes (no reallocation).
-    mutable std::deque<SyntaxNode> red_;
+    // Copies of a tree share their immutable lazy cache. set_green() detaches
+    // before an incrementally reparsed copy starts materializing new nodes.
+    mutable std::shared_ptr<RedCache> red_cache_ = std::make_shared<RedCache>();
 };
 
 struct LexOutput;

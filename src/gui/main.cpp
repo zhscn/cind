@@ -31,6 +31,62 @@ namespace cind::gui {
 
 namespace {
 
+EditorKey editor_key(SDL_Scancode scancode) {
+    switch (scancode) {
+    case SDL_SCANCODE_A:
+        return EditorKey::A;
+    case SDL_SCANCODE_E:
+        return EditorKey::E;
+    case SDL_SCANCODE_N:
+        return EditorKey::N;
+    case SDL_SCANCODE_P:
+        return EditorKey::P;
+    case SDL_SCANCODE_Q:
+        return EditorKey::Q;
+    case SDL_SCANCODE_R:
+        return EditorKey::R;
+    case SDL_SCANCODE_S:
+        return EditorKey::S;
+    case SDL_SCANCODE_V:
+        return EditorKey::V;
+    case SDL_SCANCODE_Z:
+        return EditorKey::Z;
+    case SDL_SCANCODE_LEFT:
+        return EditorKey::Left;
+    case SDL_SCANCODE_RIGHT:
+        return EditorKey::Right;
+    case SDL_SCANCODE_UP:
+        return EditorKey::Up;
+    case SDL_SCANCODE_DOWN:
+        return EditorKey::Down;
+    case SDL_SCANCODE_HOME:
+        return EditorKey::Home;
+    case SDL_SCANCODE_END:
+        return EditorKey::End;
+    case SDL_SCANCODE_PAGEUP:
+        return EditorKey::PageUp;
+    case SDL_SCANCODE_PAGEDOWN:
+        return EditorKey::PageDown;
+    case SDL_SCANCODE_BACKSPACE:
+        return EditorKey::Backspace;
+    case SDL_SCANCODE_DELETE:
+        return EditorKey::Delete;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        return EditorKey::Enter;
+    case SDL_SCANCODE_TAB:
+        return EditorKey::Tab;
+    default:
+        return EditorKey::Unknown;
+    }
+}
+
+KeyModifiers key_modifiers(SDL_Keymod modifiers) {
+    return {.control = (modifiers & SDL_KMOD_CTRL) != 0,
+            .alt = (modifiers & SDL_KMOD_ALT) != 0,
+            .shift = (modifiers & SDL_KMOD_SHIFT) != 0};
+}
+
 class SdlRuntime {
 public:
     SdlRuntime() {
@@ -100,13 +156,19 @@ public:
         paint();
         while (!editor_.should_quit()) {
             SDL_Event event{};
-            if (!SDL_WaitEvent(&event)) {
+            const bool received = editor_.has_background_work() ? SDL_WaitEventTimeout(&event, 16)
+                                                                : SDL_WaitEvent(&event);
+            if (!received && !editor_.has_background_work()) {
                 throw std::runtime_error(std::format("SDL event wait failed: {}", SDL_GetError()));
             }
-            bool repaint = dispatch_event(event).repaint;
-            while (SDL_PollEvent(&event)) {
-                repaint = dispatch_event(event).repaint || repaint;
+            bool repaint = false;
+            if (received) {
+                repaint = dispatch_event(event).repaint;
+                while (SDL_PollEvent(&event)) {
+                    repaint = dispatch_event(event).repaint || repaint;
+                }
             }
+            repaint = editor_.poll_background_work() || repaint;
             if (repaint && !editor_.should_quit()) {
                 paint();
             }
@@ -152,7 +214,8 @@ private:
             return {true, true};
         case SDL_EVENT_KEY_DOWN: {
             const int page_rows = std::max(1, rows_ - 2);
-            const bool handled = editor_.handle_key(event.key.scancode, event.key.mod, page_rows);
+            const bool handled = editor_.handle_key(editor_key(event.key.scancode),
+                                                    key_modifiers(event.key.mod), page_rows);
             return {handled, handled};
         }
         case SDL_EVENT_TEXT_INPUT:
@@ -163,7 +226,8 @@ private:
             return {true, true};
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (event.button.button == SDL_BUTTON_LEFT) {
-                editor_.click(mouse_cell_row(event.button.y), mouse_cell_column(event.button.x));
+                editor_.click({.row = mouse_cell_row(event.button.y),
+                               .column = mouse_cell_column(event.button.x)});
                 return {true, true};
             }
             return {};
@@ -347,6 +411,9 @@ private:
 
     void update_text_input_area(const ui::Scene& scene, int pixel_width, int pixel_height,
                                 float scale) {
+        if (!scene.cursor_visible) {
+            return;
+        }
         int window_width = 0;
         int window_height = 0;
         if (!SDL_GetWindowSize(window_.get(), &window_width, &window_height) || window_width <= 0 ||

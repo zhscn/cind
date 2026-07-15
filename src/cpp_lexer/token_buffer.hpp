@@ -16,8 +16,8 @@ namespace cind {
 // not O(tokens) — and a mid-stream splice repacks only the damaged window
 // plus the chunk table instead of memmoving the whole flat vector.
 //
-// Access is single-threaded; operator[] keeps a mutable cursor so the
-// parser's mostly-sequential reads stay O(1).
+// Const access is side-effect-free, so immutable analysis snapshots can be
+// queried concurrently. Random access locates a chunk through the prefix table.
 class TokenBuffer {
     struct Chunk {
         std::uint32_t base = 0;  // byte offset added to every token range
@@ -142,7 +142,6 @@ private:
     std::vector<Chunk> chunks_;
     std::vector<std::size_t> first_; // first_[k] = global index of chunks_[k][0]
     std::size_t count_ = 0;
-    mutable std::size_t cursor_ = 0; // last chunk hit; sequential reads are O(1)
 };
 
 } // namespace cind

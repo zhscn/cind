@@ -9,20 +9,29 @@ add_compile_options(-Wall -Wextra -Wconversion -Wshadow)
 
 option(CIND_BUILD_GUI "Build the Skia/SDL3 Wayland editor frontend" OFF)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Utf8Proc REQUIRED IMPORTED_TARGET libutf8proc)
+find_package(Threads REQUIRED)
+
 if (CIND_BUILD_GUI)
   include(cmake/WebKitSkia.cmake)
   cind_add_webkit_skia()
 endif()
 
-include(FetchContent)
-FetchContent_Declare(
-  doctest
-  URL https://github.com/doctest/doctest/archive/refs/tags/v2.4.12.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(doctest)
+include(CTest)
+if (BUILD_TESTING)
+  include(FetchContent)
+  FetchContent_Declare(
+    doctest
+    URL https://github.com/doctest/doctest/archive/refs/tags/v2.4.12.tar.gz
+    URL_HASH SHA256=73381c7aa4dee704bd935609668cf41880ea7f19fa0504a200e13b74999c2d70
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(doctest)
+endif()
 
 add_subdirectory(src)
 
-enable_testing()
-add_subdirectory(tests)
+if (BUILD_TESTING)
+  add_subdirectory(tests)
+endif()

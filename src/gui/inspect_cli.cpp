@@ -1,6 +1,7 @@
 #include "gui/inspect_server.hpp"
 
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -78,29 +79,45 @@ InspectionResponse request(const std::filesystem::path& socket, std::string_view
     throw std::runtime_error("GUI inspector did not publish its initial frame");
 }
 
+std::uint64_t json_unsigned(std::string_view json, const char* field) {
+    const std::string key = std::format("\"{}\":", field);
+    const std::size_t start = json.find(key);
+    if (start == std::string_view::npos) {
+        throw std::runtime_error(std::format("inspector response has no '{}' field", field));
+    }
+    const std::string_view number = json.substr(start + key.size());
+    std::uint64_t parsed = 0;
+    const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), parsed);
+    if (error != std::errc{} || end == number.data()) {
+        throw std::runtime_error(std::format("inspector '{}' field is invalid", field));
+    }
+    return parsed;
+}
+
 void watch_frames(const std::filesystem::path& socket) {
     std::uint64_t last_frame = 0;
     while (true) {
-        const std::uint64_t frame = std::stoull(request(socket, "get frame.id").payload);
-        if (frame != last_frame) {
-            std::puts(request(socket, "snapshot").payload.c_str());
+        const std::string payload =
+            request(socket, std::format("wait-frame {}", last_frame)).payload;
+        if (!payload.empty()) {
+            last_frame = json_unsigned(payload, "frame_id");
+            std::puts(payload.c_str());
             std::fflush(stdout);
-            last_frame = frame;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 
 void watch_events(const std::filesystem::path& socket) {
     std::uint64_t last_event = 0;
     while (true) {
-        const std::uint64_t event = std::stoull(request(socket, "get event.last_sequence").payload);
-        if (event > last_event) {
-            std::puts(request(socket, std::format("events {}", last_event)).payload.c_str());
+        const std::string payload =
+            request(socket, std::format("wait-events {}", last_event)).payload;
+        const std::uint64_t event = json_unsigned(payload, "last_sequence");
+        if (event > last_event || payload.find("\"gap\":true") != std::string::npos) {
+            std::puts(payload.c_str());
             std::fflush(stdout);
             last_event = event;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 

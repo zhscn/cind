@@ -55,6 +55,32 @@ void append_bool(std::string& output, bool value) {
     output += value ? "true" : "false";
 }
 
+std::string_view surface_class_name(ui::SurfaceClass surface) {
+    switch (surface) {
+    case ui::SurfaceClass::Editor:
+        return "editor";
+    case ui::SurfaceClass::Gutter:
+        return "gutter";
+    case ui::SurfaceClass::Status:
+        return "status";
+    case ui::SurfaceClass::Echo:
+        return "echo";
+    }
+    return "unknown";
+}
+
+std::string_view prim_kind_name(ui::PrimKind kind) {
+    switch (kind) {
+    case ui::PrimKind::Text:
+        return "text";
+    case ui::PrimKind::ChangeBar:
+        return "change-bar";
+    case ui::PrimKind::ChangeDeletion:
+        return "change-deletion";
+    }
+    return "unknown";
+}
+
 void append_rect(std::string& output, const ui::Rect& rect) {
     output += std::format("{{\"row\":{},\"col\":{},\"rows\":{},\"cols\":{}}}", rect.row, rect.col,
                           rect.rows, rect.cols);
@@ -95,15 +121,21 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output.push_back('}');
 }
 
-void append_prim(std::string& output, const ui::Region& region, std::size_t index) {
-    const ui::Prim& prim = region.prims[index];
+void append_prim(std::string& output, const ui::Region& region, const ui::Prim& prim) {
     output += "{\"id\":";
-    append_json_string(output,
-                       std::format("region:{}/prim:{}", region_role_name(region.role), index));
+    if (prim.id.empty()) {
+        append_json_string(output,
+                           std::format("region:{}/cell:{}:{}/{}", region_role_name(region.role),
+                                       prim.row, prim.col, prim_kind_name(prim.kind)));
+    } else {
+        append_json_string(output, prim.id);
+    }
     output += std::format(",\"row\":{},\"col\":{},\"text\":", prim.row, prim.col);
     append_json_string(output, prim.text);
     output += ",\"style\":";
     append_json_string(output, style_class_name(prim.style));
+    output += ",\"kind\":";
+    append_json_string(output, prim_kind_name(prim.kind));
     output += ",\"selected\":";
     append_bool(output, prim.selected);
     output.push_back('}');
@@ -114,6 +146,8 @@ void append_region(std::string& output, const ui::Region& region) {
     append_json_string(output, std::format("region:{}", region_role_name(region.role)));
     output += ",\"role\":";
     append_json_string(output, region_role_name(region.role));
+    output += ",\"surface\":";
+    append_json_string(output, surface_class_name(region.surface));
     output += ",\"rect\":";
     append_rect(output, region.rect);
     output += ",\"prims\":[";
@@ -121,15 +155,17 @@ void append_region(std::string& output, const ui::Region& region) {
         if (index != 0) {
             output.push_back(',');
         }
-        append_prim(output, region, index);
+        append_prim(output, region, region.prims[index]);
     }
     output += "]}";
 }
 
 void append_scene(std::string& output, const ui::Scene& scene) {
-    output +=
-        std::format("{{\"rows\":{},\"cols\":{},\"cursor\":{{\"row\":{},\"col\":{}}},\"regions\":[",
-                    scene.rows, scene.cols, scene.cursor_row, scene.cursor_col);
+    output += std::format(
+        "{{\"rows\":{},\"cols\":{},\"cursor\":{{\"row\":{},\"col\":{},\"visible\":", scene.rows,
+        scene.cols, scene.cursor_row, scene.cursor_col);
+    append_bool(output, scene.cursor_visible);
+    output += "},\"regions\":[";
     for (std::size_t index = 0; index < scene.regions.size(); ++index) {
         if (index != 0) {
             output.push_back(',');
@@ -206,6 +242,19 @@ void append_events(std::string& output, const std::vector<InputEventSnapshot>& e
     output.push_back(']');
 }
 
+void append_event_batch(std::string& output, const InspectionState& state,
+                        std::uint64_t after_sequence) {
+    const bool gap = after_sequence < state.oldest_event_sequence &&
+                     state.oldest_event_sequence - after_sequence > 1;
+    output += std::format("{{\"after_sequence\":{},\"oldest_available\":{},"
+                          "\"last_sequence\":{},\"gap\":",
+                          after_sequence, state.oldest_event_sequence, state.last_event_sequence);
+    append_bool(output, gap);
+    output += ",\"events\":";
+    append_events(output, state.events, after_sequence);
+    output.push_back('}');
+}
+
 void append_strings(std::string& output, const std::vector<std::string>& values) {
     output.push_back('[');
     for (std::size_t index = 0; index < values.size(); ++index) {
@@ -231,8 +280,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.scene.rows <= 0 || frame.scene.cols <= 0) {
         violations.emplace_back("scene geometry must be positive");
     }
-    if (frame.scene.cursor_row < 1 || frame.scene.cursor_row > frame.scene.rows ||
-        frame.scene.cursor_col < 1 || frame.scene.cursor_col > frame.scene.cols) {
+    if (frame.scene.cursor_visible &&
+        (frame.scene.cursor_row < 1 || frame.scene.cursor_row > frame.scene.rows ||
+         frame.scene.cursor_col < 1 || frame.scene.cursor_col > frame.scene.cols)) {
         violations.emplace_back("scene cursor is outside the scene");
     }
     for (const ui::Region& region : frame.scene.regions) {
@@ -316,11 +366,6 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
     if (path == "frame.cause_event_sequence") {
         return {true, std::to_string(frame.cause_event_sequence)};
     }
-    if (path == "event.last_sequence") {
-        const std::uint64_t sequence =
-            frame.recent_events.empty() ? 0 : frame.recent_events.back().sequence;
-        return {true, std::to_string(sequence)};
-    }
     std::string output;
     if (path == "frame.violations") {
         append_strings(output, frame.violations);
@@ -339,8 +384,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
     } else if (path == "scene") {
         append_scene(output, frame.scene);
     } else if (path == "scene.cursor") {
-        output = std::format("{{\"row\":{},\"col\":{}}}", frame.scene.cursor_row,
-                             frame.scene.cursor_col);
+        output = std::format("{{\"row\":{},\"col\":{},\"visible\":{}}}", frame.scene.cursor_row,
+                             frame.scene.cursor_col, frame.scene.cursor_visible);
     } else if (path == "render") {
         append_render(output, frame.render);
     } else if (path.starts_with("scene.region.")) {
@@ -413,18 +458,16 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     }
 
     const ui::Prim* hit_prim = nullptr;
-    std::size_t hit_index = 0;
     for (std::size_t index = 0; index < hit_region->prims.size(); ++index) {
         const ui::Prim& prim = hit_region->prims[index];
         const int width = std::max(1, ui::display_width(prim.text));
         if (prim.row == local_row && local_col >= prim.col && local_col < prim.col + width) {
             hit_prim = &prim;
-            hit_index = index;
         }
     }
     output += ",\"prim\":";
     if (hit_prim) {
-        append_prim(output, *hit_region, hit_index);
+        append_prim(output, *hit_region, *hit_prim);
     } else {
         output += "null";
     }
@@ -435,28 +478,35 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
 } // namespace
 
 std::uint64_t InspectionHub::record_event(InputEventSnapshot event) {
-    std::scoped_lock lock(mutex_);
-    event.sequence = next_event_sequence_++;
-    const std::uint64_t sequence = event.sequence;
-    events_.push_back(std::move(event));
-    while (events_.size() > max_events) {
-        events_.pop_front();
+    std::uint64_t sequence = 0;
+    {
+        std::scoped_lock lock(mutex_);
+        event.sequence = next_event_sequence_++;
+        sequence = event.sequence;
+        events_.push_back(std::move(event));
+        while (events_.size() > max_events) {
+            events_.pop_front();
+        }
     }
+    changed_.notify_all();
     return sequence;
 }
 
 void InspectionHub::publish(EditorStateSnapshot editor, ui::Scene scene, RenderStateSnapshot render,
                             std::uint64_t cause_event_sequence) {
-    std::scoped_lock lock(mutex_);
-    auto frame = std::make_shared<FrameInspection>();
-    frame->frame_id = next_frame_id_++;
-    frame->cause_event_sequence = cause_event_sequence;
-    frame->editor = std::move(editor);
-    frame->scene = std::move(scene);
-    frame->render = std::move(render);
-    frame->recent_events.assign(events_.begin(), events_.end());
-    frame->violations = validate_frame(*frame);
-    latest_ = std::move(frame);
+    {
+        std::scoped_lock lock(mutex_);
+        auto frame = std::make_shared<FrameInspection>();
+        frame->frame_id = next_frame_id_++;
+        frame->cause_event_sequence = cause_event_sequence;
+        frame->editor = std::move(editor);
+        frame->scene = std::move(scene);
+        frame->render = std::move(render);
+        frame->recent_events.assign(events_.begin(), events_.end());
+        frame->violations = validate_frame(*frame);
+        latest_ = std::move(frame);
+    }
+    changed_.notify_all();
 }
 
 std::shared_ptr<const FrameInspection> InspectionHub::latest() const {
@@ -467,6 +517,37 @@ std::shared_ptr<const FrameInspection> InspectionHub::latest() const {
 std::vector<InputEventSnapshot> InspectionHub::recent_events() const {
     std::scoped_lock lock(mutex_);
     return {events_.begin(), events_.end()};
+}
+
+InspectionState InspectionHub::snapshot() const {
+    std::scoped_lock lock(mutex_);
+    return {.frame = latest_,
+            .events = {events_.begin(), events_.end()},
+            .oldest_event_sequence =
+                events_.empty() ? next_event_sequence_ : events_.front().sequence,
+            .last_event_sequence = next_event_sequence_ - 1};
+}
+
+InspectionState InspectionHub::wait_for_frame(std::uint64_t after_frame,
+                                              std::chrono::milliseconds timeout) const {
+    std::unique_lock lock(mutex_);
+    changed_.wait_for(lock, timeout, [&] { return latest_ && latest_->frame_id > after_frame; });
+    return {.frame = latest_,
+            .events = {events_.begin(), events_.end()},
+            .oldest_event_sequence =
+                events_.empty() ? next_event_sequence_ : events_.front().sequence,
+            .last_event_sequence = next_event_sequence_ - 1};
+}
+
+InspectionState InspectionHub::wait_for_events(std::uint64_t after_event,
+                                               std::chrono::milliseconds timeout) const {
+    std::unique_lock lock(mutex_);
+    changed_.wait_for(lock, timeout, [&] { return next_event_sequence_ - 1 > after_event; });
+    return {.frame = latest_,
+            .events = {events_.begin(), events_.end()},
+            .oldest_event_sequence =
+                events_.empty() ? next_event_sequence_ : events_.front().sequence,
+            .last_event_sequence = next_event_sequence_ - 1};
 }
 
 std::string_view region_role_name(ui::RegionRole role) {
@@ -542,16 +623,23 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << "\" dirty=" << (frame.editor.dirty ? "true" : "false")
            << " caret=" << frame.editor.caret_position.line << ':'
            << frame.editor.caret_display_column << " byte=" << frame.editor.caret.value << '\n';
-    output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows
-           << " cursor=" << frame.scene.cursor_row << ':' << frame.scene.cursor_col << '\n';
+    output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
+    if (frame.scene.cursor_visible) {
+        output << frame.scene.cursor_row << ':' << frame.scene.cursor_col;
+    } else {
+        output << "hidden";
+    }
+    output << '\n';
     for (const ui::Region& region : frame.scene.regions) {
         output << "    region:" << region_role_name(region.role) << " rect=(" << region.rect.row
                << ',' << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
                << ") prims=" << region.prims.size() << '\n';
         for (std::size_t index = 0; index < region.prims.size(); ++index) {
             const ui::Prim& prim = region.prims[index];
-            output << "      prim:" << index << " cell=(" << prim.row << ',' << prim.col
-                   << ") style=" << style_class_name(prim.style)
+            output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
+                   << " cell=(" << prim.row << ',' << prim.col
+                   << ") kind=" << prim_kind_name(prim.kind)
+                   << " style=" << style_class_name(prim.style)
                    << (prim.selected ? " selected" : "") << " text=\"" << printable(prim.text)
                    << "\"\n";
         }
@@ -574,21 +662,55 @@ InspectionResponse run_inspection_query(const InspectionHub& hub, std::string_vi
     if (request == "help") {
         return {
             true,
-            "snapshot\ntree\nget <path>\npick <window-x> <window-y>\nevents [after-sequence]\n"};
+            "snapshot\nsnapshot-after <frame-id>\ntree\nget <path>\npick <window-x> <window-y>\n"
+            "events [after-sequence]\nwait-frame <frame-id>\nwait-events <event-sequence>\n"};
     }
-    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    InspectionState state;
+    if (request.starts_with("wait-frame ")) {
+        std::uint64_t after = 0;
+        std::istringstream input{std::string(trim(request.substr(11)))};
+        if (!(input >> after)) {
+            return {false, "usage: wait-frame <frame-id>"};
+        }
+        state = hub.wait_for_frame(after, std::chrono::seconds(1));
+    } else if (request.starts_with("wait-events ")) {
+        std::uint64_t after = 0;
+        std::istringstream input{std::string(trim(request.substr(12)))};
+        if (!(input >> after)) {
+            return {false, "usage: wait-events <event-sequence>"};
+        }
+        state = hub.wait_for_events(after, std::chrono::seconds(1));
+        std::string output;
+        append_event_batch(output, state, after);
+        return {true, std::move(output)};
+    } else {
+        state = hub.snapshot();
+    }
+    const std::shared_ptr<const FrameInspection>& frame = state.frame;
     if (!frame) {
         return {false, "no frame has been published"};
     }
+    if (request.starts_with("wait-frame ")) {
+        std::uint64_t after = 0;
+        std::istringstream{std::string(trim(request.substr(11)))} >> after;
+        return {true, frame->frame_id > after ? inspection_snapshot_json(*frame) : std::string()};
+    }
     if (request == "snapshot") {
         return {true, inspection_snapshot_json(*frame)};
+    }
+    if (request.starts_with("snapshot-after ")) {
+        std::uint64_t after = 0;
+        std::istringstream input{std::string(trim(request.substr(15)))};
+        if (!(input >> after)) {
+            return {false, "usage: snapshot-after <frame-id>"};
+        }
+        return {true, frame->frame_id > after ? inspection_snapshot_json(*frame) : std::string()};
     }
     if (request == "tree") {
         return {true, inspection_tree_text(*frame)};
     }
     if (request == "get event.last_sequence") {
-        const std::vector<InputEventSnapshot> events = hub.recent_events();
-        return {true, std::to_string(events.empty() ? 0 : events.back().sequence)};
+        return {true, std::to_string(state.last_event_sequence)};
     }
     if (request == "events" || request.starts_with("events ")) {
         std::uint64_t after_sequence = 0;
@@ -599,7 +721,7 @@ InspectionResponse run_inspection_query(const InspectionHub& hub, std::string_vi
             }
         }
         std::string output;
-        append_events(output, hub.recent_events(), after_sequence);
+        append_event_batch(output, state, after_sequence);
         return {true, std::move(output)};
     }
     if (request.starts_with("get ")) {

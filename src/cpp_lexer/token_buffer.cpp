@@ -26,29 +26,9 @@ TokenBuffer::TokenBuffer(const std::vector<Token>& toks) {
 
 std::size_t TokenBuffer::chunk_of(std::size_t i) const {
     assert(i < count_);
-    std::size_t c = cursor_;
-    if (c >= chunks_.size() || i < first_[c]) {
-        // Behind the cursor: step back once (common backward scan), else search.
-        if (c > 0 && c - 1 < chunks_.size() && i >= first_[c - 1]) {
-            c = c - 1;
-        } else {
-            c = static_cast<std::size_t>(std::upper_bound(first_.begin(), first_.end(), i) -
-                                         first_.begin()) -
-                1;
-        }
-    } else {
-        while (c + 1 < chunks_.size() && i >= first_[c + 1]) {
-            if (i >= first_[c + 1] + chunks_[c + 1].toks.size()) {
-                c = static_cast<std::size_t>(std::upper_bound(first_.begin(), first_.end(), i) -
-                                             first_.begin()) -
-                    1;
-                break;
-            }
-            ++c;
-        }
-    }
-    cursor_ = c;
-    return c;
+    return static_cast<std::size_t>(std::upper_bound(first_.begin(), first_.end(), i) -
+                                    first_.begin()) -
+           1;
 }
 
 void TokenBuffer::push_back(const Token& t) {
@@ -143,7 +123,6 @@ void TokenBuffer::splice(std::size_t lo, std::size_t hi, const std::vector<Token
         running += chunks_[k].toks.size();
     }
     assert(running == count_);
-    cursor_ = 0;
 }
 
 std::vector<Token> TokenBuffer::flatten() const {

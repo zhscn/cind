@@ -5,11 +5,68 @@
 #include "ui/text_position.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <format>
+#include <new>
 #include <optional>
+#include <system_error>
 #include <utility>
 
 namespace cind::gui {
+
+namespace {
+
+std::string_view key_name(EditorKey key) {
+    switch (key) {
+    case EditorKey::Unknown:
+        return {};
+    case EditorKey::A:
+        return "A";
+    case EditorKey::E:
+        return "E";
+    case EditorKey::N:
+        return "N";
+    case EditorKey::P:
+        return "P";
+    case EditorKey::Q:
+        return "Q";
+    case EditorKey::R:
+        return "R";
+    case EditorKey::S:
+        return "S";
+    case EditorKey::V:
+        return "V";
+    case EditorKey::Z:
+        return "Z";
+    case EditorKey::Left:
+        return "Left";
+    case EditorKey::Right:
+        return "Right";
+    case EditorKey::Up:
+        return "Up";
+    case EditorKey::Down:
+        return "Down";
+    case EditorKey::Home:
+        return "Home";
+    case EditorKey::End:
+        return "End";
+    case EditorKey::PageUp:
+        return "PageUp";
+    case EditorKey::PageDown:
+        return "PageDown";
+    case EditorKey::Backspace:
+        return "Backspace";
+    case EditorKey::Delete:
+        return "Delete";
+    case EditorKey::Enter:
+        return "Enter";
+    case EditorKey::Tab:
+        return "Tab";
+    }
+    return {};
+}
+
+} // namespace
 
 EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle style,
                          std::string style_origin, std::uint32_t initial_line)
@@ -41,98 +98,98 @@ ui::Scene EditorModel::compose(int rows, int columns) {
                                      .style_origin = style_origin_,
                                      .last_key = last_key_,
                                      .echo = echo,
+                                     .reveal_caret = reveal_caret_,
                                      .echo_cursor_column = std::nullopt},
                                     viewport_);
 }
 
-bool EditorModel::handle_key(SDL_Scancode scancode, SDL_Keymod modifiers, int page_rows) {
-    const bool control = (modifiers & SDL_KMOD_CTRL) != 0;
-    const bool alt = (modifiers & SDL_KMOD_ALT) != 0;
-    const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
+bool EditorModel::handle_key(EditorKey key, KeyModifiers modifiers, int page_rows) {
+    const bool control = modifiers.control;
+    const bool alt = modifiers.alt;
+    const bool shift = modifiers.shift;
     bool handled = true;
     bool edited = false;
 
-    if (const char* name = SDL_GetScancodeName(scancode); name && *name) {
+    if (const std::string_view name = key_name(key); !name.empty()) {
         last_key_ = name;
     }
 
     if (control) {
-        switch (scancode) {
-        case SDL_SCANCODE_S:
+        switch (key) {
+        case EditorKey::S:
             save();
             return true;
-        case SDL_SCANCODE_Q:
+        case EditorKey::Q:
             request_quit(shift);
             return true;
-        case SDL_SCANCODE_Z:
+        case EditorKey::Z:
             session_.undo();
             edited = true;
             break;
-        case SDL_SCANCODE_R:
+        case EditorKey::R:
             session_.redo();
             edited = true;
             break;
-        case SDL_SCANCODE_A:
+        case EditorKey::A:
             move_home();
             break;
-        case SDL_SCANCODE_E:
+        case EditorKey::E:
             move_end();
             break;
-        case SDL_SCANCODE_N:
+        case EditorKey::N:
             move_vertical(1);
             break;
-        case SDL_SCANCODE_P:
+        case EditorKey::P:
             move_vertical(-1);
             break;
-        case SDL_SCANCODE_V:
+        case EditorKey::V:
             move_vertical(page_rows);
             break;
         default:
             handled = false;
             break;
         }
-    } else if (alt && scancode == SDL_SCANCODE_V) {
+    } else if (alt && key == EditorKey::V) {
         move_vertical(-page_rows);
     } else if (!alt) {
-        switch (scancode) {
-        case SDL_SCANCODE_LEFT:
+        switch (key) {
+        case EditorKey::Left:
             move_horizontal(false);
             break;
-        case SDL_SCANCODE_RIGHT:
+        case EditorKey::Right:
             move_horizontal(true);
             break;
-        case SDL_SCANCODE_UP:
+        case EditorKey::Up:
             move_vertical(-1);
             break;
-        case SDL_SCANCODE_DOWN:
+        case EditorKey::Down:
             move_vertical(1);
             break;
-        case SDL_SCANCODE_HOME:
+        case EditorKey::Home:
             move_home();
             break;
-        case SDL_SCANCODE_END:
+        case EditorKey::End:
             move_end();
             break;
-        case SDL_SCANCODE_PAGEUP:
+        case EditorKey::PageUp:
             move_vertical(-page_rows);
             break;
-        case SDL_SCANCODE_PAGEDOWN:
+        case EditorKey::PageDown:
             move_vertical(page_rows);
             break;
-        case SDL_SCANCODE_BACKSPACE:
-            erase_code_point(false);
+        case EditorKey::Backspace:
+            erase_grapheme(false);
             edited = true;
             break;
-        case SDL_SCANCODE_DELETE:
-            erase_code_point(true);
+        case EditorKey::Delete:
+            erase_grapheme(true);
             edited = true;
             break;
-        case SDL_SCANCODE_RETURN:
-        case SDL_SCANCODE_KP_ENTER:
+        case EditorKey::Enter:
             session_.enter();
             edited = true;
             break;
-        case SDL_SCANCODE_TAB:
+        case EditorKey::Tab:
             session_.indent();
             edited = true;
             break;
@@ -167,27 +224,61 @@ void EditorModel::set_preedit(std::string_view text) {
     preedit_ = text.empty() ? std::string() : std::format("IME · {}", text);
 }
 
-void EditorModel::click(int cell_row, int cell_column) {
+void EditorModel::click(ui::CellPoint point) {
     const DocumentSnapshot snapshot = session_.snapshot();
     const Text& text = snapshot.content();
     const int text_column = ui::text_area_column(text.line_count());
     const int visible_rows = std::max(1, last_rows_ - 2);
-    if (cell_row < 0 || cell_row >= visible_rows) {
+    if (point.row < 0 || point.row >= visible_rows) {
         return;
     }
     const std::uint32_t line =
-        std::min(viewport_.top_line + static_cast<std::uint32_t>(cell_row), text.line_count() - 1);
-    if (cell_column < text_column) {
+        std::min(viewport_.top_line + static_cast<std::uint32_t>(point.row), text.line_count() - 1);
+    if (point.column < text_column) {
         session_.set_caret(text.line_start(line));
+        reveal_caret_ = true;
         return;
     }
-    const int display_column = viewport_.left_column + std::max(0, cell_column - text_column);
-    session_.set_caret(
-        ui::offset_at_display_column(text, line, display_column, session_.style().tab_width));
+    const int display_column = viewport_.left_column + std::max(0, point.column - text_column);
+    session_.set_caret(ui::offset_at_display_column(text, {.line = line, .column = display_column},
+                                                    session_.style().tab_width));
+    reveal_caret_ = true;
 }
 
 void EditorModel::scroll_lines(int delta) {
-    move_vertical(delta);
+    const DocumentSnapshot snapshot = session_.snapshot();
+    const int last_line = static_cast<int>(snapshot.content().line_count()) - 1;
+    viewport_.top_line = static_cast<std::uint32_t>(
+        std::clamp(static_cast<int>(viewport_.top_line) + delta, 0, last_line));
+    reveal_caret_ = false;
+}
+
+bool EditorModel::poll_background_work() {
+    if (!pending_save_ ||
+        pending_save_->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return false;
+    }
+    std::error_code error;
+    try {
+        error = pending_save_->result.get();
+    } catch (const std::system_error& exception) {
+        error = exception.code();
+    } catch (const std::bad_alloc&) {
+        error = std::make_error_code(std::errc::not_enough_memory);
+    } catch (...) {
+        error = std::make_error_code(std::errc::io_error);
+    }
+    if (error) {
+        message_ = std::format("save failed: {}", error.message());
+    } else {
+        saved_text_ = std::move(pending_save_->content);
+        ++save_generation_;
+        quit_armed_ = false;
+        message_ = dirty() ? std::format("saved {} · newer edits remain", path_)
+                           : std::format("saved {}", path_);
+    }
+    pending_save_.reset();
+    return true;
 }
 
 void EditorModel::request_quit(bool force) {
@@ -240,24 +331,44 @@ void EditorModel::after_edit() {
     quit_armed_ = false;
     message_.clear();
     preedit_.clear();
+    reveal_caret_ = true;
 }
 
 void EditorModel::save() {
-    const DocumentSnapshot snapshot = session_.snapshot();
-    if (std::error_code error = save_file_atomically(path_, snapshot.content())) {
-        message_ = std::format("save failed: {}", error.message());
+    if (pending_save_) {
+        message_ = "save already in progress";
         return;
     }
-    saved_text_ = snapshot.content();
-    ++save_generation_;
-    quit_armed_ = false;
-    message_ = std::format("saved {}", path_);
+    const DocumentSnapshot snapshot = session_.snapshot();
+    Text content = snapshot.content();
+    std::string path = path_;
+    try {
+        pending_save_.emplace(PendingSave{
+            content, std::async(std::launch::async,
+                                [path = std::move(path), content = std::move(content)]() noexcept {
+                                    try {
+                                        return save_file_atomically(path, content);
+                                    } catch (const std::system_error& exception) {
+                                        return exception.code();
+                                    } catch (const std::bad_alloc&) {
+                                        return std::make_error_code(std::errc::not_enough_memory);
+                                    } catch (...) {
+                                        return std::make_error_code(std::errc::io_error);
+                                    }
+                                })});
+        message_ = std::format("saving {}…", path_);
+    } catch (const std::system_error& exception) {
+        message_ = std::format("save failed: {}", exception.code().message());
+    } catch (const std::bad_alloc&) {
+        message_ = "save failed: not enough memory";
+    }
 }
 
 void EditorModel::move_horizontal(bool forward) {
     const DocumentSnapshot snapshot = session_.snapshot();
-    session_.set_caret(forward ? ui::next_code_point(snapshot.content(), session_.caret())
-                               : ui::previous_code_point(snapshot.content(), session_.caret()));
+    session_.set_caret(forward ? ui::next_grapheme(snapshot.content(), session_.caret())
+                               : ui::previous_grapheme(snapshot.content(), session_.caret()));
+    reveal_caret_ = true;
 }
 
 void EditorModel::move_vertical(int delta) {
@@ -268,30 +379,34 @@ void EditorModel::move_vertical(int delta) {
         ui::display_column(text, session_.caret(), session_.style().tab_width);
     const int last_line = static_cast<int>(text.line_count()) - 1;
     const int target = std::clamp(static_cast<int>(position.line) + delta, 0, last_line);
-    session_.set_caret(ui::offset_at_display_column(text, static_cast<std::uint32_t>(target),
-                                                    current_column, session_.style().tab_width));
+    session_.set_caret(ui::offset_at_display_column(
+        text, {.line = static_cast<std::uint32_t>(target), .column = current_column},
+        session_.style().tab_width));
+    reveal_caret_ = true;
 }
 
 void EditorModel::move_home() {
     const DocumentSnapshot snapshot = session_.snapshot();
     const Text& text = snapshot.content();
     session_.set_caret(text.line_start(text.position(session_.caret()).line));
+    reveal_caret_ = true;
 }
 
 void EditorModel::move_end() {
     const DocumentSnapshot snapshot = session_.snapshot();
     const Text& text = snapshot.content();
     session_.set_caret(text.line_content_end(text.position(session_.caret()).line));
+    reveal_caret_ = true;
 }
 
-void EditorModel::erase_code_point(bool forward) {
+void EditorModel::erase_grapheme(bool forward) {
     const DocumentSnapshot snapshot = session_.snapshot();
     const Text& text = snapshot.content();
     const TextOffset caret = session_.caret();
     if (forward) {
-        session_.erase(TextRange{caret, ui::next_code_point(text, caret)});
+        session_.erase(TextRange{caret, ui::next_grapheme(text, caret)});
     } else {
-        session_.erase(TextRange{ui::previous_code_point(text, caret), caret});
+        session_.erase(TextRange{ui::previous_grapheme(text, caret), caret});
     }
 }
 

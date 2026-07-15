@@ -24,9 +24,14 @@ cmake:
     - name: Asan
       compile: [-g, "-fsanitize=address,undefined", -fno-omit-frame-pointer]
       link: ["-fsanitize=address,undefined"]
+    - name: Tsan
+      compile: [-g, -fsanitize=thread, -fno-omit-frame-pointer]
+      link: [-fsanitize=thread]
 
 format:
   ignore: [third_party/skia/**]
 
 lint:
+  ignore: [third_party/skia/**]
   header-filter: ^src/
+  extra-args: ["--checks=clang-analyzer-*,bugprone-*,performance-*"]

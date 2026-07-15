@@ -2,6 +2,7 @@
 
 #include "ui/char_width.hpp"
 
+#include <modules/skshaper/include/SkShaper.h>
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColor.h>
 #include <skia/core/SkFont.h>
@@ -13,6 +14,7 @@
 #include <skia/core/SkRect.h>
 #include <skia/core/SkString.h>
 #include <skia/core/SkSurface.h>
+#include <skia/core/SkTextBlob.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/ports/SkFontMgr_fontconfig.h>
 #include <skia/ports/SkFontScanner_FreeType.h>
@@ -21,7 +23,6 @@
 #include <cmath>
 #include <stdexcept>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 
 namespace cind::gui {
@@ -64,11 +65,6 @@ SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
     return color(0xFFD4D4D4);
 }
 
-bool is_change_sign(ui::StyleClass style) {
-    return style == ui::StyleClass::SignAdded || style == ui::StyleClass::SignModified ||
-           style == ui::StyleClass::SignDeleted;
-}
-
 SkRect pixel_rect(const ui::Rect& rect, int cell_width, int cell_height) {
     return SkRect::MakeXYWH(static_cast<SkScalar>(rect.col * cell_width),
                             static_cast<SkScalar>(rect.row * cell_height),
@@ -96,6 +92,10 @@ struct SkiaPresenter::Impl {
         typeface->getFamilyName(&resolved_name);
         resolved_family = resolved_name.c_str();
         font = make_font(typeface);
+        shaper = SkShaper::Make(manager);
+        if (!shaper) {
+            throw std::runtime_error("Skia HarfBuzz shaper is unavailable");
+        }
 
         SkFontMetrics metrics{};
         font.getMetrics(&metrics);
@@ -113,45 +113,15 @@ struct SkiaPresenter::Impl {
         return result;
     }
 
-    const SkFont& fallback_font(char32_t code_point) {
-        if (auto found = fallbacks.find(code_point); found != fallbacks.end()) {
-            return found->second;
-        }
-        sk_sp<SkTypeface> face = manager->matchFamilyStyleCharacter(
-            family.c_str(), SkFontStyle{}, nullptr, 0, static_cast<SkUnichar>(code_point));
-        if (!face) {
-            face = typeface;
-        }
-        return fallbacks.emplace(code_point, make_font(face)).first->second;
-    }
-
     void draw_text(SkCanvas& canvas, std::string_view text, SkScalar x, SkScalar y,
                    const SkPaint& paint) {
-        std::size_t at = 0;
-        int column = 0;
-        while (at < text.size()) {
-            const std::size_t ascii_start = at;
-            while (at < text.size() && static_cast<unsigned char>(text[at]) < 0x80U) {
-                ++at;
-            }
-            if (at > ascii_start) {
-                const std::string_view ascii = text.substr(ascii_start, at - ascii_start);
-                canvas.drawSimpleText(ascii.data(), ascii.size(), SkTextEncoding::kUTF8,
-                                      x + static_cast<SkScalar>(column * cell_width), y, font,
-                                      paint);
-                column += ui::display_width(ascii);
-            }
-            if (at == text.size()) {
-                break;
-            }
-
-            const ui::Utf8Decode decoded = ui::decode_utf8(text.substr(at));
-            const std::string_view glyph = text.substr(at, static_cast<std::size_t>(decoded.bytes));
-            canvas.drawSimpleText(glyph.data(), glyph.size(), SkTextEncoding::kUTF8,
-                                  x + static_cast<SkScalar>(column * cell_width), y,
-                                  fallback_font(decoded.cp), paint);
-            column += ui::code_point_width(decoded.cp);
-            at += static_cast<std::size_t>(decoded.bytes);
+        if (text.empty()) {
+            return;
+        }
+        SkTextBlobBuilderRunHandler handler(text.data(), SkPoint::Make(x, y));
+        shaper->shape(text.data(), text.size(), font, true, SK_ScalarMax, &handler);
+        if (sk_sp<SkTextBlob> blob = handler.makeBlob()) {
+            canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
         }
     }
 
@@ -173,18 +143,17 @@ struct SkiaPresenter::Impl {
         fill.setAntiAlias(false);
         for (const ui::Region& region : scene.regions) {
             const SkRect bounds = pixel_rect(region.rect, cell_width, cell_height);
-            switch (region.role) {
-            case ui::RegionRole::LineNumbers:
-            case ui::RegionRole::ChangeSigns:
+            switch (region.surface) {
+            case ui::SurfaceClass::Gutter:
                 fill.setColor(color(theme.gutter_background));
                 break;
-            case ui::RegionRole::StatusBar:
+            case ui::SurfaceClass::Status:
                 fill.setColor(color(theme.status_background));
                 break;
-            case ui::RegionRole::EchoArea:
+            case ui::SurfaceClass::Echo:
                 fill.setColor(color(theme.echo_background));
                 break;
-            case ui::RegionRole::TextArea:
+            case ui::SurfaceClass::Editor:
                 fill.setColor(color(theme.background));
                 break;
             }
@@ -210,8 +179,8 @@ struct SkiaPresenter::Impl {
                 SkPaint paint;
                 paint.setAntiAlias(true);
                 paint.setColor(foreground(prim.style, theme));
-                if (is_change_sign(prim.style)) {
-                    if (prim.style == ui::StyleClass::SignDeleted) {
+                if (prim.kind != ui::PrimKind::Text) {
+                    if (prim.kind == ui::PrimKind::ChangeDeletion) {
                         canvas.drawRect(SkRect::MakeXYWH(x + 1.0F, top + 1.0F,
                                                          static_cast<SkScalar>(cell_width - 2),
                                                          2.0F),
@@ -228,13 +197,16 @@ struct SkiaPresenter::Impl {
             canvas.restore();
         }
 
-        fill.setColor(color(theme.cursor));
-        const SkScalar cursor_x =
-            static_cast<SkScalar>(std::max(0, scene.cursor_col - 1) * cell_width);
-        const SkScalar cursor_y =
-            static_cast<SkScalar>(std::max(0, scene.cursor_row - 1) * cell_height);
-        canvas.drawRect(
-            SkRect::MakeXYWH(cursor_x, cursor_y, 2.0F, static_cast<SkScalar>(cell_height)), fill);
+        if (scene.cursor_visible) {
+            fill.setColor(color(theme.cursor));
+            const SkScalar cursor_x =
+                static_cast<SkScalar>(std::max(0, scene.cursor_col - 1) * cell_width);
+            const SkScalar cursor_y =
+                static_cast<SkScalar>(std::max(0, scene.cursor_row - 1) * cell_height);
+            canvas.drawRect(
+                SkRect::MakeXYWH(cursor_x, cursor_y, 2.0F, static_cast<SkScalar>(cell_height)),
+                fill);
+        }
     }
 
     std::string family;
@@ -244,7 +216,7 @@ struct SkiaPresenter::Impl {
     sk_sp<SkFontMgr> manager;
     sk_sp<SkTypeface> typeface;
     SkFont font;
-    std::unordered_map<char32_t, SkFont> fallbacks;
+    std::unique_ptr<SkShaper> shaper;
     int cell_width = 1;
     int cell_height = 1;
     int baseline = 1;

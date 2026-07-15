@@ -6,6 +6,7 @@
 #include "ui/char_width.hpp"
 #include "ui/compose_line.hpp"
 #include "ui/line_signs.hpp"
+#include "ui/text_position.hpp"
 
 #include <string>
 
@@ -46,10 +47,22 @@ TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
     CHECK(display_width("abc") == 3);
     CHECK(display_width("中文") == 4);
     CHECK(display_width("a中b") == 4);
+    CHECK(display_width("e\u0301") == 1);
+    CHECK(display_width("👩‍💻") == 2);
+    CHECK(display_width("🇨🇳") == 2);
+    CHECK(clip_to_display_width("a中b", 3) == "a中");
     // Invalid UTF-8 decodes byte-by-byte as U+FFFD, width 1 each.
     CHECK(decode_utf8("\x80").bytes == 1);
     CHECK(decode_utf8("\x80").cp == 0xFFFD);
     CHECK(decode_utf8("\xE4\xB8").bytes == 1); // truncated 3-byte sequence
+}
+
+TEST_CASE("text positions follow extended grapheme boundaries") {
+    const Text text("e\u0301👩‍💻x");
+    CHECK(next_grapheme(text, TextOffset{0}).value == 3);
+    CHECK(next_grapheme(text, TextOffset{3}).value == 14);
+    CHECK(previous_grapheme(text, TextOffset{14}).value == 3);
+    CHECK(previous_grapheme(text, TextOffset{3}).value == 0);
 }
 
 TEST_CASE("line runs: token styles split the line") {

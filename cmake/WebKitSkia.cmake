@@ -57,8 +57,10 @@ function(cind_add_webkit_skia)
   find_package(Epoxy 1.4.0 REQUIRED)
   find_package(Freetype 2.9.0 REQUIRED)
   find_package(Fontconfig 2.13.0 REQUIRED)
+  find_package(ICU REQUIRED COMPONENTS uc i18n)
   find_package(JPEG REQUIRED)
   find_package(PNG REQUIRED)
+  pkg_check_modules(HarfBuzz REQUIRED IMPORTED_TARGET harfbuzz)
 
   set(USE_LIBEPOXY ON)
   set(USE_ANGLE_EGL OFF)
@@ -69,7 +71,40 @@ function(cind_add_webkit_skia)
   add_subdirectory("${skia_source_dir}" "${CMAKE_BINARY_DIR}/webkit-skia"
                    EXCLUDE_FROM_ALL)
 
-  # Project warning policy remains strict for cind sources. Skia uses its own
-  # warning policy and is kept warning-clean by the WebKit target definition.
+  # WebKit's SVG option also enables these modules, but the editor needs text
+  # shaping without pulling the SVG stack into the build.
+  target_sources(Skia PRIVATE
+    "${skia_source_dir}/modules/skunicode/src/SkUnicode.cpp"
+    "${skia_source_dir}/modules/skunicode/src/SkUnicode_hardcoded.cpp"
+    "${skia_source_dir}/modules/skunicode/src/SkUnicode_icu.cpp"
+    "${skia_source_dir}/modules/skunicode/src/SkUnicode_icu_bidi.cpp"
+    "${skia_source_dir}/modules/skunicode/src/SkUnicode_icu_builtin.cpp"
+    "${skia_source_dir}/modules/skunicode/src/SkBidiFactory_icu_full.cpp"
+    "${skia_source_dir}/modules/skshaper/src/SkShaper.cpp"
+    "${skia_source_dir}/modules/skshaper/src/SkShaper_factory.cpp"
+    "${skia_source_dir}/modules/skshaper/src/SkShaper_harfbuzz.cpp"
+    "${skia_source_dir}/modules/skshaper/src/SkShaper_primitive.cpp"
+    "${skia_source_dir}/modules/skshaper/src/SkShaper_skunicode.cpp"
+  )
+  target_compile_definitions(Skia PRIVATE
+    SK_SHAPER_HARFBUZZ_AVAILABLE
+    SK_SHAPER_PRIMITIVE_AVAILABLE
+    SK_SHAPER_UNICODE_AVAILABLE
+    SK_UNICODE_AVAILABLE
+    SK_UNICODE_ICU_IMPLEMENTATION
+    SKSHAPER_IMPLEMENTATION=1
+    SKUNICODE_IMPLEMENTATION=1
+    U_USING_ICU_NAMESPACE=0
+  )
+  target_link_libraries(Skia PRIVATE ICU::uc ICU::i18n PkgConfig::HarfBuzz)
+
+  # Consumers compile against Skia headers as third-party system headers while
+  # retaining the project's warning policy for their own translation units.
+  get_target_property(skia_interface_includes Skia INTERFACE_INCLUDE_DIRECTORIES)
+  set_property(TARGET Skia APPEND PROPERTY
+               INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${skia_interface_includes}")
+
+  # Project warning policy remains strict for cind sources. The vendored target
+  # receives compatibility suppressions for the project's conversion checks.
   target_compile_options(Skia PRIVATE -Wno-conversion -Wno-shadow)
 endfunction()

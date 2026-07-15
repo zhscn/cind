@@ -7,8 +7,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <filesystem>
 #include <format>
+#include <future>
+#include <thread>
 
 using namespace cind;
 using namespace cind::gui;
@@ -47,7 +50,7 @@ void publish_test_frame(InspectionHub& hub) {
     scene.cursor_col = 4;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
     body.prims.push_back({0, 0, "int", StyleClass::Keyword, false});
-    Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}};
+    Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status};
     scene.regions = {body, status};
     RenderStateSnapshot render{
         .video_driver = "wayland",
@@ -83,7 +86,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":1") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":2") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"display_scale\":1.5") != std::string::npos);
@@ -108,7 +111,16 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse events = run_inspection_query(hub, "events 1");
     REQUIRE(events.ok);
     CHECK(events.payload.find("\"sequence\":2") != std::string::npos);
+    CHECK(events.payload.find("\"gap\":false") != std::string::npos);
     CHECK(run_inspection_query(hub, "get event.last_sequence").payload == "2");
+
+    for (int index = 0; index < 300; ++index) {
+        hub.record_event({.type = "overflow", .detail = ""});
+    }
+    const InspectionResponse overflow = run_inspection_query(hub, "events 1");
+    REQUIRE(overflow.ok);
+    CHECK(overflow.payload.find("\"gap\":true") != std::string::npos);
+    CHECK(overflow.payload.find("\"oldest_available\":") != std::string::npos);
 }
 
 TEST_CASE("inspection server uses a private Unix socket and framed responses") {
@@ -133,6 +145,17 @@ TEST_CASE("inspection server uses a private Unix socket and framed responses") {
         const InspectionResponse error = send_inspector_request(socket, "get missing.path");
         CHECK_FALSE(error.ok);
         CHECK(error.payload.find("unknown inspection path") != std::string::npos);
+
+        auto waiting = std::async(std::launch::async,
+                                  [&] { return send_inspector_request(socket, "wait-frame 1"); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const InspectionResponse concurrent = send_inspector_request(socket, "get frame.id");
+        REQUIRE(concurrent.ok);
+        CHECK(concurrent.payload == "1");
+        publish_test_frame(hub);
+        const InspectionResponse update = waiting.get();
+        REQUIRE(update.ok);
+        CHECK(update.payload.find("\"frame_id\":2") != std::string::npos);
     }
     CHECK_FALSE(std::filesystem::exists(socket));
 }

@@ -1,8 +1,10 @@
 #pragma once
 
-#include "gui/editor_model.hpp"
+#include "gui/editor_state.hpp"
 #include "ui/scene.hpp"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -55,7 +57,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 1;
+    static constexpr int schema_version = 2;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;
@@ -66,6 +68,13 @@ struct FrameInspection {
     std::vector<std::string> violations;
 };
 
+struct InspectionState {
+    std::shared_ptr<const FrameInspection> frame;
+    std::vector<InputEventSnapshot> events;
+    std::uint64_t oldest_event_sequence = 1;
+    std::uint64_t last_event_sequence = 0;
+};
+
 class InspectionHub {
 public:
     std::uint64_t record_event(InputEventSnapshot event);
@@ -74,11 +83,17 @@ public:
 
     std::shared_ptr<const FrameInspection> latest() const;
     std::vector<InputEventSnapshot> recent_events() const;
+    InspectionState snapshot() const;
+    InspectionState wait_for_frame(std::uint64_t after_frame,
+                                   std::chrono::milliseconds timeout) const;
+    InspectionState wait_for_events(std::uint64_t after_event,
+                                    std::chrono::milliseconds timeout) const;
 
 private:
     static constexpr std::size_t max_events = 256;
 
     mutable std::mutex mutex_;
+    mutable std::condition_variable changed_;
     std::shared_ptr<const FrameInspection> latest_;
     std::deque<InputEventSnapshot> events_;
     std::uint64_t next_event_sequence_ = 1;

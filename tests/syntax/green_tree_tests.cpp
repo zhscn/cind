@@ -13,7 +13,7 @@ namespace {
 // The lazily materialized red pool must mirror the green tree exactly: matching
 // kind/flags/expected, absolute token span reconstructed from the relative
 // leadings/widths, parent links, and child structure — recursively. Holding a
-// red reference across the recursive t.node() calls also exercises the pool's
+// red reference across the recursive t.node() calls also exercises the cache's
 // stable-address guarantee.
 void check_red_matches_green(const SyntaxTree& t, SyntaxNodeId id, const GreenNode* g,
                              std::uint32_t base) {

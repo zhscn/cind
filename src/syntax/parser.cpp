@@ -1632,7 +1632,7 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
         splice_touches_pp_conditional(s.scanned.tokens, 0, s.scanned.tokens.size(), new_text);
 
     relex_apply(tree.tokens_, line_states, std::move(s));
-    tree.red_.clear(); // token indices shifted; drop stale materialized red nodes
+    tree.reset_red_cache(); // token indices shifted; drop stale materialized red nodes
     if (identical) {
         return; // structure unchanged (directive index included); green_root_ valid
     }
