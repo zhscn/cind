@@ -45,6 +45,17 @@ LineSigns line_signs(const Text& baseline, const Text& current) {
         return signs;
     }
 
+    // Text always has one logical line, even when it contains no bytes. That
+    // placeholder is not an existing line for change-sign purposes: content
+    // entered into an empty file consists entirely of added lines.
+    if (baseline.empty()) {
+        signs.added = current.line_count();
+        if (at_line_start(current, current.end_offset())) {
+            --signs.added; // the logical empty line after a trailing newline
+        }
+        return signs;
+    }
+
     // Whole-line block replace (the common case for Enter, paste, and line
     // deletion) is detected exactly; anything else widens to full lines.
     const bool clean = at_line_start(current, spans->b_range.start) &&

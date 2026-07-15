@@ -22,6 +22,17 @@ add_executable(ui_tests ui/ui_tests.cpp)
 target_link_libraries(ui_tests PRIVATE cind_ui doctest::doctest)
 add_test(NAME ui_tests COMMAND ui_tests)
 
+if (CIND_BUILD_GUI)
+  add_executable(skia_presenter_tests ui/skia_presenter_tests.cpp)
+  target_link_libraries(skia_presenter_tests PRIVATE
+    cind_skia_ui
+    doctest::doctest
+    Fontconfig::Fontconfig
+    Skia::Skia
+  )
+  add_test(NAME skia_presenter_tests COMMAND skia_presenter_tests)
+endif()
+
 add_executable(relex_tests lexer/relex_tests.cpp)
 target_link_libraries(relex_tests PRIVATE cind_lexer doctest::doctest)
 add_test(NAME relex_tests COMMAND relex_tests)

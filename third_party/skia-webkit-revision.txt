@@ -1,0 +1,3 @@
+Source: https://github.com/WebKit/WebKit.git
+WebKit revision: 31871cbfb029cd2dc2389d87b70af72876ef52ec
+Source path: Source/ThirdParty/skia

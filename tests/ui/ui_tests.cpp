@@ -16,8 +16,7 @@ namespace {
 
 // Lex a snippet and lay out its single line with the given viewport.
 std::vector<Run> runs_of(const std::string& text, int left_col = 0, int width = 80,
-                         std::optional<TextRange> selection = std::nullopt,
-                         int tab_width = 4) {
+                         std::optional<TextRange> selection = std::nullopt, int tab_width = 4) {
     static std::vector<TokenBuffer> keepalive; // tokens must outlive the runs
     keepalive.emplace_back(lex(Text(text)).tokens);
     return build_line_runs({.text = text,
@@ -165,6 +164,29 @@ TEST_CASE("line signs: modification, insertion, deletion") {
         CHECK(signs.at(0) == SignKind::Modified);
         CHECK(signs.at(3) == SignKind::Modified);
         CHECK(signs.at(1) == SignKind::Modified); // between-window lines join the span
+    }
+}
+
+TEST_CASE("line signs: content entered into an empty file is added") {
+    const Text empty;
+
+    SUBCASE("last line has content") {
+        const LineSigns signs = line_signs(empty, Text("one\ntwo"));
+        CHECK(signs.at(0) == SignKind::Added);
+        CHECK(signs.at(1) == SignKind::Added);
+        CHECK(signs.modified == 0);
+        CHECK(signs.added == 2);
+    }
+    SUBCASE("trailing logical empty line is not marked") {
+        const LineSigns signs = line_signs(empty, Text("one\ntwo\n"));
+        CHECK(signs.at(0) == SignKind::Added);
+        CHECK(signs.at(1) == SignKind::Added);
+        CHECK(signs.at(2) == SignKind::None);
+        CHECK(signs.modified == 0);
+        CHECK(signs.added == 2);
+    }
+    SUBCASE("returning to empty clears the signs") {
+        CHECK(line_signs(empty, empty).empty());
     }
 }
 

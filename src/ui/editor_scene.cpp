@@ -1,0 +1,113 @@
+#include "ui/editor_scene.hpp"
+
+#include "ui/char_width.hpp"
+#include "ui/compose_line.hpp"
+#include "ui/text_position.hpp"
+
+#include <algorithm>
+#include <format>
+
+namespace cind::ui {
+
+Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport) {
+    const int text_rows = std::max(1, input.rows - 2);
+    const int text_column = text_area_column(input.text.line_count());
+    const int text_width = std::max(1, input.cols - text_column);
+    const LinePosition caret_position = input.text.position(input.caret);
+    const int caret_column = display_column(input.text, input.caret, input.tab_width);
+
+    if (caret_position.line < viewport.top_line) {
+        viewport.top_line = caret_position.line;
+    }
+    if (caret_position.line >= viewport.top_line + static_cast<std::uint32_t>(text_rows)) {
+        viewport.top_line = caret_position.line - static_cast<std::uint32_t>(text_rows) + 1;
+    }
+    if (caret_column < viewport.left_column) {
+        viewport.left_column = caret_column;
+    }
+    if (caret_column >= viewport.left_column + text_width) {
+        viewport.left_column = caret_column - text_width + 1;
+    }
+
+    Scene scene;
+    scene.rows = input.rows;
+    scene.cols = input.cols;
+
+    const int digits = gutter_digits(input.text.line_count());
+    Region numbers{RegionRole::LineNumbers, {0, 0, text_rows, digits + 1}, {}};
+    Region marks{RegionRole::ChangeSigns, {0, digits + 1, text_rows, 1}, {}};
+    Region body{RegionRole::TextArea, {0, digits + 2, text_rows, text_width}, {}};
+    Region status{RegionRole::StatusBar, {text_rows, 0, 1, input.cols}, {}};
+    Region echo{RegionRole::EchoArea, {text_rows + 1, 0, 1, input.cols}, {}};
+
+    for (int row = 0; row < text_rows; ++row) {
+        const std::uint32_t line = viewport.top_line + static_cast<std::uint32_t>(row);
+        if (line >= input.text.line_count()) {
+            body.prims.push_back({row, 0, "~", StyleClass::Gutter, false});
+            continue;
+        }
+        numbers.prims.push_back(
+            {row, 0, std::format("{:>{}} ", line + 1, digits), StyleClass::Gutter, false});
+        switch (input.signs.at(line)) {
+        case SignKind::Added:
+            marks.prims.push_back({row, 0, "▎", StyleClass::SignAdded, false});
+            break;
+        case SignKind::Modified:
+            marks.prims.push_back({row, 0, "▎", StyleClass::SignModified, false});
+            break;
+        case SignKind::DeletedAbove:
+            marks.prims.push_back({row, 0, "▔", StyleClass::SignDeleted, false});
+            break;
+        case SignKind::None:
+            break;
+        }
+
+        const TextRange content = input.text.line_content_range(line);
+        const std::string bytes = input.text.substring(content);
+        for (Run& run : build_line_runs({.text = bytes,
+                                         .start_offset = content.start.value,
+                                         .tab_width = input.tab_width,
+                                         .left_col = viewport.left_column,
+                                         .width = text_width,
+                                         .selection = input.selection},
+                                        input.tokens)) {
+            body.prims.push_back({row, run.col, std::move(run.text), run.style, run.selected});
+        }
+    }
+
+    std::string left =
+        std::format(" {}{}  {}:{}  rev {}  style {} ", input.path, input.dirty ? " [+]" : "",
+                    caret_position.line + 1, caret_column + 1, input.revision, input.style_origin);
+    const std::string key =
+        input.last_key.empty() ? std::string() : std::format("key: {} ", input.last_key);
+    int fill = input.cols - display_width(left) - display_width(key);
+    if (fill < 0) {
+        const auto shorter = static_cast<std::ptrdiff_t>(left.size()) + fill;
+        left.resize(static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, shorter)));
+        fill = 0;
+    }
+    status.prims.push_back({0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
+                            StyleClass::StatusBar, false});
+    if (!key.empty()) {
+        status.prims.push_back(
+            {0, input.cols - display_width(key), key, StyleClass::StatusKey, false});
+    }
+    echo.prims.push_back({0, 0, std::string(input.echo), StyleClass::Message, false});
+
+    if (input.echo_cursor_column) {
+        scene.cursor_row = input.rows;
+        scene.cursor_col = *input.echo_cursor_column + 1;
+    } else {
+        scene.cursor_row = static_cast<int>(caret_position.line - viewport.top_line) + 1;
+        scene.cursor_col = text_column + (caret_column - viewport.left_column) + 1;
+    }
+
+    scene.regions.push_back(std::move(numbers));
+    scene.regions.push_back(std::move(marks));
+    scene.regions.push_back(std::move(body));
+    scene.regions.push_back(std::move(status));
+    scene.regions.push_back(std::move(echo));
+    return scene;
+}
+
+} // namespace cind::ui

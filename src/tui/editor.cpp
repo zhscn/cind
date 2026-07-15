@@ -2,14 +2,15 @@
 
 #include "cli/session.hpp"
 #include "cli/style_loader.hpp"
+#include "commands/file_io.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
 #include "ui/ansi_renderer.hpp"
 #include "ui/char_width.hpp"
-#include "ui/compose_line.hpp"
+#include "ui/editor_scene.hpp"
 #include "ui/line_signs.hpp"
-#include "ui/scene.hpp"
+#include "ui/text_position.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -18,87 +19,58 @@
 #include <format>
 #include <fstream>
 #include <sstream>
-#include <system_error>
-
-#include <fcntl.h>
-#include <unistd.h>
 
 namespace cind::tui {
 
 namespace {
 
-bool is_continuation_byte(char c) { return (static_cast<unsigned char>(c) & 0xC0) == 0x80; }
+bool is_utf8_continuation(char byte) {
+    return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
+}
 
 // Key caption for the status line (screenkey-style, so recordings show
 // which key produced each reaction).
 std::string describe_key(const Key& key) {
     switch (key.kind) {
-    case KeyKind::Char: return key.text;
+    case KeyKind::Char:
+        return key.text;
     case KeyKind::Ctrl:
         if (key.ch == ' ') {
             return "Ctrl-Space";
         }
         return std::format("Ctrl-{}",
                            static_cast<char>(std::toupper(static_cast<unsigned char>(key.ch))));
-    case KeyKind::Alt: return std::format("Alt-{}", key.ch);
-    case KeyKind::Enter: return "Enter";
-    case KeyKind::Tab: return "Tab";
-    case KeyKind::Backspace: return "Backspace";
-    case KeyKind::Delete: return "Delete";
-    case KeyKind::Up: return "Up";
-    case KeyKind::Down: return "Down";
-    case KeyKind::Left: return "Left";
-    case KeyKind::Right: return "Right";
-    case KeyKind::Home: return "Home";
-    case KeyKind::End: return "End";
-    case KeyKind::PageUp: return "PgUp";
-    case KeyKind::PageDown: return "PgDn";
-    case KeyKind::Escape: return "Esc";
+    case KeyKind::Alt:
+        return std::format("Alt-{}", key.ch);
+    case KeyKind::Enter:
+        return "Enter";
+    case KeyKind::Tab:
+        return "Tab";
+    case KeyKind::Backspace:
+        return "Backspace";
+    case KeyKind::Delete:
+        return "Delete";
+    case KeyKind::Up:
+        return "Up";
+    case KeyKind::Down:
+        return "Down";
+    case KeyKind::Left:
+        return "Left";
+    case KeyKind::Right:
+        return "Right";
+    case KeyKind::Home:
+        return "Home";
+    case KeyKind::End:
+        return "End";
+    case KeyKind::PageUp:
+        return "PgUp";
+    case KeyKind::PageDown:
+        return "PgDn";
+    case KeyKind::Escape:
+        return "Esc";
     case KeyKind::Eof:
-    case KeyKind::None: return {};
-    }
-    return {};
-}
-
-// Atomic save per buffer.md §6: temp file, fsync, rename, fsync the parent.
-std::error_code save_atomically(const std::string& path, const Text& content) {
-    namespace fs = std::filesystem;
-    const fs::path target(path);
-    const fs::path tmp = target.string() + ".cind-tmp";
-
-    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        return std::error_code(errno, std::generic_category());
-    }
-    for (TextCursor cursor(content); !cursor.at_end(); cursor.advance_chunk()) {
-        std::string_view chunk = cursor.chunk();
-        while (!chunk.empty()) {
-            const ssize_t n = ::write(fd, chunk.data(), chunk.size());
-            if (n <= 0) {
-                const int err = errno;
-                ::close(fd);
-                ::unlink(tmp.c_str());
-                return std::error_code(err, std::generic_category());
-            }
-            chunk.remove_prefix(static_cast<std::size_t>(n));
-        }
-    }
-    if (::fsync(fd) != 0 || ::close(fd) != 0) {
-        const int err = errno;
-        ::unlink(tmp.c_str());
-        return std::error_code(err, std::generic_category());
-    }
-    std::error_code ec;
-    fs::rename(tmp, target, ec);
-    if (ec) {
-        ::unlink(tmp.c_str());
-        return ec;
-    }
-    const fs::path dir = target.has_parent_path() ? target.parent_path() : fs::path(".");
-    const int dir_fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dir_fd >= 0) {
-        ::fsync(dir_fd);
-        ::close(dir_fd);
+    case KeyKind::None:
+        return {};
     }
     return {};
 }
@@ -113,8 +85,7 @@ public:
         const Text& text = snap.content();
         message_ = std::format("read {} lines", reported_lines(text));
         if (initial_line > 0) {
-            const std::uint32_t line =
-                std::min(initial_line - 1, text.line_count() - 1);
+            const std::uint32_t line = std::min(initial_line - 1, text.line_count() - 1);
             session_.set_caret(text.line_start(line));
         }
     }
@@ -132,102 +103,26 @@ private:
 
     int text_rows() const { return std::max(1, term_.size().rows - 2); }
 
-    int gutter_digits() const {
+    int text_width() const {
         const std::uint32_t lines = session_.snapshot().content().line_count();
-        int digits = 1;
-        for (std::uint32_t n = lines; n >= 10; n /= 10) {
-            ++digits;
-        }
-        return digits;
-    }
-
-    // Columns left of the text area: line number + space + sign column.
-    int text_col0() const { return gutter_digits() + 2; }
-
-    // Visible text-area width for the current terminal size. A future
-    // minimap strip subtracts its columns here (the Scene already carries
-    // the model for it).
-    int text_width() const { return std::max(1, term_.size().cols - text_col0()); }
-
-    // Display column of `offset` within its line (tabs expand, glyphs measure
-    // via code_point_width, so CJK takes two cells here and on screen alike).
-    int display_column(const Text& text, TextOffset offset) const {
-        const std::uint32_t start = text.line_start(text.position(offset).line).value;
-        const std::string prefix = text.substring(make_range(start, offset.value));
-        int col = 0;
-        std::string_view rest = prefix;
-        while (!rest.empty()) {
-            if (rest.front() == '\t') {
-                col += tab_width() - col % tab_width();
-                rest.remove_prefix(1);
-                continue;
-            }
-            const ui::Utf8Decode d = ui::decode_utf8(rest);
-            col += ui::code_point_width(d.cp);
-            rest.remove_prefix(static_cast<std::size_t>(d.bytes));
-        }
-        return col;
+        return std::max(1, term_.size().cols - ui::text_area_column(lines));
     }
 
     int tab_width() const { return session_.style().tab_width; }
 
     // ---- caret movement ---------------------------------------------------
 
-    TextOffset prev_code_point(const Text& text, TextOffset offset) const {
-        if (offset.value == 0) {
-            return offset;
-        }
-        std::uint32_t p = offset.value - 1;
-        while (p > 0 && is_continuation_byte(text.byte_at(TextOffset{p}))) {
-            --p;
-        }
-        return TextOffset{p};
-    }
-
-    TextOffset next_code_point(const Text& text, TextOffset offset) const {
-        if (offset.value >= text.size_bytes()) {
-            return offset;
-        }
-        std::uint32_t p = offset.value + 1;
-        while (p < text.size_bytes() && is_continuation_byte(text.byte_at(TextOffset{p}))) {
-            ++p;
-        }
-        return TextOffset{p};
-    }
-
-    // Offset on `line` closest to the goal display column.
-    TextOffset offset_at_display_column(const Text& text, std::uint32_t line, int goal) const {
-        const TextRange content = text.line_content_range(line);
-        const std::string bytes = text.substring(content);
-        std::string_view rest = bytes;
-        std::uint32_t p = content.start.value;
-        int col = 0;
-        while (!rest.empty() && col < goal) {
-            if (rest.front() == '\t') {
-                col += tab_width() - col % tab_width();
-                ++p;
-                rest.remove_prefix(1);
-                continue;
-            }
-            const ui::Utf8Decode d = ui::decode_utf8(rest);
-            col += ui::code_point_width(d.cp);
-            p += static_cast<std::uint32_t>(d.bytes);
-            rest.remove_prefix(static_cast<std::size_t>(d.bytes));
-        }
-        return TextOffset{p};
-    }
-
     void move_vertical(int delta) {
         const DocumentSnapshot snap_keepalive = session_.snapshot();
         const Text& text = snap_keepalive.content();
         const LinePosition pos = text.position(session_.caret());
         if (goal_col_ < 0) {
-            goal_col_ = display_column(text, session_.caret());
+            goal_col_ = ui::display_column(text, session_.caret(), tab_width());
         }
         const auto line_count = static_cast<int>(text.line_count());
         const int target = std::clamp(static_cast<int>(pos.line) + delta, 0, line_count - 1);
-        session_.set_caret(
-            offset_at_display_column(text, static_cast<std::uint32_t>(target), goal_col_));
+        session_.set_caret(ui::offset_at_display_column(text, static_cast<std::uint32_t>(target),
+                                                        goal_col_, tab_width()));
     }
 
     // ---- editing ----------------------------------------------------------
@@ -251,17 +146,27 @@ private:
                 session_.insert_text(key.text); // one undo unit per code point
             }
             break;
-        case KeyKind::Enter: session_.enter(); break;
+        case KeyKind::Enter:
+            session_.enter();
+            break;
         case KeyKind::Tab: {
             IndentDecision decision = session_.indent();
             message_ = std::format("indent: {}", format_role_name(decision.role));
             keep_message = true;
             break;
         }
-        case KeyKind::Backspace: soft_delete(false); break;
-        case KeyKind::Delete: soft_delete(true); break;
-        case KeyKind::Left: session_.set_caret(prev_code_point(text, caret)); break;
-        case KeyKind::Right: session_.set_caret(next_code_point(text, caret)); break;
+        case KeyKind::Backspace:
+            soft_delete(false);
+            break;
+        case KeyKind::Delete:
+            soft_delete(true);
+            break;
+        case KeyKind::Left:
+            session_.set_caret(ui::previous_code_point(text, caret));
+            break;
+        case KeyKind::Right:
+            session_.set_caret(ui::next_code_point(text, caret));
+            break;
         case KeyKind::Up:
             move_vertical(-1);
             keep_goal = true;
@@ -284,11 +189,19 @@ private:
         case KeyKind::End:
             session_.set_caret(text.line_content_end(text.position(caret).line));
             break;
-        case KeyKind::Ctrl: handle_ctrl(key.ch, keep_message); break;
-        case KeyKind::Alt: handle_alt(key.ch, keep_message); break;
-        case KeyKind::Eof: quit_ = true; break;
+        case KeyKind::Ctrl:
+            handle_ctrl(key.ch, keep_message);
+            break;
+        case KeyKind::Alt:
+            handle_alt(key.ch, keep_message);
+            break;
+        case KeyKind::Eof:
+            quit_ = true;
+            break;
         case KeyKind::Escape:
-        case KeyKind::None: keep_message = true; break;
+        case KeyKind::None:
+            keep_message = true;
+            break;
         }
 
         if (!keep_goal && !keep_vertical_goal_) {
@@ -369,16 +282,28 @@ private:
                 message_ = "copied";
             }
             break;
-        case 'g': command_goto_line(); break;
-        case 'n': search_move(last_search_, true); break;
-        case 'p': search_move(last_search_, false); break;
-        case '%': command_replace(); break;
-        case '?': show_help(); break;
+        case 'g':
+            command_goto_line();
+            break;
+        case 'n':
+            search_move(last_search_, true);
+            break;
+        case 'p':
+            search_move(last_search_, false);
+            break;
+        case '%':
+            command_replace();
+            break;
+        case '?':
+            show_help();
+            break;
         case 'v':
             move_vertical(-text_rows());
             keep_vertical_goal_ = true;
             break;
-        default: message_.clear(); break;
+        default:
+            message_.clear();
+            break;
         }
     }
 
@@ -391,18 +316,24 @@ private:
         if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
             return;
         }
-        const TextOffset target = forward ? caret : prev_code_point(text, caret);
+        const TextOffset target = forward ? caret : ui::previous_code_point(text, caret);
         const char c = text.byte_at(target);
         auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
         auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
         auto partner = [](char ch) {
             switch (ch) {
-            case '(': return ')';
-            case '[': return ']';
-            case '{': return '}';
-            case ')': return '(';
-            case ']': return '[';
-            default: return '{';
+            case '(':
+                return ')';
+            case '[':
+                return ']';
+            case '{':
+                return '}';
+            case ')':
+                return '(';
+            case ']':
+                return '[';
+            default:
+                return '{';
             }
         };
         if (is_open(c) || is_close(c)) {
@@ -414,8 +345,8 @@ private:
             }
             if (is_close(c) && target.value >= 1 &&
                 text.byte_at(TextOffset{target.value - 1}) == partner(c)) {
-                session_.erase(TextRange{TextOffset{target.value - 1},
-                                         TextOffset{target.value + 1}});
+                session_.erase(
+                    TextRange{TextOffset{target.value - 1}, TextOffset{target.value + 1}});
                 return;
             }
             session_.set_caret(forward ? TextOffset{target.value + 1} : target);
@@ -423,12 +354,11 @@ private:
             return;
         }
         if (c == '"' || c == '\'') {
-            const char other = forward ? (target.value >= 1
-                                              ? text.byte_at(TextOffset{target.value - 1})
-                                              : '\0')
-                                       : (target.value + 1 < text.size_bytes()
-                                              ? text.byte_at(TextOffset{target.value + 1})
-                                              : '\0');
+            const char other =
+                forward ? (target.value >= 1 ? text.byte_at(TextOffset{target.value - 1}) : '\0')
+                        : (target.value + 1 < text.size_bytes()
+                               ? text.byte_at(TextOffset{target.value + 1})
+                               : '\0');
             if (other == c) { // empty literal: delete both quotes
                 const std::uint32_t lo = forward ? target.value - 1 : target.value;
                 session_.erase(make_range(lo, lo + 2));
@@ -438,18 +368,28 @@ private:
             message_ = "soft delete: literal not empty (moved over)";
             return;
         }
-        session_.erase(forward ? TextRange{caret, next_code_point(text, caret)}
-                               : TextRange{prev_code_point(text, caret), caret});
+        session_.erase(forward ? TextRange{caret, ui::next_code_point(text, caret)}
+                               : TextRange{ui::previous_code_point(text, caret), caret});
     }
 
     void handle_ctrl(char ch, bool& keep_message) {
         keep_message = true;
         switch (ch) {
-        case 'q': command_quit(); break;
-        case 's': save_to(path_); break;
-        case 'o': command_save_as(); break;
-        case 'f': command_search(); break;
-        case 'c': command_position(); break;
+        case 'q':
+            command_quit();
+            break;
+        case 's':
+            save_to(path_);
+            break;
+        case 'o':
+            command_save_as();
+            break;
+        case 'f':
+            command_search();
+            break;
+        case 'c':
+            command_position();
+            break;
         case 'g': // cancel: mark, pending states, message
             mark_.reset();
             expand_stack_.clear();
@@ -475,8 +415,12 @@ private:
             move_vertical(text_rows());
             keep_vertical_goal_ = true;
             break;
-        case 'z': message_ = session_.undo() ? "undo" : "nothing to undo"; break;
-        case 'r': message_ = session_.redo() ? "redo" : "nothing to redo"; break;
+        case 'z':
+            message_ = session_.undo() ? "undo" : "nothing to undo";
+            break;
+        case 'r':
+            message_ = session_.redo() ? "redo" : "nothing to redo";
+            break;
         case ' ': // set/clear mark
             if (mark_ && *mark_ == session_.caret()) {
                 mark_.reset();
@@ -506,14 +450,15 @@ private:
                 session_.insert_text(kill_slot_);
             }
             break;
-        case 'l': break; // redraw happens every loop anyway
-        default: message_.clear(); break;
+        case 'l':
+            break; // redraw happens every loop anyway
+        default:
+            message_.clear();
+            break;
         }
     }
 
-    bool dirty() const {
-        return diff_edit(saved_text_, session_.snapshot().content()).has_value();
-    }
+    bool dirty() const { return diff_edit(saved_text_, session_.snapshot().content()).has_value(); }
 
     // ---- minibuffer -------------------------------------------------------
 
@@ -539,7 +484,7 @@ private:
                 prompt_input_ += key.text;
             } else if (key.kind == KeyKind::Backspace && !prompt_input_.empty()) {
                 std::size_t n = prompt_input_.size() - 1;
-                while (n > 0 && is_continuation_byte(prompt_input_[n])) {
+                while (n > 0 && is_utf8_continuation(prompt_input_[n])) {
                     --n;
                 }
                 prompt_input_.resize(n);
@@ -563,8 +508,7 @@ private:
                 break;
             }
             if (key.kind == KeyKind::Char && key.text.size() == 1) {
-                answer = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(key.text[0])));
+                answer = static_cast<char>(std::tolower(static_cast<unsigned char>(key.text[0])));
                 break;
             }
         }
@@ -611,8 +555,7 @@ private:
 
     void command_search() {
         std::optional<std::string> input =
-            prompt(last_search_.empty() ? "search: "
-                                        : std::format("search [{}]: ", last_search_));
+            prompt(last_search_.empty() ? "search: " : std::format("search [{}]: ", last_search_));
         if (!input) {
             message_ = "cancelled";
             return;
@@ -641,7 +584,7 @@ private:
         bool all = false;
         while (true) {
             const DocumentSnapshot snap_keepalive = session_.snapshot();
-        const Text& text = snap_keepalive.content();
+            const Text& text = snap_keepalive.content();
             const std::string hay = text.to_string();
             const std::size_t at = hay.find(*from, session_.caret().value);
             if (at == std::string::npos) {
@@ -661,8 +604,8 @@ private:
             }
             if (all || answer == 'y') {
                 const auto match_start = static_cast<std::uint32_t>(at);
-                session_.erase(make_range(match_start, match_start +
-                                                           static_cast<std::uint32_t>(from->size())));
+                session_.erase(make_range(match_start,
+                                          match_start + static_cast<std::uint32_t>(from->size())));
                 session_.insert_text(*to);
                 ++replaced;
             } else {
@@ -695,7 +638,8 @@ private:
         const std::uint32_t target = std::min(line - 1, text.line_count() - 1);
         TextOffset offset = text.line_start(target);
         if (column > 1) {
-            offset = offset_at_display_column(text, target, static_cast<int>(column - 1));
+            offset = ui::offset_at_display_column(text, target, static_cast<int>(column - 1),
+                                                  tab_width());
         }
         session_.set_caret(offset);
     }
@@ -710,9 +654,10 @@ private:
         auto pct = [](std::uint64_t a, std::uint64_t b) {
             return b == 0 ? 100 : static_cast<int>(a * 100 / b);
         };
-        message_ = std::format("line {}/{} ({}%), col {}, byte {}/{} ({}%)", pos.line + 1, lines,
-                               pct(pos.line + 1, lines), display_column(text, caret) + 1,
-                               caret.value, bytes, pct(caret.value, bytes));
+        message_ =
+            std::format("line {}/{} ({}%), col {}, byte {}/{} ({}%)", pos.line + 1, lines,
+                        pct(pos.line + 1, lines), ui::display_column(text, caret, tab_width()) + 1,
+                        caret.value, bytes, pct(caret.value, bytes));
     }
 
     // ---- saving / quitting --------------------------------------------------
@@ -728,7 +673,7 @@ private:
     }
 
     bool save_to(const std::string& target) {
-        if (std::error_code ec = save_atomically(target, session_.snapshot().content())) {
+        if (std::error_code ec = save_file_atomically(target, session_.snapshot().content())) {
             message_ = std::format("save failed: {}", ec.message());
             return false;
         }
@@ -804,132 +749,46 @@ private:
 
     // Unsaved-change signs, cached per (revision, save generation): the
     // structural diff makes a miss O(changed bytes + log n).
-    ui::SignKind sign_at(std::uint32_t line) {
+    const ui::LineSigns& signs() {
         const RevisionId rev = session_.snapshot().revision();
         if (signs_rev_ != rev || signs_gen_ != save_gen_) {
             signs_ = ui::line_signs(saved_text_, session_.snapshot().content());
             signs_rev_ = rev;
             signs_gen_ = save_gen_;
         }
-        return signs_.at(line);
+        return signs_;
     }
 
     ui::Scene compose() {
         const DocumentSnapshot snap = session_.snapshot();
-        const Text& text = snap.content();
         const TermSize size = term_.size();
-        const int rows = text_rows();
-        const int width = text_width();
-
-        // Keep the caret inside the viewport.
-        const LinePosition caret_pos = text.position(session_.caret());
-        if (caret_pos.line < top_line_) {
-            top_line_ = caret_pos.line;
-        }
-        if (caret_pos.line >= top_line_ + static_cast<std::uint32_t>(rows)) {
-            top_line_ = caret_pos.line - static_cast<std::uint32_t>(rows) + 1;
-        }
-        const int caret_col = display_column(text, session_.caret());
-        if (caret_col < left_col_) {
-            left_col_ = caret_col;
-        }
-        if (caret_col >= left_col_ + width) {
-            left_col_ = caret_col - width + 1;
-        }
-
-        ui::Scene scene;
-        scene.rows = size.rows;
-        scene.cols = size.cols;
-
-        // Layout: partition the terminal into regions. A future widget
-        // (minimap, fold strip, panel) claims its rectangle here and
-        // paints the same primitives below.
-        const int digits = gutter_digits();
-        ui::Region numbers{ui::RegionRole::LineNumbers, {0, 0, rows, digits + 1}, {}};
-        ui::Region marks{ui::RegionRole::ChangeSigns, {0, digits + 1, rows, 1}, {}};
-        ui::Region body{ui::RegionRole::TextArea, {0, digits + 2, rows, width}, {}};
-        ui::Region status{ui::RegionRole::StatusBar, {rows, 0, 1, size.cols}, {}};
-        ui::Region echo{ui::RegionRole::EchoArea, {rows + 1, 0, 1, size.cols}, {}};
-
-        // Paint.
-        const std::optional<TextRange> sel = selection();
-        const TokenBuffer& lexed = tokens();
-        for (int row = 0; row < rows; ++row) {
-            const std::uint32_t line = top_line_ + static_cast<std::uint32_t>(row);
-            if (line >= text.line_count()) {
-                body.prims.push_back({row, 0, "~", ui::StyleClass::Gutter, false});
-                continue;
-            }
-            numbers.prims.push_back({row, 0, std::format("{:>{}} ", line + 1, digits),
-                                     ui::StyleClass::Gutter, false});
-            switch (sign_at(line)) {
-            case ui::SignKind::Added:
-                marks.prims.push_back({row, 0, "▎", ui::StyleClass::SignAdded, false});
-                break;
-            case ui::SignKind::Modified:
-                marks.prims.push_back({row, 0, "▎", ui::StyleClass::SignModified, false});
-                break;
-            case ui::SignKind::DeletedAbove:
-                marks.prims.push_back({row, 0, "▔", ui::StyleClass::SignDeleted, false});
-                break;
-            case ui::SignKind::None: break;
-            }
-            const TextRange content = text.line_content_range(line);
-            const std::string bytes = text.substring(content);
-            for (ui::Run& run : ui::build_line_runs({.text = bytes,
-                                                     .start_offset = content.start.value,
-                                                     .tab_width = tab_width(),
-                                                     .left_col = left_col_,
-                                                     .width = width,
-                                                     .selection = sel},
-                                                    lexed)) {
-                body.prims.push_back(
-                    {row, run.col, std::move(run.text), run.style, run.selected});
-            }
-        }
-
-        std::string left =
-            std::format(" {}{}  {}:{}  rev {}  style {} ", path_, dirty() ? " [+]" : "",
-                        caret_pos.line + 1, caret_col + 1, snap.revision(), style_origin_);
-        const std::string key =
-            last_key_.empty() ? std::string() : std::format("key: {} ", last_key_);
-        int fill = size.cols - ui::display_width(left) - ui::display_width(key);
-        if (fill < 0) {
-            left.resize(std::max<std::size_t>(0, left.size() + static_cast<std::size_t>(fill)));
-            fill = 0;
-        }
-        status.prims.push_back(
-            {0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
-             ui::StyleClass::StatusBar, false});
-        if (!key.empty()) {
-            status.prims.push_back({0, size.cols - ui::display_width(key), key,
-                                    ui::StyleClass::StatusKey, false});
-        }
-
         const std::string echo_text =
-            prompt_active_ ? prompt_label_ + prompt_input_
-                           : (message_.empty()
-                                  ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
-                                    "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  "
-                                    "M-? help"
-                                  : message_);
-        echo.prims.push_back({0, 0, echo_text, ui::StyleClass::Message, false});
-
+            prompt_active_
+                ? prompt_label_ + prompt_input_
+                : (message_.empty() ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
+                                      "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  "
+                                      "M-? help"
+                                    : message_);
+        std::optional<int> echo_cursor;
         if (prompt_active_) {
-            scene.cursor_row = size.rows;
-            scene.cursor_col =
-                ui::display_width(prompt_label_) + ui::display_width(prompt_input_) + 1;
-        } else {
-            scene.cursor_row = static_cast<int>(caret_pos.line - top_line_) + 1;
-            scene.cursor_col = text_col0() + (caret_col - left_col_) + 1;
+            echo_cursor = ui::display_width(prompt_label_) + ui::display_width(prompt_input_);
         }
-
-        scene.regions.push_back(std::move(numbers));
-        scene.regions.push_back(std::move(marks));
-        scene.regions.push_back(std::move(body));
-        scene.regions.push_back(std::move(status));
-        scene.regions.push_back(std::move(echo));
-        return scene;
+        return ui::compose_editor_scene({.text = snap.content(),
+                                         .tokens = tokens(),
+                                         .signs = signs(),
+                                         .caret = session_.caret(),
+                                         .selection = selection(),
+                                         .rows = size.rows,
+                                         .cols = size.cols,
+                                         .tab_width = tab_width(),
+                                         .path = path_,
+                                         .dirty = dirty(),
+                                         .revision = snap.revision(),
+                                         .style_origin = style_origin_,
+                                         .last_key = last_key_,
+                                         .echo = echo_text,
+                                         .echo_cursor_column = echo_cursor},
+                                        viewport_);
     }
 
     void render() {
@@ -943,8 +802,7 @@ private:
     Text saved_text_;
     Terminal term_;
 
-    std::uint32_t top_line_ = 0;
-    int left_col_ = 0;
+    ui::EditorViewport viewport_;
     int goal_col_ = -1;
     std::uint32_t save_gen_ = 0;
     ui::LineSigns signs_;

@@ -7,6 +7,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_compile_options(-Wall -Wextra -Wconversion -Wshadow)
 
+option(CIND_BUILD_GUI "Build the Skia/SDL3 Wayland editor frontend" OFF)
+
+if (CIND_BUILD_GUI)
+  include(cmake/WebKitSkia.cmake)
+  cind_add_webkit_skia()
+endif()
+
 include(FetchContent)
 FetchContent_Declare(
   doctest

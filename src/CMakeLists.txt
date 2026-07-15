@@ -15,8 +15,10 @@ target_link_libraries(cind_lexer PUBLIC cind_document)
 add_library(cind_ui STATIC
   ui/char_width.cpp
   ui/compose_line.cpp
+  ui/editor_scene.cpp
   ui/line_signs.cpp
   ui/ansi_renderer.cpp
+  ui/text_position.cpp
 )
 target_link_libraries(cind_ui PUBLIC cind_lexer)
 
@@ -33,18 +35,39 @@ add_library(cind_indent STATIC
   indentation/indentation_service.cpp
   indentation/expression_continuation.cpp
   commands/editor_commands.cpp
+  commands/file_io.cpp
   formatting/clang_format_style.cpp
 )
 target_link_libraries(cind_indent PUBLIC cind_syntax)
 
+add_library(cind_editor STATIC
+  cli/session.cpp
+  cli/style_loader.cpp
+)
+target_link_libraries(cind_editor PUBLIC cind_indent)
+
 add_executable(indent-core
   cli/main.cpp
   cli/bench.cpp
-  cli/session.cpp
-  cli/style_loader.cpp
   cli/fixture_runner.cpp
   cli/repl.cpp
   tui/terminal.cpp
   tui/editor.cpp
 )
-target_link_libraries(indent-core PRIVATE cind_indent cind_ui)
+target_link_libraries(indent-core PRIVATE cind_editor cind_ui)
+
+if (CIND_BUILD_GUI)
+  find_package(SDL3 CONFIG REQUIRED)
+
+  add_library(cind_skia_ui STATIC
+    gui/skia_presenter.cpp
+  )
+  target_include_directories(cind_skia_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(cind_skia_ui PRIVATE -Wno-conversion -Wno-shadow)
+  target_link_libraries(cind_skia_ui PUBLIC cind_ui PRIVATE Skia::Skia)
+
+  add_executable(cind-gui
+    gui/main.cpp
+  )
+  target_link_libraries(cind-gui PRIVATE cind_editor cind_skia_ui SDL3::SDL3)
+endif()

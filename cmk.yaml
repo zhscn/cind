@@ -13,6 +13,10 @@ cmake:
   presets:
     default:
       build-dir: build
+    gui:
+      build-dir: build-gui
+      variables:
+        CIND_BUILD_GUI: ON
 
   configurations:
     - name: Debug
