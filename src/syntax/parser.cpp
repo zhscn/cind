@@ -143,6 +143,7 @@ public:
         pos_ = static_cast<std::uint32_t>(tree_.tokens_.size()); // include trailing trivia + EOF
         nodes()[0].end_token = pos_;
         stack_.pop_back();
+        tree_.pp_phantom_hi_ = pp_phantom_hi_;
         tree_.set_green(green_from_flat_subtree(build_, 0));
         return std::move(tree_);
     }
@@ -185,6 +186,21 @@ private:
         return k == TokenKind::Identifier || k == TokenKind::ColonColon ||
                k == TokenKind::Arrow || k == TokenKind::Amp || k == TokenKind::AmpAmp ||
                k == TokenKind::Star;
+    }
+
+    // Only trivia between the previous newline and the token at pos_.
+    bool at_line_start() {
+        skip_trivia();
+        for (std::uint32_t i = pos_; i > 0; --i) {
+            const TokenKind k = tokens()[i - 1].kind;
+            if (k == TokenKind::Newline) {
+                return true;
+            }
+            if (!is_trivia(k)) {
+                return false;
+            }
+        }
+        return true; // start of file
     }
 
     bool newline_before_next_token() const {
@@ -387,7 +403,7 @@ private:
         switch (pp_category_at(pos_)) {
         case PPCat::Open:
             parse_pp_directive();
-            pp_frames_.push_back({depth});
+            pp_frames_.push_back({depth, open_brace_scopes()});
             return PPItem::Consumed;
         case PPCat::Alt:
             if (pp_frames_.empty()) {
@@ -406,9 +422,27 @@ private:
                 unwind_target_ = pp_frames_.back().owner_depth;
                 return PPItem::StopLoop;
             }
-            parse_pp_directive(); // this loop owns the conditional: consume, keep frame
+            // This loop owns the conditional: consume, keep frame. An unwind
+            // in flight was aimed exactly here — clear it before any phantom
+            // scope below runs its own (deeper) item loop.
+            unwind_target_ = kNoUnwind;
+            parse_pp_directive();
+            // The previous branch net-closed scopes opened before the #if
+            // (`do { #if } while(A); #else`): re-open the deficit as phantom
+            // scopes so this branch's '}' closers re-close them.
+            if (pp_frames_.back().owner_braces > open_brace_scopes()) {
+                reopen_pp_scopes(pp_frames_.back().owner_braces - open_brace_scopes());
+            }
             return PPItem::Consumed;
         case PPCat::Close:
+            // #endif at or below the innermost phantom's frame floor bounds
+            // that phantom: hand control back to its loop (which stops at the
+            // directive) instead of consuming it here and leaking the phantom
+            // past its conditional.
+            if (!pp_phantoms_.empty() && pp_frames_.size() <= pp_phantoms_.back().frames) {
+                unwind_target_ = pp_phantoms_.back().depth;
+                return PPItem::StopLoop;
+            }
             if (!pp_frames_.empty()) {
                 pp_frames_.pop_back();
             }
@@ -418,6 +452,52 @@ private:
             return PPItem::Dispatch;
         }
         return PPItem::Dispatch;
+    }
+
+    // Open nodes on the stack whose item loop consumes a closing brace. This
+    // is the unit the #else brace-deficit is measured in: statement wrappers
+    // (DoStatement, IfStatement, ...) close without consuming '}' and add no
+    // indent scope, so they do not count.
+    std::uint32_t open_brace_scopes() const {
+        std::uint32_t n = 0;
+        for (const SyntaxNodeId id : stack_) {
+            switch (build_[id].kind) {
+            case SyntaxKind::CompoundStatement:
+            case SyntaxKind::NamespaceBody:
+            case SyntaxKind::ClassBody:
+            case SyntaxKind::PPReopenedScope: ++n; break;
+            default: break;
+            }
+        }
+        return n;
+    }
+
+    // Nested phantom scopes standing in for the ones the previous branch
+    // closed: the alternative branch's '}' tokens close them innermost-first,
+    // exactly mirroring the scopes' original closing order. Every phantom also
+    // ends at this conditional's own #elif/#else/#endif (with a missing '}')
+    // so an unbalanced branch stays bounded by the conditional.
+    void reopen_pp_scopes(std::uint32_t count) {
+        const SyntaxNodeId scope = open(SyntaxKind::PPReopenedScope);
+        const std::size_t frames = pp_frames_.size();
+        pp_phantoms_.push_back({static_cast<std::uint32_t>(stack_.size()), frames});
+        if (count > 1) {
+            reopen_pp_scopes(count - 1);
+        }
+        run_container_items([&] {
+            if (at_eof() || at(TokenKind::RBrace)) {
+                return true;
+            }
+            if (at(TokenKind::PreprocessorHash) && pp_frames_.size() <= frames) {
+                const PPCat cat = pp_category_at(pos_);
+                return cat == PPCat::Alt || cat == PPCat::Close;
+            }
+            return false;
+        });
+        expect_or_missing(TokenKind::RBrace);
+        pp_phantoms_.pop_back();
+        close(scope);
+        pp_phantom_hi_ = std::max(pp_phantom_hi_, pos_);
     }
 
     // The shared item loop for every statement/declaration container. `stop`
@@ -606,6 +686,33 @@ private:
     // (closing brace, else, EOF next) marks the owner incomplete — this is
     // what "Enter after if (x)" keys the extra indent on.
     void parse_embedded_statement(SyntaxNodeId owner) {
+        // A conditional directive here belongs to the conditional, not to
+        // this body. #endif is transparent — the body is the common suffix
+        // (`#if if(A) #else if(B) #endif stmt;` binds stmt to the last
+        // branch's if); #else/#elif means the body is absent in this branch
+        // (the enclosing item loop consumes the directive). Both decisions
+        // are functions of the token stream alone — never of pp_frames_ —
+        // so a sandbox reparse and a full parse cannot diverge here.
+        while (at(TokenKind::PreprocessorHash)) {
+            const PPCat cat = pp_category_at(pos_);
+            if (cat == PPCat::Close) {
+                if (!pp_phantoms_.empty() &&
+                    pp_frames_.size() <= pp_phantoms_.back().frames) {
+                    mark_incomplete(owner); // bounds the phantom, not this body
+                    return;
+                }
+                if (!pp_frames_.empty()) {
+                    pp_frames_.pop_back();
+                }
+                parse_pp_directive();
+                continue;
+            }
+            if (cat == PPCat::Alt) {
+                mark_incomplete(owner);
+                return;
+            }
+            break; // Open/Other: the directive parses as the body (flat)
+        }
         const TokenKind k = kind();
         if (k == TokenKind::RBrace || k == TokenKind::EndOfFile || k == TokenKind::ElseKw ||
             k == TokenKind::CaseKw || k == TokenKind::DefaultKw) {
@@ -700,8 +807,13 @@ private:
             }
             // Unclosed paren: bail at structure that clearly is not an
             // argument, so damage stays bounded (design.md §7.4b, §8.4).
-            if (k == TokenKind::RBrace || k == TokenKind::NamespaceKw ||
-                k == TokenKind::ClassKw || k == TokenKind::StructKw) {
+            // class/struct only bails at the start of a line: mid-line it is
+            // a type mention (`(struct sockaddr *)&Addr`), not a declaration
+            // the unclosed paren would swallow.
+            if (k == TokenKind::RBrace || k == TokenKind::NamespaceKw) {
+                break;
+            }
+            if ((k == TokenKind::ClassKw || k == TokenKind::StructKw) && at_line_start()) {
                 break;
             }
             body_pending = body_pending && keeps_body_pending();
@@ -1093,8 +1205,25 @@ private:
     // owner loop's stack depth; a following #else/#elif restores to it so
     // alternative branches parse as siblings (one branch's net brace effect
     // counts, not the sum). See pp_open_item / run_container_items.
+    // Open phantom scopes (reopen_pp_scopes): pp_open_item and embedded-body
+    // parsing must not consume a Close at or below `frames` — it belongs to
+    // the conditional bounding the phantom at stack depth `depth`.
+    struct PhantomCtx {
+        std::uint32_t depth;
+        std::size_t frames;
+    };
+    std::vector<PhantomCtx> pp_phantoms_;
+    // One-past-the-last token covered by any closed phantom scope; stored on
+    // the tree so reparse can refuse block repairs in phantom-influenced text.
+    std::uint32_t pp_phantom_hi_ = 0;
+
     struct PPFrame {
         std::uint32_t owner_depth;
+        // Open brace scopes at #if: an #else/#elif seen with fewer means the
+        // branch closed scopes the conditional did not open, and the deficit
+        // is re-opened as phantom scopes (PPReopenedScope) so the alternative
+        // branch re-closes them instead of terminating outer containers.
+        std::uint32_t owner_braces;
     };
     std::vector<PPFrame> pp_frames_;
     static constexpr std::uint32_t kNoUnwind = 0xFFFFFFFFu;
@@ -1461,8 +1590,11 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     // A conditional whose #if-frame context the local repair cannot rebuild
     // (window inside an open conditional, or an #else/#elif in reach) forces a
     // full reparse. Files without a reachable alternative branch parse exactly
-    // as the flat baseline, so this never fires for them.
-    if (pp_repair_unsafe(tree.tokens_, guard_lo, new_text)) {
+    // as the flat baseline, so this never fires for them. Phantom scopes
+    // (PPReopenedScope) are #if-frame context too, and error recovery can
+    // stretch one past its conditional's #endif where the token scan below
+    // would call the window safe — the parser-measured extent is authoritative.
+    if (guard_lo < tree.pp_phantom_hi_ || pp_repair_unsafe(tree.tokens_, guard_lo, new_text)) {
         LexOutput lexed;
         lexed.tokens = std::move(tree.tokens_);
         tree = parse(new_text, std::move(lexed));

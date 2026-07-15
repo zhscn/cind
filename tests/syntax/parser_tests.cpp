@@ -537,3 +537,77 @@ TEST_CASE("structural churn stays bounded while typing (golden)") {
     MESSAGE("stmt churn: ", stmt_churn);
     CHECK(stmt_churn <= 28);
 }
+
+TEST_CASE("cross-branch do-while closer re-closes a phantom scope") {
+    // Both branches close the do-compound opened before the conditional; the
+    // #else branch's '}' must close a phantom scope, not the function body.
+    SyntaxTree tree = parse_checked("void f() {\n"
+                                    "  do {\n"
+                                    "    g();\n"
+                                    "#ifdef A\n"
+                                    "  } while (x);\n"
+                                    "#else\n"
+                                    "  } while (y);\n"
+                                    "#endif\n"
+                                    "  tail();\n"
+                                    "}\n");
+    const SyntaxNodeId phantom = find_one(tree, SyntaxKind::PPReopenedScope);
+    const SyntaxNodeId fn = find_one(tree, SyntaxKind::FunctionDefinition);
+    // containment: the function is the only top-level item
+    CHECK(tree.node(tree.root()).children.size() == 1);
+    CHECK(tree.node(tree.node(fn).parent).kind == SyntaxKind::TranslationUnit);
+    // the phantom is an item of the function body and closed by a real '}'
+    const SyntaxNodeId body = tree.node(phantom).parent;
+    CHECK(tree.node(body).kind == SyntaxKind::CompoundStatement);
+    CHECK(tree.node(body).parent == fn);
+    CHECK(!tree.node(phantom).incomplete);
+}
+
+TEST_CASE("multi-branch #elif re-opens the phantom scope per branch") {
+    SyntaxTree tree = parse_checked("void f() {\n"
+                                    "  do {\n"
+                                    "    g();\n"
+                                    "#if A\n"
+                                    "  } while (x);\n"
+                                    "#elif B\n"
+                                    "  } while (y);\n"
+                                    "#else\n"
+                                    "  } while (z);\n"
+                                    "#endif\n"
+                                    "  tail();\n"
+                                    "}\n");
+    CHECK(find_all(tree, SyntaxKind::PPReopenedScope).size() == 2);
+    CHECK(tree.node(tree.root()).children.size() == 1);
+}
+
+TEST_CASE("cross-branch if header binds the common suffix as its body") {
+    SyntaxTree tree = parse_checked("void f() {\n"
+                                    "#ifdef A\n"
+                                    "  if (x)\n"
+                                    "#else\n"
+                                    "  if (y)\n"
+                                    "#endif\n"
+                                    "    return;\n"
+                                    "}\n");
+    auto ifs = find_all(tree, SyntaxKind::IfStatement);
+    REQUIRE(ifs.size() == 2);
+    // branch one's if has no body in its branch: incomplete
+    CHECK(tree.node(ifs[0]).incomplete);
+    // branch two's if sees through #endif and owns the return statement
+    CHECK(!tree.node(ifs[1]).incomplete);
+    bool owns_return = false;
+    for (SyntaxNodeId child : tree.node(ifs[1]).children) {
+        owns_return |= tree.node(child).kind == SyntaxKind::OpaqueDeclaration;
+    }
+    CHECK(owns_return);
+}
+
+TEST_CASE("mid-line struct in a cast does not abort the paren group") {
+    SyntaxTree tree = parse_checked(
+        "void f() {\n  if (c(s, (struct sockaddr *)&a, sizeof(a)) == -1)\n    return;\n}\n");
+    CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
+    CHECK(find_all(tree, SyntaxKind::ClassDecl).empty());
+    // at line start the keyword still ends an unclosed paren's damage
+    SyntaxTree bail = parse_checked("void g() {\n  h(x, y\n  struct S { int a; };\n}\n");
+    CHECK(!find_all(bail, SyntaxKind::ClassDecl).empty());
+}

@@ -568,3 +568,45 @@ TEST_CASE("prefix typing: enter at every prefix is deterministic and safe") {
         REQUIRE(doc1.snapshot().content() == prefix);
     }
 }
+
+TEST_CASE("cross-branch #else closers keep their branch-one columns") {
+    // Each branch closes the do-compound once; the #else branch's '}' closes
+    // a phantom re-opened scope and must sit at the do's column, with the
+    // interior line at the body column and the suffix back at item level.
+    static constexpr std::string_view kDoWhile = "void f() {\n"
+                                                 "    do {\n"
+                                                 "        g();\n"
+                                                 "#ifdef A\n"
+                                                 "        h(x);\n"
+                                                 "    } while (x);\n"
+                                                 "#else\n"
+                                                 "        h(y);\n"
+                                                 "    } while (y);\n"
+                                                 "#endif\n"
+                                                 "    tail();\n"
+                                                 "}\n";
+    Document doc{std::string(kDoWhile)};
+    for (std::uint32_t line = 0; line < 12; ++line) {
+        indent_line(doc, line, CppIndentStyle{});
+        CAPTURE(line);
+        REQUIRE(doc.snapshot().content() == kDoWhile);
+    }
+}
+
+TEST_CASE("cross-branch if header binds the common suffix as its body") {
+    static constexpr std::string_view kIf = "void f() {\n"
+                                            "#ifdef A\n"
+                                            "    if (x)\n"
+                                            "#else\n"
+                                            "    if (y)\n"
+                                            "#endif\n"
+                                            "        return;\n"
+                                            "    tail();\n"
+                                            "}\n";
+    Document doc{std::string(kIf)};
+    for (std::uint32_t line = 0; line < 9; ++line) {
+        indent_line(doc, line, CppIndentStyle{});
+        CAPTURE(line);
+        REQUIRE(doc.snapshot().content() == kIf);
+    }
+}

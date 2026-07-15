@@ -37,6 +37,11 @@ enum class SyntaxKind : std::uint8_t {
     CaseSection, // label + its statements
     CaseLabel,
 
+    // Phantom scope opened at #else/#elif when the first branch closed scopes
+    // the conditional did not open (`do { #if } while(A); #else } while(B);`):
+    // the alternative branch's '}' closes it instead of an outer container.
+    PPReopenedScope,
+
     MissingToken, // zero-length: an expected token that is not there
     Error,
 };

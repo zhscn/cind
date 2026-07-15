@@ -239,6 +239,8 @@ TEST_CASE("reparse fuzz: split-brace conditionals stay consistent under random e
         "if (a) {\n", "if (b) {\n", "}\n", "  stmt();\n", "  return x;\n",
         "int z = 1;\n", "void q() {\n", "for (;;) {\n", ";", "{", "}",
         "// c\n", "x", "\n", "  ",
+        // cross-branch closers and headers (PPReopenedScope / embedded pp)
+        "do {\n", "} while (x);\n", "if (b)\n", "(struct S *)&v",
     };
     std::string doc = "int h() {\n"
                       "#ifdef A\n  if (a) {\n#else\n  if (b) {\n#endif\n"
@@ -258,6 +260,23 @@ TEST_CASE("reparse fuzz: split-brace conditionals stay consistent under random e
             doc = check_edit(doc, 0, static_cast<std::uint32_t>(doc.size()) / 2, "");
         }
     }
+}
+
+TEST_CASE("reparse: edits around cross-branch do-while closers match a full parse") {
+    std::string doc = "void f() {\n"
+                      "  do {\n    g();\n"
+                      "#ifdef A\n  } while (x);\n#else\n  } while (y);\n#endif\n"
+                      "#ifdef A\n  if (u)\n#else\n  if (v)\n#endif\n    return w;\n"
+                      "  tail();\n}\n";
+    auto at = [&](std::string_view needle) {
+        return static_cast<std::uint32_t>(doc.find(needle));
+    };
+    doc = check_edit(doc, at("g()"), at("g()"), "h(); ");
+    doc = check_edit(doc, at("tail"), at("tail"), "u(); ");
+    doc = check_edit(doc, at("(y)"), at("(y)") + 3, "(y && z)");
+    doc = check_edit(doc, at("return w"), at("return w"), "w += 1; ");
+    doc = check_edit(doc, at("#else"), at("#else") + 6, ""); // delete the first #else
+    doc = check_edit(doc, at("#endif"), at("#endif"), "#else\n  } while (q);\n");
 }
 
 TEST_CASE("reparse: minimized pp-fuzz repro (step 153)") {

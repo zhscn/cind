@@ -370,6 +370,11 @@ private:
     }
 
     void finish(FormatRole role, int structural_cols, int target_cols) {
+        // A line that opens re-opened #else scopes (PPReopenedScope) computes
+        // its indent at the scope's parent and adds one level per phantom: the
+        // content continues the body the previous branch closed.
+        structural_cols += reopened_extra_;
+        target_cols += reopened_extra_;
         decision_.role = role;
         decision_.target_column = std::max(target_cols, 0);
         decision_.indentation_text = materialize(structural_cols, target_cols, style_);
@@ -731,10 +736,16 @@ private:
         }
 
         // Deepest ancestor that starts on an earlier line: its opening line
-        // is the base everything else is relative to.
+        // is the base everything else is relative to. Crossing a re-opened
+        // #else scope that starts on this line means this line is the first
+        // content of that phantom scope: one extra level per phantom.
         SyntaxNodeId relevant = node;
         while (relevant != kInvalidNode &&
                line_of(tree_.node_range(relevant).start) >= line_) {
+            if (tree_.node(relevant).kind == SyntaxKind::PPReopenedScope) {
+                reopened_extra_ += style_.indent_width;
+                trace("first line of a re-opened #else scope; one level deeper");
+            }
             relevant = tree_.node(relevant).parent;
         }
         if (relevant == kInvalidNode) {
@@ -923,6 +934,21 @@ private:
             // expression continuation (clang-format formats it this way).
             finish(FormatRole::PreprocessorDirective, base + w, base + w);
             return;
+        case SyntaxKind::PPReopenedScope:
+            // Interior of a phantom scope re-opened at #else/#elif: content
+            // continues the body the previous branch closed. Its first line
+            // carries the body indent (via the reopened-extra bump above), so
+            // later lines align flat with it and the re-closing '}' drops
+            // back one level.
+            if (first_significant_ && first_significant_->kind == TokenKind::RBrace &&
+                tree_.node_range(relevant).end == first_significant_->range.end) {
+                trace("closer of a re-opened #else scope; one level back");
+                finish(FormatRole::ClosingToken, base - w, base - w);
+                return;
+            }
+            trace("inside a re-opened #else scope; aligning with its first line");
+            finish(FormatRole::Opaque, base, base);
+            return;
         case SyntaxKind::Error: {
             trace("inside an error node; preserving the previous line's indent");
             int prev = line_ > 0 ? indent_of_line(line_ - 1) : 0;
@@ -964,6 +990,9 @@ private:
     CppIndentStyle style_;
     std::optional<Token> first_significant_;
     IndentDecision decision_;
+    // Levels added for re-opened #else scopes that start on this line;
+    // applied by finish(). Only generic()'s relevant-walk sets it.
+    int reopened_extra_ = 0;
 };
 
 } // namespace

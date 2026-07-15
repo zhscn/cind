@@ -30,6 +30,7 @@ std::string_view syntax_kind_name(SyntaxKind kind) {
     case SyntaxKind::SwitchStatement: return "SwitchStatement";
     case SyntaxKind::CaseSection: return "CaseSection";
     case SyntaxKind::CaseLabel: return "CaseLabel";
+    case SyntaxKind::PPReopenedScope: return "PPReopenedScope";
     case SyntaxKind::MissingToken: return "MissingToken";
     case SyntaxKind::Error: return "Error";
     }

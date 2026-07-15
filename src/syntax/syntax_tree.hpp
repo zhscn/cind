@@ -80,6 +80,12 @@ private:
 
     GreenRef green_root_;
     std::vector<Token> tokens_;
+    // One-past-the-last token covered by any PPReopenedScope (0 if none).
+    // Phantom scopes reshape the tree from #if-frame context that a block
+    // repair cannot rebuild, and error recovery can stretch them past their
+    // conditional's #endif — so reparse falls back to a full parse whenever
+    // the damage window opens before this point.
+    std::uint32_t pp_phantom_hi_ = 0;
     // Lazy red pool; index == SyntaxNodeId. deque so held `const SyntaxNode&`
     // stay valid as navigation materializes more nodes (no reallocation).
     mutable std::deque<SyntaxNode> red_;
