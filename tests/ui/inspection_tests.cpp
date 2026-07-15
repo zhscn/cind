@@ -19,7 +19,8 @@ using namespace cind::ui;
 
 namespace {
 
-void publish_test_frame(InspectionHub& hub, bool row_overflow = false) {
+void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
+                        bool full_reference_match = true) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -51,10 +52,12 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false) {
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
     body.prims.push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
-    Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status};
+    Region status{
+        RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     scene.regions = {body, status};
     RenderStateSnapshot render{
         .video_driver = "wayland",
+        .render_driver = "gpu",
         .window_width = 200,
         .window_height = 100,
         .output_width = 300,
@@ -73,6 +76,14 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false) {
                          .baseline_from_row_top = 15.0F},
         .theme = {.background = 0xFF1E1E1E},
         .pixel_hash = 42,
+        .animation = {},
+        .damage = {.full_repaint = false,
+                   .damaged_cells = 1,
+                   .damaged_output_pixels = 1350,
+                   .output_fraction = 0.03,
+                   .full_reference_match = full_reference_match,
+                   .rects = {{.logical = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
+                              .output = {.x = 0, .y = 0, .width = 45, .height = 30}}}},
         .primitives =
             {{.region_index = 0,
               .primitive_index = 0,
@@ -106,12 +117,15 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":3") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":5") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
+    CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
     CHECK(snapshot.find("\"display_scale\":1.5") != std::string::npos);
+    CHECK(snapshot.find("\"render_driver\":\"gpu\"") != std::string::npos);
     CHECK(snapshot.find("\"baseline_from_row_top\":15") != std::string::npos);
     CHECK(snapshot.find("\"cell_bounds\":{\"x\":0") != std::string::npos);
+    CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"violations\":[]") != std::string::npos);
 
@@ -125,9 +139,24 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(pick.payload.find("\"style\":\"keyword\"") != std::string::npos);
     CHECK(pick.payload.find("\"paint_bounds\":{\"x\":1") != std::string::npos);
 
+    const InspectionResponse footer_pick = run_inspection_query(hub, "pick 20 90");
+    REQUIRE(footer_pick.ok);
+    CHECK(footer_pick.payload.find("\"region\":\"region:status-bar\"") != std::string::npos);
+
     const InspectionResponse metrics = run_inspection_query(hub, "get render.font_metrics");
     REQUIRE(metrics.ok);
     CHECK(metrics.payload.find("\"baseline_from_row_top\":15") != std::string::npos);
+
+    const InspectionResponse animation = run_inspection_query(hub, "get render.animation");
+    REQUIRE(animation.ok);
+    CHECK(animation.payload.find("\"active\":false") != std::string::npos);
+    CHECK(animation.payload.find("\"cursor_rect\":null") != std::string::npos);
+
+    const InspectionResponse damage = run_inspection_query(hub, "get render.damage");
+    REQUIRE(damage.ok);
+    CHECK(damage.payload.find("\"full_repaint\":false") != std::string::npos);
+    CHECK(damage.payload.find("\"output\":{\"x\":0,\"y\":0,\"width\":45") != std::string::npos);
+    CHECK(damage.payload.find("\"full_reference_match\":true") != std::string::npos);
 
     const InspectionResponse primitive =
         run_inspection_query(hub, "get render.primitive.line:0/byte:0");
@@ -170,6 +199,16 @@ TEST_CASE("inspection reports renderer primitives that cross scene rows") {
         run_inspection_query(hub, "get render.primitive.line:0/byte:0");
     REQUIRE(primitive.ok);
     CHECK(primitive.payload.find("\"row_overflow\":true") != std::string::npos);
+}
+
+TEST_CASE("inspection reports retained raster divergence") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, false);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "retained raster differs from full reference render");
 }
 
 TEST_CASE("inspection server uses a private Unix socket and framed responses") {

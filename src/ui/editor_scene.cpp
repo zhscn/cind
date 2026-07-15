@@ -41,8 +41,16 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     Region marks{RegionRole::ChangeSigns, {0, digits + 1, text_rows, 1}, {}, SurfaceClass::Gutter};
     Region body{
         RegionRole::TextArea, {0, digits + 2, text_rows, text_width}, {}, SurfaceClass::Editor};
-    Region status{RegionRole::StatusBar, {text_rows, 0, 1, input.cols}, {}, SurfaceClass::Status};
-    Region echo{RegionRole::EchoArea, {text_rows + 1, 0, 1, input.cols}, {}, SurfaceClass::Echo};
+    Region status{RegionRole::StatusBar,
+                  {text_rows, 0, 1, input.cols},
+                  {},
+                  SurfaceClass::Status,
+                  VerticalAnchor::Bottom};
+    Region echo{RegionRole::EchoArea,
+                {text_rows + 1, 0, 1, input.cols},
+                {},
+                SurfaceClass::Echo,
+                VerticalAnchor::Bottom};
 
     for (int row = 0; row < text_rows; ++row) {
         const std::uint32_t line = viewport.top_line + static_cast<std::uint32_t>(row);

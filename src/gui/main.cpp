@@ -3,6 +3,7 @@
 #include "gui/inspect_server.hpp"
 #include "gui/inspection.hpp"
 #include "gui/skia_presenter.hpp"
+#include "ui/scene_layout.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -10,7 +11,9 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -30,6 +34,109 @@
 namespace cind::gui {
 
 namespace {
+
+struct PresentationDamageRect {
+    SkiaLogicalRect logical;
+    OutputPixelRectSnapshot output;
+};
+
+struct OutputSize {
+    int width = 0;
+    int height = 0;
+};
+
+using AnimationClock = std::chrono::steady_clock;
+
+constexpr std::chrono::milliseconds scroll_animation_duration{120};
+constexpr std::chrono::milliseconds cursor_animation_duration{70};
+constexpr float wheel_lines_per_step = 3.0F;
+
+float animation_progress(AnimationClock::time_point started, std::chrono::milliseconds duration,
+                         AnimationClock::time_point now) {
+    const auto elapsed = std::chrono::duration<float>(now - started);
+    const auto total = std::chrono::duration<float>(duration);
+    return std::clamp(elapsed.count() / total.count(), 0.0F, 1.0F);
+}
+
+float ease_out_cubic(float progress) {
+    const float remaining = 1.0F - progress;
+    return 1.0F - remaining * remaining * remaining;
+}
+
+float interpolate(float from, float to, float progress) {
+    return from + (to - from) * progress;
+}
+
+SkiaLogicalPoint interpolate(SkiaLogicalPoint from, SkiaLogicalPoint to, float progress) {
+    return {.x = interpolate(from.x, to.x, progress), .y = interpolate(from.y, to.y, progress)};
+}
+
+bool same_point(SkiaLogicalPoint left, SkiaLogicalPoint right) {
+    constexpr float tolerance = 0.01F;
+    return std::abs(left.x - right.x) < tolerance && std::abs(left.y - right.y) < tolerance;
+}
+
+bool touches_or_intersects(const OutputPixelRectSnapshot& left,
+                           const OutputPixelRectSnapshot& right) {
+    return left.x <= right.x + right.width && right.x <= left.x + left.width &&
+           left.y <= right.y + right.height && right.y <= left.y + left.height;
+}
+
+OutputPixelRectSnapshot joined(const OutputPixelRectSnapshot& left,
+                               const OutputPixelRectSnapshot& right) {
+    const int first_x = std::min(left.x, right.x);
+    const int first_y = std::min(left.y, right.y);
+    const int last_x = std::max(left.x + left.width, right.x + right.width);
+    const int last_y = std::max(left.y + left.height, right.y + right.height);
+    return {.x = first_x, .y = first_y, .width = last_x - first_x, .height = last_y - first_y};
+}
+
+SkiaLogicalRect joined(const SkiaLogicalRect& left, const SkiaLogicalRect& right) {
+    const float first_x = std::min(left.x, right.x);
+    const float first_y = std::min(left.y, right.y);
+    const float last_x = std::max(left.x + left.width, right.x + right.width);
+    const float last_y = std::max(left.y + left.height, right.y + right.height);
+    return {.x = first_x, .y = first_y, .width = last_x - first_x, .height = last_y - first_y};
+}
+
+std::vector<PresentationDamageRect>
+presentation_damage(std::span<const SkiaLogicalRect> logical_rects, int pixel_width,
+                    int pixel_height, float scale) {
+    std::vector<PresentationDamageRect> result;
+    for (const SkiaLogicalRect& logical : logical_rects) {
+        const int first_x =
+            std::clamp(static_cast<int>(std::floor(logical.x * scale)), 0, pixel_width);
+        const int first_y =
+            std::clamp(static_cast<int>(std::floor(logical.y * scale)), 0, pixel_height);
+        const int last_x = std::clamp(
+            static_cast<int>(std::ceil((logical.x + logical.width) * scale)), 0, pixel_width);
+        const int last_y = std::clamp(
+            static_cast<int>(std::ceil((logical.y + logical.height) * scale)), 0, pixel_height);
+        if (last_x <= first_x || last_y <= first_y) {
+            continue;
+        }
+
+        PresentationDamageRect next{
+            .logical = logical,
+            .output = {.x = first_x,
+                       .y = first_y,
+                       .width = last_x - first_x,
+                       .height = last_y - first_y},
+        };
+        for (std::size_t index = 0; index < result.size();) {
+            if (!touches_or_intersects(result[index].output, next.output)) {
+                ++index;
+                continue;
+            }
+            next.logical = joined(result[index].logical, next.logical);
+            next.output = joined(result[index].output, next.output);
+            result.erase(result.begin() + static_cast<std::ptrdiff_t>(index));
+            index = 0;
+        }
+        result.push_back(next);
+    }
+    return result;
+}
 
 EditorKey editor_key(SDL_Scancode scancode) {
     switch (scancode) {
@@ -156,9 +263,10 @@ public:
         paint();
         while (!editor_.should_quit()) {
             SDL_Event event{};
-            const bool received = editor_.has_background_work() ? SDL_WaitEventTimeout(&event, 16)
-                                                                : SDL_WaitEvent(&event);
-            if (!received && !editor_.has_background_work()) {
+            const bool asynchronous = editor_.has_background_work() || animations_active();
+            const bool received =
+                asynchronous ? SDL_WaitEventTimeout(&event, 16) : SDL_WaitEvent(&event);
+            if (!received && !asynchronous) {
                 throw std::runtime_error(std::format("SDL event wait failed: {}", SDL_GetError()));
             }
             bool repaint = false;
@@ -169,6 +277,7 @@ public:
                 }
             }
             repaint = editor_.poll_background_work() || repaint;
+            repaint = animations_active() || repaint;
             if (repaint && !editor_.should_quit()) {
                 paint();
             }
@@ -179,6 +288,28 @@ private:
     struct EventResult {
         bool handled = false;
         bool repaint = false;
+    };
+
+    struct ScrollAnimation {
+        ui::Scene source;
+        float source_top_line = 0.0F;
+        float from_top_line = 0.0F;
+        float target_top_line = 0.0F;
+        AnimationClock::time_point started;
+    };
+
+    struct CursorAnimation {
+        SkiaLogicalPoint from;
+        SkiaLogicalPoint target;
+        AnimationClock::time_point started;
+    };
+
+    struct AnimationPresentation {
+        bool active = false;
+        bool scroll_finished = false;
+        bool cursor_finished = false;
+        SkiaAnimationFrame frame;
+        RenderAnimationSnapshot snapshot;
     };
 
     EventResult dispatch_event(const SDL_Event& event) {
@@ -236,13 +367,14 @@ private:
             if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
                 amount = -amount;
             }
-            if (amount > 0.0F) {
-                editor_.scroll_lines(-std::max(1, static_cast<int>(std::ceil(amount))));
-            } else if (amount < 0.0F) {
-                editor_.scroll_lines(std::max(1, static_cast<int>(std::ceil(-amount))));
+            wheel_scroll_accumulator_ -= amount * wheel_lines_per_step;
+            const int lines = static_cast<int>(wheel_scroll_accumulator_);
+            if (lines != 0) {
+                editor_.scroll_lines(lines);
+                wheel_scroll_accumulator_ -= static_cast<float>(lines);
             }
             const bool handled = amount != 0.0F;
-            return {handled, handled};
+            return {handled, lines != 0};
         }
         default:
             return {};
@@ -327,6 +459,141 @@ private:
         return scale > 0.0F ? scale : 1.0F;
     }
 
+    bool animations_active() const {
+        return scroll_animation_.has_value() || cursor_animation_.has_value();
+    }
+
+    float scroll_position(const ScrollAnimation& animation, AnimationClock::time_point now) const {
+        const float progress =
+            ease_out_cubic(animation_progress(animation.started, scroll_animation_duration, now));
+        return interpolate(animation.from_top_line, animation.target_top_line, progress);
+    }
+
+    SkiaLogicalPoint cursor_position(const CursorAnimation& animation,
+                                     AnimationClock::time_point now) const {
+        const float progress =
+            ease_out_cubic(animation_progress(animation.started, cursor_animation_duration, now));
+        return interpolate(animation.from, animation.target, progress);
+    }
+
+    std::optional<SkiaLogicalPoint> scene_cursor_position(const ui::Scene& scene) const {
+        if (!scene.cursor_visible || !vertical_layout_) {
+            return std::nullopt;
+        }
+        return SkiaLogicalPoint{
+            .x = static_cast<float>(std::max(0, scene.cursor_col - 1) * presenter_.cell_width()),
+            .y = vertical_layout_->row_top(std::max(0, scene.cursor_row - 1)),
+        };
+    }
+
+    void update_animation_targets(const ui::Scene& scene, std::uint32_t top_line,
+                                  bool geometry_changed, AnimationClock::time_point now) {
+        const std::optional<SkiaLogicalPoint> target_cursor = scene_cursor_position(scene);
+        if (geometry_changed || !last_scene_ || !last_top_line_) {
+            scroll_animation_.reset();
+            cursor_animation_.reset();
+        } else if (*last_top_line_ != top_line) {
+            const auto line_delta =
+                static_cast<std::int64_t>(top_line) - static_cast<std::int64_t>(*last_top_line_);
+            if (std::abs(line_delta) <= 4) {
+                const float visual_top = scroll_animation_
+                                             ? scroll_position(*scroll_animation_, now)
+                                             : static_cast<float>(*last_top_line_);
+                ui::Scene source_scene = *last_scene_;
+                float source_top_line = static_cast<float>(*last_top_line_);
+                if (scroll_animation_) {
+                    source_scene = scroll_animation_->source;
+                    source_top_line = scroll_animation_->source_top_line;
+                }
+                scroll_animation_ = ScrollAnimation{
+                    .source = std::move(source_scene),
+                    .source_top_line = source_top_line,
+                    .from_top_line = visual_top,
+                    .target_top_line = static_cast<float>(top_line),
+                    .started = now,
+                };
+            } else {
+                scroll_animation_.reset();
+            }
+            cursor_animation_.reset();
+        } else if (!scroll_animation_ && target_cursor && last_cursor_target_ &&
+                   !same_point(*last_cursor_target_, *target_cursor)) {
+            const SkiaLogicalPoint from =
+                cursor_animation_ ? cursor_position(*cursor_animation_, now) : *last_cursor_target_;
+            const float maximum_x_distance = static_cast<float>(presenter_.cell_width() * 4);
+            const float maximum_y_distance = static_cast<float>(presenter_.cell_height() * 2);
+            if (std::abs(target_cursor->x - from.x) <= maximum_x_distance &&
+                std::abs(target_cursor->y - from.y) <= maximum_y_distance) {
+                cursor_animation_ =
+                    CursorAnimation{.from = from, .target = *target_cursor, .started = now};
+            } else {
+                cursor_animation_.reset();
+            }
+        } else if (!target_cursor) {
+            cursor_animation_.reset();
+        }
+
+        last_scene_ = scene;
+        last_top_line_ = top_line;
+        last_cursor_target_ = target_cursor;
+    }
+
+    AnimationPresentation animation_presentation(AnimationClock::time_point now) const {
+        AnimationPresentation presentation;
+        if (scroll_animation_) {
+            const float linear_progress =
+                animation_progress(scroll_animation_->started, scroll_animation_duration, now);
+            const float visual_top = scroll_position(*scroll_animation_, now);
+            presentation.active = true;
+            presentation.scroll_finished = linear_progress >= 1.0F;
+            presentation.frame.scroll_source = &scroll_animation_->source;
+            presentation.frame.source_grid_offset_y =
+                (scroll_animation_->source_top_line - visual_top) *
+                static_cast<float>(presenter_.cell_height());
+            presentation.frame.target_grid_offset_y =
+                (scroll_animation_->target_top_line - visual_top) *
+                static_cast<float>(presenter_.cell_height());
+            if (!presentation.scroll_finished) {
+                presentation.snapshot.active = true;
+                presentation.snapshot.scroll = true;
+                presentation.snapshot.scroll_progress = ease_out_cubic(linear_progress);
+                presentation.snapshot.source_grid_offset_y =
+                    presentation.frame.source_grid_offset_y;
+                presentation.snapshot.target_grid_offset_y =
+                    presentation.frame.target_grid_offset_y;
+            }
+        }
+        if (cursor_animation_) {
+            const float linear_progress =
+                animation_progress(cursor_animation_->started, cursor_animation_duration, now);
+            const SkiaLogicalPoint position = cursor_position(*cursor_animation_, now);
+            presentation.active = true;
+            presentation.cursor_finished = linear_progress >= 1.0F;
+            presentation.frame.cursor_position = position;
+            if (!presentation.cursor_finished) {
+                presentation.snapshot.active = true;
+                presentation.snapshot.cursor = true;
+                presentation.snapshot.cursor_progress = ease_out_cubic(linear_progress);
+                presentation.snapshot.cursor_rect = LogicalPixelRectSnapshot{
+                    .x = position.x,
+                    .y = position.y,
+                    .width = 2.0F,
+                    .height = static_cast<float>(presenter_.cell_height()),
+                };
+            }
+        }
+        return presentation;
+    }
+
+    void finish_animation_frame(const AnimationPresentation& presentation) {
+        if (presentation.scroll_finished) {
+            scroll_animation_.reset();
+        }
+        if (presentation.cursor_finished) {
+            cursor_animation_.reset();
+        }
+    }
+
     void paint() {
         int pixel_width = 0;
         int pixel_height = 0;
@@ -336,38 +603,117 @@ private:
         }
 
         const float scale = display_scale();
-        rows_ = std::max(3, static_cast<int>(std::floor(
-                                static_cast<float>(pixel_height) /
-                                (static_cast<float>(presenter_.cell_height()) * scale))));
-        columns_ = std::max(20, static_cast<int>(std::floor(
-                                    static_cast<float>(pixel_width) /
-                                    (static_cast<float>(presenter_.cell_width()) * scale))));
+        rows_ = std::max(
+            3, static_cast<int>(std::ceil(static_cast<float>(pixel_height) /
+                                          (static_cast<float>(presenter_.cell_height()) * scale))));
+        columns_ = std::max(
+            20, static_cast<int>(std::ceil(static_cast<float>(pixel_width) /
+                                           (static_cast<float>(presenter_.cell_width()) * scale))));
         editor_.set_frame_rows(rows_);
         ui::Scene scene = editor_.compose(rows_, columns_);
+        logical_output_width_ = static_cast<float>(pixel_width) / scale;
+        logical_output_height_ = static_cast<float>(pixel_height) / scale;
+        vertical_layout_.emplace(
+            scene,
+            ui::SceneVerticalMetrics{.cell_height = static_cast<float>(presenter_.cell_height()),
+                                     .viewport_height = logical_output_height_});
 
         const std::size_t pixel_count =
             static_cast<std::size_t>(pixel_width) * static_cast<std::size_t>(pixel_height);
+        const bool geometry_changed =
+            texture_width_ != pixel_width || texture_height_ != pixel_height ||
+            std::abs(rendered_scale_ - scale) > 0.0001F || pixels_.size() != pixel_count;
         pixels_.resize(pixel_count);
         const std::size_t row_bytes = static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
+        if (row_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            throw std::runtime_error("SDL texture pitch exceeds the supported range");
+        }
+
+        const AnimationClock::time_point now = AnimationClock::now();
+        EditorStateSnapshot editor_snapshot = editor_.inspect();
+        update_animation_targets(scene, editor_snapshot.viewport.top_line, geometry_changed, now);
+        const AnimationPresentation animation = animation_presentation(now);
+        const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
+        std::vector<SkiaLogicalRect> logical_damage;
+        if (animation.active) {
+            logical_damage.push_back({.x = 0.0F,
+                                      .y = 0.0F,
+                                      .width = logical_output_width_,
+                                      .height = logical_output_height_});
+        } else {
+            logical_damage = presenter_.damage_rects(scene, scene_damage, logical_output_width_,
+                                                     logical_output_height_);
+        }
+        const std::vector<PresentationDamageRect> damage =
+            presentation_damage(logical_damage, pixel_width, pixel_height, scale);
+        logical_damage.clear();
+        logical_damage.reserve(damage.size());
+        for (const PresentationDamageRect& rect : damage) {
+            logical_damage.push_back(rect.logical);
+        }
+
         SkiaRenderDiagnostics render_diagnostics;
-        presenter_.render(scene, pixel_width, pixel_height, pixels_.data(), row_bytes, scale,
-                          inspection_ ? &render_diagnostics : nullptr);
+        if (animation.active) {
+            presenter_.render_animated(scene, animation.frame, pixel_width, pixel_height,
+                                       pixels_.data(), row_bytes, scale,
+                                       inspection_ ? &render_diagnostics : nullptr);
+        } else if (scene_damage.full_repaint) {
+            presenter_.render(scene, pixel_width, pixel_height, pixels_.data(), row_bytes, scale,
+                              inspection_ ? &render_diagnostics : nullptr);
+        } else if (!logical_damage.empty()) {
+            presenter_.render_damage(scene, pixel_width, pixel_height, pixels_.data(), row_bytes,
+                                     logical_damage, scale);
+        }
+
+        bool full_reference_match = true;
+        if (inspection_ && animation.active) {
+            diagnostic_pixels_.resize(pixel_count);
+            presenter_.render_animated(scene, animation.frame, pixel_width, pixel_height,
+                                       diagnostic_pixels_.data(), row_bytes, scale);
+            full_reference_match = diagnostic_pixels_ == pixels_;
+        } else if (inspection_ && !scene_damage.full_repaint) {
+            diagnostic_pixels_.resize(pixel_count);
+            presenter_.render(scene, pixel_width, pixel_height, diagnostic_pixels_.data(),
+                              row_bytes, scale, &render_diagnostics);
+            full_reference_match = diagnostic_pixels_ == pixels_;
+        }
 
         ensure_texture(pixel_width, pixel_height);
-        if (!SDL_UpdateTexture(texture_.get(), nullptr, pixels_.data(),
-                               pixel_width * static_cast<int>(sizeof(std::uint32_t))) ||
-            !SDL_RenderClear(renderer_.get()) ||
+        const auto* pixel_bytes = reinterpret_cast<const std::byte*>(pixels_.data());
+        for (const PresentationDamageRect& rect : damage) {
+            const SDL_Rect output_rect{.x = rect.output.x,
+                                       .y = rect.output.y,
+                                       .w = rect.output.width,
+                                       .h = rect.output.height};
+            const std::size_t byte_offset =
+                static_cast<std::size_t>(rect.output.y) * row_bytes +
+                static_cast<std::size_t>(rect.output.x) * sizeof(std::uint32_t);
+            if (!SDL_UpdateTexture(texture_.get(), &output_rect, pixel_bytes + byte_offset,
+                                   static_cast<int>(row_bytes))) {
+                throw std::runtime_error(
+                    std::format("SDL texture update failed: {}", SDL_GetError()));
+            }
+        }
+        if (!SDL_RenderClear(renderer_.get()) ||
             !SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr)) {
             throw std::runtime_error(std::format("SDL presentation failed: {}", SDL_GetError()));
         }
-        update_text_input_area(scene, pixel_width, pixel_height, scale);
+        update_text_input_area(scene, {.width = pixel_width, .height = pixel_height}, scale);
         SDL_RenderPresent(renderer_.get());
-        publish_inspection(std::move(scene), pixel_width, pixel_height, scale,
-                           std::move(render_diagnostics));
+        rendered_scale_ = scale;
+        publish_inspection(std::move(editor_snapshot), std::move(scene), pixel_width, pixel_height,
+                           scale, render_diagnostics, scene_damage,
+                           scene_damage.full_repaint || animation.active, animation.snapshot,
+                           damage, full_reference_match);
+        finish_animation_frame(animation);
     }
 
-    void publish_inspection(ui::Scene scene, int pixel_width, int pixel_height, float scale,
-                            SkiaRenderDiagnostics diagnostics) {
+    void publish_inspection(EditorStateSnapshot editor_snapshot, ui::Scene scene, int pixel_width,
+                            int pixel_height, float scale, const SkiaRenderDiagnostics& diagnostics,
+                            const ui::SceneDamage& scene_damage, bool full_presentation_repaint,
+                            const RenderAnimationSnapshot& animation,
+                            const std::vector<PresentationDamageRect>& damage,
+                            bool full_reference_match) {
         if (!inspection_) {
             return;
         }
@@ -397,8 +743,32 @@ private:
             }
             primitives.push_back(std::move(snapshot));
         }
+        RenderDamageSnapshot render_damage{
+            .full_repaint = full_presentation_repaint,
+            .damaged_cells = scene_damage.damaged_cells,
+            .damaged_output_pixels = 0,
+            .output_fraction = 0.0,
+            .full_reference_match = full_reference_match,
+            .rects = {},
+        };
+        render_damage.rects.reserve(damage.size());
+        for (const PresentationDamageRect& rect : damage) {
+            render_damage.damaged_output_pixels += static_cast<std::uint64_t>(rect.output.width) *
+                                                   static_cast<std::uint64_t>(rect.output.height);
+            render_damage.rects.push_back(
+                {.logical = snapshot_rect(rect.logical), .output = rect.output});
+        }
+        const std::uint64_t output_pixels =
+            static_cast<std::uint64_t>(pixel_width) * static_cast<std::uint64_t>(pixel_height);
+        if (output_pixels != 0) {
+            render_damage.output_fraction =
+                static_cast<double>(render_damage.damaged_output_pixels) /
+                static_cast<double>(output_pixels);
+        }
         RenderStateSnapshot render{
             .video_driver = SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "",
+            .render_driver =
+                SDL_GetRendererName(renderer_.get()) ? SDL_GetRendererName(renderer_.get()) : "",
             .window_width = window_width,
             .window_height = window_height,
             .output_width = pixel_width,
@@ -425,9 +795,11 @@ private:
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
             .pixel_hash = hash_pixels(),
+            .animation = animation,
+            .damage = std::move(render_damage),
             .primitives = std::move(primitives),
         };
-        inspection_->publish(editor_.inspect(), std::move(scene), std::move(render),
+        inspection_->publish(std::move(editor_snapshot), std::move(scene), std::move(render),
                              last_repaint_event_sequence_);
     }
 
@@ -440,8 +812,7 @@ private:
         return hash;
     }
 
-    void update_text_input_area(const ui::Scene& scene, int pixel_width, int pixel_height,
-                                float scale) {
+    void update_text_input_area(const ui::Scene& scene, OutputSize output, float scale) {
         if (!scene.cursor_visible) {
             return;
         }
@@ -452,20 +823,29 @@ private:
             return;
         }
         const float x_factor =
-            static_cast<float>(window_width) * scale / static_cast<float>(pixel_width);
+            static_cast<float>(window_width) * scale / static_cast<float>(output.width);
         const float y_factor =
-            static_cast<float>(window_height) * scale / static_cast<float>(pixel_height);
+            static_cast<float>(window_height) * scale / static_cast<float>(output.height);
+        const ui::SceneVerticalLayout vertical_layout(
+            scene, {.cell_height = static_cast<float>(presenter_.cell_height()),
+                    .viewport_height = static_cast<float>(output.height) / scale});
+        const int cursor_row = std::max(0, scene.cursor_row - 1);
+        const float cursor_top = vertical_layout.row_top(cursor_row);
+        float cursor_bottom = std::min(static_cast<float>(output.height) / scale,
+                                       cursor_top + static_cast<float>(presenter_.cell_height()));
+        if (vertical_layout.bottom_anchor_row() &&
+            cursor_row < *vertical_layout.bottom_anchor_row()) {
+            cursor_bottom = std::min(cursor_bottom, vertical_layout.grid_clip_bottom());
+        }
         SDL_Rect area{
             .x = static_cast<int>(std::floor(static_cast<float>(scene.cursor_col - 1) *
                                              static_cast<float>(presenter_.cell_width()) *
                                              x_factor)),
-            .y = static_cast<int>(std::floor(static_cast<float>(scene.cursor_row - 1) *
-                                             static_cast<float>(presenter_.cell_height()) *
-                                             y_factor)),
+            .y = static_cast<int>(std::floor(cursor_top * y_factor)),
             .w = std::max(1, static_cast<int>(std::ceil(
                                  static_cast<float>(presenter_.cell_width()) * x_factor))),
-            .h = std::max(1, static_cast<int>(std::ceil(
-                                 static_cast<float>(presenter_.cell_height()) * y_factor))),
+            .h = std::max(1, static_cast<int>(
+                                 std::ceil(std::max(0.0F, cursor_bottom - cursor_top) * y_factor))),
         };
         SDL_SetTextInputArea(window_.get(), &area, 0);
     }
@@ -477,9 +857,10 @@ private:
         if (window_width <= 0) {
             return 0;
         }
-        return std::clamp(static_cast<int>(std::floor(window_x / static_cast<float>(window_width) *
-                                                      static_cast<float>(columns_))),
-                          0, columns_ - 1);
+        const float logical_x = window_x / static_cast<float>(window_width) * logical_output_width_;
+        return std::clamp(
+            static_cast<int>(std::floor(logical_x / static_cast<float>(presenter_.cell_width()))),
+            0, columns_ - 1);
     }
 
     int mouse_cell_row(float window_y) const {
@@ -489,9 +870,9 @@ private:
         if (window_height <= 0) {
             return 0;
         }
-        return std::clamp(static_cast<int>(std::floor(window_y / static_cast<float>(window_height) *
-                                                      static_cast<float>(rows_))),
-                          0, rows_ - 1);
+        const float logical_y =
+            window_y / static_cast<float>(window_height) * logical_output_height_;
+        return vertical_layout_ ? vertical_layout_->row_at(logical_y) : 0;
     }
 
     EditorModel& editor_;
@@ -501,10 +882,22 @@ private:
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
     std::vector<std::uint32_t> pixels_;
+    std::vector<std::uint32_t> diagnostic_pixels_;
+    ui::SceneDamageTracker damage_tracker_;
+    std::optional<ui::SceneVerticalLayout> vertical_layout_;
+    std::optional<ScrollAnimation> scroll_animation_;
+    std::optional<CursorAnimation> cursor_animation_;
+    std::optional<ui::Scene> last_scene_;
+    std::optional<std::uint32_t> last_top_line_;
+    std::optional<SkiaLogicalPoint> last_cursor_target_;
     int texture_width_ = 0;
     int texture_height_ = 0;
+    float rendered_scale_ = 0.0F;
+    float logical_output_width_ = 0.0F;
+    float logical_output_height_ = 0.0F;
     int rows_ = 24;
     int columns_ = 80;
+    float wheel_scroll_accumulator_ = 0.0F;
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 

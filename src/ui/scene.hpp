@@ -10,9 +10,9 @@
 namespace cind::ui {
 
 // Backend-independent frame model. Layout partitions the screen into regions;
-// each region carries a surface class and a display list in local coordinates.
-// Region roles remain semantic inspection and input-routing metadata, while
-// presenters render only surface classes and primitive kinds.
+// each region carries a surface class, a vertical anchoring policy, and a
+// display list in local coordinates. Region roles remain semantic inspection
+// and input-routing metadata.
 
 // Cell-unit rectangle in scene coordinates (0-based row/col). A GUI
 // presenter maps cells to pixels with its font metrics.
@@ -67,11 +67,17 @@ enum class RegionRole : std::uint8_t {
     EchoArea, // message / prompt line
 };
 
+enum class VerticalAnchor : std::uint8_t {
+    Grid,
+    Bottom,
+};
+
 struct Region {
     RegionRole role = RegionRole::TextArea;
     Rect rect;
     std::vector<Prim> prims;
     SurfaceClass surface = SurfaceClass::Editor;
+    VerticalAnchor vertical_anchor = VerticalAnchor::Grid;
 };
 
 struct Scene {

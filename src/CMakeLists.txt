@@ -17,6 +17,8 @@ add_library(cind_ui STATIC
   ui/compose_line.cpp
   ui/editor_scene.cpp
   ui/line_signs.cpp
+  ui/scene_damage.cpp
+  ui/scene_layout.cpp
   ui/ansi_renderer.cpp
   ui/text_position.cpp
 )

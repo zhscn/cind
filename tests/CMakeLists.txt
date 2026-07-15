@@ -30,6 +30,10 @@ add_executable(ui_tests ui/ui_tests.cpp)
 target_link_libraries(ui_tests PRIVATE cind_ui doctest::doctest)
 add_test(NAME ui_tests COMMAND ui_tests)
 
+add_executable(scene_damage_tests ui/scene_damage_tests.cpp)
+target_link_libraries(scene_damage_tests PRIVATE cind_ui doctest::doctest)
+add_test(NAME scene_damage_tests COMMAND scene_damage_tests)
+
 if (CIND_BUILD_GUI)
   add_executable(editor_model_tests gui/editor_model_tests.cpp)
   target_link_libraries(editor_model_tests PRIVATE cind_gui_model doctest::doctest)

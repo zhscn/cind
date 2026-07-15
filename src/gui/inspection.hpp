@@ -36,6 +36,38 @@ struct LogicalPixelRectSnapshot {
     float height = 0.0F;
 };
 
+struct OutputPixelRectSnapshot {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct RenderDamageRectSnapshot {
+    LogicalPixelRectSnapshot logical;
+    OutputPixelRectSnapshot output;
+};
+
+struct RenderDamageSnapshot {
+    bool full_repaint = false;
+    std::size_t damaged_cells = 0;
+    std::uint64_t damaged_output_pixels = 0;
+    double output_fraction = 0.0;
+    bool full_reference_match = true;
+    std::vector<RenderDamageRectSnapshot> rects;
+};
+
+struct RenderAnimationSnapshot {
+    bool active = false;
+    bool scroll = false;
+    bool cursor = false;
+    float scroll_progress = 1.0F;
+    float cursor_progress = 1.0F;
+    float source_grid_offset_y = 0.0F;
+    float target_grid_offset_y = 0.0F;
+    std::optional<LogicalPixelRectSnapshot> cursor_rect;
+};
+
 struct FontMetricsSnapshot {
     float ascent = 0.0F;
     float descent = 0.0F;
@@ -59,6 +91,7 @@ struct PrimitiveRenderSnapshot {
 
 struct RenderStateSnapshot {
     std::string video_driver;
+    std::string render_driver;
     int window_width = 0;
     int window_height = 0;
     int output_width = 0;
@@ -74,6 +107,8 @@ struct RenderStateSnapshot {
     FontMetricsSnapshot font_metrics;
     ThemeInspection theme;
     std::uint64_t pixel_hash = 0;
+    RenderAnimationSnapshot animation;
+    RenderDamageSnapshot damage;
     std::vector<PrimitiveRenderSnapshot> primitives;
 };
 
@@ -88,7 +123,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 3;
+    static constexpr int schema_version = 5;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

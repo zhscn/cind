@@ -1,9 +1,11 @@
 #include "gui/inspection.hpp"
 
 #include "ui/char_width.hpp"
+#include "ui/scene_layout.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <format>
 #include <sstream>
 #include <stdexcept>
@@ -69,6 +71,16 @@ std::string_view surface_class_name(ui::SurfaceClass surface) {
     return "unknown";
 }
 
+std::string_view vertical_anchor_name(ui::VerticalAnchor anchor) {
+    switch (anchor) {
+    case ui::VerticalAnchor::Grid:
+        return "grid";
+    case ui::VerticalAnchor::Bottom:
+        return "bottom";
+    }
+    return "unknown";
+}
+
 std::string_view prim_kind_name(ui::PrimKind kind) {
     switch (kind) {
     case ui::PrimKind::Text:
@@ -95,6 +107,11 @@ void append_rect(std::string& output, const ui::Rect& rect) {
 }
 
 void append_logical_rect(std::string& output, const LogicalPixelRectSnapshot& rect) {
+    output += std::format("{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", rect.x, rect.y,
+                          rect.width, rect.height);
+}
+
+void append_output_rect(std::string& output, const OutputPixelRectSnapshot& rect) {
     output += std::format("{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", rect.x, rect.y,
                           rect.width, rect.height);
 }
@@ -155,6 +172,8 @@ void append_region(std::string& output, const ui::Region& region) {
     append_json_string(output, region_role_name(region.role));
     output += ",\"surface\":";
     append_json_string(output, surface_class_name(region.surface));
+    output += ",\"vertical_anchor\":";
+    append_json_string(output, vertical_anchor_name(region.vertical_anchor));
     output += ",\"rect\":";
     append_rect(output, region.rect);
     output += ",\"prims\":[";
@@ -237,9 +256,53 @@ void append_render_primitives(std::string& output,
     output.push_back(']');
 }
 
+void append_render_damage(std::string& output, const RenderDamageSnapshot& damage) {
+    output += "{\"full_repaint\":";
+    append_bool(output, damage.full_repaint);
+    output +=
+        std::format(",\"damaged_cells\":{},\"damaged_output_pixels\":{},"
+                    "\"output_fraction\":{},\"full_reference_match\":",
+                    damage.damaged_cells, damage.damaged_output_pixels, damage.output_fraction);
+    append_bool(output, damage.full_reference_match);
+    output += ",\"rects\":[";
+    for (std::size_t index = 0; index < damage.rects.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"logical\":";
+        append_logical_rect(output, damage.rects[index].logical);
+        output += ",\"output\":";
+        append_output_rect(output, damage.rects[index].output);
+        output.push_back('}');
+    }
+    output += "]}";
+}
+
+void append_render_animation(std::string& output, const RenderAnimationSnapshot& animation) {
+    output += "{\"active\":";
+    append_bool(output, animation.active);
+    output += ",\"scroll\":";
+    append_bool(output, animation.scroll);
+    output += ",\"cursor\":";
+    append_bool(output, animation.cursor);
+    output +=
+        std::format(",\"scroll_progress\":{},\"cursor_progress\":{},\"source_grid_offset_y\":{},"
+                    "\"target_grid_offset_y\":{},\"cursor_rect\":",
+                    animation.scroll_progress, animation.cursor_progress,
+                    animation.source_grid_offset_y, animation.target_grid_offset_y);
+    if (animation.cursor_rect) {
+        append_logical_rect(output, *animation.cursor_rect);
+    } else {
+        output += "null";
+    }
+    output.push_back('}');
+}
+
 void append_render(std::string& output, const RenderStateSnapshot& render) {
     output += "{\"video_driver\":";
     append_json_string(output, render.video_driver);
+    output += ",\"render_driver\":";
+    append_json_string(output, render.render_driver);
     output += std::format(
         ",\"window\":{{\"width\":{},\"height\":{}}},\"output\":{{\"width\":{},\"height\":{}}},"
         "\"display_scale\":{},\"cell\":{{\"width\":{},\"height\":{}}},\"grid\":{{\"rows\":{},"
@@ -269,7 +332,11 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.sign_modified);
     output += ",\"sign_deleted\":";
     append_color(output, render.theme.sign_deleted);
-    output += std::format("}},\"pixel_hash\":\"0x{:016X}\",\"primitives\":", render.pixel_hash);
+    output += std::format("}},\"pixel_hash\":\"0x{:016X}\",\"animation\":", render.pixel_hash);
+    append_render_animation(output, render.animation);
+    output += ",\"damage\":";
+    append_render_damage(output, render.damage);
+    output += ",\"primitives\":";
     append_render_primitives(output, render.primitives);
     output.push_back('}');
 }
@@ -392,6 +459,28 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.render.rows != frame.scene.rows || frame.render.columns != frame.scene.cols) {
         violations.emplace_back("render grid does not match scene geometry");
     }
+    const RenderAnimationSnapshot& animation = frame.render.animation;
+    if (animation.scroll_progress < 0.0F || animation.scroll_progress > 1.0F ||
+        animation.cursor_progress < 0.0F || animation.cursor_progress > 1.0F) {
+        violations.emplace_back("render animation progress is outside [0, 1]");
+    }
+    if (animation.active != (animation.scroll || animation.cursor)) {
+        violations.emplace_back("render animation activity flags are inconsistent");
+    }
+    if (animation.active && !frame.render.damage.full_repaint) {
+        violations.emplace_back("render animation requires a full presentation repaint");
+    }
+    if (!frame.render.damage.full_reference_match) {
+        violations.emplace_back("retained raster differs from full reference render");
+    }
+    for (const RenderDamageRectSnapshot& damage : frame.render.damage.rects) {
+        const OutputPixelRectSnapshot& rect = damage.output;
+        if (rect.x < 0 || rect.y < 0 || rect.width <= 0 || rect.height <= 0 ||
+            rect.x + rect.width > frame.render.output_width ||
+            rect.y + rect.height > frame.render.output_height) {
+            violations.emplace_back("render damage rectangle is outside the output");
+        }
+    }
     for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
         if (primitive.region_index >= frame.scene.regions.size() ||
             primitive.primitive_index >= frame.scene.regions[primitive.region_index].prims.size()) {
@@ -501,6 +590,10 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_render(output, frame.render);
     } else if (path == "render.font_metrics") {
         append_font_metrics(output, frame.render.font_metrics);
+    } else if (path == "render.animation") {
+        append_render_animation(output, frame.render.animation);
+    } else if (path == "render.damage") {
+        append_render_damage(output, frame.render.damage);
     } else if (path == "render.primitives") {
         append_render_primitives(output, frame.render.primitives);
     } else if (path.starts_with("render.primitive.")) {
@@ -541,8 +634,20 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         return {false, "point is outside the window"};
     }
 
-    const int cell_col = static_cast<int>(window_x / static_cast<float>(frame.render.cell_width));
-    const int cell_row = static_cast<int>(window_y / static_cast<float>(frame.render.cell_height));
+    const float logical_width =
+        static_cast<float>(frame.render.output_width) / frame.render.display_scale;
+    const float logical_height =
+        static_cast<float>(frame.render.output_height) / frame.render.display_scale;
+    const float logical_x =
+        window_x / static_cast<float>(frame.render.window_width) * logical_width;
+    const float logical_y =
+        window_y / static_cast<float>(frame.render.window_height) * logical_height;
+    const int cell_col =
+        static_cast<int>(std::floor(logical_x / static_cast<float>(frame.render.cell_width)));
+    const ui::SceneVerticalLayout vertical_layout(
+        frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
+                      .viewport_height = logical_height});
+    const int cell_row = vertical_layout.row_at(logical_y);
 
     std::string output =
         std::format("{{\"window\":{{\"x\":{},\"y\":{}}},\"cell\":{{\"row\":{},\"col\":{}}}",
@@ -772,7 +877,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     for (const ui::Region& region : frame.scene.regions) {
         output << "    region:" << region_role_name(region.role) << " rect=(" << region.rect.row
                << ',' << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
-               << ") prims=" << region.prims.size() << '\n';
+               << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
+               << " prims=" << region.prims.size() << '\n';
         for (std::size_t index = 0; index < region.prims.size(); ++index) {
             const ui::Prim& prim = region.prims[index];
             output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
@@ -783,7 +889,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                    << "\"\n";
         }
     }
-    output << "  render driver=" << frame.render.video_driver
+    output << "  render video-driver=" << frame.render.video_driver
+           << " render-driver=" << frame.render.render_driver
            << " scale=" << frame.render.display_scale << " window=" << frame.render.window_width
            << 'x' << frame.render.window_height << " output=" << frame.render.output_width << 'x'
            << frame.render.output_height << " cell=" << frame.render.cell_width << 'x'
@@ -798,6 +905,18 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    primitives=" << frame.render.primitives.size()
            << " row-overflows=" << row_overflows
            << " draw-bounds-cross-clip=" << draw_bounds_clip_crossings << '\n';
+    output << "    animation=" << (frame.render.animation.active ? "active" : "idle")
+           << " scroll=" << (frame.render.animation.scroll ? "true" : "false")
+           << " cursor=" << (frame.render.animation.cursor ? "true" : "false")
+           << " scroll-progress=" << frame.render.animation.scroll_progress
+           << " cursor-progress=" << frame.render.animation.cursor_progress << '\n';
+    output << "    damage=" << (frame.render.damage.full_repaint ? "full" : "partial")
+           << " rects=" << frame.render.damage.rects.size()
+           << " cells=" << frame.render.damage.damaged_cells
+           << " output-pixels=" << frame.render.damage.damaged_output_pixels
+           << " fraction=" << frame.render.damage.output_fraction
+           << " reference-match=" << (frame.render.damage.full_reference_match ? "true" : "false")
+           << '\n';
     for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
         if (primitive.row_overflow) {
             output << "      ! " << printable(primitive.id) << " cell-y=" << primitive.cell_bounds.y

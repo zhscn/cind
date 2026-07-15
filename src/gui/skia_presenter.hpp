@@ -1,11 +1,13 @@
 #pragma once
 
 #include "ui/scene.hpp"
+#include "ui/scene_damage.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,22 @@ struct SkiaLogicalRect {
     float y = 0.0F;
     float width = 0.0F;
     float height = 0.0F;
+};
+
+struct SkiaLogicalPoint {
+    float x = 0.0F;
+    float y = 0.0F;
+};
+
+// Transient presentation state layered over a composed Scene. A scroll frame
+// paints the source and target grid layers at independent pixel offsets while
+// keeping bottom-anchored regions fixed. cursor_position replaces the Scene's
+// cell-aligned cursor for the current frame.
+struct SkiaAnimationFrame {
+    const ui::Scene* scroll_source = nullptr;
+    float source_grid_offset_y = 0.0F;
+    float target_grid_offset_y = 0.0F;
+    std::optional<SkiaLogicalPoint> cursor_position;
 };
 
 struct SkiaPrimitiveRenderDiagnostics {
@@ -70,10 +88,18 @@ public:
     const std::string& font_family() const;
     float font_size() const;
     const SkiaTheme& theme() const;
+    std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
+                                              float viewport_width, float viewport_height) const;
 
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale = 1.0F,
                 SkiaRenderDiagnostics* diagnostics = nullptr);
+    void render_damage(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
+                       std::size_t row_bytes, std::span<const SkiaLogicalRect> damage,
+                       float device_scale = 1.0F);
+    void render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
+                         int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
+                         float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
 
 private:
     struct Impl;
