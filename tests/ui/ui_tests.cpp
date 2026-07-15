@@ -168,45 +168,48 @@ TEST_CASE("line signs: modification, insertion, deletion") {
     }
 }
 
-TEST_CASE("ansi renderer: golden frame") {
+TEST_CASE("ansi renderer: regions paint at absolute positions") {
+    // The scene is layout + display lists: regions with rects, primitives in
+    // region-local coordinates. The renderer only positions and styles.
     Scene scene;
-    scene.rows = 5; // 3 text rows + status + message
+    scene.rows = 5; // 3 text rows + status + echo
     scene.cols = 20;
-    scene.gutter_digits = 2;
-    scene.show_signs = true;
 
-    LineView line;
-    line.line_no = 0;
-    line.sign = SignKind::Modified;
-    line.runs.push_back({0, "int", StyleClass::Keyword, false});
-    line.runs.push_back({3, " x;", StyleClass::Text, false});
-    scene.lines.push_back(line);
-
-    scene.status_left = " f.cc ";
-    scene.status_key = "key ";
-    scene.message = "hello";
+    Region numbers{RegionRole::LineNumbers, {0, 0, 3, 3}, {}};
+    numbers.prims.push_back({0, 0, " 1 ", StyleClass::Gutter, false});
+    Region marks{RegionRole::ChangeSigns, {0, 3, 3, 1}, {}};
+    marks.prims.push_back({0, 0, "▎", StyleClass::SignModified, false});
+    Region body{RegionRole::TextArea, {0, 4, 3, 16}, {}};
+    body.prims.push_back({0, 0, "int", StyleClass::Keyword, false});
+    body.prims.push_back({0, 3, " x;", StyleClass::Text, false});
+    body.prims.push_back({1, 0, "~", StyleClass::Gutter, false});
+    Region status{RegionRole::StatusBar, {3, 0, 1, 20}, {}};
+    status.prims.push_back({0, 0, " f.cc ", StyleClass::StatusBar, false});
+    Region echo{RegionRole::EchoArea, {4, 0, 1, 20}, {}};
+    echo.prims.push_back({0, 0, "hello", StyleClass::Message, false});
+    scene.regions = {numbers, marks, body, status, echo};
     scene.cursor_row = 1;
     scene.cursor_col = 5;
 
     const std::string frame = render_ansi(scene);
-    // Structure, not aesthetics: home, gutter, sign, styled runs, EOF
-    // markers, status fill, message, final cursor park.
-    CHECK(frame.starts_with("\x1b[?25l\x1b[H"));
-    CHECK(frame.find(" 1 ") != std::string::npos);          // line number
-    CHECK(frame.find("\x1b[33m▎") != std::string::npos);    // modified sign
-    CHECK(frame.find("\x1b[1;34mint") != std::string::npos); // keyword run
-    CHECK(frame.find("\x1b[90m~") != std::string::npos);    // past-EOF rows
-    CHECK(frame.find("\x1b[7m f.cc ") != std::string::npos); // status bar
-    CHECK(frame.find("hello") != std::string::npos);
+    CHECK(frame.starts_with("\x1b[?25l\x1b[H\x1b[2J"));
+    // Region-local coordinates offset by the region's rect (1-based).
+    CHECK(frame.find("\x1b[1;1H\x1b[90m 1 ") != std::string::npos);   // numbers
+    CHECK(frame.find("\x1b[1;4H\x1b[33m▎") != std::string::npos);     // sign strip
+    CHECK(frame.find("\x1b[1;5H\x1b[1;34mint") != std::string::npos); // text at rect.col
+    CHECK(frame.find("\x1b[1;8H") != std::string::npos);              // second run offset
+    CHECK(frame.find("\x1b[2;5H\x1b[90m~") != std::string::npos);     // past-EOF marker
+    CHECK(frame.find("\x1b[4;1H\x1b[7m f.cc ") != std::string::npos); // status row
+    CHECK(frame.find("\x1b[5;1Hhello") != std::string::npos);         // echo row
     CHECK(frame.ends_with("\x1b[1;5H\x1b[?25h"));
 
-    // Selected run renders with reverse video.
+    // Selected primitives add reverse video.
     Scene sel = scene;
-    sel.lines[0].runs[1].selected = true;
+    sel.regions[2].prims[1].selected = true;
+    CHECK(render_ansi(sel).find("\x1b[1;34m") != std::string::npos);
     CHECK(render_ansi(sel).find("\x1b[7m x;") != std::string::npos);
 
-    // Signs off: the sign glyph disappears.
-    Scene plain = scene;
-    plain.show_signs = false;
-    CHECK(render_ansi(plain).find("▎") == std::string::npos);
+    // find() locates regions by role.
+    CHECK(scene.find(RegionRole::TextArea) != nullptr);
+    CHECK(scene.find(RegionRole::TextArea)->rect.col == 4);
 }

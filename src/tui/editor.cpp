@@ -840,44 +840,80 @@ private:
         ui::Scene scene;
         scene.rows = size.rows;
         scene.cols = size.cols;
-        scene.gutter_digits = gutter_digits();
-        scene.show_signs = true;
 
+        // Layout: partition the terminal into regions. A future widget
+        // (minimap, fold strip, panel) claims its rectangle here and
+        // paints the same primitives below.
+        const int digits = gutter_digits();
+        ui::Region numbers{ui::RegionRole::LineNumbers, {0, 0, rows, digits + 1}, {}};
+        ui::Region marks{ui::RegionRole::ChangeSigns, {0, digits + 1, rows, 1}, {}};
+        ui::Region body{ui::RegionRole::TextArea, {0, digits + 2, rows, width}, {}};
+        ui::Region status{ui::RegionRole::StatusBar, {rows, 0, 1, size.cols}, {}};
+        ui::Region echo{ui::RegionRole::EchoArea, {rows + 1, 0, 1, size.cols}, {}};
+
+        // Paint.
         const std::optional<TextRange> sel = selection();
         const TokenBuffer& lexed = tokens();
         for (int row = 0; row < rows; ++row) {
             const std::uint32_t line = top_line_ + static_cast<std::uint32_t>(row);
             if (line >= text.line_count()) {
+                body.prims.push_back({row, 0, "~", ui::StyleClass::Gutter, false});
+                continue;
+            }
+            numbers.prims.push_back({row, 0, std::format("{:>{}} ", line + 1, digits),
+                                     ui::StyleClass::Gutter, false});
+            switch (sign_at(line)) {
+            case ui::SignKind::Added:
+                marks.prims.push_back({row, 0, "▎", ui::StyleClass::SignAdded, false});
                 break;
+            case ui::SignKind::Modified:
+                marks.prims.push_back({row, 0, "▎", ui::StyleClass::SignModified, false});
+                break;
+            case ui::SignKind::DeletedAbove:
+                marks.prims.push_back({row, 0, "▔", ui::StyleClass::SignDeleted, false});
+                break;
+            case ui::SignKind::None: break;
             }
             const TextRange content = text.line_content_range(line);
-            ui::LineView view;
-            view.line_no = line;
-            view.sign = sign_at(line);
             const std::string bytes = text.substring(content);
-            view.runs = ui::build_line_runs(
-                {.text = bytes,
-                 .start_offset = content.start.value,
-                 .tab_width = tab_width(),
-                 .left_col = left_col_,
-                 .width = width,
-                 .selection = sel},
-                lexed);
-            scene.lines.push_back(std::move(view));
+            for (ui::Run& run : ui::build_line_runs({.text = bytes,
+                                                     .start_offset = content.start.value,
+                                                     .tab_width = tab_width(),
+                                                     .left_col = left_col_,
+                                                     .width = width,
+                                                     .selection = sel},
+                                                    lexed)) {
+                body.prims.push_back(
+                    {row, run.col, std::move(run.text), run.style, run.selected});
+            }
         }
 
-        scene.status_left =
+        std::string left =
             std::format(" {}{}  {}:{}  rev {}  style {} ", path_, dirty() ? " [+]" : "",
                         caret_pos.line + 1, caret_col + 1, snap.revision(), style_origin_);
-        scene.status_key =
+        const std::string key =
             last_key_.empty() ? std::string() : std::format("key: {} ", last_key_);
-        scene.prompt_active = prompt_active_;
-        scene.prompt_label = prompt_label_;
-        scene.prompt_input = prompt_input_;
-        scene.message = message_.empty()
-                            ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
-                              "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  M-? help"
-                            : message_;
+        int fill = size.cols - ui::display_width(left) - ui::display_width(key);
+        if (fill < 0) {
+            left.resize(std::max<std::size_t>(0, left.size() + static_cast<std::size_t>(fill)));
+            fill = 0;
+        }
+        status.prims.push_back(
+            {0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
+             ui::StyleClass::StatusBar, false});
+        if (!key.empty()) {
+            status.prims.push_back({0, size.cols - ui::display_width(key), key,
+                                    ui::StyleClass::StatusKey, false});
+        }
+
+        const std::string echo_text =
+            prompt_active_ ? prompt_label_ + prompt_input_
+                           : (message_.empty()
+                                  ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
+                                    "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  "
+                                    "M-? help"
+                                  : message_);
+        echo.prims.push_back({0, 0, echo_text, ui::StyleClass::Message, false});
 
         if (prompt_active_) {
             scene.cursor_row = size.rows;
@@ -887,6 +923,12 @@ private:
             scene.cursor_row = static_cast<int>(caret_pos.line - top_line_) + 1;
             scene.cursor_col = text_col0() + (caret_col - left_col_) + 1;
         }
+
+        scene.regions.push_back(std::move(numbers));
+        scene.regions.push_back(std::move(marks));
+        scene.regions.push_back(std::move(body));
+        scene.regions.push_back(std::move(status));
+        scene.regions.push_back(std::move(echo));
         return scene;
     }
 

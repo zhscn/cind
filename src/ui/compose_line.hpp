@@ -1,12 +1,24 @@
 #pragma once
 
 #include "cpp_lexer/token_buffer.hpp"
-#include "ui/scene.hpp"
+#include "ui/style.hpp"
 
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace cind::ui {
+
+// A styled stretch of one laid-out line; `col` is the display column
+// relative to the viewport's left edge. Compose turns runs into scene
+// primitives by stamping the visual row.
+struct Run {
+    int col = 0;
+    std::string text;
+    StyleClass style = StyleClass::Text;
+    bool selected = false;
+};
 
 // Lays one document line out into styled runs: token highlighting, selection
 // splitting, tab expansion, wide-glyph measurement, and horizontal clipping

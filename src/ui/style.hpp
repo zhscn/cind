@@ -23,7 +23,6 @@ enum class StyleClass : std::uint8_t {
     StatusBar,
     StatusKey, // keystroke caption on the status bar
     Message,   // message / prompt line
-    MinimapView, // viewport indicator on the minimap strip
 };
 
 // Layer-1 highlighting straight off the lexer: token kind -> style class.

@@ -1,9 +1,19 @@
 #pragma once
 
 #include "document/text.hpp"
-#include "ui/scene.hpp"
+
+#include <cstdint>
 
 namespace cind::ui {
+
+// Unsaved-change sign for one line (the classic gutter marks; git HEAD can
+// replace "saved file" as the baseline later without touching the model).
+enum class SignKind : std::uint8_t {
+    None,
+    Added,
+    Modified,
+    DeletedAbove, // lines were deleted just above this line
+};
 
 // Line-level unsaved-change signs: which lines of `current` differ from
 // `baseline` (the file as last saved; a git HEAD blob works the same way).
