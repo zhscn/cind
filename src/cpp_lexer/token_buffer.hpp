@@ -20,8 +20,8 @@ namespace cind {
 // parser's mostly-sequential reads stay O(1).
 class TokenBuffer {
     struct Chunk {
-        std::uint32_t base = 0;   // byte offset added to every token range
-        std::vector<Token> toks;  // ranges relative to base
+        std::uint32_t base = 0;  // byte offset added to every token range
+        std::vector<Token> toks; // ranges relative to base
     };
 
 public:
@@ -75,10 +75,24 @@ public:
         Token operator[](difference_type n) const {
             return (*buf_)[static_cast<std::size_t>(static_cast<difference_type>(i_) + n)];
         }
-        iterator& operator++() { ++i_; return *this; }
-        iterator operator++(int) { iterator t = *this; ++i_; return t; }
-        iterator& operator--() { --i_; return *this; }
-        iterator operator--(int) { iterator t = *this; --i_; return t; }
+        iterator& operator++() {
+            ++i_;
+            return *this;
+        }
+        iterator operator++(int) {
+            iterator t = *this;
+            ++i_;
+            return t;
+        }
+        iterator& operator--() {
+            --i_;
+            return *this;
+        }
+        iterator operator--(int) {
+            iterator t = *this;
+            --i_;
+            return t;
+        }
         iterator& operator+=(difference_type n) {
             i_ = static_cast<std::size_t>(static_cast<difference_type>(i_) + n);
             return *this;

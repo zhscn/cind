@@ -32,9 +32,9 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
     };
 
     // First token overlapping the line, then walked forward in lockstep.
-    auto it = std::ranges::lower_bound(tokens, TextOffset{in.start_offset},
-                                       [](TextOffset a, TextOffset b) { return a < b; },
-                                       [](const Token& t) { return t.range.end; });
+    auto it = std::ranges::lower_bound(
+        tokens, TextOffset{in.start_offset}, [](TextOffset a, TextOffset b) { return a < b; },
+        [](const Token& t) { return t.range.end; });
 
     const int right = in.left_col + in.width;
     int col = 0;

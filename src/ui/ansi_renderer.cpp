@@ -10,19 +10,32 @@ namespace {
 // that knows colors.
 std::string_view sgr_of(StyleClass style) {
     switch (style) {
-    case StyleClass::Text: return "";
-    case StyleClass::Keyword: return "\x1b[1;34m";
-    case StyleClass::String: return "\x1b[32m";
-    case StyleClass::Number: return "\x1b[35m";
-    case StyleClass::Comment: return "\x1b[90m";
-    case StyleClass::Preprocessor: return "\x1b[33m";
-    case StyleClass::Gutter: return "\x1b[90m";
-    case StyleClass::SignAdded: return "\x1b[32m";
-    case StyleClass::SignModified: return "\x1b[33m";
-    case StyleClass::SignDeleted: return "\x1b[31m";
-    case StyleClass::StatusBar: return "\x1b[7m";
-    case StyleClass::StatusKey: return "\x1b[7m\x1b[1m";
-    case StyleClass::Message: return "";
+    case StyleClass::Text:
+        return "";
+    case StyleClass::Keyword:
+        return "\x1b[1;34m";
+    case StyleClass::String:
+        return "\x1b[32m";
+    case StyleClass::Number:
+        return "\x1b[35m";
+    case StyleClass::Comment:
+        return "\x1b[90m";
+    case StyleClass::Preprocessor:
+        return "\x1b[33m";
+    case StyleClass::Gutter:
+        return "\x1b[90m";
+    case StyleClass::SignAdded:
+        return "\x1b[32m";
+    case StyleClass::SignModified:
+        return "\x1b[33m";
+    case StyleClass::SignDeleted:
+        return "\x1b[31m";
+    case StyleClass::StatusBar:
+        return "\x1b[7m";
+    case StyleClass::StatusKey:
+        return "\x1b[7m\x1b[1m";
+    case StyleClass::Message:
+        return "";
     }
     return "";
 }

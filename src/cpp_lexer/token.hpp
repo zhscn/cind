@@ -117,7 +117,9 @@ enum class LexicalFlags : std::uint8_t {
 constexpr LexicalFlags operator|(LexicalFlags a, LexicalFlags b) {
     return static_cast<LexicalFlags>(static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
 }
-constexpr LexicalFlags& operator|=(LexicalFlags& a, LexicalFlags b) { return a = a | b; }
+constexpr LexicalFlags& operator|=(LexicalFlags& a, LexicalFlags b) {
+    return a = a | b;
+}
 constexpr bool has_flag(LexicalFlags flags, LexicalFlags flag) {
     return (static_cast<std::uint8_t>(flags) & static_cast<std::uint8_t>(flag)) != 0;
 }

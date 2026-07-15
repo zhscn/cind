@@ -78,8 +78,7 @@ struct PendingStyle {
     int ctor_init_width;
 
     explicit PendingStyle(const CppIndentStyle& base)
-        : style(base),
-          access_modifier_offset(base.access_specifier_offset - base.indent_width),
+        : style(base), access_modifier_offset(base.access_specifier_offset - base.indent_width),
           ctor_init_width(base.continuation_indent) {}
 };
 
@@ -206,8 +205,7 @@ bool value_in(std::string_view value, std::initializer_list<std::string_view> se
 
 void apply_key(const KeyValue& kv, PendingStyle& pending, ClangFormatStyle& result) {
     auto warn_value = [&] {
-        result.warnings.push_back(
-            std::format("invalid value for {}: '{}'", kv.key, kv.value));
+        result.warnings.push_back(std::format("invalid value for {}: '{}'", kv.key, kv.value));
     };
     auto set_int = [&](int& out) {
         if (auto v = parse_int(kv.value)) {
@@ -371,8 +369,7 @@ ClangFormatStyle parse_clang_format_yaml(std::string_view yaml, const CppIndentS
             } else if (const Preset* preset = find_preset(*based_on)) {
                 apply_preset(*preset, pending);
             } else {
-                result.warnings.push_back(
-                    std::format("unknown BasedOnStyle: '{}'", *based_on));
+                result.warnings.push_back(std::format("unknown BasedOnStyle: '{}'", *based_on));
             }
         }
         for (const KeyValue& kv : doc) {
@@ -386,10 +383,10 @@ ClangFormatStyle parse_clang_format_yaml(std::string_view yaml, const CppIndentS
     pending.style.access_specifier_offset =
         pending.style.indent_width + pending.access_modifier_offset;
     if (pending.ctor_init_width != pending.style.continuation_indent) {
-        result.warnings.push_back(std::format(
-            "unsupported: ConstructorInitializerIndentWidth {} differs from "
-            "ContinuationIndentWidth {}; keeping first-initializer alignment",
-            pending.ctor_init_width, pending.style.continuation_indent));
+        result.warnings.push_back(
+            std::format("unsupported: ConstructorInitializerIndentWidth {} differs from "
+                        "ContinuationIndentWidth {}; keeping first-initializer alignment",
+                        pending.ctor_init_width, pending.style.continuation_indent));
     }
     result.style = pending.style;
     return result;

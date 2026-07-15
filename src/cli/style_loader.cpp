@@ -55,8 +55,7 @@ std::optional<LoadedStyle> load_file(const fs::path& config, int depth) {
             if (auto inherited = load_file(*parent, depth + 1)) {
                 base = inherited->style;
                 parsed = parse_clang_format_yaml(*text, base);
-                parsed.warnings.insert(parsed.warnings.begin(),
-                                       inherited->warnings.begin(),
+                parsed.warnings.insert(parsed.warnings.begin(), inherited->warnings.begin(),
                                        inherited->warnings.end());
             }
         }

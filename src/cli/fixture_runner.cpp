@@ -106,8 +106,7 @@ std::optional<std::string> parse_quoted(std::string_view s) {
     std::string_view body = s.substr(open + 1, close - open - 1);
     std::string out;
     for (std::size_t i = 0; i < body.size(); ++i) {
-        if (body[i] == '\\' && i + 1 < body.size() &&
-            (body[i + 1] == '"' || body[i + 1] == '\\')) {
+        if (body[i] == '\\' && i + 1 < body.size() && (body[i + 1] == '"' || body[i + 1] == '\\')) {
             ++i;
         }
         out += body[i];
@@ -217,9 +216,15 @@ bool run_one(const Fixture& fixture, std::string& failure) {
 
     for (const FixtureAction& action : fixture.actions) {
         switch (action.kind) {
-        case FixtureAction::Kind::Enter: session.enter(); break;
-        case FixtureAction::Kind::Indent: session.indent(); break;
-        case FixtureAction::Kind::Type: session.type_text(action.text); break;
+        case FixtureAction::Kind::Enter:
+            session.enter();
+            break;
+        case FixtureAction::Kind::Indent:
+            session.indent();
+            break;
+        case FixtureAction::Kind::Type:
+            session.type_text(action.text);
+            break;
         case FixtureAction::Kind::Undo:
             if (!session.undo()) {
                 failure = "undo with empty undo stack";
@@ -294,8 +299,7 @@ int run_fixtures(const char* path) {
             ++failed;
             continue;
         }
-        std::string display =
-            fixture->name.empty() ? file.filename().string() : fixture->name;
+        std::string display = fixture->name.empty() ? file.filename().string() : fixture->name;
 
         std::string failure;
         bool ok = false;

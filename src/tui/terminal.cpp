@@ -106,26 +106,39 @@ Key Terminal::read_escape_sequence() {
     }
     const int b2 = read_byte(false);
     switch (b2) {
-    case 'A': return Key{KeyKind::Up, 0, {}};
-    case 'B': return Key{KeyKind::Down, 0, {}};
-    case 'C': return Key{KeyKind::Right, 0, {}};
-    case 'D': return Key{KeyKind::Left, 0, {}};
-    case 'H': return Key{KeyKind::Home, 0, {}};
-    case 'F': return Key{KeyKind::End, 0, {}};
-    default: break;
+    case 'A':
+        return Key{KeyKind::Up, 0, {}};
+    case 'B':
+        return Key{KeyKind::Down, 0, {}};
+    case 'C':
+        return Key{KeyKind::Right, 0, {}};
+    case 'D':
+        return Key{KeyKind::Left, 0, {}};
+    case 'H':
+        return Key{KeyKind::Home, 0, {}};
+    case 'F':
+        return Key{KeyKind::End, 0, {}};
+    default:
+        break;
     }
     if (b2 >= '0' && b2 <= '9') {
         const int b3 = read_byte(false);
         if (b3 == '~') {
             switch (b2) {
             case '1':
-            case '7': return Key{KeyKind::Home, 0, {}};
+            case '7':
+                return Key{KeyKind::Home, 0, {}};
             case '4':
-            case '8': return Key{KeyKind::End, 0, {}};
-            case '3': return Key{KeyKind::Delete, 0, {}};
-            case '5': return Key{KeyKind::PageUp, 0, {}};
-            case '6': return Key{KeyKind::PageDown, 0, {}};
-            default: break;
+            case '8':
+                return Key{KeyKind::End, 0, {}};
+            case '3':
+                return Key{KeyKind::Delete, 0, {}};
+            case '5':
+                return Key{KeyKind::PageUp, 0, {}};
+            case '6':
+                return Key{KeyKind::PageDown, 0, {}};
+            default:
+                break;
             }
         }
     }

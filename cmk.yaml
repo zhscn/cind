@@ -25,5 +25,8 @@ cmake:
       compile: [-g, "-fsanitize=address,undefined", -fno-omit-frame-pointer]
       link: ["-fsanitize=address,undefined"]
 
+format:
+  ignore: [third_party/skia/**]
+
 lint:
   header-filter: ^src/

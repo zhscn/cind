@@ -40,15 +40,15 @@ struct SimToken {
 
     enum class Scope : std::uint8_t { None, Open, Close };
     Scope scope = Scope::None;
-    int close_count = 1;       // '>>' closes two template groups at once
-    bool block = false;        // scope token of a skipped code block
-    bool braced_init = false;  // scope token of a braced initializer list
-    bool multi_param = false;  // opener with more than one comma at depth 1
+    int close_count = 1;      // '>>' closes two template groups at once
+    bool block = false;       // scope token of a skipped code block
+    bool braced_init = false; // scope token of a braced initializer list
+    bool multi_param = false; // opener with more than one comma at depth 1
 
     bool binary = false; // acts as a binary operator
     bool unary = false;
     int precedence = -1;
-    int operator_index = 0;    // index among same-level operators
+    int operator_index = 0; // index among same-level operators
     bool next_operator = false;
     bool starts_binary_expression = false;
     bool ternary_question = false;
@@ -73,7 +73,8 @@ bool is_operand_end(const SimToken& t) {
 
 int binary_precedence(const SimToken& t) {
     switch (t.kind) {
-    case TokenKind::Comma: return kPrecComma;
+    case TokenKind::Comma:
+        return kPrecComma;
     case TokenKind::Equals:
     case TokenKind::PlusEqual:
     case TokenKind::MinusEqual:
@@ -84,31 +85,46 @@ int binary_precedence(const SimToken& t) {
     case TokenKind::PipeEqual:
     case TokenKind::CaretEqual:
     case TokenKind::LessLessEqual:
-    case TokenKind::GreaterGreaterEqual: return kPrecAssignment;
-    case TokenKind::PipePipe: return kPrecLogicalOr;
-    case TokenKind::AmpAmp: return 5;
-    case TokenKind::Pipe: return 6;
-    case TokenKind::Caret: return 7;
-    case TokenKind::Amp: return 8;
+    case TokenKind::GreaterGreaterEqual:
+        return kPrecAssignment;
+    case TokenKind::PipePipe:
+        return kPrecLogicalOr;
+    case TokenKind::AmpAmp:
+        return 5;
+    case TokenKind::Pipe:
+        return 6;
+    case TokenKind::Caret:
+        return 7;
+    case TokenKind::Amp:
+        return 8;
     case TokenKind::EqualEqual:
-    case TokenKind::ExclaimEqual: return 9;
+    case TokenKind::ExclaimEqual:
+        return 9;
     case TokenKind::Less:
     case TokenKind::Greater:
     case TokenKind::LessEqual:
-    case TokenKind::GreaterEqual: return 10; // Relational
-    case TokenKind::Spaceship: return 11;
+    case TokenKind::GreaterEqual:
+        return 10; // Relational
+    case TokenKind::Spaceship:
+        return 11;
     case TokenKind::LessLess:
-    case TokenKind::GreaterGreater: return 12;
+    case TokenKind::GreaterGreater:
+        return 12;
     case TokenKind::Plus:
-    case TokenKind::Minus: return 13;
+    case TokenKind::Minus:
+        return 13;
     case TokenKind::Star:
     case TokenKind::Slash:
-    case TokenKind::Percent: return 14;
+    case TokenKind::Percent:
+        return 14;
     case TokenKind::PeriodStar:
-    case TokenKind::ArrowStar: return kPrecPointerToMember;
+    case TokenKind::ArrowStar:
+        return kPrecPointerToMember;
     case TokenKind::Period:
-    case TokenKind::Arrow: return kPrecArrowAndPeriod;
-    default: return -1;
+    case TokenKind::Arrow:
+        return kPrecArrowAndPeriod;
+    default:
+        return -1;
     }
 }
 
@@ -121,8 +137,10 @@ bool is_unary_spelling(const SimToken& t) {
     case TokenKind::Exclaim:
     case TokenKind::Tilde:
     case TokenKind::PlusPlus:
-    case TokenKind::MinusMinus: return true;
-    default: return false;
+    case TokenKind::MinusMinus:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -228,8 +246,7 @@ private:
         }
 
         if (latest_operator && (cur() || precedence > 0)) {
-            add_fake_parens(start, precedence == kPrecArrowAndPeriod ? kPrecUnknown
-                                                                     : precedence);
+            add_fake_parens(start, precedence == kPrecArrowAndPeriod ? kPrecUnknown : precedence);
         }
     }
 
@@ -278,8 +295,7 @@ struct SimParen {
 
 class Replayer {
 public:
-    Replayer(const std::vector<SimToken>& tokens, int first_indent,
-             const CppIndentStyle& style)
+    Replayer(const std::vector<SimToken>& tokens, int first_indent, const CppIndentStyle& style)
         : tokens_(tokens), first_indent_(first_indent), style_(style) {
         stack_.push_back({first_indent, first_indent, first_indent, 0, 0, 0, 0, 0, false});
     }
@@ -291,8 +307,7 @@ public:
         for (std::size_t i = 0; i < count; ++i) {
             const SimToken* prev = i > 0 ? &tokens_[i - 1] : nullptr;
             const SimToken* prev2 = i > 1 ? &tokens_[i - 2] : nullptr;
-            step(tokens_[i], prev, prev2, prev_nc,
-                 i + 1 < count ? &tokens_[i + 1] : nullptr);
+            step(tokens_[i], prev, prev2, prev_nc, i + 1 < count ? &tokens_[i + 1] : nullptr);
             if (tokens_[i].kind != TokenKind::LineComment &&
                 tokens_[i].kind != TokenKind::BlockComment) {
                 prev_nc = &tokens_[i];
@@ -329,12 +344,11 @@ private:
             }
         } else if (prev) {
             // addTokenOnCurrentLine (751-1095), same-line state updates.
-            if (t.kind == TokenKind::Equals && region_depth_ == 0 &&
-                top().variable_pos == 0 && prev != nullptr) {
+            if (t.kind == TokenKind::Equals && region_depth_ == 0 && top().variable_pos == 0 &&
+                prev != nullptr) {
                 top().variable_pos = variable_start_column(prev, prev2);
             }
-            if (style_.align_open_bracket && prev->scope == SimToken::Scope::Open &&
-                !prev->block) {
+            if (style_.align_open_bracket && prev->scope == SimToken::Scope::Open && !prev->block) {
                 top().indent = col; // AlignAfterOpenBracket (976)
             }
             if (prev->scope == SimToken::Scope::Open && prev2 &&
@@ -344,13 +358,11 @@ private:
                 top().nested_block_indent = col;
             } else if (prev->kind == TokenKind::Comma) {
                 top().last_space = col;
-            } else if (prev->ternary_question || prev->ternary_colon ||
-                       prev->ctor_colon) {
+            } else if (prev->ternary_question || prev->ternary_colon || prev->ctor_colon) {
                 top().last_space = col;
             } else if (prev->binary &&
                        ((prev->precedence != kPrecAssignment &&
-                         (!prev->lessless || prev->operator_index != 0 ||
-                          prev->next_operator)) ||
+                         (!prev->lessless || prev->operator_index != 0 || prev->next_operator)) ||
                         t.starts_binary_expression)) {
                 // Indent relative to the RHS of the expression
                 // (BreakBeforeBinaryOperators: None).
@@ -367,12 +379,10 @@ private:
         if (style_.break_before_ternary && t.ternary_question) {
             top().question_column = col;
         }
-        if (!style_.break_before_ternary && prev && prev->ternary_question &&
-            !t.ternary_colon) {
+        if (!style_.break_before_ternary && prev && prev->ternary_question && !t.ternary_colon) {
             top().question_column = col;
         }
-        if (t.ternary_question &&
-            (t.newline_before || (next && next->newline_before))) {
+        if (t.ternary_question && (t.newline_before || (next && next->newline_before))) {
             top().is_wrapped_conditional = true;
         }
         if (t.member_access) {
@@ -416,10 +426,8 @@ private:
             if (start_of_string_literal_ == 0) {
                 start_of_string_literal_ = col;
             }
-        } else if (t.kind != TokenKind::Identifier &&
-                   t.kind != TokenKind::PreprocessorHash &&
-                   t.kind != TokenKind::LineComment &&
-                   t.kind != TokenKind::BlockComment) {
+        } else if (t.kind != TokenKind::Identifier && t.kind != TokenKind::PreprocessorHash &&
+                   t.kind != TokenKind::LineComment && t.kind != TokenKind::BlockComment) {
             start_of_string_literal_ = 0;
         }
     }
@@ -428,8 +436,7 @@ private:
     // (e.g. '*') to find where the declarator starts (802-815).
     int variable_start_column(const SimToken* prev, const SimToken* prev2) {
         int column = prev ? prev->column : 0;
-        if (prev && prev2 &&
-            (prev2->kind == TokenKind::Star || prev2->kind == TokenKind::Amp) &&
+        if (prev && prev2 && (prev2->kind == TokenKind::Star || prev2->kind == TokenKind::Amp) &&
             prev2->column + prev2->length == column) {
             column = prev2->column;
         }
@@ -443,24 +450,21 @@ private:
         // 1892: no extra indent for the first fake paren after return,
         // assignments, or opening brackets.
         bool skip_first_extra_indent =
-            prev && (prev->scope == SimToken::Scope::Open ||
-                     prev->kind == TokenKind::Semicolon ||
-                     prev->kind == TokenKind::ReturnKw ||
-                     (prev->binary && prev->precedence == kPrecAssignment &&
-                      style_.align_operands));
+            prev &&
+            (prev->scope == SimToken::Scope::Open || prev->kind == TokenKind::Semicolon ||
+             prev->kind == TokenKind::ReturnKw ||
+             (prev->binary && prev->precedence == kPrecAssignment && style_.align_operands));
         for (auto it = t.fake_lparens.rbegin(); it != t.fake_lparens.rend(); ++it) {
             const int level = *it;
             SimParen state = top(); // fake parens inherit the current state
             state.is_wrapped_conditional = false;
 
             const bool align = style_.align_operands || level < kPrecAssignment;
-            const bool after_return = prev && prev->kind == TokenKind::ReturnKw &&
-                                      level == kPrecUnknown;
+            const bool after_return =
+                prev && prev->kind == TokenKind::ReturnKw && level == kPrecUnknown;
             if (align && !after_return &&
-                (style_.align_open_bracket || level > kPrecComma ||
-                 region_depth_ == 0)) {
-                state.indent =
-                    std::max({t.column, state.indent, top().last_space});
+                (style_.align_open_bracket || level > kPrecComma || region_depth_ == 0)) {
+                state.indent = std::max({t.column, state.indent, top().last_space});
             }
             if (level > kPrecUnknown) {
                 state.last_space = std::max(state.last_space, t.column);
@@ -471,9 +475,8 @@ private:
             const bool chained_conditional =
                 level == kPrecConditional && prev && prev->ternary_colon &&
                 it + 1 == t.fake_lparens.rend() && !top().is_wrapped_conditional;
-            if (!chained_conditional &&
-                (level == kPrecConditional ||
-                 (!skip_first_extra_indent && level > kPrecAssignment))) {
+            if (!chained_conditional && (level == kPrecConditional ||
+                                         (!skip_first_extra_indent && level > kPrecAssignment))) {
                 state.indent += style_.continuation_indent;
             }
             stack_.push_back(state);
@@ -489,18 +492,15 @@ private:
             // Opaque child block; only pushed so the matching '}' pops.
             state.indent = top().indent;
         } else if (t.braced_init) {
-            const int width =
-                style_.brace_init_continuation ? cont : style_.indent_width;
+            const int width = style_.brace_init_continuation ? cont : style_.indent_width;
             state.indent = top().last_space + width;
             state.nested_block_indent =
                 std::max(top().start_of_function_call, top().nested_block_indent);
             if (t.multi_param) {
-                state.nested_block_indent =
-                    std::max(state.nested_block_indent, t.column + 1);
+                state.nested_block_indent = std::max(state.nested_block_indent, t.column + 1);
             }
         } else {
-            state.indent =
-                std::max(top().last_space, top().start_of_function_call) + cont;
+            state.indent = std::max(top().last_space, top().start_of_function_call) + cont;
             state.nested_block_indent =
                 std::max(top().start_of_function_call, top().nested_block_indent);
             if (t.kind == TokenKind::Less) {
@@ -515,11 +515,9 @@ private:
     // getNewLineColumn (1387-1686), C++ subset in upstream order.
     int new_line_column(const SimToken& t, const SimToken* prev) const {
         const int cont = style_.continuation_indent;
-        const int continuation_indent =
-            std::max(top().last_space, top().indent) + cont;
+        const int continuation_indent = std::max(top().last_space, top().indent) + cont;
 
-        if ((t.kind == TokenKind::RBrace || t.kind == TokenKind::RBracket) &&
-            stack_.size() > 1) {
+        if ((t.kind == TokenKind::RBrace || t.kind == TokenKind::RBracket) && stack_.size() > 1) {
             return stack_[stack_.size() - 2].last_space; // closes a braced init
         }
         if (t.kind == TokenKind::RParen && stack_.size() > 1) {
@@ -532,18 +530,15 @@ private:
             return top().first_lessless;
         }
         if (t.member_access) {
-            return top().call_continuation == 0 ? continuation_indent
-                                                : top().call_continuation;
+            return top().call_continuation == 0 ? continuation_indent : top().call_continuation;
         }
         if (top().question_column != 0 &&
-            ((t.ternary_colon) ||
-             (prev && (prev->ternary_question || prev->ternary_colon)))) {
-            const bool chained =
-                ((t.ternary_colon && !t.fake_lparens.empty() &&
-                  t.fake_lparens.back() == kPrecConditional) ||
-                 (prev && prev->ternary_colon && !t.fake_lparens.empty() &&
-                  t.fake_lparens.back() == kPrecConditional)) &&
-                !top().is_wrapped_conditional;
+            ((t.ternary_colon) || (prev && (prev->ternary_question || prev->ternary_colon)))) {
+            const bool chained = ((t.ternary_colon && !t.fake_lparens.empty() &&
+                                   t.fake_lparens.back() == kPrecConditional) ||
+                                  (prev && prev->ternary_colon && !t.fake_lparens.empty() &&
+                                   t.fake_lparens.back() == kPrecConditional)) &&
+                                 !top().is_wrapped_conditional;
             if (chained) {
                 int indent = top().indent;
                 if (style_.align_operands) {
@@ -556,16 +551,13 @@ private:
         if (prev && prev->kind == TokenKind::Comma && top().variable_pos != 0) {
             return top().variable_pos;
         }
-        if (prev && (prev->kind == TokenKind::ColonColon ||
-                     prev->kind == TokenKind::Equals)) {
+        if (prev && (prev->kind == TokenKind::ColonColon || prev->kind == TokenKind::Equals)) {
             return continuation_indent;
         }
-        if (prev && prev->kind == TokenKind::RParen && !t.binary &&
-            t.kind != TokenKind::Colon) {
+        if (prev && prev->kind == TokenKind::RParen && !t.binary && t.kind != TokenKind::Colon) {
             return continuation_indent;
         }
-        if (top().indent == first_indent_ && prev &&
-            prev->kind != TokenKind::RBrace) {
+        if (top().indent == first_indent_ && prev && prev->kind != TokenKind::RBrace) {
             return top().indent + cont;
         }
         return top().indent;
@@ -612,8 +604,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
     // across same-line siblings, stopping at statement boundary tokens.
     std::uint32_t first_token = tree.node(region).first_token;
     {
-        const std::uint32_t region_line =
-            lines.position(tokens[first_token].range.start).line;
+        const std::uint32_t region_line = lines.position(tokens[first_token].range.start).line;
         std::uint32_t i = first_token;
         while (i > 0) {
             const Token& prev_tok = tokens[i - 1];
@@ -622,10 +613,8 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
                 continue;
             }
             if (lines.position(prev_tok.range.start).line != region_line ||
-                prev_tok.kind == TokenKind::Semicolon ||
-                prev_tok.kind == TokenKind::Colon ||
-                prev_tok.kind == TokenKind::LBrace ||
-                prev_tok.kind == TokenKind::RBrace) {
+                prev_tok.kind == TokenKind::Semicolon || prev_tok.kind == TokenKind::Colon ||
+                prev_tok.kind == TokenKind::LBrace || prev_tok.kind == TokenKind::RBrace) {
                 break;
             }
             --i;
@@ -720,10 +709,9 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
         // Scope structure from the CST: a group's first/last tokens.
         const SyntaxNodeId deepest = tree.node_at(tok.range.start);
         const SyntaxNode& dn = tree.node(deepest);
-        const bool group = dn.kind == SyntaxKind::ParenGroup ||
-                           dn.kind == SyntaxKind::BracketGroup ||
-                           dn.kind == SyntaxKind::BraceGroup ||
-                           dn.kind == SyntaxKind::TemplateArgumentList;
+        const bool group =
+            dn.kind == SyntaxKind::ParenGroup || dn.kind == SyntaxKind::BracketGroup ||
+            dn.kind == SyntaxKind::BraceGroup || dn.kind == SyntaxKind::TemplateArgumentList;
         if (is_block_bound(i)) {
             s.scope = tokens[i].kind == TokenKind::LBrace ? SimToken::Scope::Open
                                                           : SimToken::Scope::Close;
@@ -740,15 +728,13 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
             }
             s.multi_param = commas >= 1;
         } else if (group && i + 1 == dn.end_token && tok.kind != TokenKind::Comma &&
-                   tok.kind != TokenKind::Semicolon &&
-                   tok.kind != TokenKind::Identifier) {
+                   tok.kind != TokenKind::Semicolon && tok.kind != TokenKind::Identifier) {
             // The group's last token closes it whatever it lexed as ('>>'
             // closes two template groups with one token).
             s.scope = SimToken::Scope::Close;
             s.braced_init = dn.kind == SyntaxKind::BraceGroup;
             s.close_count = 1;
-            for (SyntaxNodeId up = dn.parent; up != kInvalidNode;
-                 up = tree.node(up).parent) {
+            for (SyntaxNodeId up = dn.parent; up != kInvalidNode; up = tree.node(up).parent) {
                 const SyntaxNode& un = tree.node(up);
                 const bool up_group = un.kind == SyntaxKind::ParenGroup ||
                                       un.kind == SyntaxKind::BracketGroup ||
@@ -767,13 +753,12 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
         // adjacency disambiguates what TokenAnnotator infers from context.
         const bool space_before =
             tok.range.start.value > 0 &&
-            (text[tok.range.start.value - 1] == ' ' ||
-             text[tok.range.start.value - 1] == '\t' ||
+            (text[tok.range.start.value - 1] == ' ' || text[tok.range.start.value - 1] == '\t' ||
              text[tok.range.start.value - 1] == '\n');
-        const bool space_after = tok.range.end.value < text.size() &&
-                                 (text[tok.range.end.value] == ' ' ||
-                                  text[tok.range.end.value] == '\t' ||
-                                  text[tok.range.end.value] == '\n');
+        const bool space_after =
+            tok.range.end.value < text.size() &&
+            (text[tok.range.end.value] == ' ' || text[tok.range.end.value] == '\t' ||
+             text[tok.range.end.value] == '\n');
         const SimToken* prev_sig = sim.empty() ? nullptr : &sim.back();
         if (s.scope == SimToken::Scope::None && !after_operator_kw) {
             if (tok.kind == TokenKind::Colon) {
@@ -842,8 +827,7 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
     }
     const SimToken& query = query_index ? sim[*query_index] : synthetic;
 
-    const std::uint32_t region_line =
-        lines.position(tokens[first_token].range.start).line;
+    const std::uint32_t region_line = lines.position(tokens[first_token].range.start).line;
     int first_indent = 0;
     for (std::uint32_t i = lines.line_start(region_line).value; i < text.size(); ++i) {
         const char c = text[i];
@@ -858,9 +842,8 @@ std::optional<int> expression_continuation_column(const DocumentSnapshot& snapsh
 
     Replayer replayer(sim, first_indent, style);
     const int column = replayer.run(*replay_count, query);
-    trace.push_back(std::format(
-        "expression continuation engine: region {} at line {}, column {}",
-        syntax_kind_name(region_node.kind), region_line + 1, column));
+    trace.push_back(std::format("expression continuation engine: region {} at line {}, column {}",
+                                syntax_kind_name(region_node.kind), region_line + 1, column));
     return column;
 }
 

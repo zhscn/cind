@@ -62,7 +62,9 @@ Document::Document(std::string text, DocumentId id)
     undo_nodes_.push_back(UndoNode{text_, {}, {}, kInvalidUndoNode, {}});
 }
 
-DocumentSnapshot Document::snapshot() const { return DocumentSnapshot(id_, revision_, text_); }
+DocumentSnapshot Document::snapshot() const {
+    return DocumentSnapshot(id_, revision_, text_);
+}
 
 EditTransaction Document::begin_transaction() {
     if (transaction_active_) {
@@ -118,13 +120,17 @@ const Document::UndoNode& Document::undo_node(UndoNodeId id) const {
     return undo_nodes_[id];
 }
 
-UndoNodeId Document::undo_parent(UndoNodeId id) const { return undo_node(id).parent; }
+UndoNodeId Document::undo_parent(UndoNodeId id) const {
+    return undo_node(id).parent;
+}
 
 const std::vector<UndoNodeId>& Document::undo_children(UndoNodeId id) const {
     return undo_node(id).children;
 }
 
-const Text& Document::undo_node_text(UndoNodeId id) const { return undo_node(id).text; }
+const Text& Document::undo_node_text(UndoNodeId id) const {
+    return undo_node(id).text;
+}
 
 DocumentChange Document::undo_to(UndoNodeId id) {
     require_no_transaction("undo_to");

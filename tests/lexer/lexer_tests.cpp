@@ -94,8 +94,8 @@ TEST_CASE("empty input") {
 TEST_CASE("basic declaration") {
     using enum TokenKind;
     CHECK(kinds_of("namespace foo { int x; }") ==
-          std::vector<TokenKind>{NamespaceKw, Identifier, LBrace, Identifier, Identifier,
-                                 Semicolon, RBrace});
+          std::vector<TokenKind>{NamespaceKw, Identifier, LBrace, Identifier, Identifier, Semicolon,
+                                 RBrace});
 }
 
 TEST_CASE("keywords are exact matches") {
@@ -158,8 +158,7 @@ TEST_CASE("raw string literals") {
     SUBCASE("prefixed") {
         CHECK(kinds_of("u8R\"(x)\"") == std::vector<TokenKind>{RawStringLiteral});
         // FooR is an identifier, not a raw-string prefix
-        CHECK(kinds_of("FooR\"(x)\"") ==
-              std::vector<TokenKind>{Identifier, StringLiteral});
+        CHECK(kinds_of("FooR\"(x)\"") == std::vector<TokenKind>{Identifier, StringLiteral});
     }
     SUBCASE("unterminated runs to EOF") {
         std::string text = "R\"d(open\nstill";
@@ -271,9 +270,9 @@ TEST_CASE("invalid bytes become Invalid tokens") {
 TEST_CASE("operator keyword and template brackets") {
     using enum TokenKind;
     CHECK(kinds_of("operator<<") == std::vector<TokenKind>{OperatorKw, LessLess});
-    CHECK(kinds_of("vector<vector<int>> v") ==
-          std::vector<TokenKind>{Identifier, Less, Identifier, Less, Identifier, GreaterGreater,
-                                 Identifier});
+    CHECK(kinds_of("vector<vector<int>> v") == std::vector<TokenKind>{Identifier, Less, Identifier,
+                                                                      Less, Identifier,
+                                                                      GreaterGreater, Identifier});
 }
 
 TEST_CASE("fuzz: arbitrary bytes never break the invariants") {
@@ -282,8 +281,7 @@ TEST_CASE("fuzz: arbitrary bytes never break the invariants") {
     std::uniform_int_distribution<int> byte_dist(0, 255);
     std::uniform_int_distribution<int> mode_dist(0, 2);
     // A C++-flavored alphabet reaches deeper lexer paths than raw bytes.
-    static constexpr std::string_view kCppish =
-        " \t\nabcR\"'(){}[]<>:;,#\\/*=+-.0123456789_";
+    static constexpr std::string_view kCppish = " \t\nabcR\"'(){}[]<>:;,#\\/*=+-.0123456789_";
 
     for (int round = 0; round < 400; ++round) {
         const int mode = mode_dist(rng);
@@ -293,8 +291,7 @@ TEST_CASE("fuzz: arbitrary bytes never break the invariants") {
             if (mode == 0) {
                 text.push_back(static_cast<char>(byte_dist(rng)));
             } else {
-                text.push_back(
-                    kCppish[static_cast<std::size_t>(byte_dist(rng)) % kCppish.size()]);
+                text.push_back(kCppish[static_cast<std::size_t>(byte_dist(rng)) % kCppish.size()]);
             }
         }
         if (text.find('\r') != std::string::npos) {

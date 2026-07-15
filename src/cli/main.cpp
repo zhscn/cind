@@ -1,12 +1,12 @@
 #include "cli/bench.hpp"
 #include "cli/fixture_runner.hpp"
 #include "cli/repl.hpp"
-#include "tui/editor.hpp"
 #include "commands/editor_commands.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
 #include "syntax/analysis.hpp"
 #include "syntax/syntax_tree.hpp"
+#include "tui/editor.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -15,8 +15,8 @@
 
 #include <cstdio>
 #include <fstream>
-#include <memory>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -31,9 +31,15 @@ std::string escape_preview(std::string_view text, std::size_t max_len = 40) {
             break;
         }
         switch (c) {
-        case '\n': out += "\\n"; break;
-        case '\t': out += "\\t"; break;
-        default: out += c; break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            out += c;
+            break;
         }
     }
     return out;
@@ -179,7 +185,8 @@ int cmd_perf(const char* path) {
     std::size_t token_count = 0;
     std::size_t node_count = 0;
     const double build_ms = time_ms([&] { cind::Document d(text); });
-    const double lex_ms = time_ms([&] { token_count = cind::lex(snapshot.content()).tokens.size(); });
+    const double lex_ms =
+        time_ms([&] { token_count = cind::lex(snapshot.content()).tokens.size(); });
     const double parse_ms =
         time_ms([&] { node_count = cind::parse(snapshot.content()).node_count(); });
     cind::SyntaxTree tree = cind::parse(snapshot.content());
@@ -279,8 +286,7 @@ int main(int argc, char** argv) {
             if (arg == "--style" && i + 1 < argc) {
                 options.style_preset = argv[++i];
             } else if (arg == "--show" && i + 1 < argc) {
-                options.show_mismatches =
-                    static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+                options.show_mismatches = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
             } else if (arg == "--clean-only") {
                 options.clean_only = true;
             } else {

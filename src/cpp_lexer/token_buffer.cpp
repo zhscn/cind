@@ -32,15 +32,15 @@ std::size_t TokenBuffer::chunk_of(std::size_t i) const {
         if (c > 0 && c - 1 < chunks_.size() && i >= first_[c - 1]) {
             c = c - 1;
         } else {
-            c = static_cast<std::size_t>(
-                    std::upper_bound(first_.begin(), first_.end(), i) - first_.begin()) -
+            c = static_cast<std::size_t>(std::upper_bound(first_.begin(), first_.end(), i) -
+                                         first_.begin()) -
                 1;
         }
     } else {
         while (c + 1 < chunks_.size() && i >= first_[c + 1]) {
             if (i >= first_[c + 1] + chunks_[c + 1].toks.size()) {
-                c = static_cast<std::size_t>(
-                        std::upper_bound(first_.begin(), first_.end(), i) - first_.begin()) -
+                c = static_cast<std::size_t>(std::upper_bound(first_.begin(), first_.end(), i) -
+                                             first_.begin()) -
                     1;
                 break;
             }

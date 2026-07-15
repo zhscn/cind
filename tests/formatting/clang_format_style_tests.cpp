@@ -69,7 +69,8 @@ TEST_CASE("IndentPPDirectives and PPIndentWidth map to the PP directive style") 
           PP::None);
     CHECK(parse_clang_format_yaml("IndentPPDirectives: AfterHash\n", base)
               .style.pp_directive_indent == PP::AfterHash);
-    auto before = parse_clang_format_yaml("IndentPPDirectives: BeforeHash\nPPIndentWidth: 2\n", base);
+    auto before =
+        parse_clang_format_yaml("IndentPPDirectives: BeforeHash\nPPIndentWidth: 2\n", base);
     CHECK(before.style.pp_directive_indent == PP::BeforeHash);
     CHECK(before.style.pp_indent_width == 2);
     CHECK(before.warnings.empty());
@@ -110,36 +111,34 @@ TEST_CASE("old and new enum spellings are both accepted") {
               .style.align_open_bracket == false);
     CHECK(parse_clang_format_yaml("AlignAfterOpenBracket: AlwaysBreak\n", base)
               .style.align_open_bracket == false);
-    CHECK(parse_clang_format_yaml("AlignAfterOpenBracket: true\n", base)
-              .style.align_open_bracket == true);
+    CHECK(parse_clang_format_yaml("AlignAfterOpenBracket: true\n", base).style.align_open_bracket ==
+          true);
     CHECK(parse_clang_format_yaml("UseTab: ForIndentation\n", base).style.use_tabs == true);
     CHECK(parse_clang_format_yaml("NamespaceIndentation: Inner\n", base)
               .style.namespace_indentation == NI::Inner);
 }
 
 TEST_CASE("multi-document files select the Cpp document") {
-    const char* yaml =
-        "BasedOnStyle: LLVM\n"
-        "---\n"
-        "Language: JavaScript\n"
-        "IndentWidth: 8\n"
-        "---\n"
-        "Language: Cpp\n"
-        "IndentWidth: 4\n"
-        "...\n";
+    const char* yaml = "BasedOnStyle: LLVM\n"
+                       "---\n"
+                       "Language: JavaScript\n"
+                       "IndentWidth: 8\n"
+                       "---\n"
+                       "Language: Cpp\n"
+                       "IndentWidth: 4\n"
+                       "...\n";
     auto result = parse_clang_format_yaml(yaml, {});
     CHECK(result.style.indent_width == 4);        // Cpp doc, not the JS one
     CHECK(result.style.continuation_indent == 4); // from the common LLVM doc
 }
 
 TEST_CASE("nested blocks, comments and quoted values") {
-    const char* yaml =
-        "# a header comment\n"
-        "IndentWidth: 4 # trailing comment\n"
-        "BraceWrapping:\n"
-        "  AfterClass: true\n"
-        "  IndentBraces: true\n"
-        "UseTab: \"Never\"\n";
+    const char* yaml = "# a header comment\n"
+                       "IndentWidth: 4 # trailing comment\n"
+                       "BraceWrapping:\n"
+                       "  AfterClass: true\n"
+                       "  IndentBraces: true\n"
+                       "UseTab: \"Never\"\n";
     auto result = parse_clang_format_yaml(yaml, {});
     CHECK(result.style.indent_width == 4);
     CHECK(result.style.use_tabs == false);
@@ -159,23 +158,22 @@ TEST_CASE("unsupported indentation keys produce warnings, not silence") {
     CHECK(parse_clang_format_yaml("IndentWidth: banana\n", base).warnings.size() == 1);
     // ConstructorInitializerIndentWidth differing from continuation width is
     // the one mapping we cannot honor exactly.
-    auto ctor = parse_clang_format_yaml(
-        "BasedOnStyle: LLVM\nConstructorInitializerIndentWidth: 8\n", base);
+    auto ctor =
+        parse_clang_format_yaml("BasedOnStyle: LLVM\nConstructorInitializerIndentWidth: 8\n", base);
     CHECK(ctor.warnings.size() == 1);
     // Unrelated formatter keys stay silent.
-    CHECK(parse_clang_format_yaml("SortIncludes: Never\nColumnLimit: 120\n", base)
-              .warnings.empty());
+    CHECK(
+        parse_clang_format_yaml("SortIncludes: Never\nColumnLimit: 120\n", base).warnings.empty());
 }
 
 TEST_CASE("DisableFormat is surfaced to the caller") {
-    CHECK(parse_clang_format_yaml("DisableFormat: true\nSortIncludes: Never\n", {})
-              .disable_format);
+    CHECK(parse_clang_format_yaml("DisableFormat: true\nSortIncludes: Never\n", {}).disable_format);
     CHECK(!parse_clang_format_yaml("DisableFormat: false\n", {}).disable_format);
 }
 
 TEST_CASE("InheritParentConfig is reported to the caller") {
-    auto result = parse_clang_format_yaml("BasedOnStyle: InheritParentConfig\nIndentWidth: 2\n",
-                                          {});
+    auto result =
+        parse_clang_format_yaml("BasedOnStyle: InheritParentConfig\nIndentWidth: 2\n", {});
     CHECK(result.inherit_parent);
     CHECK(result.style.indent_width == 2);
 }
@@ -188,8 +186,8 @@ TEST_CASE("InheritParentConfig is reported to the caller") {
 TEST_CASE("preset table cross-validates against clang-format --dump-config") {
     for (const char* name :
          {"LLVM", "Google", "Chromium", "Mozilla", "WebKit", "GNU", "Microsoft"}) {
-        const std::string cmd = std::string("clang-format --style=") + name +
-                                " --dump-config 2>/dev/null";
+        const std::string cmd =
+            std::string("clang-format --style=") + name + " --dump-config 2>/dev/null";
         FILE* pipe = popen(cmd.c_str(), "r");
         REQUIRE(pipe != nullptr);
         std::string dump;

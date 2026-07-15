@@ -14,29 +14,52 @@ namespace cind {
 
 std::string_view format_role_name(FormatRole role) {
     switch (role) {
-    case FormatRole::File: return "File";
-    case FormatRole::NamespaceBody: return "NamespaceBody";
-    case FormatRole::TypeBody: return "TypeBody";
-    case FormatRole::AccessSpecifierLabel: return "AccessSpecifierLabel";
-    case FormatRole::FunctionBody: return "FunctionBody";
-    case FormatRole::CompoundBody: return "CompoundBody";
-    case FormatRole::LambdaBody: return "LambdaBody";
-    case FormatRole::SingleStatementBody: return "SingleStatementBody";
-    case FormatRole::ControlHeaderContinuation: return "ControlHeaderContinuation";
-    case FormatRole::CaseLabel: return "CaseLabel";
-    case FormatRole::CaseBody: return "CaseBody";
-    case FormatRole::ConstructorInitializerIntro: return "ConstructorInitializerIntro";
-    case FormatRole::ConstructorInitializerItem: return "ConstructorInitializerItem";
-    case FormatRole::ParenContinuation: return "ParenContinuation";
-    case FormatRole::BracketContinuation: return "BracketContinuation";
-    case FormatRole::TemplateArgsContinuation: return "TemplateArgsContinuation";
-    case FormatRole::BraceInit: return "BraceInit";
-    case FormatRole::StatementContinuation: return "StatementContinuation";
-    case FormatRole::PreprocessorDirective: return "PreprocessorDirective";
-    case FormatRole::ClosingToken: return "ClosingToken";
-    case FormatRole::PreservedRawString: return "PreservedRawString";
-    case FormatRole::PreservedBlockComment: return "PreservedBlockComment";
-    case FormatRole::Opaque: return "Opaque";
+    case FormatRole::File:
+        return "File";
+    case FormatRole::NamespaceBody:
+        return "NamespaceBody";
+    case FormatRole::TypeBody:
+        return "TypeBody";
+    case FormatRole::AccessSpecifierLabel:
+        return "AccessSpecifierLabel";
+    case FormatRole::FunctionBody:
+        return "FunctionBody";
+    case FormatRole::CompoundBody:
+        return "CompoundBody";
+    case FormatRole::LambdaBody:
+        return "LambdaBody";
+    case FormatRole::SingleStatementBody:
+        return "SingleStatementBody";
+    case FormatRole::ControlHeaderContinuation:
+        return "ControlHeaderContinuation";
+    case FormatRole::CaseLabel:
+        return "CaseLabel";
+    case FormatRole::CaseBody:
+        return "CaseBody";
+    case FormatRole::ConstructorInitializerIntro:
+        return "ConstructorInitializerIntro";
+    case FormatRole::ConstructorInitializerItem:
+        return "ConstructorInitializerItem";
+    case FormatRole::ParenContinuation:
+        return "ParenContinuation";
+    case FormatRole::BracketContinuation:
+        return "BracketContinuation";
+    case FormatRole::TemplateArgsContinuation:
+        return "TemplateArgsContinuation";
+    case FormatRole::BraceInit:
+        return "BraceInit";
+    case FormatRole::StatementContinuation:
+        return "StatementContinuation";
+    case FormatRole::PreprocessorDirective:
+        return "PreprocessorDirective";
+    case FormatRole::ClosingToken:
+        return "ClosingToken";
+    case FormatRole::PreservedRawString:
+        return "PreservedRawString";
+    case FormatRole::PreservedBlockComment:
+        return "PreservedBlockComment";
+    case FormatRole::Opaque:
+        return "Opaque";
     }
     return "?";
 }
@@ -51,8 +74,7 @@ int display_width(std::string_view chars, int start_col, int tab_width) {
     return col;
 }
 
-std::string leading_whitespace(const TextCharSource& text, const Text& lines,
-                               std::uint32_t line) {
+std::string leading_whitespace(const TextCharSource& text, const Text& lines, std::uint32_t line) {
     TextRange content = lines.line_content_range(line);
     std::string out;
     for (std::uint32_t p = content.start.value; p < content.end.value; ++p) {
@@ -102,8 +124,7 @@ SyntaxNodeId query_node_at(const SyntaxTree& tree, TextOffset offset) {
     while (true) {
         const auto& children = tree.node(current).children;
         auto it = std::ranges::upper_bound(
-            children, offset, {},
-            [&](SyntaxNodeId child) { return tree.node_range(child).start; });
+            children, offset, {}, [&](SyntaxNodeId child) { return tree.node_range(child).start; });
         SyntaxNodeId next = kInvalidNode;
         while (it != children.begin()) {
             --it;
@@ -150,12 +171,11 @@ std::optional<Token> first_significant_on_line(const SyntaxTree& tree, const Tex
 // Last non-trivia token ending at or before the offset.
 std::optional<Token> last_significant_before(const SyntaxTree& tree, TextOffset offset) {
     const auto& tokens = tree.tokens();
-    auto it = std::ranges::upper_bound(tokens, offset, {},
-                                       [](const Token& t) { return t.range.start; });
+    auto it =
+        std::ranges::upper_bound(tokens, offset, {}, [](const Token& t) { return t.range.start; });
     while (it != tokens.begin()) {
         --it;
-        if (!is_trivia(it->kind) && it->kind != TokenKind::EndOfFile &&
-            it->range.end <= offset) {
+        if (!is_trivia(it->kind) && it->kind != TokenKind::EndOfFile && it->range.end <= offset) {
             return *it;
         }
     }
@@ -165,8 +185,8 @@ std::optional<Token> last_significant_before(const SyntaxTree& tree, TextOffset 
 // Token whose range strictly contains the offset (for protection checks).
 std::optional<Token> token_covering(const SyntaxTree& tree, TextOffset offset) {
     const auto& tokens = tree.tokens();
-    auto it = std::ranges::upper_bound(tokens, offset, {},
-                                       [](const Token& t) { return t.range.start; });
+    auto it =
+        std::ranges::upper_bound(tokens, offset, {}, [](const Token& t) { return t.range.start; });
     if (it == tokens.begin()) {
         return std::nullopt;
     }
@@ -276,10 +296,18 @@ int pp_before_hash_column(const SyntaxTree& tree, const Text& text, std::uint32_
     for (const Dir& d : dirs) {
         int own = level;
         switch (category(d.hash)) {
-        case PPCat::Open: own = level++; break;
-        case PPCat::Alt: own = std::max(level - 1, 0); break;
-        case PPCat::Close: own = (level = std::max(level - 1, 0)); break;
-        case PPCat::Other: own = level; break;
+        case PPCat::Open:
+            own = level++;
+            break;
+        case PPCat::Alt:
+            own = std::max(level - 1, 0);
+            break;
+        case PPCat::Close:
+            own = (level = std::max(level - 1, 0));
+            break;
+        case PPCat::Other:
+            own = level;
+            break;
         }
         if (guard) {
             own = std::max(own - 1, 0);
@@ -323,8 +351,7 @@ public:
                 // (AfterHash's between-#-and-keyword spacing is intra-line, so
                 // it does not change the leading column).
                 int col = 0;
-                if (style_.pp_directive_indent ==
-                    CppIndentStyle::PPDirectiveIndent::BeforeHash) {
+                if (style_.pp_directive_indent == CppIndentStyle::PPDirectiveIndent::BeforeHash) {
                     col = pp_before_hash_column(tree_, lines_, line_, style_.pp_step());
                 }
                 trace("preprocessor directive at conditional depth column {}", col);
@@ -349,7 +376,8 @@ public:
                     return std::move(decision_);
                 }
                 break;
-            default: break;
+            default:
+                break;
             }
         }
 
@@ -358,8 +386,7 @@ public:
     }
 
 private:
-    template <typename... Args>
-    void trace(std::format_string<Args...> fmt, Args&&... args) {
+    template <typename... Args> void trace(std::format_string<Args...> fmt, Args&&... args) {
         decision_.trace.push_back(std::format(fmt, std::forward<Args>(args)...));
     }
 
@@ -389,8 +416,10 @@ private:
         case SyntaxKind::CompoundStatement:
         case SyntaxKind::ClassBody:
         case SyntaxKind::NamespaceBody:
-        case SyntaxKind::BraceGroup: break;
-        default: return tree_.node_range(node).start;
+        case SyntaxKind::BraceGroup:
+            break;
+        default:
+            return tree_.node_range(node).start;
         }
         // One step only: the enclosing construct whose header owns this
         // brace. Statements further out contain this one as a body and must
@@ -409,7 +438,8 @@ private:
             case SyntaxKind::DoStatement:
             case SyntaxKind::SwitchStatement:
                 return tree_.node_range(parent).start;
-            default: break;
+            default:
+                break;
             }
         }
         return tree_.node_range(node).start;
@@ -422,8 +452,7 @@ private:
     // ',' or expression operators.
     bool wrapped_declarator_name_line(SyntaxNodeId node) const {
         const SyntaxNode& n = tree_.node(node);
-        if (n.kind != SyntaxKind::FunctionDefinition &&
-            n.kind != SyntaxKind::OpaqueDeclaration) {
+        if (n.kind != SyntaxKind::FunctionDefinition && n.kind != SyntaxKind::OpaqueDeclaration) {
             return false;
         }
         if (n.parent == kInvalidNode) {
@@ -432,8 +461,10 @@ private:
         switch (tree_.node(n.parent).kind) {
         case SyntaxKind::TranslationUnit:
         case SyntaxKind::NamespaceBody:
-        case SyntaxKind::ClassBody: break;
-        default: return false;
+        case SyntaxKind::ClassBody:
+            break;
+        default:
+            return false;
         }
         SyntaxNodeId params = kInvalidNode;
         for (SyntaxNodeId child : n.children) {
@@ -476,12 +507,14 @@ private:
             case TokenKind::Identifier:
             case TokenKind::ColonColon:
             case TokenKind::Arrow:
-            case TokenKind::OperatorKw: break;
+            case TokenKind::OperatorKw:
+                break;
             // Return-type decoration; also legal as an operator name.
             case TokenKind::Star:
             case TokenKind::Amp:
             case TokenKind::AmpAmp:
-            case TokenKind::Tilde: break;
+            case TokenKind::Tilde:
+                break;
             case TokenKind::Equals:
             case TokenKind::Less:
             case TokenKind::Greater:
@@ -507,8 +540,7 @@ private:
     std::optional<int> aligned_continuation(SyntaxNodeId group) const {
         const SyntaxNode& g = tree_.node(group);
         const auto& tokens = tree_.tokens();
-        const std::uint32_t open_line =
-            lines_.position(tokens[g.first_token].range.start).line;
+        const std::uint32_t open_line = lines_.position(tokens[g.first_token].range.start).line;
         for (std::uint32_t i = g.first_token + 1; i < g.end_token; ++i) {
             if (is_trivia(tokens[i].kind)) {
                 continue;
@@ -545,8 +577,7 @@ private:
                 continue; // blank or another comment line
             }
             IndentDecision adopted = IndentComputer(snapshot_, tree_, next, style_).run();
-            if (adopted.preserve ||
-                adopted.target_column != indent_of_line(line_)) {
+            if (adopted.preserve || adopted.target_column != indent_of_line(line_)) {
                 return false; // not aligned with what follows: keep structure
             }
             adopted.trace.insert(adopted.trace.begin(),
@@ -587,8 +618,10 @@ private:
         case SyntaxKind::NamespaceBody:
         case SyntaxKind::ClassBody:
         case SyntaxKind::ParenGroup:
-        case SyntaxKind::BracketGroup: break;
-        default: return false;
+        case SyntaxKind::BracketGroup:
+            break;
+        default:
+            return false;
         }
         TextOffset opening = anchor_origin(owner);
         int target = indent_of_line(line_of(opening));
@@ -609,8 +642,8 @@ private:
         int base = indent_of_line(line_of(anchor));
         int target = base + (style_.indent_case_label ? style_.indent_width : 0);
         decision_.anchor = anchor;
-        trace("case label in switch at line {}; style.indent_case_label = {}",
-              line_of(anchor) + 1, style_.indent_case_label);
+        trace("case label in switch at line {}; style.indent_case_label = {}", line_of(anchor) + 1,
+              style_.indent_case_label);
         finish(FormatRole::CaseLabel, target, target);
         return true;
     }
@@ -619,13 +652,11 @@ private:
         // `public Base` in a base clause is not a label: the keyword must be
         // followed by (identifiers and) a single ':' (Qt's "public slots:").
         std::size_t p = first_significant_->range.end.value;
-        while (p < text_.size() &&
-               (text_[p] == ' ' || text_[p] == '\t' || text_[p] == '_' ||
-                (std::isalnum(static_cast<unsigned char>(text_[p])) != 0))) {
+        while (p < text_.size() && (text_[p] == ' ' || text_[p] == '\t' || text_[p] == '_' ||
+                                    (std::isalnum(static_cast<unsigned char>(text_[p])) != 0))) {
             ++p;
         }
-        if (p >= text_.size() || text_[p] != ':' ||
-            (p + 1 < text_.size() && text_[p + 1] == ':')) {
+        if (p >= text_.size() || text_[p] != ':' || (p + 1 < text_.size() && text_[p + 1] == ':')) {
             return false;
         }
         SyntaxNodeId node = query_node_at(tree_, first_significant_->range.start);
@@ -712,8 +743,8 @@ private:
     }
 
     void generic() {
-        TextOffset query = first_significant_ ? first_significant_->range.start
-                                              : lines_.line_start(line_);
+        TextOffset query =
+            first_significant_ ? first_significant_->range.start : lines_.line_start(line_);
         SyntaxNodeId node;
         if (first_significant_) {
             node = query_node_at(tree_, query);
@@ -740,8 +771,7 @@ private:
         // #else scope that starts on this line means this line is the first
         // content of that phantom scope: one extra level per phantom.
         SyntaxNodeId relevant = node;
-        while (relevant != kInvalidNode &&
-               line_of(tree_.node_range(relevant).start) >= line_) {
+        while (relevant != kInvalidNode && line_of(tree_.node_range(relevant).start) >= line_) {
             if (tree_.node(relevant).kind == SyntaxKind::PPReopenedScope) {
                 reopened_extra_ += style_.indent_width;
                 trace("first line of a re-opened #else scope; one level deeper");
@@ -761,24 +791,24 @@ private:
         const int w = style_.indent_width;
         const int cont = style_.continuation_indent;
         decision_.anchor = origin;
-        trace("controlling block: {} anchored at line {} (indent {})",
-              syntax_kind_name(a.kind), opening_line + 1, base);
+        trace("controlling block: {} anchored at line {} (indent {})", syntax_kind_name(a.kind),
+              opening_line + 1, base);
 
         switch (a.kind) {
-        case SyntaxKind::TranslationUnit: finish(FormatRole::File, 0, 0); return;
+        case SyntaxKind::TranslationUnit:
+            finish(FormatRole::File, 0, 0);
+            return;
         case SyntaxKind::NamespaceBody: {
             using NI = CppIndentStyle::NamespaceIndentation;
             bool nested = false;
-            for (SyntaxNodeId up = a.parent; up != kInvalidNode;
-                 up = tree_.node(up).parent) {
+            for (SyntaxNodeId up = a.parent; up != kInvalidNode; up = tree_.node(up).parent) {
                 if (tree_.node(up).kind == SyntaxKind::NamespaceBody) {
                     nested = true;
                     break;
                 }
             }
-            const bool indents =
-                style_.namespace_indentation == NI::All ||
-                (style_.namespace_indentation == NI::Inner && nested);
+            const bool indents = style_.namespace_indentation == NI::All ||
+                                 (style_.namespace_indentation == NI::Inner && nested);
             trace("style.namespace_indentation = {}, nested = {}",
                   style_.namespace_indentation == NI::None    ? "None"
                   : style_.namespace_indentation == NI::Inner ? "Inner"
@@ -810,8 +840,7 @@ private:
                         indent_of_line(line_of(tree_.node_range(prev_section).start));
                     trace("after a case section; style.indent_case_body = {}",
                           style_.indent_case_body);
-                    finish(FormatRole::CaseBody,
-                           label_indent + (style_.indent_case_body ? w : 0),
+                    finish(FormatRole::CaseBody, label_indent + (style_.indent_case_body ? w : 0),
                            label_indent + (style_.indent_case_body ? w : 0));
                     return;
                 }
@@ -855,8 +884,7 @@ private:
         case SyntaxKind::ParenGroup:
         case SyntaxKind::BracketGroup:
         case SyntaxKind::TemplateArgumentList: {
-            const FormatRole role = a.kind == SyntaxKind::ParenGroup
-                                        ? FormatRole::ParenContinuation
+            const FormatRole role = a.kind == SyntaxKind::ParenGroup ? FormatRole::ParenContinuation
                                     : a.kind == SyntaxKind::BracketGroup
                                         ? FormatRole::BracketContinuation
                                         : FormatRole::TemplateArgsContinuation;
@@ -873,7 +901,9 @@ private:
             finish(role, base + cont, base + cont);
             return;
         }
-        case SyntaxKind::CtorInitializerList: ctor_items(relevant); return;
+        case SyntaxKind::CtorInitializerList:
+            ctor_items(relevant);
+            return;
         case SyntaxKind::FunctionDefinition: {
             // A pending initializer list with no body yet: new lines continue
             // the initializer items even though the list node ended earlier.
@@ -881,12 +911,10 @@ private:
             bool body_before_query = false;
             for (SyntaxNodeId child : a.children) {
                 SyntaxKind k = tree_.node(child).kind;
-                if (k == SyntaxKind::CtorInitializerList &&
-                    tree_.node_range(child).end <= query) {
+                if (k == SyntaxKind::CtorInitializerList && tree_.node_range(child).end <= query) {
                     list = child;
                 }
-                if (k == SyntaxKind::CompoundStatement &&
-                    tree_.node_range(child).start < query) {
+                if (k == SyntaxKind::CompoundStatement && tree_.node_range(child).start < query) {
                     body_before_query = true;
                 }
             }
@@ -895,8 +923,7 @@ private:
                 ctor_items(list);
                 return;
             }
-            if (!style_.indent_wrapped_function_names &&
-                wrapped_declarator_name_line(relevant)) {
+            if (!style_.indent_wrapped_function_names && wrapped_declarator_name_line(relevant)) {
                 trace("wrapped declarator name; kept at the declaration indent");
                 finish(FormatRole::StatementContinuation, base, base);
                 return;
@@ -928,7 +955,9 @@ private:
             }
             finish(FormatRole::SingleStatementBody, base + w, base + w);
             return;
-        case SyntaxKind::SwitchStatement: finish(FormatRole::Opaque, base + w, base + w); return;
+        case SyntaxKind::SwitchStatement:
+            finish(FormatRole::Opaque, base + w, base + w);
+            return;
         case SyntaxKind::PreprocessorDirective:
             // A '\'-continued macro body indents like a block, not like an
             // expression continuation (clang-format formats it this way).
@@ -956,8 +985,7 @@ private:
             return;
         }
         default: // opaque declarations, labels, class heads: continuation
-            if (!style_.indent_wrapped_function_names &&
-                wrapped_declarator_name_line(relevant)) {
+            if (!style_.indent_wrapped_function_names && wrapped_declarator_name_line(relevant)) {
                 trace("wrapped declarator name; kept at the declaration indent");
                 finish(FormatRole::StatementContinuation, base, base);
                 return;
@@ -973,8 +1001,8 @@ private:
     // T3: replay clang-format's continuation column rules over the actual
     // statement layout (design.md §10.2). False = fall back to the T2 table.
     bool expression_engine(SyntaxNodeId controlling, FormatRole role) {
-        auto column = expression_continuation_column(snapshot_, tree_, line_, controlling,
-                                                     style_, decision_.trace);
+        auto column = expression_continuation_column(snapshot_, tree_, line_, controlling, style_,
+                                                     decision_.trace);
         if (!column) {
             return false;
         }

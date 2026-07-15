@@ -107,9 +107,7 @@ public:
 
     // Tree navigation. Node 0 is the initial state; ids are stable and dense.
     UndoNodeId undo_position() const { return undo_current_; }
-    std::uint32_t undo_node_count() const {
-        return static_cast<std::uint32_t>(undo_nodes_.size());
-    }
+    std::uint32_t undo_node_count() const { return static_cast<std::uint32_t>(undo_nodes_.size()); }
     UndoNodeId undo_parent(UndoNodeId id) const;
     const std::vector<UndoNodeId>& undo_children(UndoNodeId id) const;
     // Historical text of any node, without switching to it (O(1)).

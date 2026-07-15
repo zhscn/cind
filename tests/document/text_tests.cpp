@@ -26,8 +26,7 @@ std::uint32_t ref_utf16(std::string_view text) {
 }
 
 bool is_code_point_start(std::string_view text, std::size_t offset) {
-    return offset >= text.size() ||
-           (static_cast<unsigned char>(text[offset]) & 0xC0) != 0x80;
+    return offset >= text.size() || (static_cast<unsigned char>(text[offset]) & 0xC0) != 0x80;
 }
 
 std::string via_chunks(const Text& text, TextOffset start = TextOffset{0}) {
@@ -210,9 +209,9 @@ TEST_CASE("text: chunk cursor covers the text from any start") {
     }
     Text text(model);
     CHECK(via_chunks(text) == model);
-    for (std::uint32_t start : {1u, 2047u, 2048u, 2049u,
-                                static_cast<std::uint32_t>(model.size()) - 1,
-                                static_cast<std::uint32_t>(model.size())}) {
+    for (std::uint32_t start :
+         {1u, 2047u, 2048u, 2049u, static_cast<std::uint32_t>(model.size()) - 1,
+          static_cast<std::uint32_t>(model.size())}) {
         CHECK(via_chunks(text, TextOffset{start}) == model.substr(start));
     }
     CHECK(text.substring(make_range(100, 9000)) == model.substr(100, 8900));
@@ -244,11 +243,11 @@ TEST_CASE("text: structural diff between revisions") {
     CHECK(d.old_range.start.value >= 19995);
     CHECK(d.old_range.end.value <= 20010);
 
-    check_diff(b, a);                                    // reverse direction
-    check_diff(a, a.insert(TextOffset{0}, "prefix"));    // no shared alignment
+    check_diff(b, a);                                 // reverse direction
+    check_diff(a, a.insert(TextOffset{0}, "prefix")); // no shared alignment
     check_diff(a, a.erase(make_range(0, 100)));
     check_diff(a, a.insert(a.end_offset(), "suffix"));
-    check_diff(a, Text());                               // everything deleted
+    check_diff(a, Text()); // everything deleted
     check_diff(Text(), a);
 
     // Randomized: diff of two edit chains still patches correctly.
@@ -339,8 +338,8 @@ TEST_CASE("text: randomized edits match std::string model") {
         }
         if (op % 97 == 0 && !model.empty()) {
             std::uint32_t start = std::min(a, static_cast<std::uint32_t>(model.size() - 1));
-            std::uint32_t end = std::min<std::uint32_t>(
-                start + 5000, static_cast<std::uint32_t>(model.size()));
+            std::uint32_t end =
+                std::min<std::uint32_t>(start + 5000, static_cast<std::uint32_t>(model.size()));
             CHECK(text.substring(make_range(start, end)) == model.substr(start, end - start));
             CHECK(via_chunks(text, TextOffset{start}) == model.substr(start));
         }

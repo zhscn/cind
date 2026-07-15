@@ -70,8 +70,7 @@ RelexSplice relex_scan(const TokenBuffer& old_tokens,
 // Applies a relex_scan plan to the containers it was computed from: splices
 // the rescanned window in and shifts the surviving suffix (O(chunks), not
 // O(tokens) — the whole point of the chunked buffer).
-void relex_apply(TokenBuffer& tokens, std::vector<LexerState>& line_states,
-                 RelexSplice&& splice);
+void relex_apply(TokenBuffer& tokens, std::vector<LexerState>& line_states, RelexSplice&& splice);
 
 // In-place variant of relex() (scan + apply). Same equivalence guarantee.
 RelexSplice relex_in_place(TokenBuffer& tokens, std::vector<LexerState>& line_states,

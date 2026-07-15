@@ -6,8 +6,8 @@
 #include "syntax/green_node.hpp"
 #include "syntax/syntax_tree.hpp"
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <vector>
@@ -57,40 +57,37 @@ std::string check_edit(const std::string& before, std::uint32_t start, std::uint
 
 TEST_CASE("reparse: token-identical edits reuse the tree verbatim") {
     const std::string text = "int f() {\n    // note\n    return 1;\n}\nint g() { return 2; }\n";
-    check_edit(text, 17, 17, " more");    // inside the comment
-    check_edit(text, 14, 21, "");         // delete the comment body text
+    check_edit(text, 17, 17, " more"); // inside the comment
+    check_edit(text, 14, 21, "");      // delete the comment body text
     const std::string str = "auto s = \"hello\";\nint x = 1;\n";
-    check_edit(str, 11, 11, "big ");      // inside a string literal
+    check_edit(str, 11, 11, "big "); // inside a string literal
 }
 
 TEST_CASE("reparse: statement edits stay inside one function") {
-    const std::string text =
-        "int f(int a) {\n    int x = a;\n    return x;\n}\n"
-        "int g() {\n    return 42;\n}\n"
-        "namespace ns {\nvoid h() {\n    h();\n}\n}\n";
-    check_edit(text, 23, 24, "y");        // rename inside f
-    check_edit(text, 31, 31, " + 1");     // extend an expression
-    check_edit(text, 19, 30, "");         // delete a statement
+    const std::string text = "int f(int a) {\n    int x = a;\n    return x;\n}\n"
+                             "int g() {\n    return 42;\n}\n"
+                             "namespace ns {\nvoid h() {\n    h();\n}\n}\n";
+    check_edit(text, 23, 24, "y");                 // rename inside f
+    check_edit(text, 31, 31, " + 1");              // extend an expression
+    check_edit(text, 19, 30, "");                  // delete a statement
     check_edit(text, 33, 33, "if (a) x++;\n    "); // insert a statement
-    check_edit(text, 47, 47, "\n");       // blank line between functions
-    check_edit(text, 90, 90, "x");        // inside namespace body
+    check_edit(text, 47, 47, "\n");                // blank line between functions
+    check_edit(text, 90, 90, "x");                 // inside namespace body
 }
 
 TEST_CASE("reparse: structural edits escalate correctly") {
-    const std::string text =
-        "int f() {\n    if (a) {\n        b();\n    }\n    c();\n}\n"
-        "int tail() { return 0; }\n";
-    check_edit(text, 41, 42, "");         // delete the if's closing '}'
-    check_edit(text, 21, 22, "");         // delete the if's opening '{'
-    check_edit(text, 8, 9, "");           // delete f's opening '{'
-    check_edit(text, 53, 54, "");         // delete f's closing '}'
+    const std::string text = "int f() {\n    if (a) {\n        b();\n    }\n    c();\n}\n"
+                             "int tail() { return 0; }\n";
+    check_edit(text, 41, 42, "");                     // delete the if's closing '}'
+    check_edit(text, 21, 22, "");                     // delete the if's opening '{'
+    check_edit(text, 8, 9, "");                       // delete f's opening '{'
+    check_edit(text, 53, 54, "");                     // delete f's closing '}'
     check_edit(text, 30, 30, "} int split() { d();"); // split mid-function
 
-    const std::string cls =
-        "class C {\npublic:\n    void m();\nprivate:\n    int x_;\n};\n";
-    check_edit(cls, 27, 27, " const");    // member edit
-    check_edit(cls, 10, 17, "");          // delete "public:"
-    check_edit(cls, 54, 55, "");          // delete the ';' after '}'
+    const std::string cls = "class C {\npublic:\n    void m();\nprivate:\n    int x_;\n};\n";
+    check_edit(cls, 27, 27, " const"); // member edit
+    check_edit(cls, 10, 17, "");       // delete "public:"
+    check_edit(cls, 54, 55, "");       // delete the ';' after '}'
 
     const std::string sw =
         "void f(int v) {\n    switch (v) {\n    case 1:\n        a();\n        break;\n"
@@ -102,30 +99,29 @@ TEST_CASE("reparse: structural edits escalate correctly") {
 
 TEST_CASE("reparse: enum bodies keep comma-separated items") {
     const std::string en = "enum class E {\n    A = 1,\n    B,\n    C\n};\nint after;\n";
-    check_edit(en, 24, 24, "23");   // change an enumerator value
-    check_edit(en, 31, 31, "2,\n    B");  // add an enumerator
-    check_edit(en, 5, 5, "X");      // touch the head ("enum classX" -> opaque)
+    check_edit(en, 24, 24, "23");        // change an enumerator value
+    check_edit(en, 31, 31, "2,\n    B"); // add an enumerator
+    check_edit(en, 5, 5, "X");           // touch the head ("enum classX" -> opaque)
 }
 
 TEST_CASE("reparse: preprocessor and macro boundaries") {
-    const std::string pp =
-        "#define M(a) \\\n    ((a) + 1)\n"
-        "int f() {\n    return M(2);\n}\n"
-        "LLVM_MACRO(int, x)\n"
-        "int g;\n";
-    check_edit(pp, 22, 22, "* 2");   // inside the macro body
-    check_edit(pp, 13, 15, "");      // remove the continuation splice
-    check_edit(pp, 58, 58, "5, ");   // inside the macro invocation args
-    check_edit(pp, 77, 77, ";");     // terminate the LLVM_MACRO declaration
+    const std::string pp = "#define M(a) \\\n    ((a) + 1)\n"
+                           "int f() {\n    return M(2);\n}\n"
+                           "LLVM_MACRO(int, x)\n"
+                           "int g;\n";
+    check_edit(pp, 22, 22, "* 2"); // inside the macro body
+    check_edit(pp, 13, 15, "");    // remove the continuation splice
+    check_edit(pp, 58, 58, "5, "); // inside the macro invocation args
+    check_edit(pp, 77, 77, ";");   // terminate the LLVM_MACRO declaration
 }
 
 TEST_CASE("reparse: template prefix lookahead guard") {
     // The '<' after `template` scans ahead for its '>'; an edit inside that
     // scan range must invalidate the prefix item too.
     const std::string t = "template <typename T\n>\nclass V {};\nint z;\n";
-    check_edit(t, 21, 22, ";");      // '>' -> ';' : match_angles now fails
+    check_edit(t, 21, 22, ";"); // '>' -> ';' : match_angles now fails
     const std::string u = "template <typename T;\nclass V {};\nint z;\n";
-    check_edit(u, 20, 21, "\n>");    // ';' -> '>' : match now succeeds
+    check_edit(u, 20, 21, "\n>"); // ';' -> '>' : match now succeeds
 }
 
 TEST_CASE("reparse: edits at file boundaries") {
@@ -146,50 +142,67 @@ TEST_CASE("reparse: fuzz against full parse") {
     // breadth. Each seed reruns the full edit loop below.
     const unsigned seeds[] = {20260715u, 50000u, 1013u, 424242u, 7u};
     for (unsigned seed : seeds) {
-    CAPTURE(seed);
-    std::mt19937 rng(seed);
-    const std::string_view fragments[] = {
-        "int f(int a, int b) { return a + b; }\n",
-        "namespace ns {\nvoid g() {}\n}\n",
-        "class C : public B {\npublic:\n    C() : x_(1) {}\n    int x_;\n};\n",
-        "switch (v) {\ncase 1: a(); break;\ndefault: b();\n}\n",
-        "enum E { A, B, C };\n",
-        "template <typename T>\nstruct S { T t; };\n",
-        "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n",
-        "if (x) {\n    y();\n} else {\n    z();\n}\n",
-        "auto l = [](int q) { return q * 2; };\n",
-        "extern \"C\" {\nvoid cfn(void);\n}\n",
-        "for (int i = 0; i < n; ++i) { work(i); }\n",
-        "do {\n    step();\n} while (cond);\n",
-        "MACRO_CALL(a, b)\n",
-        "int v = arr[idx];\n",
-        "/* comment */", "// line\n", "{", "}", "(", ")", ";", ":", "<", ">", ",",
-        "case 3:", "public:", "else", "\n", "    ", "x", "template", "enum",
-    };
-    std::string doc = "int main() {\n    return 0;\n}\n";
-    for (int step = 0; step < 300; ++step) {
-        CAPTURE(step);
-        const auto pick = fragments[rng() % std::size(fragments)];
-        const auto len = static_cast<std::uint32_t>(doc.size());
-        std::uint32_t start = len == 0 ? 0 : rng() % (len + 1);
-        std::uint32_t end = start;
-        if (rng() % 3 == 0 && start < len) {
-            end = start + rng() % std::min<std::uint32_t>(len - start + 1, 60);
+        CAPTURE(seed);
+        std::mt19937 rng(seed);
+        const std::string_view fragments[] = {
+            "int f(int a, int b) { return a + b; }\n",
+            "namespace ns {\nvoid g() {}\n}\n",
+            "class C : public B {\npublic:\n    C() : x_(1) {}\n    int x_;\n};\n",
+            "switch (v) {\ncase 1: a(); break;\ndefault: b();\n}\n",
+            "enum E { A, B, C };\n",
+            "template <typename T>\nstruct S { T t; };\n",
+            "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n",
+            "if (x) {\n    y();\n} else {\n    z();\n}\n",
+            "auto l = [](int q) { return q * 2; };\n",
+            "extern \"C\" {\nvoid cfn(void);\n}\n",
+            "for (int i = 0; i < n; ++i) { work(i); }\n",
+            "do {\n    step();\n} while (cond);\n",
+            "MACRO_CALL(a, b)\n",
+            "int v = arr[idx];\n",
+            "/* comment */",
+            "// line\n",
+            "{",
+            "}",
+            "(",
+            ")",
+            ";",
+            ":",
+            "<",
+            ">",
+            ",",
+            "case 3:",
+            "public:",
+            "else",
+            "\n",
+            "    ",
+            "x",
+            "template",
+            "enum",
+        };
+        std::string doc = "int main() {\n    return 0;\n}\n";
+        for (int step = 0; step < 300; ++step) {
+            CAPTURE(step);
+            const auto pick = fragments[rng() % std::size(fragments)];
+            const auto len = static_cast<std::uint32_t>(doc.size());
+            std::uint32_t start = len == 0 ? 0 : rng() % (len + 1);
+            std::uint32_t end = start;
+            if (rng() % 3 == 0 && start < len) {
+                end = start + rng() % std::min<std::uint32_t>(len - start + 1, 60);
+            }
+            const bool insert = rng() % 4 != 0;
+            if (const char* dump_step = std::getenv("REPARSE_DUMP_STEP");
+                dump_step != nullptr && std::stoi(dump_step) == step) {
+                std::FILE* f = std::fopen("/tmp/reparse-repro.txt", "w");
+                const std::string_view rep = insert ? pick : std::string_view{};
+                std::fprintf(f, "%u %u %zu\n%.*s%s", start, end, rep.size(),
+                             static_cast<int>(rep.size()), rep.data(), doc.c_str());
+                std::fclose(f);
+            }
+            doc = check_edit(doc, start, end, insert ? pick : std::string_view{});
+            if (doc.size() > 12000) {
+                doc = check_edit(doc, 0, static_cast<std::uint32_t>(doc.size()) / 2, "");
+            }
         }
-        const bool insert = rng() % 4 != 0;
-        if (const char* dump_step = std::getenv("REPARSE_DUMP_STEP");
-            dump_step != nullptr && std::stoi(dump_step) == step) {
-            std::FILE* f = std::fopen("/tmp/reparse-repro.txt", "w");
-            const std::string_view rep = insert ? pick : std::string_view{};
-            std::fprintf(f, "%u %u %zu\n%.*s%s", start, end, rep.size(),
-                         static_cast<int>(rep.size()), rep.data(), doc.c_str());
-            std::fclose(f);
-        }
-        doc = check_edit(doc, start, end, insert ? pick : std::string_view{});
-        if (doc.size() > 12000) {
-            doc = check_edit(doc, 0, static_cast<std::uint32_t>(doc.size()) / 2, "");
-        }
-    }
     } // seeds
 }
 
@@ -198,19 +211,19 @@ TEST_CASE("reparse: edits around split-brace #if/#else match a full parse") {
     // span starts between #if and #else must not flatten the sibling structure
     // the full parse produces (design.md §276).
     const std::string text = "int h() {\n"    // 0
-                             "#ifdef A\n"      // 1
-                             "  int x = 1;\n"  // 2
-                             "  if (a) {\n"    // 3
-                             "#else\n"         // 4
-                             "  int y = 2;\n"  // 5
-                             "  if (b) {\n"    // 6
-                             "#endif\n"        // 7
-                             "    inner();\n"  // 8
-                             "  }\n"           // 9
-                             "  tail();\n"     // 10
-                             "}\n";            // 11
+                             "#ifdef A\n"     // 1
+                             "  int x = 1;\n" // 2
+                             "  if (a) {\n"   // 3
+                             "#else\n"        // 4
+                             "  int y = 2;\n" // 5
+                             "  if (b) {\n"   // 6
+                             "#endif\n"       // 7
+                             "    inner();\n" // 8
+                             "  }\n"          // 9
+                             "  tail();\n"    // 10
+                             "}\n";           // 11
     // edit inside the #if branch (before #else): the risky mid-conditional start
-    check_edit(text, 30, 31, "11");  // int x = 1 -> int x = 11
+    check_edit(text, 30, 31, "11"); // int x = 1 -> int x = 11
     // edit inside the #else branch
     check_edit(text, 56, 57, "22");
     // edit in the shared tail after #endif
@@ -228,19 +241,38 @@ TEST_CASE("reparse: edits near the extern-C / __cplusplus guard match a full par
                              "#ifdef __cplusplus\n"
                              "}\n"
                              "#endif\n";
-    check_edit(text, 50, 51, "F");   // rename inside the guarded body
+    check_edit(text, 50, 51, "F");               // rename inside the guarded body
     check_edit(text, 63, 63, "\nvoid h(void);"); // insert a declaration
 }
 
 TEST_CASE("reparse fuzz: split-brace conditionals stay consistent under random edits") {
     std::mt19937 rng(0xC0FFEE);
     const char* fragments[] = {
-        "#ifdef A\n", "#else\n", "#endif\n", "#if X\n", "#elif Y\n",
-        "if (a) {\n", "if (b) {\n", "}\n", "  stmt();\n", "  return x;\n",
-        "int z = 1;\n", "void q() {\n", "for (;;) {\n", ";", "{", "}",
-        "// c\n", "x", "\n", "  ",
+        "#ifdef A\n",
+        "#else\n",
+        "#endif\n",
+        "#if X\n",
+        "#elif Y\n",
+        "if (a) {\n",
+        "if (b) {\n",
+        "}\n",
+        "  stmt();\n",
+        "  return x;\n",
+        "int z = 1;\n",
+        "void q() {\n",
+        "for (;;) {\n",
+        ";",
+        "{",
+        "}",
+        "// c\n",
+        "x",
+        "\n",
+        "  ",
         // cross-branch closers and headers (PPReopenedScope / embedded pp)
-        "do {\n", "} while (x);\n", "if (b)\n", "(struct S *)&v",
+        "do {\n",
+        "} while (x);\n",
+        "if (b)\n",
+        "(struct S *)&v",
     };
     std::string doc = "int h() {\n"
                       "#ifdef A\n  if (a) {\n#else\n  if (b) {\n#endif\n"
@@ -268,9 +300,7 @@ TEST_CASE("reparse: edits around cross-branch do-while closers match a full pars
                       "#ifdef A\n  } while (x);\n#else\n  } while (y);\n#endif\n"
                       "#ifdef A\n  if (u)\n#else\n  if (v)\n#endif\n    return w;\n"
                       "  tail();\n}\n";
-    auto at = [&](std::string_view needle) {
-        return static_cast<std::uint32_t>(doc.find(needle));
-    };
+    auto at = [&](std::string_view needle) { return static_cast<std::uint32_t>(doc.find(needle)); };
     doc = check_edit(doc, at("g()"), at("g()"), "h(); ");
     doc = check_edit(doc, at("tail"), at("tail"), "u(); ");
     doc = check_edit(doc, at("(y)"), at("(y)") + 3, "(y && z)");
@@ -288,7 +318,8 @@ TEST_CASE("reparse: minimized pp-fuzz repro (seed5 step268)") {
     const std::string doc =
         "#  ifdef Ax\nt#int v#else\noid q()#endif\n {\nz =    for (;;) {\n(ifurn x;\n#if X\nt//"
         "}oivoid q() if (a) {\n{\nf (a) {\n#else\nid q() {\nturn x;\nnt #i;xe#ifdef A\n;\n(  "
-        "stmtvoid q() {\n\nif (#else\nif (b) {\nb) {\n)inxt z  //void q() {\n\n{\n {\n();\ne#endif\n";
+        "stmtvoid q() {\n\nif (#else\nif (b) {\nb) {\n)inxt z  //void q() {\n\n{\n "
+        "{\n();\ne#endif\n";
     check_edit(doc, 214, 223, "  stmt();\n");
 }
 

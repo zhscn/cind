@@ -11,9 +11,9 @@ namespace cind {
 namespace detail {
 struct TextNode {
     TextSummary summary;
-    std::uint32_t height = 0;                               // 0 = leaf
-    std::string bytes;                                      // leaves only
-    std::vector<std::shared_ptr<const TextNode>> children;  // internal only
+    std::uint32_t height = 0;                              // 0 = leaf
+    std::string bytes;                                     // leaves only
+    std::vector<std::shared_ptr<const TextNode>> children; // internal only
 };
 } // namespace detail
 
@@ -52,8 +52,8 @@ NodePtr make_internal(std::vector<NodePtr> children) {
 std::vector<NodePtr> build_leaves(std::string_view text) {
     std::vector<NodePtr> leaves;
     while (text.size() > kMaxChunkBytes) {
-        std::size_t take = text.size() >= kMaxChunkBytes + kMinChunkBytes ? kMaxChunkBytes
-                                                                          : text.size() / 2;
+        std::size_t take =
+            text.size() >= kMaxChunkBytes + kMinChunkBytes ? kMaxChunkBytes : text.size() / 2;
         leaves.push_back(make_leaf(std::string(text.substr(0, take))));
         text.remove_prefix(take);
     }
@@ -67,13 +67,15 @@ NodePtr build_tree(std::string_view text) {
         std::vector<NodePtr> parents;
         std::size_t i = 0;
         while (level.size() - i > kMaxFanout) {
-            std::size_t take = level.size() - i >= kMaxFanout + kMinFanout ? kMaxFanout
-                                                                           : (level.size() - i) / 2;
-            parents.push_back(make_internal({level.begin() + static_cast<std::ptrdiff_t>(i),
-                                             level.begin() + static_cast<std::ptrdiff_t>(i + take)}));
+            std::size_t take =
+                level.size() - i >= kMaxFanout + kMinFanout ? kMaxFanout : (level.size() - i) / 2;
+            parents.push_back(
+                make_internal({level.begin() + static_cast<std::ptrdiff_t>(i),
+                               level.begin() + static_cast<std::ptrdiff_t>(i + take)}));
             i += take;
         }
-        parents.push_back(make_internal({level.begin() + static_cast<std::ptrdiff_t>(i), level.end()}));
+        parents.push_back(
+            make_internal({level.begin() + static_cast<std::ptrdiff_t>(i), level.end()}));
         level = std::move(parents);
     }
     return level.front();
@@ -171,8 +173,8 @@ NodePtr slice_node(const NodePtr& n, std::uint32_t start, std::uint32_t end) {
     for (const NodePtr& child : n->children) {
         std::uint32_t child_end = base + child->summary.bytes;
         if (child_end > start && base < end) {
-            NodePtr piece = slice_node(child, std::max(start, base) - base,
-                                       std::min(end, child_end) - base);
+            NodePtr piece =
+                slice_node(child, std::max(start, base) - base, std::min(end, child_end) - base);
             acc = acc ? concat_trees(acc, piece) : piece;
         }
         base = child_end;
@@ -271,13 +273,21 @@ Text::Text(std::string_view text) : root_(build_tree(text)) {}
 
 Text::Text(std::shared_ptr<const detail::TextNode> root) : root_(std::move(root)) {}
 
-std::uint32_t Text::size_bytes() const { return root_->summary.bytes; }
+std::uint32_t Text::size_bytes() const {
+    return root_->summary.bytes;
+}
 
-TextSummary Text::summary() const { return root_->summary; }
+TextSummary Text::summary() const {
+    return root_->summary;
+}
 
-std::uint32_t Text::line_count() const { return root_->summary.lines + 1; }
+std::uint32_t Text::line_count() const {
+    return root_->summary.lines + 1;
+}
 
-std::uint32_t Text::utf16_size() const { return root_->summary.utf16_units; }
+std::uint32_t Text::utf16_size() const {
+    return root_->summary.utf16_units;
+}
 
 void Text::check_line(std::uint32_t line) const {
     if (line >= line_count()) {
@@ -334,8 +344,8 @@ LinePosition Text::position(TextOffset offset) const {
     }
     auto [leaf, before] = find_leaf_by_offset(root_.get(), offset.value);
     std::string_view prefix = std::string_view(leaf->bytes).substr(0, offset.value - before.bytes);
-    auto line = before.lines +
-                static_cast<std::uint32_t>(std::count(prefix.begin(), prefix.end(), '\n'));
+    auto line =
+        before.lines + static_cast<std::uint32_t>(std::count(prefix.begin(), prefix.end(), '\n'));
     std::size_t newline = prefix.rfind('\n');
     std::uint32_t start = newline != std::string_view::npos
                               ? before.bytes + static_cast<std::uint32_t>(newline) + 1
@@ -391,7 +401,8 @@ TextOffset Text::offset_at_utf16(std::uint32_t utf16) const {
     std::uint32_t result = base + static_cast<std::uint32_t>(pos);
     // A code point split across chunks can leave the scan on a continuation
     // byte at the chunk edge; round up to the next code point boundary.
-    while (result < size_bytes() && (static_cast<unsigned char>(byte_at(TextOffset{result})) & 0xC0) == 0x80) {
+    while (result < size_bytes() &&
+           (static_cast<unsigned char>(byte_at(TextOffset{result})) & 0xC0) == 0x80) {
         ++result;
     }
     return TextOffset{result};
@@ -405,7 +416,9 @@ char Text::byte_at(TextOffset offset) const {
     return leaf->bytes[offset.value - before.bytes];
 }
 
-std::string Text::to_string() const { return substring(TextRange{TextOffset{0}, end_offset()}); }
+std::string Text::to_string() const {
+    return substring(TextRange{TextOffset{0}, end_offset()});
+}
 
 std::string Text::substring(TextRange range) const {
     if (range.start > range.end || range.end.value > size_bytes()) {
@@ -444,7 +457,9 @@ Text Text::insert(TextOffset position, std::string_view text) const {
     return replace(TextRange{position, position}, text);
 }
 
-Text Text::erase(TextRange range) const { return replace(range, std::string_view()); }
+Text Text::erase(TextRange range) const {
+    return replace(range, std::string_view());
+}
 
 std::optional<std::string> Text::validate() const {
     if (!root_) {
@@ -475,8 +490,8 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> diff_trim(const Text& a, 
             prefix += static_cast<std::uint32_t>(x.size());
             continue;
         }
-        const std::size_t n = std::min({x.size(), y.size(),
-                                        static_cast<std::size_t>(limit - prefix)});
+        const std::size_t n =
+            std::min({x.size(), y.size(), static_cast<std::size_t>(limit - prefix)});
         std::size_t i = 0;
         while (i < n && x[i] == y[i]) {
             ++i;

@@ -16,8 +16,8 @@ enum class StyleClass : std::uint8_t {
     Number,
     Comment,
     Preprocessor,
-    Gutter,       // line numbers and the "~" past-EOF marker
-    SignAdded,    // unsaved-change sign column
+    Gutter,    // line numbers and the "~" past-EOF marker
+    SignAdded, // unsaved-change sign column
     SignModified,
     SignDeleted,
     StatusBar,
@@ -32,11 +32,14 @@ constexpr StyleClass style_of(const Token& token) {
     }
     switch (token.kind) {
     case TokenKind::LineComment:
-    case TokenKind::BlockComment: return StyleClass::Comment;
+    case TokenKind::BlockComment:
+        return StyleClass::Comment;
     case TokenKind::StringLiteral:
     case TokenKind::RawStringLiteral:
-    case TokenKind::CharacterLiteral: return StyleClass::String;
-    case TokenKind::Number: return StyleClass::Number;
+    case TokenKind::CharacterLiteral:
+        return StyleClass::String;
+    case TokenKind::Number:
+        return StyleClass::Number;
     case TokenKind::NamespaceKw:
     case TokenKind::ClassKw:
     case TokenKind::StructKw:
@@ -55,8 +58,10 @@ constexpr StyleClass style_of(const Token& token) {
     case TokenKind::DoKw:
     case TokenKind::ReturnKw:
     case TokenKind::TemplateKw:
-    case TokenKind::OperatorKw: return StyleClass::Keyword;
-    default: return StyleClass::Text;
+    case TokenKind::OperatorKw:
+        return StyleClass::Keyword;
+    default:
+        return StyleClass::Text;
     }
 }
 

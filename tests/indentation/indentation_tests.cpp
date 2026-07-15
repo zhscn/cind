@@ -140,7 +140,7 @@ TEST_CASE("split-brace #if/#else does not cascade the indent of the tail") {
     // raw_socket_stream.cpp getSocketFD shape: two `if (...) {` alternatives
     // share one closing brace after #endif. The old all-branches-active parse
     // nested if2 inside if1 and pushed every following line one level too deep.
-    const std::string text = "int h() {\n"    // 0
+    const std::string text = "int h() {\n"     // 0
                              "#ifdef _WIN32\n" // 1
                              "  if (a) {\n"    // 2  #if branch
                              "#else\n"         // 3
@@ -241,8 +241,7 @@ TEST_CASE("bare colon initializer keeps a stable continuation indent") {
 TEST_CASE("comma-prepended constructor initializers align with the colon") {
     // clang-format BreakConstructorInitializers: BeforeComma (WebKit/Mozilla)
     CppIndentStyle style;
-    style.constructor_initializers =
-        CppIndentStyle::ConstructorInitializerStyle::AlignWithColon;
+    style.constructor_initializers = CppIndentStyle::ConstructorInitializerStyle::AlignWithColon;
 
     Document doc("Foo::Foo()");
     TextOffset caret{10};
@@ -316,7 +315,8 @@ TEST_CASE("T3: member call chain and stream continuation") {
     Document doc("  return WithColor(OS)\n.get()\n<< \"e\";\n");
     indent_line(doc, 1, CppIndentStyle{});
     indent_line(doc, 2, CppIndentStyle{});
-    CHECK(doc.snapshot().content() == "  return WithColor(OS)\n             .get()\n         << \"e\";\n");
+    CHECK(doc.snapshot().content() ==
+          "  return WithColor(OS)\n             .get()\n         << \"e\";\n");
 }
 
 TEST_CASE("T3: braced init contents indent from the expression level") {
@@ -340,8 +340,7 @@ TEST_CASE("wrapped signature anchors the body on the declaration line") {
     CHECK(enter("void long_name(int a,\n               int b) {^}\n") ==
           "void long_name(int a,\n               int b) {\n    ^\n}\n");
     // one step only: a braceless for's if-block anchors on the if line
-    CHECK(enter("for (;;)\n    if (x) {^}\n") ==
-          "for (;;)\n    if (x) {\n        ^\n    }\n");
+    CHECK(enter("for (;;)\n    if (x) {^}\n") == "for (;;)\n    if (x) {\n        ^\n    }\n");
 }
 
 TEST_CASE("open-bracket alignment") {
@@ -413,8 +412,7 @@ TEST_CASE("macro body call arguments align like code") {
 }
 
 TEST_CASE("extern block follows namespace indent style") {
-    CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n") ==
-          "extern \"C\" {\n^\nvoid f(int);\n}\n");
+    CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n") == "extern \"C\" {\n^\nvoid f(int);\n}\n");
     CppIndentStyle indented;
     indented.namespace_indentation = CppIndentStyle::NamespaceIndentation::All;
     CHECK(enter("extern \"C\" {^\nvoid f(int);\n}\n", indented) ==
@@ -488,8 +486,7 @@ TEST_CASE("smart tabs: structural part in tabs, alignment in spaces") {
 
 TEST_CASE("typed-char reindent") {
     SUBCASE("':' completing a case label dedents the line") {
-        CHECK(type_chars("switch (x) {\n    ^\n}\n", "case 1:") ==
-              "switch (x) {\ncase 1:^\n}\n");
+        CHECK(type_chars("switch (x) {\n    ^\n}\n", "case 1:") == "switch (x) {\ncase 1:^\n}\n");
     }
     SUBCASE("':' completing an access specifier") {
         CHECK(type_chars("class C {\n    int a;\n    ^\n};\n", "public:") ==
@@ -513,8 +510,7 @@ TEST_CASE("typed-char reindent") {
               "void f() {\n    int a[] = {1}^\n");
     }
     SUBCASE("protected lines are never touched") {
-        CHECK(type_chars("auto s = R\"(\nabc^\n)\";\n", ":") ==
-              "auto s = R\"(\nabc:^\n)\";\n");
+        CHECK(type_chars("auto s = R\"(\nabc^\n)\";\n", ":") == "auto s = R\"(\nabc:^\n)\";\n");
     }
 }
 
@@ -536,24 +532,23 @@ TEST_CASE("every decision carries a trace and a handler") {
 }
 
 TEST_CASE("prefix typing: enter at every prefix is deterministic and safe") {
-    static constexpr std::string_view kSample =
-        "namespace foo {\n"
-        "class Foo {\n"
-        "public:\n"
-        "    Foo();\n"
-        "};\n"
-        "Foo::Foo()\n"
-        "    : a_(1),\n"
-        "      b_{2}\n"
-        "{\n"
-        "    switch (x) {\n"
-        "    case 1:\n"
-        "        f([&] { return 1; });\n"
-        "    default:\n"
-        "        break;\n"
-        "    }\n"
-        "}\n"
-        "}\n";
+    static constexpr std::string_view kSample = "namespace foo {\n"
+                                                "class Foo {\n"
+                                                "public:\n"
+                                                "    Foo();\n"
+                                                "};\n"
+                                                "Foo::Foo()\n"
+                                                "    : a_(1),\n"
+                                                "      b_{2}\n"
+                                                "{\n"
+                                                "    switch (x) {\n"
+                                                "    case 1:\n"
+                                                "        f([&] { return 1; });\n"
+                                                "    default:\n"
+                                                "        break;\n"
+                                                "    }\n"
+                                                "}\n"
+                                                "}\n";
     for (std::size_t len = 0; len <= kSample.size(); ++len) {
         std::string prefix(kSample.substr(0, len));
         Document doc1(prefix);
@@ -561,7 +556,8 @@ TEST_CASE("prefix typing: enter at every prefix is deterministic and safe") {
         auto caret = TextOffset{static_cast<std::uint32_t>(doc1.snapshot().size_bytes())};
         EnterResult r1 = press_enter(doc1, caret, CppIndentStyle{});
         EnterResult r2 = press_enter(doc2, caret, CppIndentStyle{});
-        REQUIRE(doc1.snapshot().content() == doc2.snapshot().content().to_string()); // deterministic
+        REQUIRE(doc1.snapshot().content() ==
+                doc2.snapshot().content().to_string()); // deterministic
         REQUIRE(r1.caret == r2.caret);
         // the whole command stays one undo unit
         REQUIRE(doc1.undo().has_value());

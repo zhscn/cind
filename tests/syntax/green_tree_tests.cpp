@@ -60,15 +60,15 @@ TEST_CASE("green round-trip: root owns trailing trivia and EOF") {
 }
 
 TEST_CASE("green round-trip: zero-width MissingToken nodes") {
-    roundtrip("int f(");             // missing ')'
-    roundtrip("void g() {");         // missing '}'
-    roundtrip("struct S {");         // missing '}' and ';'
-    roundtrip("if (x)");             // incomplete if
-    roundtrip("foo(a, b");           // missing ')'
+    roundtrip("int f(");     // missing ')'
+    roundtrip("void g() {"); // missing '}'
+    roundtrip("struct S {"); // missing '}' and ';'
+    roundtrip("if (x)");     // incomplete if
+    roundtrip("foo(a, b");   // missing ')'
 }
 
 TEST_CASE("green round-trip: children not covering full width") {
-    roundtrip("struct S {};\n");     // ClassDecl owns trailing ';' after ClassBody
+    roundtrip("struct S {};\n"); // ClassDecl owns trailing ';' after ClassBody
     roundtrip("class C { int x; };\n");
     roundtrip("namespace n { int y; }\n"); // NamespaceDecl owns 'namespace n' prefix
     roundtrip("enum E { A, B, C };\n");

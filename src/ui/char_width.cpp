@@ -37,25 +37,24 @@ Utf8Decode decode_utf8(std::string_view s) {
 int code_point_width(char32_t cp) {
     // Zero width: combining marks and joiners (coarse ranges).
     if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
-        (cp >= 0x20D0 && cp <= 0x20FF) || (cp >= 0xFE00 && cp <= 0xFE0F) ||
-        cp == 0x200B || cp == 0x200C || cp == 0x200D) {
+        (cp >= 0x20D0 && cp <= 0x20FF) || (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0x200B ||
+        cp == 0x200C || cp == 0x200D) {
         return 0;
     }
     // Wide: East Asian Wide/Fullwidth blocks plus common emoji planes,
     // mirroring wcwidth's behavior closely enough for a text editor.
-    if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
-        (cp >= 0x2E80 && cp <= 0x303E) ||   // CJK radicals .. punctuation
-        (cp >= 0x3041 && cp <= 0x33FF) ||   // kana .. CJK compatibility
-        (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK ext A
-        (cp >= 0x4E00 && cp <= 0x9FFF) ||   // CJK unified
-        (cp >= 0xA000 && cp <= 0xA4CF) ||   // Yi
-        (cp >= 0xAC00 && cp <= 0xD7A3) ||   // Hangul syllables
-        (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility ideographs
-        (cp >= 0xFE30 && cp <= 0xFE4F) ||   // CJK compatibility forms
-        (cp >= 0xFF00 && cp <= 0xFF60) ||   // fullwidth forms
-        (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-        (cp >= 0x1F300 && cp <= 0x1F9FF) || // emoji & pictographs
-        (cp >= 0x20000 && cp <= 0x3FFFD)) { // CJK ext B..
+    if ((cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo
+        (cp >= 0x2E80 && cp <= 0x303E) || // CJK radicals .. punctuation
+        (cp >= 0x3041 && cp <= 0x33FF) || // kana .. CJK compatibility
+        (cp >= 0x3400 && cp <= 0x4DBF) || // CJK ext A
+        (cp >= 0x4E00 && cp <= 0x9FFF) || // CJK unified
+        (cp >= 0xA000 && cp <= 0xA4CF) || // Yi
+        (cp >= 0xAC00 && cp <= 0xD7A3) || // Hangul syllables
+        (cp >= 0xF900 && cp <= 0xFAFF) || // CJK compatibility ideographs
+        (cp >= 0xFE30 && cp <= 0xFE4F) || // CJK compatibility forms
+        (cp >= 0xFF00 && cp <= 0xFF60) || // fullwidth forms
+        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1F9FF) || // emoji & pictographs
+        (cp >= 0x20000 && cp <= 0x3FFFD)) {                                   // CJK ext B..
         return 2;
     }
     return 1;

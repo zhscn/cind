@@ -27,8 +27,8 @@ bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, Te
     // First token starting at or after the caret. The stream is contiguous
     // and sorted, so only the token before `at` can straddle the caret, and
     // every non-trivia token before it ends at or before the caret.
-    auto it = std::ranges::lower_bound(tokens, caret, {},
-                                       [](const Token& t) { return t.range.start; });
+    auto it =
+        std::ranges::lower_bound(tokens, caret, {}, [](const Token& t) { return t.range.start; });
     const auto at = static_cast<std::size_t>(it - tokens.begin());
     if (at > 0) {
         const Token t = tokens[at - 1];
@@ -75,8 +75,10 @@ bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, Te
     case SyntaxKind::CompoundStatement:
     case SyntaxKind::BraceGroup:
     case SyntaxKind::NamespaceBody:
-    case SyntaxKind::ClassBody: break;
-    default: return false;
+    case SyntaxKind::ClassBody:
+        break;
+    default:
+        return false;
     }
     TextRange owner_range = tree.node_range(owner);
     return owner_range.end == tokens[next].range.end;
@@ -85,9 +87,8 @@ bool between_braces(const DocumentSnapshot& snapshot, const SyntaxTree& tree, Te
 // Steals the analyzer cache and advances it in place onto the transaction's
 // pending state — the zero-copy speculative analysis. Falls back to a full
 // pass when the cache was cold.
-Analysis speculative_analysis(Analyzer& analyzer, const EditTransaction& tx,
-                              const Text& old_text, RevisionId old_revision,
-                              const DocumentSnapshot& spec) {
+Analysis speculative_analysis(Analyzer& analyzer, const EditTransaction& tx, const Text& old_text,
+                              RevisionId old_revision, const DocumentSnapshot& spec) {
     if (std::optional<Analysis> stolen = analyzer.take(old_revision)) {
         reparse(stolen->tree, stolen->line_states, old_text, spec.content(), tx.pending_edits());
         stolen->text = spec.content();
@@ -103,16 +104,15 @@ Analysis speculative_analysis(Analyzer& analyzer, const EditTransaction& tx,
 void adopt_committed(Analyzer& analyzer, Analysis analysis, std::vector<TextEdit> late_edits,
                      const CommitResult& commit) {
     const Text spec_text = analysis.text;
-    reparse(analysis.tree, analysis.line_states, spec_text, commit.snapshot.content(),
-            late_edits);
+    reparse(analysis.tree, analysis.line_states, spec_text, commit.snapshot.content(), late_edits);
     analysis.text = commit.snapshot.content();
     analysis.revision = commit.snapshot.revision();
     analyzer.adopt(std::move(analysis));
 }
 
-EnterResult enter_between_braces(Document& document, TextOffset caret,
-                                 const CppIndentStyle& style, Analyzer& analyzer,
-                                 const Text& old_text, RevisionId old_revision) {
+EnterResult enter_between_braces(Document& document, TextOffset caret, const CppIndentStyle& style,
+                                 Analyzer& analyzer, const Text& old_text,
+                                 RevisionId old_revision) {
     EditTransaction tx = document.begin_transaction();
     tx.insert(caret, "\n\n");
 
@@ -143,8 +143,7 @@ EnterResult enter_between_braces(Document& document, TextOffset caret,
 }
 
 EnterResult newline_and_indent(Document& document, TextOffset caret, const CppIndentStyle& style,
-                               Analyzer& analyzer, const Text& old_text,
-                               RevisionId old_revision) {
+                               Analyzer& analyzer, const Text& old_text, RevisionId old_revision) {
     EditTransaction tx = document.begin_transaction();
     tx.insert(caret, "\n");
 
@@ -198,8 +197,8 @@ EnterResult press_enter(Document& document, TextOffset caret, const CppIndentSty
     return press_enter(document, caret, style, analyzer);
 }
 
-TypeCharResult type_char(Document& document, TextOffset caret, char ch,
-                         const CppIndentStyle& style, Analyzer& analyzer) {
+TypeCharResult type_char(Document& document, TextOffset caret, char ch, const CppIndentStyle& style,
+                         Analyzer& analyzer) {
     const Text old_text = document.snapshot().content();
     const RevisionId old_revision = document.revision();
     EditTransaction tx = document.begin_transaction();
@@ -275,9 +274,9 @@ IndentDecision indent_line(Document& document, std::uint32_t line, const CppInde
     if (current != decision.indentation_text) {
         TextOffset start = snapshot.content().line_start(line);
         EditTransaction tx = document.begin_transaction();
-        tx.replace(TextRange{start, TextOffset{start.value +
-                                               static_cast<std::uint32_t>(current.size())}},
-                   decision.indentation_text);
+        tx.replace(
+            TextRange{start, TextOffset{start.value + static_cast<std::uint32_t>(current.size())}},
+            decision.indentation_text);
         CommitResult commit = tx.commit();
         analyzer.apply(commit.change, commit.snapshot);
     }

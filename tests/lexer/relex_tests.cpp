@@ -57,25 +57,25 @@ TEST_CASE("relex: plain edits converge next line") {
 
 TEST_CASE("relex: multi-line construct boundaries") {
     const std::string comment = "a();\n/* one\n   two\n   three */\nb();\n";
-    check_edit(comment, 13, 13, "X");   // edit inside the block comment
-    check_edit(comment, 26, 28, "");    // delete the "*/" -> comment runs on
-    check_edit(comment, 5, 7, "");      // delete the "/*" -> lines become code
+    check_edit(comment, 13, 13, "X"); // edit inside the block comment
+    check_edit(comment, 26, 28, "");  // delete the "*/" -> comment runs on
+    check_edit(comment, 5, 7, "");    // delete the "/*" -> lines become code
 
     const std::string raw = "auto s = R\"(line\nline)\";\nint x;\n";
-    check_edit(raw, 14, 14, "Z");       // inside the raw string
-    check_edit(raw, 21, 23, "");        // remove the closing delimiter
-    check_edit(raw, 3, 3, "x");         // before the raw string, same line
+    check_edit(raw, 14, 14, "Z"); // inside the raw string
+    check_edit(raw, 21, 23, "");  // remove the closing delimiter
+    check_edit(raw, 3, 3, "x");   // before the raw string, same line
 
     const std::string pp = "#define M(a) \\\n    (a + 1) \\\n    * 2\nint y;\n";
-    check_edit(pp, 20, 20, "b");        // inside continuation line
-    check_edit(pp, 13, 15, "");         // delete a splice -> pp line ends earlier
-    check_edit(pp, 36, 36, " \\\nz");   // extend the continuation
+    check_edit(pp, 20, 20, "b");      // inside continuation line
+    check_edit(pp, 13, 15, "");       // delete a splice -> pp line ends earlier
+    check_edit(pp, 36, 36, " \\\nz"); // extend the continuation
 }
 
 TEST_CASE("relex: token joins at edit boundaries") {
-    check_edit("a < b;\n c;\n", 3, 4, "");      // "< b" -> "<b" stays two tokens
-    check_edit("a <\n= b;\n", 3, 4, "");        // deleting newline joins "<" "=" -> "<="
-    check_edit("int R;\ns();\n", 5, 6, "\"x\""); // R + string literal -> raw string
+    check_edit("a < b;\n c;\n", 3, 4, "");        // "< b" -> "<b" stays two tokens
+    check_edit("a <\n= b;\n", 3, 4, "");          // deleting newline joins "<" "=" -> "<="
+    check_edit("int R;\ns();\n", 5, 6, "\"x\"");  // R + string literal -> raw string
     check_edit("x = \"abc\";\ny();\n", 4, 5, ""); // unbalance a string quote
     check_edit("x = 1;\ny();\n", 5, 5, "'");      // stray quote, unterminated char
 }
@@ -99,7 +99,20 @@ TEST_CASE("relex: fuzz against full lex") {
         "\"string with \\\" escape\"",
         "template <typename T> class V { T* p; };\n",
         "x <<= y >>= z <=> w;\n",
-        "'\\n'", "{", "}", "(", ")", "\"", "'", "\\\n", "\n", "R", "//", "/*", "*/", "#",
+        "'\\n'",
+        "{",
+        "}",
+        "(",
+        ")",
+        "\"",
+        "'",
+        "\\\n",
+        "\n",
+        "R",
+        "//",
+        "/*",
+        "*/",
+        "#",
     };
     std::string doc = "int main() {\n    return 0;\n}\n";
     for (int step = 0; step < 400; ++step) {

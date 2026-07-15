@@ -85,7 +85,8 @@ TEST_CASE("namespace with declaration") {
 }
 
 TEST_CASE("class with access specifiers") {
-    SyntaxTree tree = parse_checked("class Foo {\npublic:\n    Foo();\nprivate:\n    int x_;\n};\n");
+    SyntaxTree tree =
+        parse_checked("class Foo {\npublic:\n    Foo();\nprivate:\n    int x_;\n};\n");
     find_one(tree, SyntaxKind::ClassDecl);
     SyntaxNodeId body = find_one(tree, SyntaxKind::ClassBody);
     CHECK(!tree.node(body).incomplete);
@@ -93,8 +94,8 @@ TEST_CASE("class with access specifiers") {
 }
 
 TEST_CASE("switch with case sections") {
-    SyntaxTree tree = parse_checked(
-        "switch (x) {\ncase 1:\n    foo();\n    bar();\ndefault:\n    break;\n}\n");
+    SyntaxTree tree =
+        parse_checked("switch (x) {\ncase 1:\n    foo();\n    bar();\ndefault:\n    break;\n}\n");
     find_one(tree, SyntaxKind::SwitchStatement);
     auto sections = find_all(tree, SyntaxKind::CaseSection);
     REQUIRE(sections.size() == 2);
@@ -172,7 +173,8 @@ TEST_CASE("if without braces") {
         CHECK(open_tree.node(find_one(open_tree, SyntaxKind::IfStatement)).incomplete);
     }
     SUBCASE("else if chains nest") {
-        SyntaxTree chain = parse_checked("if (a)\n    f();\nelse if (b)\n    g();\nelse\n    h();\n");
+        SyntaxTree chain =
+            parse_checked("if (a)\n    f();\nelse if (b)\n    g();\nelse\n    h();\n");
         CHECK(find_all(chain, SyntaxKind::IfStatement).size() == 2);
         CHECK(find_all(chain, SyntaxKind::ElseClause).size() == 2);
     }
@@ -223,8 +225,8 @@ TEST_CASE("split-brace #if/#else branches parse as sibling alternatives") {
     // '}' after #endif closes it. clang-format's model treats the branches as
     // alternatives (one net brace), so f and g are siblings, not g nested
     // inside f's unclosed body. design.md §276.
-    SyntaxTree tree = parse_checked(
-        "#ifdef A\nvoid f() {\n#else\nvoid g() {\n#endif\n    body();\n}\n");
+    SyntaxTree tree =
+        parse_checked("#ifdef A\nvoid f() {\n#else\nvoid g() {\n#endif\n    body();\n}\n");
     CHECK(find_all(tree, SyntaxKind::PreprocessorDirective).size() == 3);
     auto fns = find_all(tree, SyntaxKind::FunctionDefinition);
     REQUIRE(fns.size() == 2); // ids are DFS-preorder: fns[0] == f, fns[1] == g
@@ -275,8 +277,8 @@ TEST_CASE("split-brace #if inside a function keeps the tail at body level") {
 
 TEST_CASE("declarator suffixes still introduce a function body") {
     SUBCASE(") const {") {
-        SyntaxTree tree = parse_checked(
-            "class C {\n    int f(int a) const { return a; }\n    void g() {}\n};\n");
+        SyntaxTree tree =
+            parse_checked("class C {\n    int f(int a) const { return a; }\n    void g() {}\n};\n");
         auto fns = find_all(tree, SyntaxKind::FunctionDefinition);
         CHECK(fns.size() == 2);
         // both stay members: the class body is not closed early
@@ -315,9 +317,9 @@ TEST_CASE("statement evidence upgrades a brace group to a block") {
 }
 
 TEST_CASE("brace after '=' in a struct-typed variable is an init list") {
-    SyntaxTree tree = parse_checked(
-        "static const struct f_cnvrt Convert = {\n    SETCVTOFF, // cvtcmd\n"
-        "    0,         // pccsid\n};\n");
+    SyntaxTree tree =
+        parse_checked("static const struct f_cnvrt Convert = {\n    SETCVTOFF, // cvtcmd\n"
+                      "    0,         // pccsid\n};\n");
     CHECK(find_all(tree, SyntaxKind::ClassBody).empty());
     find_one(tree, SyntaxKind::BraceGroup);
     CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
@@ -340,8 +342,8 @@ TEST_CASE("goto label is complete on its own") {
 }
 
 TEST_CASE("macro bodies get group structure, bounded to the directive") {
-    SyntaxTree tree = parse_checked(
-        "#define F(a, b) \\\n  impl((long)(a), \\\n       (long)(b))\nint x;\n");
+    SyntaxTree tree =
+        parse_checked("#define F(a, b) \\\n  impl((long)(a), \\\n       (long)(b))\nint x;\n");
     CHECK(find_all(tree, SyntaxKind::PreprocessorDirective).size() == 1);
     CHECK(find_all(tree, SyntaxKind::ParenGroup).size() >= 2);
     // unbalanced parens inside a macro never leak past the line
@@ -353,8 +355,7 @@ TEST_CASE("macro bodies get group structure, bounded to the directive") {
 }
 
 TEST_CASE("extern linkage block has namespace semantics") {
-    SyntaxTree tree =
-        parse_checked("extern \"C\" {\nvoid f(int);\nint g(void) { return 0; }\n}\n");
+    SyntaxTree tree = parse_checked("extern \"C\" {\nvoid f(int);\nint g(void) { return 0; }\n}\n");
     SyntaxNodeId body = find_one(tree, SyntaxKind::NamespaceBody);
     CHECK(tree.node(body).children.size() >= 2);
     CHECK(find_all(tree, SyntaxKind::MissingToken).empty());
@@ -429,26 +430,25 @@ TEST_CASE("node_at finds the deepest node") {
 }
 
 TEST_CASE("every prefix of a realistic file parses with invariants intact") {
-    static constexpr std::string_view kSample =
-        "namespace foo {\n"
-        "class Foo {\n"
-        "public:\n"
-        "    Foo();\n"
-        "};\n"
-        "Foo::Foo()\n"
-        "    : a_(1),\n"
-        "      b_{2}\n"
-        "{\n"
-        "    switch (x) {\n"
-        "    case 1:\n"
-        "        f([&] { return 1; });\n"
-        "    default:\n"
-        "        break;\n"
-        "    }\n"
-        "    if (y)\n"
-        "        g();\n"
-        "}\n"
-        "}\n";
+    static constexpr std::string_view kSample = "namespace foo {\n"
+                                                "class Foo {\n"
+                                                "public:\n"
+                                                "    Foo();\n"
+                                                "};\n"
+                                                "Foo::Foo()\n"
+                                                "    : a_(1),\n"
+                                                "      b_{2}\n"
+                                                "{\n"
+                                                "    switch (x) {\n"
+                                                "    case 1:\n"
+                                                "        f([&] { return 1; });\n"
+                                                "    default:\n"
+                                                "        break;\n"
+                                                "    }\n"
+                                                "    if (y)\n"
+                                                "        g();\n"
+                                                "}\n"
+                                                "}\n";
     for (std::size_t len = 0; len <= kSample.size(); ++len) {
         parse_checked(kSample.substr(0, len));
     }
@@ -471,8 +471,7 @@ TEST_CASE("fuzz: arbitrary input never breaks parser invariants") {
             if (mode == 0) {
                 text.push_back(static_cast<char>(byte_dist(rng)));
             } else {
-                text.push_back(
-                    kCppish[static_cast<std::size_t>(byte_dist(rng)) % kCppish.size()]);
+                text.push_back(kCppish[static_cast<std::size_t>(byte_dist(rng)) % kCppish.size()]);
             }
         }
         if (text.find('\r') != std::string::npos) {
@@ -491,8 +490,7 @@ namespace {
 std::vector<SyntaxKind> ancestor_path_at_end(const SyntaxTree& tree, std::size_t size) {
     const TextOffset probe{size > 0 ? static_cast<std::uint32_t>(size - 1) : 0};
     std::vector<SyntaxKind> path;
-    for (SyntaxNodeId id = tree.node_at(probe); id != kInvalidNode;
-         id = tree.node(id).parent) {
+    for (SyntaxNodeId id = tree.node_at(probe); id != kInvalidNode; id = tree.node(id).parent) {
         path.push_back(tree.node(id).kind);
     }
     std::reverse(path.begin(), path.end());
@@ -512,8 +510,8 @@ int total_churn(std::string_view sample) {
                previous[common] == path[common]) {
             ++common;
         }
-        total += static_cast<int>(previous.size() - common) +
-                 static_cast<int>(path.size() - common);
+        total +=
+            static_cast<int>(previous.size() - common) + static_cast<int>(path.size() - common);
         previous = std::move(path);
     }
     return total;

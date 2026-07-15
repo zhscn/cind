@@ -47,7 +47,8 @@ void ref_splice(std::vector<Token>& v, std::size_t lo, std::size_t hi,
         v[i].range.start.value = static_cast<std::uint32_t>(v[i].range.start.value + delta);
         v[i].range.end.value = static_cast<std::uint32_t>(v[i].range.end.value + delta);
     }
-    v.erase(v.begin() + static_cast<std::ptrdiff_t>(lo), v.begin() + static_cast<std::ptrdiff_t>(hi));
+    v.erase(v.begin() + static_cast<std::ptrdiff_t>(lo),
+            v.begin() + static_cast<std::ptrdiff_t>(hi));
     v.insert(v.begin() + static_cast<std::ptrdiff_t>(lo), replacement.begin(), replacement.end());
 }
 
@@ -106,12 +107,12 @@ TEST_CASE("token buffer: splice fuzz against the flat reference") {
             const std::size_t hi = lo + rng() % (ref.size() - lo + 1);
             // Replacement re-lexes [start of lo, ...) with a new length; the
             // suffix shifts by the length delta, keeping the stream contiguous.
-            const std::uint32_t start =
-                lo < ref.size() ? ref[lo].range.start.value
-                                : (ref.empty() ? 0 : ref.back().range.end.value);
-            const std::uint32_t old_end =
-                hi < ref.size() ? ref[hi].range.start.value
-                                : (ref.empty() ? 0 : ref.back().range.end.value);
+            const std::uint32_t start = lo < ref.size()
+                                            ? ref[lo].range.start.value
+                                            : (ref.empty() ? 0 : ref.back().range.end.value);
+            const std::uint32_t old_end = hi < ref.size()
+                                              ? ref[hi].range.start.value
+                                              : (ref.empty() ? 0 : ref.back().range.end.value);
             std::vector<Token> repl;
             std::uint32_t at = start;
             const std::size_t repl_n = rng() % 40;

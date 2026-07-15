@@ -47,8 +47,10 @@ bool is_sync_introducer(TokenKind k) {
     case TokenKind::PublicKw:
     case TokenKind::ProtectedKw:
     case TokenKind::PrivateKw:
-    case TokenKind::PreprocessorHash: return true;
-    default: return false;
+    case TokenKind::PreprocessorHash:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -56,8 +58,7 @@ bool is_sync_introducer(TokenKind k) {
 
 // Declared a friend of SyntaxTree. Source is a CharSource (char_source.hpp);
 // token text is only extracted at a few cold classification sites.
-template <typename Source>
-class Parser {
+template <typename Source> class Parser {
 public:
     // A full parse reads the flat lexed vector (the hot O(n) build path
     // stays raw-array fast); run() converts it into the tree's chunked
@@ -71,8 +72,7 @@ public:
 
     // Sandbox mode for incremental block reparse: tokens are borrowed, not
     // owned, and parsing replays one container's item loop.
-    Parser(const Source& source, const TokenBuffer& tokens)
-        : src_(source), tokens_view_(&tokens) {}
+    Parser(const Source& source, const TokenBuffer& tokens) : src_(source), tokens_view_(&tokens) {}
 
     // Replays the guarded(parse_declaration_or_statement) loop of a
     // `container` node from `start`, stopping as soon as the position (after
@@ -89,8 +89,8 @@ public:
     };
     SandboxResult run_items(std::uint32_t start, SyntaxKind container, bool enum_body,
                             std::span<const std::uint32_t> boundaries) {
-        nodes().push_back(SyntaxNode{container, start, start, kInvalidNode, {}, false, false,
-                                     TokenKind::EndOfFile});
+        nodes().push_back(SyntaxNode{
+            container, start, start, kInvalidNode, {}, false, false, TokenKind::EndOfFile});
         stack_.push_back(0);
         pos_ = start;
         enum_body_ = enum_body;
@@ -142,8 +142,14 @@ public:
     }
 
     SyntaxTree run() {
-        nodes().push_back(SyntaxNode{SyntaxKind::TranslationUnit, 0, 0, kInvalidNode, {}, false,
-                                     false, TokenKind::EndOfFile});
+        nodes().push_back(SyntaxNode{SyntaxKind::TranslationUnit,
+                                     0,
+                                     0,
+                                     kInvalidNode,
+                                     {},
+                                     false,
+                                     false,
+                                     TokenKind::EndOfFile});
         stack_.push_back(0);
         run_container_items([&] { return at_eof(); });
         pos_ = static_cast<std::uint32_t>(token_count()); // include trailing trivia + EOF
@@ -207,9 +213,8 @@ private:
     // function/lambda body possible: `) const {`, `) mutable -> T & {`.
     bool keeps_body_pending() {
         const TokenKind k = kind();
-        return k == TokenKind::Identifier || k == TokenKind::ColonColon ||
-               k == TokenKind::Arrow || k == TokenKind::Amp || k == TokenKind::AmpAmp ||
-               k == TokenKind::Star;
+        return k == TokenKind::Identifier || k == TokenKind::ColonColon || k == TokenKind::Arrow ||
+               k == TokenKind::Amp || k == TokenKind::AmpAmp || k == TokenKind::Star;
     }
 
     // Only trivia between the previous newline and the token at pos_.
@@ -257,7 +262,8 @@ private:
         // skips trivia in place, so trim it back off — but never past the
         // last child (a MissingToken may legitimately sit at pos_).
         SyntaxNode& n = nodes()[id];
-        std::uint32_t floor = n.children.empty() ? n.first_token : nodes()[n.children.back()].end_token;
+        std::uint32_t floor =
+            n.children.empty() ? n.first_token : nodes()[n.children.back()].end_token;
         std::uint32_t end = pos_;
         while (end > floor && is_trivia(tok(end - 1).kind)) {
             --end;
@@ -274,8 +280,8 @@ private:
     void add_missing(TokenKind expected) {
         skip_trivia();
         const auto id = static_cast<SyntaxNodeId>(nodes().size());
-        nodes().push_back(SyntaxNode{SyntaxKind::MissingToken, pos_, pos_, stack_.back(), {},
-                                     true, false, expected});
+        nodes().push_back(SyntaxNode{
+            SyntaxKind::MissingToken, pos_, pos_, stack_.back(), {}, true, false, expected});
         nodes()[stack_.back()].children.push_back(id);
         nodes()[stack_.back()].incomplete = true;
     }
@@ -304,24 +310,46 @@ private:
 
     void parse_declaration_or_statement() {
         switch (kind()) {
-        case TokenKind::PreprocessorHash: parse_pp_directive(); return;
-        case TokenKind::NamespaceKw: parse_namespace(); return;
+        case TokenKind::PreprocessorHash:
+            parse_pp_directive();
+            return;
+        case TokenKind::NamespaceKw:
+            parse_namespace();
+            return;
         case TokenKind::ClassKw:
         case TokenKind::StructKw:
         case TokenKind::UnionKw:
-        case TokenKind::EnumKw: parse_class(); return;
+        case TokenKind::EnumKw:
+            parse_class();
+            return;
         case TokenKind::PublicKw:
         case TokenKind::ProtectedKw:
-        case TokenKind::PrivateKw: parse_access_label(); return;
-        case TokenKind::TemplateKw: parse_template_prefix(); return;
-        case TokenKind::SwitchKw: parse_switch(); return;
-        case TokenKind::IfKw: parse_if(); return;
+        case TokenKind::PrivateKw:
+            parse_access_label();
+            return;
+        case TokenKind::TemplateKw:
+            parse_template_prefix();
+            return;
+        case TokenKind::SwitchKw:
+            parse_switch();
+            return;
+        case TokenKind::IfKw:
+            parse_if();
+            return;
         case TokenKind::ForKw:
-        case TokenKind::WhileKw: parse_loop(); return;
-        case TokenKind::DoKw: parse_do(); return;
+        case TokenKind::WhileKw:
+            parse_loop();
+            return;
+        case TokenKind::DoKw:
+            parse_do();
+            return;
         case TokenKind::CaseKw:
-        case TokenKind::DefaultKw: parse_case_section(); return;
-        case TokenKind::LBrace: parse_compound_statement(); return;
+        case TokenKind::DefaultKw:
+            parse_case_section();
+            return;
+        case TokenKind::LBrace:
+            parse_compound_statement();
+            return;
         case TokenKind::Semicolon: {
             const SyntaxNodeId n = open(SyntaxKind::OpaqueDeclaration);
             advance();
@@ -329,8 +357,11 @@ private:
             return;
         }
         case TokenKind::RBrace:
-        case TokenKind::EndOfFile: return; // the caller owns these
-        default: parse_generic(); return;
+        case TokenKind::EndOfFile:
+            return; // the caller owns these
+        default:
+            parse_generic();
+            return;
         }
     }
 
@@ -369,12 +400,17 @@ private:
     // Returns true if the token opened a nested group (already consumed).
     bool parse_pp_body_token(TokenKind k) {
         switch (k) {
-        case TokenKind::LParen: parse_pp_group(TokenKind::RParen, SyntaxKind::ParenGroup); return true;
+        case TokenKind::LParen:
+            parse_pp_group(TokenKind::RParen, SyntaxKind::ParenGroup);
+            return true;
         case TokenKind::LBracket:
             parse_pp_group(TokenKind::RBracket, SyntaxKind::BracketGroup);
             return true;
-        case TokenKind::LBrace: parse_pp_group(TokenKind::RBrace, SyntaxKind::BraceGroup); return true;
-        default: return false;
+        case TokenKind::LBrace:
+            parse_pp_group(TokenKind::RBrace, SyntaxKind::BraceGroup);
+            return true;
+        default:
+            return false;
         }
     }
 
@@ -408,9 +444,9 @@ private:
     }
 
     enum class PPItem : std::uint8_t {
-        Dispatch,  // no conditional directive here: parse the next item normally
-        Consumed,  // a conditional directive was consumed; re-run the loop
-        StopLoop,  // #else/#elif belongs to an outer container: unwind
+        Dispatch, // no conditional directive here: parse the next item normally
+        Consumed, // a conditional directive was consumed; re-run the loop
+        StopLoop, // #else/#elif belongs to an outer container: unwind
     };
 
     // Called at the top of a container item loop. Handles a leading
@@ -489,8 +525,11 @@ private:
             case SyntaxKind::CompoundStatement:
             case SyntaxKind::NamespaceBody:
             case SyntaxKind::ClassBody:
-            case SyntaxKind::PPReopenedScope: ++n; break;
-            default: break;
+            case SyntaxKind::PPReopenedScope:
+                ++n;
+                break;
+            default:
+                break;
             }
         }
         return n;
@@ -720,8 +759,7 @@ private:
         while (at(TokenKind::PreprocessorHash)) {
             const PPCat cat = pp_category_at(pos_);
             if (cat == PPCat::Close) {
-                if (!pp_phantoms_.empty() &&
-                    pp_frames_.size() <= pp_phantoms_.back().frames) {
+                if (!pp_phantoms_.empty() && pp_frames_.size() <= pp_phantoms_.back().frames) {
                     mark_incomplete(owner); // bounds the phantom, not this body
                     return;
                 }
@@ -799,7 +837,7 @@ private:
 
     void parse_paren_group() {
         const SyntaxNodeId g = open(SyntaxKind::ParenGroup);
-        advance(); // (
+        advance();                 // (
         bool body_pending = false; // ')'/']' + declarator suffixes seen
         while (!at_eof()) {
             const TokenKind k = kind();
@@ -877,7 +915,7 @@ private:
 
     void parse_brace_group() {
         const SyntaxNodeId g = open(SyntaxKind::BraceGroup);
-        advance(); // {
+        advance();                 // {
         bool body_pending = false; // ')'/']' + declarator suffixes seen
         while (!at_eof()) {
             const TokenKind k = kind();
@@ -910,9 +948,9 @@ private:
             // lambdas (clang-format calculateBraceTypes: semi/if/for/... in
             // an unknown brace forces BK_Block). Reclassify and continue as
             // statements; already-consumed tokens stay flat.
-            if (k == TokenKind::Semicolon || k == TokenKind::ReturnKw ||
-                k == TokenKind::IfKw || k == TokenKind::WhileKw || k == TokenKind::ForKw ||
-                k == TokenKind::DoKw || k == TokenKind::SwitchKw) {
+            if (k == TokenKind::Semicolon || k == TokenKind::ReturnKw || k == TokenKind::IfKw ||
+                k == TokenKind::WhileKw || k == TokenKind::ForKw || k == TokenKind::DoKw ||
+                k == TokenKind::SwitchKw) {
                 nodes()[g].kind = SyntaxKind::CompoundStatement;
                 nodes()[g].reclassified = true;
                 run_container_items([&] { return at_eof() || at(TokenKind::RBrace); });
@@ -957,7 +995,9 @@ private:
                 return 0;
             }
             switch (t.kind) {
-            case TokenKind::Less: ++angle; break;
+            case TokenKind::Less:
+                ++angle;
+                break;
             case TokenKind::Greater:
                 if (--angle == 0) {
                     return i + 1;
@@ -969,14 +1009,18 @@ private:
                     return i + 1;
                 }
                 break;
-            case TokenKind::LParen: ++paren; break;
+            case TokenKind::LParen:
+                ++paren;
+                break;
             case TokenKind::RParen:
                 if (paren == 0) {
                     return 0;
                 }
                 --paren;
                 break;
-            case TokenKind::LBracket: ++bracket; break;
+            case TokenKind::LBracket:
+                ++bracket;
+                break;
             case TokenKind::RBracket:
                 if (bracket == 0) {
                     return 0;
@@ -986,8 +1030,10 @@ private:
             case TokenKind::Semicolon:
             case TokenKind::LBrace:
             case TokenKind::RBrace:
-            case TokenKind::EndOfFile: return 0;
-            default: break;
+            case TokenKind::EndOfFile:
+                return 0;
+            default:
+                break;
             }
         }
         return 0;
@@ -1291,11 +1337,14 @@ bool is_item_container(SyntaxKind kind, bool reclassified) {
     case SyntaxKind::TranslationUnit:
     case SyntaxKind::NamespaceBody:
     case SyntaxKind::ClassBody:
-    case SyntaxKind::CaseSection: return true;
+    case SyntaxKind::CaseSection:
+        return true;
     // A reclassified brace group consumed its early tokens with initializer
     // semantics; its item loop cannot be replayed uniformly.
-    case SyntaxKind::CompoundStatement: return !reclassified;
-    default: return false;
+    case SyntaxKind::CompoundStatement:
+        return !reclassified;
+    default:
+        return false;
     }
 }
 
@@ -1536,8 +1585,9 @@ bool splice_touches_pp_conditional(const Toks& toks, std::size_t lo, std::size_t
             continue;
         }
         const TokenKind kw = toks[j].kind;
-        const PPCat cat = kw == TokenKind::Identifier ? pp_classify(kw, text.substring(toks[j].range))
-                                                      : pp_classify(kw, {});
+        const PPCat cat = kw == TokenKind::Identifier
+                              ? pp_classify(kw, text.substring(toks[j].range))
+                              : pp_classify(kw, {});
         if (cat != PPCat::Other) {
             return true;
         }
@@ -1677,7 +1727,7 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
     };
     std::vector<GreenRef> path_green{tree.green_root_};
     std::vector<std::uint32_t> path_index{0}; // path_green[k] sits at this index in path_green[k-1]
-    std::vector<std::uint32_t> path_first{0};  // absolute first token of path_green[k]
+    std::vector<std::uint32_t> path_first{0}; // absolute first token of path_green[k]
     std::vector<ChainEntry> chain;
     if (is_item_container(tree.green_root_->kind, tree.green_root_->reclassified)) {
         chain.push_back({0, false});
@@ -1724,8 +1774,8 @@ void reparse(SyntaxTree& tree, std::vector<LexerState>& line_states, const Text&
 
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         const RepairContext ctx{it->enum_body};
-        GreenRef spliced = try_repair(tree.tokens_, ctx, path_green[it->depth], path_first[it->depth],
-                                      guard_lo, tok_hi, delta_tok, new_text);
+        GreenRef spliced = try_repair(tree.tokens_, ctx, path_green[it->depth],
+                                      path_first[it->depth], guard_lo, tok_hi, delta_tok, new_text);
         if (!spliced) {
             continue;
         }

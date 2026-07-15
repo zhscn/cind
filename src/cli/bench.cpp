@@ -26,8 +26,7 @@ namespace {
 namespace fs = std::filesystem;
 
 bool has_cpp_extension(const fs::path& path) {
-    static constexpr std::string_view kExtensions[] = {".cpp", ".cc", ".cxx",
-                                                       ".h",   ".hpp", ".hxx"};
+    static constexpr std::string_view kExtensions[] = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"};
     return std::ranges::find(kExtensions, path.extension().string()) != std::end(kExtensions);
 }
 
@@ -85,8 +84,7 @@ bool is_bracket_continuation(FormatRole role) {
 void print_role_histogram(const Report& report) {
     std::vector<std::pair<FormatRole, RoleCount>> rows(report.by_role.begin(),
                                                        report.by_role.end());
-    std::ranges::sort(rows, std::greater{},
-                      [](const auto& row) { return row.second.mismatch; });
+    std::ranges::sort(rows, std::greater{}, [](const auto& row) { return row.second.mismatch; });
     for (const auto& [role, count] : rows) {
         std::string note;
         if (count.align_fix > 0) {
@@ -99,9 +97,9 @@ void print_role_histogram(const Report& report) {
 
 void print_summary(const Report& report) {
     double accuracy = report.checked > 0 ? 100.0 * report.matched / report.checked : 100.0;
-    std::cout << std::format(
-        "lines {}  checked {}  matched {} ({:.2f}%)  blank {}  preserved {}\n", report.lines,
-        report.checked, report.matched, accuracy, report.blank, report.preserved);
+    std::cout << std::format("lines {}  checked {}  matched {} ({:.2f}%)  blank {}  preserved {}\n",
+                             report.lines, report.checked, report.matched, accuracy, report.blank,
+                             report.preserved);
     std::cout << std::format("parse {:.1f}ms  indent {:.1f}ms\n", report.parse_ms,
                              report.indent_ms);
     if (report.checked > report.matched) {
@@ -220,8 +218,8 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, const Bench
         if (is_bracket_continuation(decision.role) && decision.anchor) {
             TextOffset open = *decision.anchor;
             std::uint32_t open_line_start = lines.line_start(lines.position(open).line).value;
-            int open_col = display_width(
-                text.substr(open_line_start, open.value - open_line_start), style.tab_width);
+            int open_col = display_width(text.substr(open_line_start, open.value - open_line_start),
+                                         style.tab_width);
             if (open_col + 1 == actual) {
                 ++count.align_fix;
             }
@@ -230,8 +228,7 @@ Report bench_file(const fs::path& path, const CppIndentStyle& style, const Bench
             --show_budget;
             std::cout << std::format("{}:{}: {} expected {} actual {} | {}\n", path.string(),
                                      line + 1, format_role_name(decision.role),
-                                     decision.target_column, actual,
-                                     line_text.substr(ws, 60));
+                                     decision.target_column, actual, line_text.substr(ws, 60));
         }
     }
     auto t2 = clock::now();
@@ -267,16 +264,16 @@ public:
                 it->second = {loaded->style, loaded->disable_format};
                 if (reported_configs_.insert(loaded->config_path.string()).second) {
                     for (const std::string& warning : loaded->warnings) {
-                        std::cerr << "indent-core: " << loaded->config_path.string()
-                                  << ": " << warning << "\n";
+                        std::cerr << "indent-core: " << loaded->config_path.string() << ": "
+                                  << warning << "\n";
                     }
                 }
             } else {
                 it->second = {fallback_, false};
                 if (!warned_) {
                     warned_ = true;
-                    std::cerr << "indent-core: no .clang-format above "
-                              << dir.string() << "; using LLVM preset\n";
+                    std::cerr << "indent-core: no .clang-format above " << dir.string()
+                              << "; using LLVM preset\n";
                 }
             }
         }

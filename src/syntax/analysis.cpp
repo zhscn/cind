@@ -45,7 +45,9 @@ void Analyzer::apply(const DocumentChange& change, const DocumentSnapshot& after
     cache_.reset();
 }
 
-void Analyzer::adopt(Analysis analysis) { cache_ = std::move(analysis); }
+void Analyzer::adopt(Analysis analysis) {
+    cache_ = std::move(analysis);
+}
 
 std::optional<Analysis> Analyzer::take(RevisionId revision) {
     if (!cache_ || cache_->revision != revision) {

@@ -119,8 +119,7 @@ bool EditSession::redo() {
 
 IndentDecision EditSession::explain() const {
     DocumentSnapshot snap = snapshot();
-    return compute_line_indent(snap, analysis().tree, snap.content().position(caret_).line,
-                               style_);
+    return compute_line_indent(snap, analysis().tree, snap.content().position(caret_).line, style_);
 }
 
 std::string EditSession::render_with_caret() const {

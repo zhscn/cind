@@ -46,8 +46,8 @@ struct TypeCharResult {
 // ':' completing a case label / access specifier / ctor initializer intro,
 // '}' or '#' typed as the line's first content. One transaction, one undo
 // unit; if the predicate fails the character is inserted unchanged.
-TypeCharResult type_char(Document& document, TextOffset caret, char ch,
-                         const CppIndentStyle& style, Analyzer& analyzer);
+TypeCharResult type_char(Document& document, TextOffset caret, char ch, const CppIndentStyle& style,
+                         Analyzer& analyzer);
 TypeCharResult type_char(Document& document, TextOffset caret, char ch,
                          const CppIndentStyle& style);
 

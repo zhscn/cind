@@ -5,8 +5,7 @@
 
 namespace cind {
 
-LineIndex::LineIndex(std::string_view text)
-    : text_size_(static_cast<std::uint32_t>(text.size())) {
+LineIndex::LineIndex(std::string_view text) : text_size_(static_cast<std::uint32_t>(text.size())) {
     line_starts_.push_back(0);
     for (std::size_t i = 0; i < text.size(); ++i) {
         if (text[i] == '\n') {

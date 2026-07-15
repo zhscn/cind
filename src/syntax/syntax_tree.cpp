@@ -6,33 +6,60 @@ namespace cind {
 
 std::string_view syntax_kind_name(SyntaxKind kind) {
     switch (kind) {
-    case SyntaxKind::TranslationUnit: return "TranslationUnit";
-    case SyntaxKind::PreprocessorDirective: return "PreprocessorDirective";
-    case SyntaxKind::NamespaceDecl: return "NamespaceDecl";
-    case SyntaxKind::NamespaceBody: return "NamespaceBody";
-    case SyntaxKind::ClassDecl: return "ClassDecl";
-    case SyntaxKind::ClassBody: return "ClassBody";
-    case SyntaxKind::AccessSpecifierLabel: return "AccessSpecifierLabel";
-    case SyntaxKind::OpaqueDeclaration: return "OpaqueDeclaration";
-    case SyntaxKind::FunctionDefinition: return "FunctionDefinition";
-    case SyntaxKind::CtorInitializerList: return "CtorInitializerList";
-    case SyntaxKind::CtorInitializer: return "CtorInitializer";
-    case SyntaxKind::ParenGroup: return "ParenGroup";
-    case SyntaxKind::BracketGroup: return "BracketGroup";
-    case SyntaxKind::BraceGroup: return "BraceGroup";
-    case SyntaxKind::TemplateArgumentList: return "TemplateArgumentList";
-    case SyntaxKind::CompoundStatement: return "CompoundStatement";
-    case SyntaxKind::IfStatement: return "IfStatement";
-    case SyntaxKind::ElseClause: return "ElseClause";
-    case SyntaxKind::ForStatement: return "ForStatement";
-    case SyntaxKind::WhileStatement: return "WhileStatement";
-    case SyntaxKind::DoStatement: return "DoStatement";
-    case SyntaxKind::SwitchStatement: return "SwitchStatement";
-    case SyntaxKind::CaseSection: return "CaseSection";
-    case SyntaxKind::CaseLabel: return "CaseLabel";
-    case SyntaxKind::PPReopenedScope: return "PPReopenedScope";
-    case SyntaxKind::MissingToken: return "MissingToken";
-    case SyntaxKind::Error: return "Error";
+    case SyntaxKind::TranslationUnit:
+        return "TranslationUnit";
+    case SyntaxKind::PreprocessorDirective:
+        return "PreprocessorDirective";
+    case SyntaxKind::NamespaceDecl:
+        return "NamespaceDecl";
+    case SyntaxKind::NamespaceBody:
+        return "NamespaceBody";
+    case SyntaxKind::ClassDecl:
+        return "ClassDecl";
+    case SyntaxKind::ClassBody:
+        return "ClassBody";
+    case SyntaxKind::AccessSpecifierLabel:
+        return "AccessSpecifierLabel";
+    case SyntaxKind::OpaqueDeclaration:
+        return "OpaqueDeclaration";
+    case SyntaxKind::FunctionDefinition:
+        return "FunctionDefinition";
+    case SyntaxKind::CtorInitializerList:
+        return "CtorInitializerList";
+    case SyntaxKind::CtorInitializer:
+        return "CtorInitializer";
+    case SyntaxKind::ParenGroup:
+        return "ParenGroup";
+    case SyntaxKind::BracketGroup:
+        return "BracketGroup";
+    case SyntaxKind::BraceGroup:
+        return "BraceGroup";
+    case SyntaxKind::TemplateArgumentList:
+        return "TemplateArgumentList";
+    case SyntaxKind::CompoundStatement:
+        return "CompoundStatement";
+    case SyntaxKind::IfStatement:
+        return "IfStatement";
+    case SyntaxKind::ElseClause:
+        return "ElseClause";
+    case SyntaxKind::ForStatement:
+        return "ForStatement";
+    case SyntaxKind::WhileStatement:
+        return "WhileStatement";
+    case SyntaxKind::DoStatement:
+        return "DoStatement";
+    case SyntaxKind::SwitchStatement:
+        return "SwitchStatement";
+    case SyntaxKind::CaseSection:
+        return "CaseSection";
+    case SyntaxKind::CaseLabel:
+        return "CaseLabel";
+    case SyntaxKind::PPReopenedScope:
+        return "PPReopenedScope";
+    case SyntaxKind::MissingToken:
+        return "MissingToken";
+    case SyntaxKind::Error:
+        return "Error";
     }
     return "?";
 }
@@ -55,9 +82,16 @@ TextRange span_range(std::uint32_t base, std::uint32_t width, const TokenBuffer&
 
 SyntaxNodeId SyntaxTree::root() const {
     if (red_.empty() && green_root_) {
-        red_.push_back(SyntaxNode{green_root_->kind, 0, green_root_->width, kInvalidNode, {},
-                                  green_root_->incomplete, green_root_->reclassified,
-                                  green_root_->expected, green_root_.get(), false});
+        red_.push_back(SyntaxNode{green_root_->kind,
+                                  0,
+                                  green_root_->width,
+                                  kInvalidNode,
+                                  {},
+                                  green_root_->incomplete,
+                                  green_root_->reclassified,
+                                  green_root_->expected,
+                                  green_root_.get(),
+                                  false});
     }
     return 0;
 }
@@ -75,9 +109,16 @@ void SyntaxTree::expand(SyntaxNodeId id) const {
     for (const GreenChild& gc : g->children) {
         const std::uint32_t cf = cursor + gc.leading;
         kids.push_back(static_cast<SyntaxNodeId>(red_.size()));
-        red_.push_back(SyntaxNode{gc.node->kind, cf, cf + gc.node->width, id, {},
-                                  gc.node->incomplete, gc.node->reclassified, gc.node->expected,
-                                  gc.node.get(), false});
+        red_.push_back(SyntaxNode{gc.node->kind,
+                                  cf,
+                                  cf + gc.node->width,
+                                  id,
+                                  {},
+                                  gc.node->incomplete,
+                                  gc.node->reclassified,
+                                  gc.node->expected,
+                                  gc.node.get(),
+                                  false});
         cursor = cf + gc.node->width;
     }
     red_[id].children = std::move(kids);

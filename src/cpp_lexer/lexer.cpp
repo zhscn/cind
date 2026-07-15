@@ -14,97 +14,185 @@ namespace cind {
 
 std::string_view token_kind_name(TokenKind kind) {
     switch (kind) {
-    case TokenKind::Whitespace: return "Whitespace";
-    case TokenKind::Newline: return "Newline";
-    case TokenKind::LineComment: return "LineComment";
-    case TokenKind::BlockComment: return "BlockComment";
-    case TokenKind::Identifier: return "Identifier";
-    case TokenKind::Number: return "Number";
-    case TokenKind::StringLiteral: return "StringLiteral";
-    case TokenKind::RawStringLiteral: return "RawStringLiteral";
-    case TokenKind::CharacterLiteral: return "CharacterLiteral";
-    case TokenKind::NamespaceKw: return "NamespaceKw";
-    case TokenKind::ClassKw: return "ClassKw";
-    case TokenKind::StructKw: return "StructKw";
-    case TokenKind::EnumKw: return "EnumKw";
-    case TokenKind::UnionKw: return "UnionKw";
-    case TokenKind::SwitchKw: return "SwitchKw";
-    case TokenKind::CaseKw: return "CaseKw";
-    case TokenKind::DefaultKw: return "DefaultKw";
-    case TokenKind::PublicKw: return "PublicKw";
-    case TokenKind::ProtectedKw: return "ProtectedKw";
-    case TokenKind::PrivateKw: return "PrivateKw";
-    case TokenKind::IfKw: return "IfKw";
-    case TokenKind::ElseKw: return "ElseKw";
-    case TokenKind::ForKw: return "ForKw";
-    case TokenKind::WhileKw: return "WhileKw";
-    case TokenKind::DoKw: return "DoKw";
-    case TokenKind::ReturnKw: return "ReturnKw";
-    case TokenKind::TemplateKw: return "TemplateKw";
-    case TokenKind::OperatorKw: return "OperatorKw";
-    case TokenKind::LBrace: return "LBrace";
-    case TokenKind::RBrace: return "RBrace";
-    case TokenKind::LParen: return "LParen";
-    case TokenKind::RParen: return "RParen";
-    case TokenKind::LBracket: return "LBracket";
-    case TokenKind::RBracket: return "RBracket";
-    case TokenKind::Less: return "Less";
-    case TokenKind::Greater: return "Greater";
-    case TokenKind::Colon: return "Colon";
-    case TokenKind::ColonColon: return "ColonColon";
-    case TokenKind::Comma: return "Comma";
-    case TokenKind::Semicolon: return "Semicolon";
-    case TokenKind::Arrow: return "Arrow";
-    case TokenKind::Equals: return "Equals";
-    case TokenKind::Plus: return "Plus";
-    case TokenKind::Minus: return "Minus";
-    case TokenKind::Star: return "Star";
-    case TokenKind::Slash: return "Slash";
-    case TokenKind::Percent: return "Percent";
-    case TokenKind::Exclaim: return "Exclaim";
-    case TokenKind::Amp: return "Amp";
-    case TokenKind::Pipe: return "Pipe";
-    case TokenKind::Caret: return "Caret";
-    case TokenKind::Tilde: return "Tilde";
-    case TokenKind::Question: return "Question";
-    case TokenKind::Period: return "Period";
-    case TokenKind::Ellipsis: return "Ellipsis";
-    case TokenKind::PlusPlus: return "PlusPlus";
-    case TokenKind::MinusMinus: return "MinusMinus";
-    case TokenKind::AmpAmp: return "AmpAmp";
-    case TokenKind::PipePipe: return "PipePipe";
-    case TokenKind::EqualEqual: return "EqualEqual";
-    case TokenKind::ExclaimEqual: return "ExclaimEqual";
-    case TokenKind::LessEqual: return "LessEqual";
-    case TokenKind::GreaterEqual: return "GreaterEqual";
-    case TokenKind::Spaceship: return "Spaceship";
-    case TokenKind::LessLess: return "LessLess";
-    case TokenKind::GreaterGreater: return "GreaterGreater";
-    case TokenKind::PeriodStar: return "PeriodStar";
-    case TokenKind::ArrowStar: return "ArrowStar";
-    case TokenKind::PlusEqual: return "PlusEqual";
-    case TokenKind::MinusEqual: return "MinusEqual";
-    case TokenKind::StarEqual: return "StarEqual";
-    case TokenKind::SlashEqual: return "SlashEqual";
-    case TokenKind::PercentEqual: return "PercentEqual";
-    case TokenKind::AmpEqual: return "AmpEqual";
-    case TokenKind::PipeEqual: return "PipeEqual";
-    case TokenKind::CaretEqual: return "CaretEqual";
-    case TokenKind::LessLessEqual: return "LessLessEqual";
-    case TokenKind::GreaterGreaterEqual: return "GreaterGreaterEqual";
-    case TokenKind::Punctuator: return "Punctuator";
-    case TokenKind::PreprocessorHash: return "PreprocessorHash";
-    case TokenKind::Invalid: return "Invalid";
-    case TokenKind::EndOfFile: return "EndOfFile";
+    case TokenKind::Whitespace:
+        return "Whitespace";
+    case TokenKind::Newline:
+        return "Newline";
+    case TokenKind::LineComment:
+        return "LineComment";
+    case TokenKind::BlockComment:
+        return "BlockComment";
+    case TokenKind::Identifier:
+        return "Identifier";
+    case TokenKind::Number:
+        return "Number";
+    case TokenKind::StringLiteral:
+        return "StringLiteral";
+    case TokenKind::RawStringLiteral:
+        return "RawStringLiteral";
+    case TokenKind::CharacterLiteral:
+        return "CharacterLiteral";
+    case TokenKind::NamespaceKw:
+        return "NamespaceKw";
+    case TokenKind::ClassKw:
+        return "ClassKw";
+    case TokenKind::StructKw:
+        return "StructKw";
+    case TokenKind::EnumKw:
+        return "EnumKw";
+    case TokenKind::UnionKw:
+        return "UnionKw";
+    case TokenKind::SwitchKw:
+        return "SwitchKw";
+    case TokenKind::CaseKw:
+        return "CaseKw";
+    case TokenKind::DefaultKw:
+        return "DefaultKw";
+    case TokenKind::PublicKw:
+        return "PublicKw";
+    case TokenKind::ProtectedKw:
+        return "ProtectedKw";
+    case TokenKind::PrivateKw:
+        return "PrivateKw";
+    case TokenKind::IfKw:
+        return "IfKw";
+    case TokenKind::ElseKw:
+        return "ElseKw";
+    case TokenKind::ForKw:
+        return "ForKw";
+    case TokenKind::WhileKw:
+        return "WhileKw";
+    case TokenKind::DoKw:
+        return "DoKw";
+    case TokenKind::ReturnKw:
+        return "ReturnKw";
+    case TokenKind::TemplateKw:
+        return "TemplateKw";
+    case TokenKind::OperatorKw:
+        return "OperatorKw";
+    case TokenKind::LBrace:
+        return "LBrace";
+    case TokenKind::RBrace:
+        return "RBrace";
+    case TokenKind::LParen:
+        return "LParen";
+    case TokenKind::RParen:
+        return "RParen";
+    case TokenKind::LBracket:
+        return "LBracket";
+    case TokenKind::RBracket:
+        return "RBracket";
+    case TokenKind::Less:
+        return "Less";
+    case TokenKind::Greater:
+        return "Greater";
+    case TokenKind::Colon:
+        return "Colon";
+    case TokenKind::ColonColon:
+        return "ColonColon";
+    case TokenKind::Comma:
+        return "Comma";
+    case TokenKind::Semicolon:
+        return "Semicolon";
+    case TokenKind::Arrow:
+        return "Arrow";
+    case TokenKind::Equals:
+        return "Equals";
+    case TokenKind::Plus:
+        return "Plus";
+    case TokenKind::Minus:
+        return "Minus";
+    case TokenKind::Star:
+        return "Star";
+    case TokenKind::Slash:
+        return "Slash";
+    case TokenKind::Percent:
+        return "Percent";
+    case TokenKind::Exclaim:
+        return "Exclaim";
+    case TokenKind::Amp:
+        return "Amp";
+    case TokenKind::Pipe:
+        return "Pipe";
+    case TokenKind::Caret:
+        return "Caret";
+    case TokenKind::Tilde:
+        return "Tilde";
+    case TokenKind::Question:
+        return "Question";
+    case TokenKind::Period:
+        return "Period";
+    case TokenKind::Ellipsis:
+        return "Ellipsis";
+    case TokenKind::PlusPlus:
+        return "PlusPlus";
+    case TokenKind::MinusMinus:
+        return "MinusMinus";
+    case TokenKind::AmpAmp:
+        return "AmpAmp";
+    case TokenKind::PipePipe:
+        return "PipePipe";
+    case TokenKind::EqualEqual:
+        return "EqualEqual";
+    case TokenKind::ExclaimEqual:
+        return "ExclaimEqual";
+    case TokenKind::LessEqual:
+        return "LessEqual";
+    case TokenKind::GreaterEqual:
+        return "GreaterEqual";
+    case TokenKind::Spaceship:
+        return "Spaceship";
+    case TokenKind::LessLess:
+        return "LessLess";
+    case TokenKind::GreaterGreater:
+        return "GreaterGreater";
+    case TokenKind::PeriodStar:
+        return "PeriodStar";
+    case TokenKind::ArrowStar:
+        return "ArrowStar";
+    case TokenKind::PlusEqual:
+        return "PlusEqual";
+    case TokenKind::MinusEqual:
+        return "MinusEqual";
+    case TokenKind::StarEqual:
+        return "StarEqual";
+    case TokenKind::SlashEqual:
+        return "SlashEqual";
+    case TokenKind::PercentEqual:
+        return "PercentEqual";
+    case TokenKind::AmpEqual:
+        return "AmpEqual";
+    case TokenKind::PipeEqual:
+        return "PipeEqual";
+    case TokenKind::CaretEqual:
+        return "CaretEqual";
+    case TokenKind::LessLessEqual:
+        return "LessLessEqual";
+    case TokenKind::GreaterGreaterEqual:
+        return "GreaterGreaterEqual";
+    case TokenKind::Punctuator:
+        return "Punctuator";
+    case TokenKind::PreprocessorHash:
+        return "PreprocessorHash";
+    case TokenKind::Invalid:
+        return "Invalid";
+    case TokenKind::EndOfFile:
+        return "EndOfFile";
     }
     return "?";
 }
 
 namespace {
 
-bool is_ident_start(unsigned char c) { return std::isalpha(c) != 0 || c == '_' || c >= 0x80; }
-bool is_ident_continue(unsigned char c) { return std::isalnum(c) != 0 || c == '_' || c >= 0x80; }
-bool is_horizontal_space(char c) { return c == ' ' || c == '\t' || c == '\v' || c == '\f'; }
+bool is_ident_start(unsigned char c) {
+    return std::isalpha(c) != 0 || c == '_' || c >= 0x80;
+}
+bool is_ident_continue(unsigned char c) {
+    return std::isalnum(c) != 0 || c == '_' || c >= 0x80;
+}
+bool is_horizontal_space(char c) {
+    return c == ' ' || c == '\t' || c == '\v' || c == '\f';
+}
 
 TokenKind keyword_kind(std::string_view ident) {
     static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
@@ -138,8 +226,7 @@ struct StopCheck {
     virtual ~StopCheck() = default;
 };
 
-template <typename Source>
-class Lexer {
+template <typename Source> class Lexer {
 public:
     explicit Lexer(const Source& source) : src_(source), size_(source.size()) {}
 
@@ -178,9 +265,7 @@ private:
 
     // Cross-line lexical state is recorded while scanning: every consumed
     // '\n' appends the state entering the following line.
-    void push_line_state(LexerState state = {}) {
-        out_.line_states.push_back(std::move(state));
-    }
+    void push_line_state(LexerState state = {}) { out_.line_states.push_back(std::move(state)); }
 
     void emit(TokenKind kind, std::size_t start, LexicalFlags flags = LexicalFlags::None) {
         if (in_pp_line_) {
@@ -222,7 +307,7 @@ private:
             push_line_state(std::move(state));
             emit(TokenKind::Whitespace, start, LexicalFlags::EscapedNewline);
             at_line_start_ = true; // physically at a line start (mid-splice)
-            return; // a splice does not end a preprocessor line
+            return;                // a splice does not end a preprocessor line
         }
         if (c == '/' && peek() == '/') {
             pos_ += 2;
@@ -392,9 +477,8 @@ private:
             if (pos_ < size_) {
                 const char next = at(pos_);
                 if (next == '"') {
-                    if (ident == "R" ||
-                        (ident.ends_with('R') &&
-                         is_encoding_prefix(ident.substr(0, ident.size() - 1)))) {
+                    if (ident == "R" || (ident.ends_with('R') &&
+                                         is_encoding_prefix(ident.substr(0, ident.size() - 1)))) {
                         lex_raw_string(start);
                         return;
                     }
@@ -438,16 +522,16 @@ private:
             {"...", TokenKind::Ellipsis},
         };
         static constexpr Spelling kTwo[] = {
-            {"::", TokenKind::ColonColon},   {"<<", TokenKind::LessLess},
+            {"::", TokenKind::ColonColon},     {"<<", TokenKind::LessLess},
             {">>", TokenKind::GreaterGreater}, {"<=", TokenKind::LessEqual},
-            {">=", TokenKind::GreaterEqual}, {"==", TokenKind::EqualEqual},
-            {"!=", TokenKind::ExclaimEqual}, {"&&", TokenKind::AmpAmp},
-            {"||", TokenKind::PipePipe},     {"+=", TokenKind::PlusEqual},
-            {"-=", TokenKind::MinusEqual},   {"*=", TokenKind::StarEqual},
-            {"/=", TokenKind::SlashEqual},   {"%=", TokenKind::PercentEqual},
-            {"&=", TokenKind::AmpEqual},     {"|=", TokenKind::PipeEqual},
-            {"^=", TokenKind::CaretEqual},   {"->", TokenKind::Arrow},
-            {"++", TokenKind::PlusPlus},     {"--", TokenKind::MinusMinus},
+            {">=", TokenKind::GreaterEqual},   {"==", TokenKind::EqualEqual},
+            {"!=", TokenKind::ExclaimEqual},   {"&&", TokenKind::AmpAmp},
+            {"||", TokenKind::PipePipe},       {"+=", TokenKind::PlusEqual},
+            {"-=", TokenKind::MinusEqual},     {"*=", TokenKind::StarEqual},
+            {"/=", TokenKind::SlashEqual},     {"%=", TokenKind::PercentEqual},
+            {"&=", TokenKind::AmpEqual},       {"|=", TokenKind::PipeEqual},
+            {"^=", TokenKind::CaretEqual},     {"->", TokenKind::Arrow},
+            {"++", TokenKind::PlusPlus},       {"--", TokenKind::MinusMinus},
             {".*", TokenKind::PeriodStar},
         };
         for (const Spelling& op : kThree) {
@@ -467,31 +551,81 @@ private:
         const char c = at(pos_++);
         TokenKind kind;
         switch (c) {
-        case '{': kind = TokenKind::LBrace; break;
-        case '}': kind = TokenKind::RBrace; break;
-        case '(': kind = TokenKind::LParen; break;
-        case ')': kind = TokenKind::RParen; break;
-        case '[': kind = TokenKind::LBracket; break;
-        case ']': kind = TokenKind::RBracket; break;
-        case '<': kind = TokenKind::Less; break;
-        case '>': kind = TokenKind::Greater; break;
-        case ':': kind = TokenKind::Colon; break;
-        case ',': kind = TokenKind::Comma; break;
-        case ';': kind = TokenKind::Semicolon; break;
-        case '=': kind = TokenKind::Equals; break;
-        case '+': kind = TokenKind::Plus; break;
-        case '-': kind = TokenKind::Minus; break;
-        case '*': kind = TokenKind::Star; break;
-        case '/': kind = TokenKind::Slash; break;
-        case '%': kind = TokenKind::Percent; break;
-        case '!': kind = TokenKind::Exclaim; break;
-        case '&': kind = TokenKind::Amp; break;
-        case '|': kind = TokenKind::Pipe; break;
-        case '^': kind = TokenKind::Caret; break;
-        case '~': kind = TokenKind::Tilde; break;
-        case '?': kind = TokenKind::Question; break;
-        case '.': kind = TokenKind::Period; break;
-        default: kind = TokenKind::Invalid; break;
+        case '{':
+            kind = TokenKind::LBrace;
+            break;
+        case '}':
+            kind = TokenKind::RBrace;
+            break;
+        case '(':
+            kind = TokenKind::LParen;
+            break;
+        case ')':
+            kind = TokenKind::RParen;
+            break;
+        case '[':
+            kind = TokenKind::LBracket;
+            break;
+        case ']':
+            kind = TokenKind::RBracket;
+            break;
+        case '<':
+            kind = TokenKind::Less;
+            break;
+        case '>':
+            kind = TokenKind::Greater;
+            break;
+        case ':':
+            kind = TokenKind::Colon;
+            break;
+        case ',':
+            kind = TokenKind::Comma;
+            break;
+        case ';':
+            kind = TokenKind::Semicolon;
+            break;
+        case '=':
+            kind = TokenKind::Equals;
+            break;
+        case '+':
+            kind = TokenKind::Plus;
+            break;
+        case '-':
+            kind = TokenKind::Minus;
+            break;
+        case '*':
+            kind = TokenKind::Star;
+            break;
+        case '/':
+            kind = TokenKind::Slash;
+            break;
+        case '%':
+            kind = TokenKind::Percent;
+            break;
+        case '!':
+            kind = TokenKind::Exclaim;
+            break;
+        case '&':
+            kind = TokenKind::Amp;
+            break;
+        case '|':
+            kind = TokenKind::Pipe;
+            break;
+        case '^':
+            kind = TokenKind::Caret;
+            break;
+        case '~':
+            kind = TokenKind::Tilde;
+            break;
+        case '?':
+            kind = TokenKind::Question;
+            break;
+        case '.':
+            kind = TokenKind::Period;
+            break;
+        default:
+            kind = TokenKind::Invalid;
+            break;
         }
         emit(kind, start);
     }
@@ -538,9 +672,10 @@ void splice_vector(std::vector<T>& v, std::size_t first, std::size_t last,
     } else {
         std::move(replacement.begin(), replacement.begin() + static_cast<std::ptrdiff_t>(old_len),
                   v.begin() + static_cast<std::ptrdiff_t>(first));
-        v.insert(v.begin() + static_cast<std::ptrdiff_t>(last),
-                 std::make_move_iterator(replacement.begin() + static_cast<std::ptrdiff_t>(old_len)),
-                 std::make_move_iterator(replacement.end()));
+        v.insert(
+            v.begin() + static_cast<std::ptrdiff_t>(last),
+            std::make_move_iterator(replacement.begin() + static_cast<std::ptrdiff_t>(old_len)),
+            std::make_move_iterator(replacement.end()));
     }
 }
 
@@ -617,8 +752,11 @@ RelexSplice relex_scan(const TokenBuffer& old_tokens,
     // begins at a token boundary. The former rules out block comments, raw
     // strings and pp continuations spanning into the line; the latter rules
     // out a backslash-newline splice token spanning the line start.
-    std::uint32_t restart_line = old_text.position(TextOffset{static_cast<std::uint32_t>(
-        std::min<std::size_t>(damage_old_start, old_text.size_bytes()))}).line;
+    std::uint32_t restart_line =
+        old_text
+            .position(TextOffset{static_cast<std::uint32_t>(
+                std::min<std::size_t>(damage_old_start, old_text.size_bytes()))})
+            .line;
     while (restart_line > 0 &&
            !(old_line_states[restart_line] == LexerState{} &&
              token_index_at(old_tokens, old_text.line_start(restart_line).value) != kNoToken)) {
@@ -654,8 +792,7 @@ LexOutput relex(const std::vector<Token>& old_tokens,
     if (edits.empty()) {
         return LexOutput{old_tokens, old_line_states};
     }
-    RelexSplice s =
-        relex_scan(TokenBuffer(old_tokens), old_line_states, old_text, new_text, edits);
+    RelexSplice s = relex_scan(TokenBuffer(old_tokens), old_line_states, old_text, new_text, edits);
 
     LexOutput result;
     result.tokens.reserve(s.keep_tokens + s.scanned.tokens.size() +
@@ -680,8 +817,7 @@ LexOutput relex(const std::vector<Token>& old_tokens,
     // consumed the newline before it; the old suffix starts one later.
     if (!s.hit_eof) {
         result.line_states.insert(result.line_states.end(),
-                                  old_line_states.begin() + s.stop_line + 1,
-                                  old_line_states.end());
+                                  old_line_states.begin() + s.stop_line + 1, old_line_states.end());
     }
     return result;
 }
@@ -691,15 +827,16 @@ void relex_apply(TokenBuffer& tokens, std::vector<LexerState>& line_states, Rele
     // delta — O(chunk count + window), the flat vector's O(token count)
     // suffix shift and memmove are gone (design.md §214).
     tokens.splice(s.keep_tokens, s.stop_token, s.scanned.tokens, s.delta);
-    splice_vector(line_states, s.restart_line + 1,
-                  s.hit_eof ? line_states.size() : s.stop_line + 1, s.scanned.line_states);
+    splice_vector(line_states, s.restart_line + 1, s.hit_eof ? line_states.size() : s.stop_line + 1,
+                  s.scanned.line_states);
 }
 
 RelexSplice relex_in_place(TokenBuffer& tokens, std::vector<LexerState>& line_states,
                            const Text& old_text, const Text& new_text,
                            std::span<const TextEdit> edits) {
     if (edits.empty()) {
-        return RelexSplice{tokens.size(), tokens.size(),
+        return RelexSplice{tokens.size(),
+                           tokens.size(),
                            static_cast<std::uint32_t>(line_states.size() - 1),
                            static_cast<std::uint32_t>(line_states.size() - 1),
                            0,
@@ -707,8 +844,13 @@ RelexSplice relex_in_place(TokenBuffer& tokens, std::vector<LexerState>& line_st
                            {}};
     }
     RelexSplice s = relex_scan(tokens, line_states, old_text, new_text, edits);
-    RelexSplice out{s.keep_tokens, s.stop_token, s.restart_line, s.stop_line,
-                    s.delta,       s.hit_eof,    {}}; // scanned stays with the apply
+    RelexSplice out{s.keep_tokens,
+                    s.stop_token,
+                    s.restart_line,
+                    s.stop_line,
+                    s.delta,
+                    s.hit_eof,
+                    {}}; // scanned stays with the apply
     relex_apply(tokens, line_states, std::move(s));
     return out;
 }

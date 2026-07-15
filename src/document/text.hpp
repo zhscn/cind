@@ -133,10 +133,10 @@ private:
     };
 
     Text text_;
-    std::vector<Frame> stack_; // path from root to the current leaf
+    std::vector<Frame> stack_;               // path from root to the current leaf
     const detail::TextNode* leaf_ = nullptr; // null at end
-    std::uint32_t leaf_start_ = 0; // text offset of the current leaf's first byte
-    std::uint32_t skip_ = 0;       // bytes skipped at the front of the current leaf
+    std::uint32_t leaf_start_ = 0;           // text offset of the current leaf's first byte
+    std::uint32_t skip_ = 0;                 // bytes skipped at the front of the current leaf
 };
 
 } // namespace cind

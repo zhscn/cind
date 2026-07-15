@@ -14,34 +14,40 @@ bool is_group_kind(SyntaxKind kind) {
     case SyntaxKind::TemplateArgumentList:
     case SyntaxKind::CompoundStatement:
     case SyntaxKind::ClassBody:
-    case SyntaxKind::NamespaceBody: return true;
-    default: return false;
+    case SyntaxKind::NamespaceBody:
+        return true;
+    default:
+        return false;
     }
 }
 
 bool is_open_bracket(TokenKind kind) {
-    return kind == TokenKind::LParen || kind == TokenKind::LBracket ||
-           kind == TokenKind::LBrace;
+    return kind == TokenKind::LParen || kind == TokenKind::LBracket || kind == TokenKind::LBrace;
 }
 
 bool is_close_bracket(TokenKind kind) {
-    return kind == TokenKind::RParen || kind == TokenKind::RBracket ||
-           kind == TokenKind::RBrace;
+    return kind == TokenKind::RParen || kind == TokenKind::RBracket || kind == TokenKind::RBrace;
 }
 
 TokenKind matching_close(TokenKind open) {
     switch (open) {
-    case TokenKind::LParen: return TokenKind::RParen;
-    case TokenKind::LBracket: return TokenKind::RBracket;
-    default: return TokenKind::RBrace;
+    case TokenKind::LParen:
+        return TokenKind::RParen;
+    case TokenKind::LBracket:
+        return TokenKind::RBracket;
+    default:
+        return TokenKind::RBrace;
     }
 }
 
 TokenKind matching_open(TokenKind close) {
     switch (close) {
-    case TokenKind::RParen: return TokenKind::LParen;
-    case TokenKind::RBracket: return TokenKind::LBracket;
-    default: return TokenKind::LBrace;
+    case TokenKind::RParen:
+        return TokenKind::LParen;
+    case TokenKind::RBracket:
+        return TokenKind::LBracket;
+    default:
+        return TokenKind::LBrace;
     }
 }
 
@@ -66,8 +72,7 @@ std::optional<TextRange> template_group_at(const SyntaxTree& tree, std::uint32_t
         if (node.kind != SyntaxKind::TemplateArgumentList) {
             continue;
         }
-        if ((at_open && node.first_token == index) ||
-            (!at_open && node.end_token == index + 1)) {
+        if ((at_open && node.first_token == index) || (!at_open && node.end_token == index + 1)) {
             return tree.node_range(id);
         }
     }
@@ -142,8 +147,8 @@ std::optional<TextRange> sexp_forward(const SyntaxTree& tree, TextOffset from) {
 std::optional<TextRange> sexp_backward(const SyntaxTree& tree, TextOffset from) {
     const auto& tokens = tree.tokens();
     // First token wholly past `from`; everything before it is a candidate.
-    auto it = std::ranges::upper_bound(tokens, from, {},
-                                       [](const Token& t) { return t.range.end; });
+    auto it =
+        std::ranges::upper_bound(tokens, from, {}, [](const Token& t) { return t.range.end; });
     if (it != tokens.end() && it->range.start < from && !is_trivia(it->kind) &&
         it->kind != TokenKind::EndOfFile) {
         // Mid-atom: move to the start of the current atom.
@@ -185,8 +190,7 @@ std::optional<TextRange> sexp_backward(const SyntaxTree& tree, TextOffset from) 
 }
 
 std::optional<TextRange> enclosing_list(const SyntaxTree& tree, TextOffset offset) {
-    for (SyntaxNodeId id = tree.node_at(offset); id != kInvalidNode;
-         id = tree.node(id).parent) {
+    for (SyntaxNodeId id = tree.node_at(offset); id != kInvalidNode; id = tree.node(id).parent) {
         if (!is_group_kind(tree.node(id).kind)) {
             continue;
         }
@@ -205,8 +209,7 @@ std::optional<TextRange> expand_selection(const SyntaxTree& tree, TextRange rang
         // Seed: the non-trivia token at the position.
         const std::uint32_t i = token_at_or_after(tree, range.start);
         if (i < tokens.size() && !is_trivia(tokens[i].kind) &&
-            tokens[i].kind != TokenKind::EndOfFile &&
-            tokens[i].range.start <= range.start) {
+            tokens[i].kind != TokenKind::EndOfFile && tokens[i].range.start <= range.start) {
             return tokens[i].range;
         }
     }

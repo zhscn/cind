@@ -32,8 +32,7 @@ void check_normalized(const std::vector<TextEdit>& edits) {
 }
 
 // Index is LineIndex or Text (same line-query API).
-template <typename Index>
-void check_line_index(std::string_view text, const Index& index) {
+template <typename Index> void check_line_index(std::string_view text, const Index& index) {
     std::vector<std::uint32_t> starts{0};
     for (std::size_t i = 0; i < text.size(); ++i) {
         if (text[i] == '\n') {
@@ -151,7 +150,7 @@ TEST_CASE("edit folding keeps the list normalized") {
     }
     SUBCASE("replace spanning an earlier insertion merges") {
         auto tx = doc.begin_transaction();
-        tx.insert(TextOffset{5}, "XX"); // "01234XX56789"
+        tx.insert(TextOffset{5}, "XX");    // "01234XX56789"
         tx.replace(make_range(4, 9), "-"); // spans "4XX56"
         auto result = tx.commit();
         CHECK(doc.snapshot().content() == "0123-789");
@@ -160,9 +159,9 @@ TEST_CASE("edit folding keeps the list normalized") {
     }
     SUBCASE("erase across two earlier edits merges all three") {
         auto tx = doc.begin_transaction();
-        tx.insert(TextOffset{2}, "A");  // "01A23456789"
-        tx.insert(TextOffset{9}, "B");  // "01A234567B89"
-        tx.erase(make_range(1, 11));    // spans both, keeps "0" and the final "9"
+        tx.insert(TextOffset{2}, "A"); // "01A23456789"
+        tx.insert(TextOffset{9}, "B"); // "01A234567B89"
+        tx.erase(make_range(1, 11));   // spans both, keeps "0" and the final "9"
         auto result = tx.commit();
         CHECK(doc.snapshot().content() == "09");
         REQUIRE(result.change.edits.size() == 1);
@@ -356,8 +355,12 @@ TEST_CASE("undo tree: random walk matches per-node model") {
             node_text.push_back(std::move(cur));
             break;
         }
-        case 2: doc.undo(); break;
-        case 3: doc.redo(); break;
+        case 2:
+            doc.undo();
+            break;
+        case 3:
+            doc.redo();
+            break;
         default: { // undo_to a random known node
             const auto target = static_cast<UndoNodeId>(
                 rand_int(0, static_cast<std::uint32_t>(node_text.size() - 1)));

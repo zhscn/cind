@@ -16,8 +16,8 @@ void show(const EditSession& session) {
     if (!rendered.ends_with('\n')) {
         rendered += '\n';
     }
-    std::cout << "-- rev " << session.snapshot().revision() << " caret "
-              << session.caret().value << " --\n"
+    std::cout << "-- rev " << session.snapshot().revision() << " caret " << session.caret().value
+              << " --\n"
               << rendered;
 }
 
@@ -48,8 +48,7 @@ constexpr std::string_view kHelp = R"(commands:
 int run_repl(std::istream& in, std::string initial) {
     CaretText split = split_caret_marker(initial);
     EditSession session(std::move(split.text), CppIndentStyle{});
-    session.set_caret(TextOffset{
-        std::min(split.caret.value, session.snapshot().size_bytes())});
+    session.set_caret(TextOffset{std::min(split.caret.value, session.snapshot().size_bytes())});
 
     const bool interactive = isatty(fileno(stdin)) != 0;
     if (interactive) {
