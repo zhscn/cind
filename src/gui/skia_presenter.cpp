@@ -101,7 +101,6 @@ struct SkiaPresenter::Impl {
         font.getMetrics(&metrics);
         const SkScalar advance = font.measureText("M", 1, SkTextEncoding::kUTF8, nullptr, nullptr);
         cell_width = std::max(1, static_cast<int>(std::ceil(advance)));
-        baseline = std::max(1, static_cast<int>(std::ceil(-metrics.fAscent)));
         cell_height = std::max(
             1, static_cast<int>(std::ceil(metrics.fDescent - metrics.fAscent + metrics.fLeading)));
     }
@@ -192,7 +191,7 @@ struct SkiaPresenter::Impl {
                     }
                     continue;
                 }
-                draw_text(canvas, prim.text, x, top + static_cast<SkScalar>(baseline), paint);
+                draw_text(canvas, prim.text, x, top, paint);
             }
             canvas.restore();
         }
@@ -219,7 +218,6 @@ struct SkiaPresenter::Impl {
     std::unique_ptr<SkShaper> shaper;
     int cell_width = 1;
     int cell_height = 1;
-    int baseline = 1;
 };
 
 SkiaPresenter::SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme)

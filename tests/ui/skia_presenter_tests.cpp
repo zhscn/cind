@@ -105,3 +105,35 @@ TEST_CASE("Skia presenter paints semantic change-sign colors") {
     CHECK(pixel(2, presenter.cell_height() + middle) == theme.sign_modified);
     CHECK(pixel(2, presenter.cell_height() * 2 + 1) == theme.sign_deleted);
 }
+
+TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+
+    Scene scene;
+    scene.rows = 2;
+    scene.cols = 2;
+    scene.cursor_visible = false;
+    Region numbers{RegionRole::LineNumbers, {0, 0, 2, 2}, {}, SurfaceClass::Gutter};
+    numbers.prims.push_back({0, 0, "1", StyleClass::Gutter, false});
+    scene.regions = {numbers};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    presenter.render(scene, width, height, pixels.data(),
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t));
+
+    int first_row_ink = 0;
+    int second_row_ink = 0;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < presenter.cell_width(); ++x) {
+            if (pixels[static_cast<std::size_t>(y * width + x)] != theme.gutter_background) {
+                (y < presenter.cell_height() ? first_row_ink : second_row_ink) += 1;
+            }
+        }
+    }
+
+    CHECK(first_row_ink > 0);
+    CHECK(second_row_ink == 0);
+}
