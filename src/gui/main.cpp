@@ -526,6 +526,37 @@ private:
         };
     }
 
+    bool scene_cursor_uses_grid_offset(const ui::Scene& scene) const {
+        const int cursor_row = scene.cursor_row - 1;
+        const int cursor_col = scene.cursor_col - 1;
+        for (const ui::Region& region : scene.regions) {
+            const ui::Rect& rect = region.rect;
+            if (cursor_row >= rect.row && cursor_row < rect.row + rect.rows &&
+                cursor_col >= rect.col && cursor_col < rect.col + rect.cols) {
+                return region.vertical_anchor == ui::VerticalAnchor::Grid;
+            }
+        }
+        return true;
+    }
+
+    std::optional<SkiaLogicalRect> presented_cursor_rect(const ui::Scene& scene,
+                                                         const SkiaAnimationFrame& frame) const {
+        std::optional<SkiaLogicalPoint> position = frame.cursor_position;
+        if (!position) {
+            position = scene_cursor_position(scene);
+            if (position && frame.scroll_source && scene_cursor_uses_grid_offset(scene)) {
+                position->y += frame.target_grid_offset_y;
+            }
+        }
+        if (!position) {
+            return std::nullopt;
+        }
+        return SkiaLogicalRect{.x = position->x,
+                               .y = position->y,
+                               .width = 2.0F,
+                               .height = static_cast<float>(presenter_.cell_height())};
+    }
+
     void update_animation_targets(const ui::Scene& scene, float scroll_top, bool geometry_changed,
                                   AnimationClock::time_point now) {
         const std::optional<SkiaLogicalPoint> target_cursor = scene_cursor_position(scene);
@@ -687,6 +718,8 @@ private:
                                  editor_snapshot.viewport.top_line_offset;
         update_animation_targets(scene, scroll_top, geometry_changed, now);
         const AnimationPresentation animation = animation_presentation(now);
+        const std::optional<SkiaLogicalRect> current_cursor =
+            presented_cursor_rect(scene, animation.frame);
         const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
         std::vector<SkiaLogicalRect> logical_damage;
         if (animation.active) {
@@ -697,6 +730,7 @@ private:
         } else {
             logical_damage = presenter_.damage_rects(scene, scene_damage, logical_output_width_,
                                                      logical_output_height_);
+            append_cursor_transition_damage(logical_damage, presented_cursor_rect_, current_cursor);
         }
         const std::vector<PresentationDamageRect> damage =
             presentation_damage(logical_damage, pixel_width, pixel_height, scale);
@@ -754,6 +788,7 @@ private:
         }
         update_text_input_area(scene, {.width = pixel_width, .height = pixel_height}, scale);
         SDL_RenderPresent(renderer_.get());
+        presented_cursor_rect_ = current_cursor;
         rendered_scale_ = scale;
         publish_inspection(std::move(editor_snapshot), std::move(scene), pixel_width, pixel_height,
                            scale, render_diagnostics, scene_damage,
@@ -944,6 +979,7 @@ private:
     std::optional<ui::Scene> last_scene_;
     std::optional<float> last_scroll_top_;
     std::optional<SkiaLogicalPoint> last_cursor_target_;
+    std::optional<SkiaLogicalRect> presented_cursor_rect_;
     int texture_width_ = 0;
     int texture_height_ = 0;
     float rendered_scale_ = 0.0F;

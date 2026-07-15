@@ -423,3 +423,67 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
     CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.status_background);
     CHECK(pixel(width - 1, cell_height * 3 + cell_height / 2) == theme.echo_background);
 }
+
+TEST_CASE("Skia partial rendering clears a cancelled cursor animation position") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    SceneDamageTracker tracker;
+    const auto make_scene = [](int cursor_row, int cursor_col) {
+        Scene scene;
+        scene.rows = 8;
+        scene.cols = 20;
+        scene.cursor_row = cursor_row;
+        scene.cursor_col = cursor_col;
+        Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
+        body.prims.push_back({0, 0, "text", StyleClass::Text, false});
+        Region status{
+            RegionRole::StatusBar, {6, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+        Region echo{
+            RegionRole::EchoArea, {7, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+        scene.regions = {std::move(body), std::move(status), std::move(echo)};
+        return scene;
+    };
+
+    Scene scene = make_scene(4, 10);
+    const int cell_width = presenter.cell_width();
+    const int cell_height = presenter.cell_height();
+    const int width = cell_width * scene.cols;
+    const int height = cell_height * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+
+    REQUIRE(tracker.update(scene).full_repaint);
+    const SkiaLogicalRect interpolated_cursor{
+        .x = static_cast<float>(cell_width) / 2.0F,
+        .y = static_cast<float>(cell_height) / 2.0F,
+        .width = 2.0F,
+        .height = static_cast<float>(cell_height),
+    };
+    presenter.render_animated(scene,
+                              {.scroll_source = nullptr,
+                               .source_grid_offset_y = 0.0F,
+                               .target_grid_offset_y = 0.0F,
+                               .cursor_position = SkiaLogicalPoint{.x = interpolated_cursor.x,
+                                                                   .y = interpolated_cursor.y}},
+                              width, height, retained.data(), row_bytes);
+
+    scene = make_scene(5, 11);
+    const SceneDamage scene_damage = tracker.update(scene);
+    REQUIRE_FALSE(scene_damage.full_repaint);
+    std::vector<SkiaLogicalRect> damage = presenter.damage_rects(
+        scene, scene_damage, static_cast<float>(width), static_cast<float>(height));
+    const SkiaLogicalRect target_cursor{
+        .x = static_cast<float>((scene.cursor_col - 1) * cell_width),
+        .y = static_cast<float>((scene.cursor_row - 1) * cell_height),
+        .width = 2.0F,
+        .height = static_cast<float>(cell_height),
+    };
+    std::vector<std::uint32_t> incomplete = retained;
+    presenter.render_damage(scene, width, height, incomplete.data(), row_bytes, damage);
+    presenter.render(scene, width, height, reference.data(), row_bytes);
+    CHECK(incomplete != reference);
+
+    append_cursor_transition_damage(damage, interpolated_cursor, target_cursor);
+    presenter.render_damage(scene, width, height, retained.data(), row_bytes, damage);
+    CHECK(retained == reference);
+}

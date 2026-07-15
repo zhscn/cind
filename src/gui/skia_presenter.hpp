@@ -37,6 +37,13 @@ struct SkiaLogicalPoint {
     float y = 0.0F;
 };
 
+// Adds the previous and current cursor bounds when the presented cursor moves.
+// This bridges transient animation positions into a retained partial-render
+// frame, whose scene damage only knows cell-aligned logical cursor targets.
+void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
+                                     const std::optional<SkiaLogicalRect>& previous_cursor,
+                                     const std::optional<SkiaLogicalRect>& current_cursor);
+
 // Transient presentation state layered over a composed Scene. A scroll frame
 // paints the source and target grid layers at independent pixel offsets while
 // keeping bottom-anchored regions fixed. cursor_position replaces the Scene's

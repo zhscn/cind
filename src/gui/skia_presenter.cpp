@@ -139,6 +139,13 @@ void append_damage(std::vector<SkiaLogicalRect>& rectangles, SkiaLogicalRect inc
     rectangles.push_back(incoming);
 }
 
+bool same_rect(const SkiaLogicalRect& left, const SkiaLogicalRect& right) {
+    constexpr float tolerance = 0.01F;
+    return std::abs(left.x - right.x) < tolerance && std::abs(left.y - right.y) < tolerance &&
+           std::abs(left.width - right.width) < tolerance &&
+           std::abs(left.height - right.height) < tolerance;
+}
+
 struct PixelProbe {
     int left = 0;
     int top = 0;
@@ -218,6 +225,21 @@ std::optional<SkiaLogicalRect> changed_pixel_bounds(const PixelProbe& probe,
 }
 
 } // namespace
+
+void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
+                                     const std::optional<SkiaLogicalRect>& previous_cursor,
+                                     const std::optional<SkiaLogicalRect>& current_cursor) {
+    if ((!previous_cursor && !current_cursor) ||
+        (previous_cursor && current_cursor && same_rect(*previous_cursor, *current_cursor))) {
+        return;
+    }
+    if (previous_cursor) {
+        append_damage(damage, *previous_cursor);
+    }
+    if (current_cursor) {
+        append_damage(damage, *current_cursor);
+    }
+}
 
 struct SkiaPresenter::Impl {
     Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme)
