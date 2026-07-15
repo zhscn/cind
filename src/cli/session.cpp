@@ -109,6 +109,7 @@ IndentDecision EditSession::indent() {
     while (old_len < content.size() && (content[old_len] == ' ' || content[old_len] == '\t')) {
         ++old_len;
     }
+    const bool blank_line = old_len == content.size();
 
     const TextOffset before = caret_before;
     Document& document = mutable_document();
@@ -122,6 +123,12 @@ IndentDecision EditSession::indent() {
             set_caret(TextOffset{line_start.value + new_len});
         }
         record_caret(before);
+    } else if (blank_line && !decision.preserve) {
+        const TextOffset target{line_start.value +
+                                static_cast<std::uint32_t>(decision.indentation_text.size())};
+        if (caret_before != target) {
+            set_caret(target);
+        }
     }
     return decision;
 }
@@ -173,6 +180,8 @@ std::string EditSession::render_with_caret() const {
     return out;
 }
 
+// key/value order mirrors the textual `key: value` configuration contract.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool set_style_field(CppIndentStyle& style, std::string_view key, std::string_view value) {
     auto parse_int = [&](int& out) {
         auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), out);

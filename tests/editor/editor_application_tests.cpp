@@ -222,6 +222,24 @@ TEST_CASE("soft delete allows malformed literals and exposes raw deletion") {
     CHECK(unmatched_bracket.session().snapshot().content().to_string().empty());
 }
 
+TEST_CASE("Tab moves blank lines to their contextual indentation") {
+    EditorApplication empty = make_application("sample.cc", "void f() {\n\n}\n");
+    empty.session().set_caret(TextOffset{11});
+    send_keys(empty, "TAB");
+    CHECK(empty.session().snapshot().content().to_string() == "void f() {\n    \n}\n");
+    CHECK(empty.session().caret().value == 15);
+
+    EditorApplication indented = make_application("sample.cc", "void f() {\n    \n}\n");
+    indented.session().set_caret(TextOffset{11});
+    const RevisionId revision = indented.revision();
+    indented.hide_caret();
+    send_keys(indented, "TAB");
+    CHECK(indented.revision() == revision);
+    CHECK(indented.session().snapshot().content().to_string() == "void f() {\n    \n}\n");
+    CHECK(indented.session().caret().value == 15);
+    CHECK(indented.reveal_caret());
+}
+
 TEST_CASE("buffers retain independent document view and lifecycle state") {
     const std::filesystem::path directory =
         std::filesystem::temp_directory_path() /

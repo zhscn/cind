@@ -42,7 +42,9 @@ public:
     // For multi-byte input (a UTF-8 code point is one undo unit) and pastes.
     void insert_text(std::string_view text);
     EnterResult enter();
-    IndentDecision indent(); // reindent the caret's line
+    // Reindent the caret's line. On a blank line, the caret settles at the
+    // resulting indentation even when the document text is already correct.
+    IndentDecision indent();
     // Erases a range as one undo unit; the caret settles at range.start.
     void erase(TextRange range);
     bool undo();

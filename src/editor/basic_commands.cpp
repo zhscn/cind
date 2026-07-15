@@ -112,10 +112,14 @@ BasicEditorCommands::BasicEditorCommands(EditorRuntime& runtime, EditSessionReso
     });
     define("edit.indent", [this](ViewId view, const CommandInvocation&) {
         reset_preferred_column(view);
-        const RevisionId revision = session_(view).snapshot().revision();
-        const IndentDecision decision = session_(view).indent();
-        if (session_(view).snapshot().revision() != revision) {
+        EditSession& active = session_(view);
+        const RevisionId revision = active.snapshot().revision();
+        const TextOffset caret = active.caret();
+        const IndentDecision decision = active.indent();
+        if (active.snapshot().revision() != revision) {
             notify_edited();
+        } else if (active.caret() != caret) {
+            notify_caret_moved();
         }
         hooks_.show_message(std::format("indent: {}", format_role_name(decision.role)));
     });
