@@ -80,11 +80,18 @@ class Editor {
 public:
     Editor(const std::string& path, std::string initial, CppIndentStyle style,
            std::string style_origin, std::uint32_t initial_line)
-        : application_({.path = path,
+        : term_(),
+          application_({.path = path,
                         .initial_text = std::move(initial),
                         .style = style,
                         .style_origin = std::move(style_origin),
-                        .initial_line = initial_line}),
+                        .initial_line = initial_line,
+                        .platform_services = {.write_clipboard = [this](std::string_view text)
+                                                  -> std::expected<void, std::string> {
+                                                  term_.set_clipboard_text(text);
+                                                  return {};
+                                              },
+                                              .read_clipboard = {}}}),
           search_commands_(application_.search_commands()),
           command_loop_(application_.command_loop()), message_(application_.message()) {
         register_commands();
@@ -405,12 +412,11 @@ private:
         term_.flush();
     }
 
+    Terminal term_;
     EditorApplication application_;
     SearchCommands& search_commands_;
     CommandLoop& command_loop_;
     std::string& message_;
-    Terminal term_;
-
     ui::LineSigns signs_;
     BufferId signs_buffer_;
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);

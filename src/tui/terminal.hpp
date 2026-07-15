@@ -41,6 +41,11 @@ struct Key {
     bool control = false;
 };
 
+// OSC 52 requests the terminal emulator to place UTF-8 text in its system
+// clipboard. The payload is base64 encoded so terminal control bytes in the
+// selected text cannot escape the sequence.
+std::string osc52_copy_sequence(std::string_view text);
+
 // Raw-mode terminal (RAII): alternate screen, no echo, no canonical input,
 // no signal keys — Ctrl-C/Z/S reach the editor as ordinary keys. Restores
 // everything on destruction. Throws std::runtime_error when stdin/stdout is
@@ -58,6 +63,7 @@ public:
     // Buffered output: frames are composed off-screen and flushed as one
     // write to avoid tearing.
     void queue(std::string_view s) { out_ += s; }
+    void set_clipboard_text(std::string_view text) { queue(osc52_copy_sequence(text)); }
     void flush();
 
 private:

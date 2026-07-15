@@ -71,15 +71,19 @@ target_link_libraries(cind_editor
   PRIVATE cind_ui Threads::Threads
 )
 
+add_library(cind_tui_terminal STATIC
+  tui/terminal.cpp
+)
+target_include_directories(cind_tui_terminal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(indent-core
   cli/main.cpp
   cli/bench.cpp
   cli/fixture_runner.cpp
   cli/repl.cpp
-  tui/terminal.cpp
   tui/editor.cpp
 )
-target_link_libraries(indent-core PRIVATE cind_editor cind_ui)
+target_link_libraries(indent-core PRIVATE cind_editor cind_ui cind_tui_terminal)
 
 if (CIND_BUILD_GUI)
   find_package(SDL3 CONFIG REQUIRED)

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -21,12 +22,18 @@
 
 namespace cind {
 
+struct EditorPlatformServices {
+    std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
+    std::function<std::expected<std::string, std::string>()> read_clipboard;
+};
+
 struct EditorApplicationSpec {
     std::string path;
     std::string initial_text;
     CppIndentStyle style;
     std::string style_origin;
     std::uint32_t initial_line = 0;
+    EditorPlatformServices platform_services;
 };
 
 struct OpenBufferSnapshot {
@@ -134,6 +141,8 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();
+    std::optional<std::string> store_kill(std::string text);
+    std::optional<std::string> import_clipboard();
     void save();
     void mark_saved(BufferId buffer, Text content);
     void switch_relative(int delta);
@@ -168,6 +177,7 @@ private:
     std::string last_key_;
     std::string last_command_;
     std::string kill_slot_;
+    EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_armed_ = false;
     bool quit_ = false;

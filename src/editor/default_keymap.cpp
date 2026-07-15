@@ -59,6 +59,8 @@ constexpr std::array kBindings{
     Binding{"TAB", "edit.indent"},
     Binding{"Backspace", "edit.delete-backward"},
     Binding{"Delete", "edit.delete-forward"},
+    Binding{"C-u Backspace", "edit.delete-backward-raw"},
+    Binding{"C-u Delete", "edit.delete-forward-raw"},
     Binding{"Left", "cursor.backward-character"},
     Binding{"Right", "cursor.forward-character"},
     Binding{"Up", "cursor.previous-line"},

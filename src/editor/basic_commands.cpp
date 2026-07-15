@@ -1,6 +1,7 @@
 #include "editor/basic_commands.hpp"
 
 #include "editor/runtime.hpp"
+#include "syntax/structure.hpp"
 #include "ui/text_position.hpp"
 
 #include <algorithm>
@@ -84,6 +85,22 @@ BasicEditorCommands::BasicEditorCommands(EditorRuntime& runtime, EditSessionReso
         reset_preferred_column(view);
         const RevisionId revision = session_(view).snapshot().revision();
         soft_delete(view, true);
+        if (session_(view).snapshot().revision() != revision) {
+            notify_edited();
+        }
+    });
+    define("edit.delete-backward-raw", [this](ViewId view, const CommandInvocation&) {
+        reset_preferred_column(view);
+        const RevisionId revision = session_(view).snapshot().revision();
+        raw_delete(view, false);
+        if (session_(view).snapshot().revision() != revision) {
+            notify_edited();
+        }
+    });
+    define("edit.delete-forward-raw", [this](ViewId view, const CommandInvocation&) {
+        reset_preferred_column(view);
+        const RevisionId revision = session_(view).snapshot().revision();
+        raw_delete(view, true);
         if (session_(view).snapshot().revision() != revision) {
             notify_edited();
         }
@@ -172,31 +189,15 @@ void BasicEditorCommands::soft_delete(ViewId view, bool forward) {
     const char character = text.byte_at(target);
     auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
     auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
-    auto partner = [](char ch) {
-        switch (ch) {
-        case '(':
-            return ')';
-        case '[':
-            return ']';
-        case '{':
-            return '}';
-        case ')':
-            return '(';
-        case ']':
-            return '[';
-        default:
-            return '{';
-        }
-    };
     if (is_open(character) || is_close(character)) {
-        if (is_open(character) && target.value + 1 < text.size_bytes() &&
-            text.byte_at(TextOffset{target.value + 1}) == partner(character)) {
-            active.erase(TextRange{target, TextOffset{target.value + 2}});
+        const std::optional<TextRange> pair =
+            matching_bracket_range(active.analysis().tree, target);
+        if (!pair) {
+            raw_delete(view, forward);
             return;
         }
-        if (is_close(character) && target.value >= 1 &&
-            text.byte_at(TextOffset{target.value - 1}) == partner(character)) {
-            active.erase(TextRange{TextOffset{target.value - 1}, TextOffset{target.value + 1}});
+        if (pair->length() == 2) {
+            active.erase(*pair);
             return;
         }
         active.set_caret(forward ? TextOffset{target.value + 1} : target);
@@ -205,6 +206,36 @@ void BasicEditorCommands::soft_delete(ViewId view, bool forward) {
         return;
     }
     if (character == '"' || character == '\'') {
+        const TokenBuffer& tokens = active.analysis().tree.tokens();
+        std::size_t lo = 0;
+        std::size_t hi = tokens.size();
+        while (lo < hi) {
+            const std::size_t mid = lo + (hi - lo) / 2;
+            if (tokens[mid].range.end <= target) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < tokens.size()) {
+            const Token token = tokens[lo];
+            const bool literal = token.kind == TokenKind::StringLiteral ||
+                                 token.kind == TokenKind::RawStringLiteral ||
+                                 token.kind == TokenKind::CharacterLiteral;
+            TextOffset opening_quote = token.range.start;
+            while (opening_quote < token.range.end && text.byte_at(opening_quote) != character) {
+                ++opening_quote.value;
+            }
+            const bool delimiter =
+                target == opening_quote || target.value + 1 == token.range.end.value;
+            if (!literal || has_flag(token.flags, LexicalFlags::Unterminated) || !delimiter) {
+                raw_delete(view, forward);
+                return;
+            }
+        } else {
+            raw_delete(view, forward);
+            return;
+        }
         const char other =
             forward
                 ? (target.value >= 1 ? text.byte_at(TextOffset{target.value - 1}) : '\0')
@@ -218,6 +249,17 @@ void BasicEditorCommands::soft_delete(ViewId view, bool forward) {
         active.set_caret(forward ? TextOffset{target.value + 1} : target);
         hooks_.show_message("soft delete: literal not empty (moved over)");
         notify_caret_moved();
+        return;
+    }
+    raw_delete(view, forward);
+}
+
+void BasicEditorCommands::raw_delete(ViewId view, bool forward) {
+    EditSession& active = session_(view);
+    const DocumentSnapshot snapshot = active.snapshot();
+    const Text& text = snapshot.content();
+    const TextOffset caret = active.caret();
+    if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
         return;
     }
     active.erase(forward ? TextRange{caret, ui::next_grapheme(text, caret)}

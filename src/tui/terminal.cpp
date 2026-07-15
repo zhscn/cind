@@ -1,6 +1,8 @@
 #include "tui/terminal.hpp"
 
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 #include <sys/ioctl.h>
@@ -10,6 +12,42 @@ namespace cind::tui {
 
 namespace {
 constexpr int kEof = -2;
+constexpr std::string_view kBase64Alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+} // namespace
+
+std::string osc52_copy_sequence(std::string_view text) {
+    std::string sequence = "\x1b]52;c;";
+    sequence.reserve(sequence.size() + ((text.size() + 2) / 3) * 4 + 1);
+    std::size_t offset = 0;
+    while (offset + 3 <= text.size()) {
+        const std::uint32_t chunk =
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset])) << 16U) |
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset + 1])) << 8U) |
+            static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset + 2]));
+        sequence.push_back(kBase64Alphabet[(chunk >> 18U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[(chunk >> 12U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[(chunk >> 6U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[chunk & 0x3FU]);
+        offset += 3;
+    }
+    if (text.size() - offset == 1) {
+        const std::uint32_t chunk =
+            static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset])) << 16U;
+        sequence.push_back(kBase64Alphabet[(chunk >> 18U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[(chunk >> 12U) & 0x3FU]);
+        sequence += "==";
+    } else if (text.size() - offset == 2) {
+        const std::uint32_t chunk =
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset])) << 16U) |
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(text[offset + 1])) << 8U);
+        sequence.push_back(kBase64Alphabet[(chunk >> 18U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[(chunk >> 12U) & 0x3FU]);
+        sequence.push_back(kBase64Alphabet[(chunk >> 6U) & 0x3FU]);
+        sequence.push_back('=');
+    }
+    sequence.push_back('\a');
+    return sequence;
 }
 
 Terminal::Terminal() {

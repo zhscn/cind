@@ -12,12 +12,14 @@
 namespace cind::gui {
 
 EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle style,
-                         std::string style_origin, std::uint32_t initial_line)
+                         std::string style_origin, std::uint32_t initial_line,
+                         EditorPlatformServices platform_services)
     : application_({.path = std::move(path),
                     .initial_text = std::move(initial),
                     .style = style,
                     .style_origin = std::move(style_origin),
-                    .initial_line = initial_line}) {
+                    .initial_line = initial_line,
+                    .platform_services = std::move(platform_services)}) {
     application_.set_message("SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
 }
 

@@ -1,6 +1,7 @@
 #include "syntax/structure.hpp"
 
 #include <algorithm>
+#include <vector>
 
 namespace cind {
 
@@ -198,6 +199,55 @@ std::optional<TextRange> enclosing_list(const SyntaxTree& tree, TextOffset offse
         // Only a group we are strictly inside of (not sitting on its edge).
         if (range.start < offset && offset < range.end) {
             return range;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<TextRange> matching_bracket_range(const SyntaxTree& tree, TextOffset offset) {
+    const TokenBuffer& tokens = tree.tokens();
+    const std::uint32_t index = token_at_or_after(tree, offset);
+    if (index >= tokens.size()) {
+        return std::nullopt;
+    }
+    const Token delimiter = tokens[index];
+    if (delimiter.range.start != offset ||
+        (!is_open_bracket(delimiter.kind) && !is_close_bracket(delimiter.kind))) {
+        return std::nullopt;
+    }
+
+    if (is_open_bracket(delimiter.kind)) {
+        std::vector<TokenKind> openers;
+        for (std::uint32_t cursor = index; cursor < tokens.size(); ++cursor) {
+            const TokenKind kind = tokens[cursor].kind;
+            if (is_open_bracket(kind)) {
+                openers.push_back(kind);
+            } else if (is_close_bracket(kind)) {
+                if (openers.empty() || matching_close(openers.back()) != kind) {
+                    return std::nullopt;
+                }
+                openers.pop_back();
+                if (openers.empty()) {
+                    return TextRange{delimiter.range.start, tokens[cursor].range.end};
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::vector<TokenKind> closers;
+    for (std::uint32_t cursor = index + 1; cursor-- > 0;) {
+        const TokenKind kind = tokens[cursor].kind;
+        if (is_close_bracket(kind)) {
+            closers.push_back(kind);
+        } else if (is_open_bracket(kind)) {
+            if (closers.empty() || matching_close(kind) != closers.back()) {
+                return std::nullopt;
+            }
+            closers.pop_back();
+            if (closers.empty()) {
+                return TextRange{tokens[cursor].range.start, delimiter.range.end};
+            }
         }
     }
     return std::nullopt;

@@ -18,12 +18,14 @@ using namespace cind;
 
 namespace {
 
-EditorApplication make_application(std::string path, std::string initial) {
+EditorApplication make_application(std::string path, std::string initial,
+                                   EditorPlatformServices platform_services = {}) {
     return EditorApplication({.path = std::move(path),
                               .initial_text = std::move(initial),
                               .style = {},
                               .style_origin = "test",
-                              .initial_line = 0});
+                              .initial_line = 0,
+                              .platform_services = std::move(platform_services)});
 }
 
 void send_keys(EditorApplication& application, std::string_view notation) {
@@ -162,6 +164,62 @@ TEST_CASE("Emacs mark kill yank and structural commands are frontend independent
     application.session().set_caret(TextOffset{0});
     send_keys(application, "C-M-f");
     CHECK(application.session().caret().value == 3);
+}
+
+TEST_CASE("copy and kill commands synchronize with the platform clipboard") {
+    std::string clipboard;
+    EditorPlatformServices services{
+        .write_clipboard = [&clipboard](std::string_view text) -> std::expected<void, std::string> {
+            clipboard = text;
+            return {};
+        },
+        .read_clipboard = [&clipboard]() -> std::expected<std::string, std::string> {
+            return clipboard;
+        }};
+    EditorApplication application = make_application("sample.cc", "abc", std::move(services));
+
+    send_keys(application, "C-SPC C-f M-w");
+    CHECK(clipboard == "a");
+    CHECK(application.session().snapshot().content().to_string() == "abc");
+    send_keys(application, "C-y");
+    CHECK(application.session().snapshot().content().to_string() == "aabc");
+
+    application.session().set_caret(TextOffset{0});
+    send_keys(application, "C-SPC C-f C-w");
+    CHECK(clipboard == "a");
+    CHECK(application.session().snapshot().content().to_string() == "abc");
+}
+
+TEST_CASE("yank imports the platform clipboard when the internal kill slot is empty") {
+    EditorPlatformServices services{
+        .write_clipboard = {},
+        .read_clipboard = []() -> std::expected<std::string, std::string> { return "outside"; }};
+    EditorApplication application = make_application("sample.cc", "text", std::move(services));
+
+    send_keys(application, "C-y");
+    CHECK(application.session().snapshot().content().to_string() == "outsidetext");
+}
+
+TEST_CASE("soft delete allows malformed literals and exposes raw deletion") {
+    EditorApplication malformed = make_application("sample.cc", "#include \"foo\"\n\"");
+    malformed.session().set_caret(TextOffset{16});
+    send_keys(malformed, "Backspace");
+    CHECK(malformed.session().snapshot().content().to_string() == "#include \"foo\"\n");
+
+    EditorApplication balanced = make_application("sample.cc", "\"foo\"");
+    balanced.session().set_caret(TextOffset{5});
+    send_keys(balanced, "Backspace");
+    CHECK(balanced.session().snapshot().content().to_string() == "\"foo\"");
+    CHECK(balanced.session().caret().value == 4);
+
+    balanced.session().set_caret(TextOffset{5});
+    send_keys(balanced, "C-u Backspace");
+    CHECK(balanced.session().snapshot().content().to_string() == "\"foo");
+
+    EditorApplication unmatched_bracket = make_application("sample.cc", "(");
+    unmatched_bracket.session().set_caret(TextOffset{1});
+    send_keys(unmatched_bracket, "Backspace");
+    CHECK(unmatched_bracket.session().snapshot().content().to_string().empty());
 }
 
 TEST_CASE("buffers retain independent document view and lifecycle state") {

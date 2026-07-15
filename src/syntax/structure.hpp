@@ -21,6 +21,11 @@ std::optional<TextRange> sexp_backward(const SyntaxTree& tree, TextOffset from);
 // construct containing `offset`; nullopt at the top level.
 std::optional<TextRange> enclosing_list(const SyntaxTree& tree, TextOffset offset);
 
+// Full range of the properly nested bracket pair whose opening or closing
+// delimiter begins at `offset`. Returns nullopt for non-delimiters, unmatched
+// delimiters and crossing pairs.
+std::optional<TextRange> matching_bracket_range(const SyntaxTree& tree, TextOffset offset);
+
 // Next bigger syntactic range: token -> group interior -> whole group ->
 // parent node ... Used for expand-region. nullopt once the whole tree is
 // selected. An empty `range` seeds from the token/node at its position.

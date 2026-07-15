@@ -91,6 +91,24 @@ TEST_CASE("enclosing_list and expand_selection") {
     CHECK(c.slice(*sel).starts_with("g(a")); // statement / body level next
 }
 
+TEST_CASE("matching bracket range requires a properly nested pair") {
+    Ctx balanced("f(|[x])");
+    const std::optional<TextRange> pair = matching_bracket_range(balanced.tree, balanced.at);
+    REQUIRE(pair);
+    CHECK(balanced.slice(*pair) == "[x]");
+
+    Ctx closing("f([x]|)");
+    const std::optional<TextRange> reverse_pair = matching_bracket_range(closing.tree, closing.at);
+    REQUIRE(reverse_pair);
+    CHECK(closing.slice(*reverse_pair) == "([x])");
+
+    Ctx unmatched("f(|[x)");
+    CHECK_FALSE(matching_bracket_range(unmatched.tree, unmatched.at));
+
+    Ctx crossing("f(|[)]");
+    CHECK_FALSE(matching_bracket_range(crossing.tree, crossing.at));
+}
+
 TEST_CASE("soft_kill_end keeps balance") {
     // Units starting past the line end stay; the enclosing ')' is never
     // crossed even though the statement continues.

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -248,6 +249,10 @@ private:
 
 struct WindowDeleter {
     void operator()(SDL_Window* window) const { SDL_DestroyWindow(window); }
+};
+
+struct SdlMemoryDeleter {
+    void operator()(void* memory) const { SDL_free(memory); }
 };
 
 struct RendererDeleter {
@@ -972,9 +977,27 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
         style_origin = loaded->config_path.filename().string();
     }
 
-    EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line);
-    SkiaPresenter presenter;
     SdlRuntime runtime;
+    EditorPlatformServices platform_services{
+        .write_clipboard = [](std::string_view text) -> std::expected<void, std::string> {
+            const std::string owned(text);
+            if (!SDL_SetClipboardText(owned.c_str())) {
+                return std::unexpected(std::format("SDL_SetClipboardText: {}", SDL_GetError()));
+            }
+            return {};
+        },
+        .read_clipboard = []() -> std::expected<std::string, std::string> {
+            (void)SDL_ClearError();
+            const std::unique_ptr<char, SdlMemoryDeleter> text(SDL_GetClipboardText());
+            const std::string error(SDL_GetError());
+            if (text == nullptr || !error.empty()) {
+                return std::unexpected(std::format("SDL_GetClipboardText: {}", error));
+            }
+            return std::string(text.get());
+        }};
+    EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line,
+                       std::move(platform_services));
+    SkiaPresenter presenter;
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {

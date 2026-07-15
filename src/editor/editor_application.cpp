@@ -76,7 +76,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
               message_ = std::move(message);
               reveal_caret_ = true;
           }),
-      command_loop_(runtime_) {
+      command_loop_(runtime_), platform_services_(std::move(spec.platform_services)) {
     register_commands();
     register_interaction_providers();
 
@@ -523,10 +523,14 @@ void EditorApplication::register_commands() {
             message_ = "no active region";
             return;
         }
-        kill_slot_ = session().snapshot().substring(*selection);
+        const std::optional<std::string> clipboard_error =
+            store_kill(session().snapshot().substring(*selection));
         session().erase(*selection);
         active_buffer().selection_history.clear();
         after_edit();
+        if (clipboard_error) {
+            message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
+        }
     });
     define("edit.kill-line", [this](const CommandInvocation&) {
         const DocumentSnapshot snapshot = session().snapshot();
@@ -535,10 +539,13 @@ void EditorApplication::register_commands() {
         if (range.empty()) {
             return;
         }
-        kill_slot_ = snapshot.substring(range);
+        const std::optional<std::string> clipboard_error = store_kill(snapshot.substring(range));
         session().erase(range);
         active_buffer().selection_history.clear();
         after_edit();
+        if (clipboard_error) {
+            message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
+        }
     });
     define("edit.copy-region", [this](const CommandInvocation&) {
         const std::optional<TextRange> selection = session().selection();
@@ -546,14 +553,23 @@ void EditorApplication::register_commands() {
             message_ = "no active region";
             return;
         }
-        kill_slot_ = session().snapshot().substring(*selection);
+        const std::optional<std::string> clipboard_error =
+            store_kill(session().snapshot().substring(*selection));
         session().clear_selection();
-        message_ = "copied";
+        message_ = clipboard_error
+                       ? std::format("copied internally; clipboard: {}", *clipboard_error)
+                       : "copied";
     });
     define("edit.yank", [this](const CommandInvocation&) {
         if (kill_slot_.empty()) {
-            message_ = "kill ring is empty";
-            return;
+            if (const std::optional<std::string> clipboard_error = import_clipboard()) {
+                message_ = std::format("kill ring is empty; clipboard: {}", *clipboard_error);
+                return;
+            }
+            if (kill_slot_.empty()) {
+                message_ = "kill ring and clipboard are empty";
+                return;
+            }
         }
         session().insert_text(kill_slot_);
         after_edit();
@@ -830,6 +846,30 @@ void EditorApplication::after_edit() {
     quit_armed_ = false;
     message_.clear();
     reveal_caret_ = true;
+}
+
+std::optional<std::string> EditorApplication::store_kill(std::string text) {
+    kill_slot_ = std::move(text);
+    if (!platform_services_.write_clipboard) {
+        return std::nullopt;
+    }
+    std::expected<void, std::string> result = platform_services_.write_clipboard(kill_slot_);
+    if (!result) {
+        return std::move(result.error());
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> EditorApplication::import_clipboard() {
+    if (!platform_services_.read_clipboard) {
+        return std::nullopt;
+    }
+    std::expected<std::string, std::string> result = platform_services_.read_clipboard();
+    if (!result) {
+        return std::move(result.error());
+    }
+    kill_slot_ = std::move(*result);
+    return std::nullopt;
 }
 
 void EditorApplication::save() {

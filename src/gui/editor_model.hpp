@@ -15,7 +15,8 @@ namespace cind::gui {
 class EditorModel {
 public:
     EditorModel(std::string path, std::string initial, CppIndentStyle style,
-                std::string style_origin, std::uint32_t initial_line);
+                std::string style_origin, std::uint32_t initial_line,
+                EditorPlatformServices platform_services = {});
 
     ui::Scene compose(int rows, int columns, float visible_text_rows = 0.0F);
     bool handle_key(KeyStroke key, int page_rows);

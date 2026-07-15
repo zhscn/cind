@@ -32,6 +32,7 @@ private:
     void move_vertical(ViewId view, int direction, bool page, const CommandInvocation& invocation);
     void move_line_boundary(ViewId view, bool end);
     void soft_delete(ViewId view, bool forward);
+    void raw_delete(ViewId view, bool forward);
     void notify_edited();
     void notify_caret_moved();
 
