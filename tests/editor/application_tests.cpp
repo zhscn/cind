@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/runtime.hpp"
 
@@ -221,7 +222,7 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
             auto transaction = context.buffer().begin_transaction();
             transaction.insert(context.runtime().views().caret(context.view_id()), text);
             transaction.commit();
-            return std::nullopt;
+            return CommandCompleted{};
         });
 
     CommandContext context(runtime, buffer, first);
@@ -242,4 +243,110 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
                                   .repeat_count = std::nullopt});
         }(),
         std::logic_error);
+}
+
+TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "keys",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    CommandContext context(runtime, buffer, view);
+
+    int base_calls = 0;
+    std::optional<std::int64_t> received_repeat;
+    const CommandId base = runtime.commands().define(
+        "base.command", [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
+            ++base_calls;
+            received_repeat = invocation.repeat_count;
+            return CommandCompleted{};
+        });
+    int local_calls = 0;
+    const CommandId local = runtime.commands().define(
+        "local.command", [&](CommandContext&, const CommandInvocation&) -> CommandResult {
+            ++local_calls;
+            return CommandCompleted{};
+        });
+
+    const KeymapId local_map = runtime.keymaps().define("local");
+    const KeymapId base_map = runtime.keymaps().define("base");
+    runtime.keymaps().bind(base_map, "C-x C-f", base);
+    runtime.keymaps().bind(base_map, "C-a", base);
+    runtime.keymaps().bind(local_map, "C-a", local);
+
+    CommandLoop loop(runtime);
+    loop.set_keymaps({local_map, base_map});
+    const KeySequence chord = *parse_key_sequence("C-x C-f");
+    CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
+    loop.set_repeat_count(4);
+    const CommandLoopResult chord_result = loop.dispatch(chord[1], context);
+    CHECK(chord_result.status == CommandLoopStatus::Executed);
+    CHECK(chord_result.key_sequence == "C-x C-f");
+    CHECK(base_calls == 1);
+    CHECK(received_repeat == 4);
+
+    const KeyStroke control_a = parse_key_sequence("C-a")->front();
+    CHECK(loop.dispatch(control_a, context).status == CommandLoopStatus::Executed);
+    CHECK(local_calls == 1);
+    CHECK(base_calls == 1);
+
+    runtime.keymaps().bind(local_map, "C-x C-l", local);
+    CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
+    CHECK(loop.pending_keymap() == local_map);
+    const CommandLoopResult masked = loop.dispatch(chord[1], context);
+    CHECK(masked.status == CommandLoopStatus::NotHandled);
+    CHECK(masked.consumed);
+    CHECK(local_calls == 1);
+    CHECK(base_calls == 1);
+
+    CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-x", local), std::invalid_argument);
+    CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-a C-b", local), std::invalid_argument);
+}
+
+TEST_CASE("command loop owns non-blocking minibuffer input") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "prompt",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    CommandContext context(runtime, buffer, view);
+
+    std::string submitted;
+    const CommandId accept = runtime.commands().define(
+        "prompt.accept",
+        [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
+            REQUIRE(invocation.arguments.size() == 1);
+            submitted = std::get<std::string>(invocation.arguments.front());
+            return CommandCompleted{};
+        });
+    const CommandId start = runtime.commands().define(
+        "prompt.start", [accept](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return MinibufferRequest{.prompt = "find: ",
+                                     .initial_input = "needle",
+                                     .history = "search",
+                                     .completion_provider = "buffer-text",
+                                     .accept_command = accept,
+                                     .arguments = {}};
+        });
+    const KeymapId keymap = runtime.keymaps().define("prompt-test");
+    runtime.keymaps().bind(keymap, "C-f", start);
+
+    CommandLoop loop(runtime);
+    loop.set_keymaps({keymap});
+    const CommandLoopResult started = loop.dispatch(parse_key_sequence("C-f")->front(), context);
+    CHECK(started.status == CommandLoopStatus::AwaitingInput);
+    REQUIRE(loop.minibuffer() != nullptr);
+    CHECK(loop.minibuffer()->input == "needle");
+
+    loop.minibuffer_insert("é");
+    CHECK(loop.minibuffer_erase_backward());
+    CHECK(loop.minibuffer()->input == "needle");
+    loop.minibuffer_insert("-next");
+    CHECK(loop.submit_minibuffer(context).status == CommandLoopStatus::Executed);
+    CHECK(submitted == "needle-next");
+    CHECK_FALSE(loop.minibuffer_active());
 }

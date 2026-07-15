@@ -45,7 +45,10 @@ target_link_libraries(cind_indent PUBLIC cind_syntax)
 add_library(cind_application STATIC
   editor/buffer.cpp
   editor/command.cpp
+  editor/command_loop.cpp
   editor/cpp_mode.cpp
+  editor/default_keymap.cpp
+  editor/keymap.cpp
   editor/language.cpp
   editor/mode.cpp
   editor/project.cpp
@@ -58,6 +61,8 @@ target_link_libraries(cind_application PUBLIC cind_document)
 add_library(cind_editor STATIC
   cli/session.cpp
   cli/style_loader.cpp
+  editor/basic_commands.cpp
+  editor/search_commands.cpp
 )
 target_link_libraries(cind_editor PUBLIC cind_indent cind_application)
 

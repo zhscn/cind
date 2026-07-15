@@ -1,6 +1,9 @@
 #pragma once
 
 #include "cli/session.hpp"
+#include "editor/basic_commands.hpp"
+#include "editor/command_loop.hpp"
+#include "editor/search_commands.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "gui/editor_state.hpp"
 #include "ui/editor_scene.hpp"
@@ -15,44 +18,13 @@
 
 namespace cind::gui {
 
-enum class EditorKey : std::uint8_t {
-    Unknown,
-    A,
-    E,
-    N,
-    P,
-    Q,
-    R,
-    S,
-    V,
-    Z,
-    Left,
-    Right,
-    Up,
-    Down,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Backspace,
-    Delete,
-    Enter,
-    Tab,
-};
-
-struct KeyModifiers {
-    bool control = false;
-    bool alt = false;
-    bool shift = false;
-};
-
 class EditorModel {
 public:
     EditorModel(std::string path, std::string initial, CppIndentStyle style,
                 std::string style_origin, std::uint32_t initial_line);
 
     ui::Scene compose(int rows, int columns);
-    bool handle_key(EditorKey key, KeyModifiers modifiers, int page_rows);
+    bool handle_key(KeyStroke key, int page_rows);
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);
     void click(ui::CellPoint point);
@@ -72,16 +44,19 @@ private:
     const ui::LineSigns& signs();
     void after_edit();
     void save();
-    void move_horizontal(bool forward);
-    void move_vertical(int delta);
-    void move_home();
-    void move_end();
-    void erase_grapheme(bool forward);
+    void register_commands();
+    bool handle_loop_result(const CommandLoopResult& result);
+    CommandContext command_context() { return CommandContext(runtime_, buffer_id_, view_id_); }
 
     EditorRuntime runtime_;
     BufferId buffer_id_;
     ViewId view_id_;
     EditSession session_;
+    BasicEditorCommands basic_commands_;
+    SearchCommands search_commands_;
+    CommandLoop command_loop_;
+    KeymapId keymap_;
+    int command_page_rows_ = 1;
     std::string style_origin_;
     ui::LineSigns signs_;
     RevisionId sign_revision_ = static_cast<RevisionId>(-1);
@@ -92,6 +67,7 @@ private:
     std::string message_;
     std::string preedit_;
     std::string last_key_;
+    std::string last_command_;
     bool quit_armed_ = false;
     bool quit_ = false;
 

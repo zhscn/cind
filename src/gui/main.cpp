@@ -138,60 +138,62 @@ presentation_damage(std::span<const SkiaLogicalRect> logical_rects, int pixel_wi
     return result;
 }
 
-EditorKey editor_key(SDL_Scancode scancode) {
-    switch (scancode) {
-    case SDL_SCANCODE_A:
-        return EditorKey::A;
-    case SDL_SCANCODE_E:
-        return EditorKey::E;
-    case SDL_SCANCODE_N:
-        return EditorKey::N;
-    case SDL_SCANCODE_P:
-        return EditorKey::P;
-    case SDL_SCANCODE_Q:
-        return EditorKey::Q;
-    case SDL_SCANCODE_R:
-        return EditorKey::R;
-    case SDL_SCANCODE_S:
-        return EditorKey::S;
-    case SDL_SCANCODE_V:
-        return EditorKey::V;
-    case SDL_SCANCODE_Z:
-        return EditorKey::Z;
-    case SDL_SCANCODE_LEFT:
-        return EditorKey::Left;
-    case SDL_SCANCODE_RIGHT:
-        return EditorKey::Right;
-    case SDL_SCANCODE_UP:
-        return EditorKey::Up;
-    case SDL_SCANCODE_DOWN:
-        return EditorKey::Down;
-    case SDL_SCANCODE_HOME:
-        return EditorKey::Home;
-    case SDL_SCANCODE_END:
-        return EditorKey::End;
-    case SDL_SCANCODE_PAGEUP:
-        return EditorKey::PageUp;
-    case SDL_SCANCODE_PAGEDOWN:
-        return EditorKey::PageDown;
-    case SDL_SCANCODE_BACKSPACE:
-        return EditorKey::Backspace;
-    case SDL_SCANCODE_DELETE:
-        return EditorKey::Delete;
-    case SDL_SCANCODE_RETURN:
-    case SDL_SCANCODE_KP_ENTER:
-        return EditorKey::Enter;
-    case SDL_SCANCODE_TAB:
-        return EditorKey::Tab;
-    default:
-        return EditorKey::Unknown;
+KeyModifiers key_modifiers(SDL_Keymod modifiers) {
+    KeyModifiers result;
+    if ((modifiers & SDL_KMOD_CTRL) != 0) {
+        result |= KeyModifier::Control;
     }
+    if ((modifiers & SDL_KMOD_ALT) != 0) {
+        result |= KeyModifier::Alt;
+    }
+    if ((modifiers & SDL_KMOD_SHIFT) != 0) {
+        result |= KeyModifier::Shift;
+    }
+    if ((modifiers & SDL_KMOD_GUI) != 0) {
+        result |= KeyModifier::Super;
+    }
+    return result;
 }
 
-KeyModifiers key_modifiers(SDL_Keymod modifiers) {
-    return {.control = (modifiers & SDL_KMOD_CTRL) != 0,
-            .alt = (modifiers & SDL_KMOD_ALT) != 0,
-            .shift = (modifiers & SDL_KMOD_SHIFT) != 0};
+std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers) {
+    const KeyModifiers mods = key_modifiers(modifiers);
+    if (scancode >= SDL_SCANCODE_A && scancode <= SDL_SCANCODE_Z) {
+        const char32_t character = U'a' + static_cast<char32_t>(scancode - SDL_SCANCODE_A);
+        return KeyStroke::character_key(character, mods);
+    }
+    switch (scancode) {
+    case SDL_SCANCODE_LEFT:
+        return KeyStroke::named(KeyCode::Left, mods);
+    case SDL_SCANCODE_RIGHT:
+        return KeyStroke::named(KeyCode::Right, mods);
+    case SDL_SCANCODE_UP:
+        return KeyStroke::named(KeyCode::Up, mods);
+    case SDL_SCANCODE_DOWN:
+        return KeyStroke::named(KeyCode::Down, mods);
+    case SDL_SCANCODE_HOME:
+        return KeyStroke::named(KeyCode::Home, mods);
+    case SDL_SCANCODE_END:
+        return KeyStroke::named(KeyCode::End, mods);
+    case SDL_SCANCODE_PAGEUP:
+        return KeyStroke::named(KeyCode::PageUp, mods);
+    case SDL_SCANCODE_PAGEDOWN:
+        return KeyStroke::named(KeyCode::PageDown, mods);
+    case SDL_SCANCODE_BACKSPACE:
+        return KeyStroke::named(KeyCode::Backspace, mods);
+    case SDL_SCANCODE_DELETE:
+        return KeyStroke::named(KeyCode::Delete, mods);
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        return KeyStroke::named(KeyCode::Enter, mods);
+    case SDL_SCANCODE_TAB:
+        return KeyStroke::named(KeyCode::Tab, mods);
+    case SDL_SCANCODE_ESCAPE:
+        return KeyStroke::named(KeyCode::Escape, mods);
+    case SDL_SCANCODE_SPACE:
+        return KeyStroke::character_key(U' ', mods);
+    default:
+        return std::nullopt;
+    }
 }
 
 class SdlRuntime {
@@ -345,8 +347,8 @@ private:
             return {true, true};
         case SDL_EVENT_KEY_DOWN: {
             const int page_rows = std::max(1, rows_ - 2);
-            const bool handled = editor_.handle_key(editor_key(event.key.scancode),
-                                                    key_modifiers(event.key.mod), page_rows);
+            const std::optional<KeyStroke> key = editor_key(event.key.scancode, event.key.mod);
+            const bool handled = key && editor_.handle_key(*key, page_rows);
             return {handled, handled};
         }
         case SDL_EVENT_TEXT_INPUT:

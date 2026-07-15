@@ -43,6 +43,12 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .message = "",
         .preedit = "",
         .last_key = "text",
+        .command_loop = {.keymaps = {"editor.default"},
+                         .pending_keys = "C-x",
+                         .pending_keymap = "editor.default",
+                         .repeat_count = 4,
+                         .last_command = "edit.insert",
+                         .minibuffer = {}},
     };
     Scene scene;
     scene.rows = 2;
@@ -117,7 +123,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":5") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":6") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -127,11 +133,17 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"cell_bounds\":{\"x\":0") != std::string::npos);
     CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
+    CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
+    CHECK(snapshot.find("\"pending_keymap\":\"editor.default\"") != std::string::npos);
     CHECK(snapshot.find("\"violations\":[]") != std::string::npos);
 
     const InspectionResponse caret = run_inspection_query(hub, "get editor.caret");
     REQUIRE(caret.ok);
     CHECK(caret.payload == "{\"byte\":3,\"line\":0,\"byte_column\":3,\"display_column\":3}");
+
+    const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");
+    REQUIRE(command_loop.ok);
+    CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
 
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);

@@ -4,7 +4,11 @@
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "cpp_lexer/lexer.hpp"
+#include "editor/basic_commands.hpp"
+#include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
+#include "editor/default_keymap.hpp"
+#include "editor/search_commands.hpp"
 #include "syntax/structure.hpp"
 #include "tui/terminal.hpp"
 #include "ui/ansi_renderer.hpp"
@@ -88,13 +92,79 @@ std::string describe_key(const Key& key) {
     return {};
 }
 
+std::optional<KeyStroke> normalize_key(const Key& key) {
+    switch (key.kind) {
+    case KeyKind::Ctrl:
+        return KeyStroke::character_key(static_cast<unsigned char>(key.ch), KeyModifier::Control);
+    case KeyKind::Alt: {
+        KeyModifiers modifiers = KeyModifier::Alt;
+        char character = key.ch;
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+            modifiers |= KeyModifier::Shift;
+        }
+        return KeyStroke::character_key(static_cast<unsigned char>(character), modifiers);
+    }
+    case KeyKind::Enter:
+        return KeyStroke::named(KeyCode::Enter);
+    case KeyKind::Tab:
+        return KeyStroke::named(KeyCode::Tab);
+    case KeyKind::Backspace:
+        return KeyStroke::named(KeyCode::Backspace);
+    case KeyKind::Delete:
+        return KeyStroke::named(KeyCode::Delete);
+    case KeyKind::Up:
+        return KeyStroke::named(KeyCode::Up);
+    case KeyKind::Down:
+        return KeyStroke::named(KeyCode::Down);
+    case KeyKind::Left:
+        return KeyStroke::named(KeyCode::Left);
+    case KeyKind::Right:
+        return KeyStroke::named(KeyCode::Right);
+    case KeyKind::Home:
+        return KeyStroke::named(KeyCode::Home);
+    case KeyKind::End:
+        return KeyStroke::named(KeyCode::End);
+    case KeyKind::PageUp:
+        return KeyStroke::named(KeyCode::PageUp);
+    case KeyKind::PageDown:
+        return KeyStroke::named(KeyCode::PageDown);
+    case KeyKind::Escape:
+        return KeyStroke::named(KeyCode::Escape);
+    case KeyKind::Char:
+    case KeyKind::Eof:
+    case KeyKind::None:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 class Editor {
 public:
     Editor(const std::string& path, std::string initial, CppIndentStyle style,
            std::string style_origin, std::uint32_t initial_line)
         : buffer_id_(create_file_buffer(runtime_, path, std::move(initial))),
           view_id_(runtime_.views().create(buffer_id_)),
-          session_(runtime_, buffer_id_, view_id_, style), style_origin_(std::move(style_origin)) {
+          session_(runtime_, buffer_id_, view_id_, style),
+          basic_commands_(runtime_, session_,
+                          {.page_rows = [this] { return text_rows(); },
+                           .show_message =
+                               [this](std::string message) {
+                                   message_ = std::move(message);
+                                   command_keep_message_ = true;
+                               },
+                           .edited = {},
+                           .caret_moved = {}}),
+          search_commands_(runtime_, session_,
+                           [this](std::string message) {
+                               message_ = std::move(message);
+                               command_keep_message_ = true;
+                           }),
+          command_loop_(runtime_), style_origin_(std::move(style_origin)) {
+        register_commands();
+        keymap_ = runtime_.keymaps().define("editor.default");
+        (void)bind_default_editor_keys(runtime_, keymap_);
+        command_loop_.set_keymaps({keymap_});
         const DocumentSnapshot snap = session_.snapshot();
         const Text& text = snap.content();
         message_ = std::format("read {} lines", reported_lines(text));
@@ -124,111 +194,99 @@ private:
 
     int tab_width() const { return session_.style().tab_width; }
 
-    // ---- caret movement ---------------------------------------------------
-
-    void move_vertical(int delta) {
-        const DocumentSnapshot snap_keepalive = session_.snapshot();
-        const Text& text = snap_keepalive.content();
-        const LinePosition pos = text.position(session_.caret());
-        if (goal_col_ < 0) {
-            goal_col_ = ui::display_column(text, session_.caret(), tab_width());
-        }
-        const auto line_count = static_cast<int>(text.line_count());
-        const int target = std::clamp(static_cast<int>(pos.line) + delta, 0, line_count - 1);
-        session_.set_caret(ui::offset_at_display_column(
-            text, {.line = static_cast<std::uint32_t>(target), .column = goal_col_}, tab_width()));
-    }
-
     // ---- editing ----------------------------------------------------------
 
     void handle_key(const Key& key) {
-        const DocumentSnapshot snap_keepalive = session_.snapshot();
-        const Text& text = snap_keepalive.content();
-        const TextOffset caret = session_.caret();
         const RevisionId rev_before = session_.snapshot().revision();
-        bool keep_goal = false;
-        bool keep_message = false;
+        command_keep_message_ = false;
         if (std::string caption = describe_key(key); !caption.empty()) {
             last_key_ = std::move(caption);
         }
 
-        switch (key.kind) {
-        case KeyKind::Char:
+        if (command_loop_.minibuffer_active()) {
+            CommandContext context(runtime_, buffer_id_, view_id_);
+            CommandLoopResult result;
+            if (key.kind == KeyKind::Char) {
+                command_loop_.minibuffer_insert(key.text);
+                command_keep_message_ = true;
+            } else if (key.kind == KeyKind::Backspace) {
+                (void)command_loop_.minibuffer_erase_backward();
+                command_keep_message_ = true;
+            } else if (key.kind == KeyKind::Enter) {
+                result = command_loop_.submit_minibuffer(context);
+            } else if (key.kind == KeyKind::Escape ||
+                       (key.kind == KeyKind::Ctrl && key.ch == 'g')) {
+                result = command_loop_.cancel_minibuffer();
+            }
+            if (!result.message.empty()) {
+                message_ = result.message;
+                command_keep_message_ = true;
+            }
+        } else if (key.kind == KeyKind::Char) {
+            basic_commands_.reset_preferred_column();
             if (key.text.size() == 1) {
                 session_.type_text(key.text); // full typed-char pipeline
             } else {
                 session_.insert_text(key.text); // one undo unit per code point
             }
-            break;
-        case KeyKind::Enter:
-            session_.enter();
-            break;
-        case KeyKind::Tab: {
-            IndentDecision decision = session_.indent();
-            message_ = std::format("indent: {}", format_role_name(decision.role));
-            keep_message = true;
-            break;
-        }
-        case KeyKind::Backspace:
-            soft_delete(false);
-            break;
-        case KeyKind::Delete:
-            soft_delete(true);
-            break;
-        case KeyKind::Left:
-            session_.set_caret(ui::previous_grapheme(text, caret));
-            break;
-        case KeyKind::Right:
-            session_.set_caret(ui::next_grapheme(text, caret));
-            break;
-        case KeyKind::Up:
-            move_vertical(-1);
-            keep_goal = true;
-            break;
-        case KeyKind::Down:
-            move_vertical(1);
-            keep_goal = true;
-            break;
-        case KeyKind::PageUp:
-            move_vertical(-text_rows());
-            keep_goal = true;
-            break;
-        case KeyKind::PageDown:
-            move_vertical(text_rows());
-            keep_goal = true;
-            break;
-        case KeyKind::Home:
-            session_.set_caret(text.line_start(text.position(caret).line));
-            break;
-        case KeyKind::End:
-            session_.set_caret(text.line_content_end(text.position(caret).line));
-            break;
-        case KeyKind::Ctrl:
-            handle_ctrl(key.ch, keep_message);
-            break;
-        case KeyKind::Alt:
-            handle_alt(key.ch, keep_message);
-            break;
-        case KeyKind::Eof:
+        } else if (key.kind == KeyKind::Eof) {
             quit_ = true;
-            break;
-        case KeyKind::Escape:
-        case KeyKind::None:
-            keep_message = true;
-            break;
+        } else if (const std::optional<KeyStroke> stroke = normalize_key(key)) {
+            CommandContext context(runtime_, buffer_id_, view_id_);
+            const CommandLoopResult result = command_loop_.dispatch(*stroke, context);
+            if (result.status == CommandLoopStatus::Prefix ||
+                result.status == CommandLoopStatus::Error ||
+                result.status == CommandLoopStatus::Disabled ||
+                (result.status == CommandLoopStatus::NotHandled && result.consumed)) {
+                if (!result.message.empty()) {
+                    message_ = result.message;
+                }
+                command_keep_message_ = true;
+            }
+        } else {
+            command_keep_message_ = true;
         }
 
-        if (!keep_goal && !keep_vertical_goal_) {
-            goal_col_ = -1;
-        }
-        keep_vertical_goal_ = false;
-        if (!keep_message) {
+        if (!command_keep_message_) {
             message_.clear();
         }
         if (session_.snapshot().revision() != rev_before) {
             session_.clear_selection(); // edits invalidate the selection
             expand_stack_.clear();
         }
+    }
+
+    void register_commands() {
+        auto define = [this](std::string name, auto execute) {
+            runtime_.commands().define(
+                std::move(name),
+                [execute = std::move(execute)](CommandContext&,
+                                               const CommandInvocation&) mutable -> CommandResult {
+                    execute();
+                    return CommandCompleted{};
+                });
+        };
+
+        define("application.quit", [this] { handle_ctrl('q', command_keep_message_); });
+        define("file.save", [this] { handle_ctrl('s', command_keep_message_); });
+        define("file.save-as", [this] { handle_ctrl('o', command_keep_message_); });
+        define("editor.position", [this] { handle_ctrl('c', command_keep_message_); });
+        define("keyboard.quit", [this] { handle_ctrl('g', command_keep_message_); });
+        define("selection.toggle-mark", [this] { handle_ctrl(' ', command_keep_message_); });
+        define("edit.kill-region", [this] { handle_ctrl('w', command_keep_message_); });
+        define("edit.kill-line", [this] { handle_ctrl('k', command_keep_message_); });
+        define("edit.yank", [this] { handle_ctrl('y', command_keep_message_); });
+        define("editor.redraw", [this] { handle_ctrl('l', command_keep_message_); });
+
+        define("cursor.forward-expression", [this] { handle_alt('f', command_keep_message_); });
+        define("cursor.backward-expression", [this] { handle_alt('b', command_keep_message_); });
+        define("cursor.up-list", [this] { handle_alt('u', command_keep_message_); });
+        define("selection.expand", [this] { handle_alt('h', command_keep_message_); });
+        define("selection.contract", [this] { handle_alt('j', command_keep_message_); });
+        define("edit.copy-region", [this] { handle_alt('w', command_keep_message_); });
+        define("cursor.goto-line", [this] { handle_alt('g', command_keep_message_); });
+        define("search.replace", [this] { handle_alt('%', command_keep_message_); });
+        define("help.keys", [this] { handle_alt('?', command_keep_message_); });
     }
 
     std::optional<TextRange> selection() const { return session_.selection(); }
@@ -240,6 +298,7 @@ private:
 
     // puni-style structural commands over the CST.
     void handle_alt(char ch, bool& keep_message) {
+        basic_commands_.reset_preferred_column();
         keep_message = true;
         const DocumentSnapshot snap = session_.snapshot();
         const SyntaxTree& tree = session_.analysis().tree;
@@ -289,10 +348,10 @@ private:
             command_goto_line();
             break;
         case 'n':
-            search_move(last_search_, true);
+            (void)search_commands_.move(true);
             break;
         case 'p':
-            search_move(last_search_, false);
+            (void)search_commands_.move(false);
             break;
         case '%':
             command_replace();
@@ -300,82 +359,14 @@ private:
         case '?':
             show_help();
             break;
-        case 'v':
-            move_vertical(-text_rows());
-            keep_vertical_goal_ = true;
-            break;
         default:
             message_.clear();
             break;
         }
     }
 
-    // Soft deletion: bracket pairs and literal quotes are only deleted when
-    // the pair is empty; otherwise the caret moves across the delimiter.
-    void soft_delete(bool forward) {
-        const DocumentSnapshot snap = session_.snapshot();
-        const Text& text = snap.content();
-        const TextOffset caret = session_.caret();
-        if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
-            return;
-        }
-        const TextOffset target = forward ? caret : ui::previous_grapheme(text, caret);
-        const char c = text.byte_at(target);
-        auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
-        auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
-        auto partner = [](char ch) {
-            switch (ch) {
-            case '(':
-                return ')';
-            case '[':
-                return ']';
-            case '{':
-                return '}';
-            case ')':
-                return '(';
-            case ']':
-                return '[';
-            default:
-                return '{';
-            }
-        };
-        if (is_open(c) || is_close(c)) {
-            // Empty adjacent pair: delete both. Otherwise step over.
-            if (is_open(c) && target.value + 1 < text.size_bytes() &&
-                text.byte_at(TextOffset{target.value + 1}) == partner(c)) {
-                session_.erase(TextRange{target, TextOffset{target.value + 2}});
-                return;
-            }
-            if (is_close(c) && target.value >= 1 &&
-                text.byte_at(TextOffset{target.value - 1}) == partner(c)) {
-                session_.erase(
-                    TextRange{TextOffset{target.value - 1}, TextOffset{target.value + 1}});
-                return;
-            }
-            session_.set_caret(forward ? TextOffset{target.value + 1} : target);
-            message_ = "soft delete: pair not empty (moved over)";
-            return;
-        }
-        if (c == '"' || c == '\'') {
-            const char other =
-                forward ? (target.value >= 1 ? text.byte_at(TextOffset{target.value - 1}) : '\0')
-                        : (target.value + 1 < text.size_bytes()
-                               ? text.byte_at(TextOffset{target.value + 1})
-                               : '\0');
-            if (other == c) { // empty literal: delete both quotes
-                const std::uint32_t lo = forward ? target.value - 1 : target.value;
-                session_.erase(make_range(lo, lo + 2));
-                return;
-            }
-            session_.set_caret(forward ? TextOffset{target.value + 1} : target);
-            message_ = "soft delete: literal not empty (moved over)";
-            return;
-        }
-        session_.erase(forward ? TextRange{caret, ui::next_grapheme(text, caret)}
-                               : TextRange{ui::previous_grapheme(text, caret), caret});
-    }
-
     void handle_ctrl(char ch, bool& keep_message) {
+        basic_commands_.reset_preferred_column();
         keep_message = true;
         switch (ch) {
         case 'q':
@@ -387,9 +378,6 @@ private:
         case 'o':
             command_save_as();
             break;
-        case 'f':
-            command_search();
-            break;
         case 'c':
             command_position();
             break;
@@ -397,32 +385,6 @@ private:
             session_.clear_selection();
             expand_stack_.clear();
             message_ = "cancelled";
-            break;
-        case 'a':
-            session_.set_caret(session_.snapshot().content().line_start(
-                session_.snapshot().content().position(session_.caret()).line));
-            break;
-        case 'e':
-            session_.set_caret(session_.snapshot().content().line_content_end(
-                session_.snapshot().content().position(session_.caret()).line));
-            break;
-        case 'n':
-            move_vertical(1);
-            keep_vertical_goal_ = true;
-            break;
-        case 'p':
-            move_vertical(-1);
-            keep_vertical_goal_ = true;
-            break;
-        case 'v':
-            move_vertical(text_rows());
-            keep_vertical_goal_ = true;
-            break;
-        case 'z':
-            message_ = session_.undo() ? "undo" : "nothing to undo";
-            break;
-        case 'r':
-            message_ = session_.redo() ? "redo" : "nothing to redo";
             break;
         case ' ': // set/clear mark
             if (session_.mark() && *session_.mark() == session_.caret()) {
@@ -529,61 +491,14 @@ private:
 
     // ---- search / goto ----------------------------------------------------
 
-    // Moves the caret to the next occurrence of `needle`; wraps around and
-    // says so. `forward` chooses the direction, starting just past the caret.
-    void search_move(const std::string& needle, bool forward) {
-        if (needle.empty()) {
-            return;
-        }
-        const DocumentSnapshot snap_keepalive = session_.snapshot();
-        const Text& text = snap_keepalive.content();
-        const std::string hay = text.to_string(); // user-initiated; fine
-        const std::size_t caret = session_.caret().value;
-        std::size_t found = std::string::npos;
-        bool wrapped = false;
-        if (forward) {
-            found = hay.find(needle, std::min(caret + 1, hay.size()));
-            if (found == std::string::npos) {
-                found = hay.find(needle);
-                wrapped = found != std::string::npos;
-            }
-        } else {
-            if (caret > 0) {
-                found = hay.rfind(needle, caret - 1); // match start strictly before caret
-            }
-            if (found == std::string::npos) {
-                found = hay.rfind(needle);
-                wrapped = found != std::string::npos;
-            }
-        }
-        if (found == std::string::npos) {
-            message_ = std::format("\"{}\" not found", needle);
-            return;
-        }
-        session_.set_caret(TextOffset{static_cast<std::uint32_t>(found)});
-        message_ = wrapped ? "search wrapped" : std::string();
-    }
-
-    void command_search() {
-        std::optional<std::string> input =
-            prompt(last_search_.empty() ? "search: " : std::format("search [{}]: ", last_search_));
-        if (!input) {
-            message_ = "cancelled";
-            return;
-        }
-        if (!input->empty()) {
-            last_search_ = *input;
-        }
-        search_move(last_search_, true);
-    }
-
     void command_replace() {
-        std::optional<std::string> from = prompt("replace: ", last_search_);
+        std::optional<std::string> from =
+            prompt("replace: ", std::string(search_commands_.query()));
         if (!from || from->empty()) {
             message_ = "cancelled";
             return;
         }
-        last_search_ = *from;
+        search_commands_.set_query(*from);
         std::optional<std::string> to = prompt(std::format("replace \"{}\" with: ", *from));
         if (!to) {
             message_ = "cancelled";
@@ -776,16 +691,18 @@ private:
     ui::Scene compose() {
         const DocumentSnapshot snap = session_.snapshot();
         const TermSize size = term_.size();
+        const MinibufferState* command_prompt = command_loop_.minibuffer();
+        const bool any_prompt = command_prompt != nullptr || prompt_active_;
         const std::string echo_text =
-            prompt_active_
-                ? prompt_label_ + prompt_input_
-                : (message_.empty() ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
-                                      "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  "
-                                      "M-? help"
-                                    : message_);
+            command_prompt     ? command_prompt->request.prompt + command_prompt->input
+            : prompt_active_   ? prompt_label_ + prompt_input_
+            : message_.empty() ? "C-s save  C-o write-as  C-q quit  C-f find  M-g goto  "
+                                 "C-z/C-r undo  C-k kill  C-y yank  C-SPC mark  M-f/b sexp  "
+                                 "M-? help"
+                               : message_;
         std::optional<int> echo_cursor;
-        if (prompt_active_) {
-            echo_cursor = ui::display_width(prompt_label_) + ui::display_width(prompt_input_);
+        if (any_prompt) {
+            echo_cursor = ui::display_width(echo_text);
         }
         ViewportState& state = session_.view().viewport();
         ui::EditorViewport viewport{.top_line = state.top_line, .left_column = state.left_column};
@@ -819,20 +736,22 @@ private:
     BufferId buffer_id_;
     ViewId view_id_;
     EditSession session_;
+    BasicEditorCommands basic_commands_;
+    SearchCommands search_commands_;
+    CommandLoop command_loop_;
+    KeymapId keymap_;
     std::string style_origin_;
     Terminal term_;
 
-    int goal_col_ = -1;
     std::uint32_t save_gen_ = 0;
     ui::LineSigns signs_;
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
-    bool keep_vertical_goal_ = false;
+    bool command_keep_message_ = false;
     std::string message_;
     std::string last_key_;
     std::vector<TextRange> expand_stack_;
     std::string kill_slot_;
-    std::string last_search_;
     bool prompt_active_ = false;
     std::string prompt_label_;
     std::string prompt_input_;

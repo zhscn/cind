@@ -40,7 +40,24 @@ struct CommandError {
     std::string message;
 };
 
-using CommandResult = std::expected<std::optional<SettingValue>, CommandError>;
+struct CommandCompleted {
+    std::optional<SettingValue> value = std::nullopt;
+};
+
+// Commands request interactive input with data rather than retaining a
+// language- or frontend-specific continuation. The accept command receives
+// `arguments` followed by the submitted string and may request another input.
+struct MinibufferRequest {
+    std::string prompt;
+    std::string initial_input;
+    std::string history;
+    std::string completion_provider;
+    CommandId accept_command;
+    std::vector<SettingValue> arguments;
+};
+
+using CommandAction = std::variant<CommandCompleted, MinibufferRequest>;
+using CommandResult = std::expected<CommandAction, CommandError>;
 
 class CommandContext {
 public:

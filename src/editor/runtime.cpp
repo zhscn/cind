@@ -19,6 +19,7 @@ void EditorRuntime::seal_extensions() {
     languages_.seal();
     modes_.seal();
     commands_.seal();
+    keymaps_.seal();
     extensions_sealed_ = true;
 }
 

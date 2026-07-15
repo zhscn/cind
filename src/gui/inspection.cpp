@@ -123,6 +123,39 @@ void append_line_signs(std::string& output, const ui::LineSigns& signs) {
     output += std::format(",\"boundary\":{}}}", signs.boundary);
 }
 
+void append_command_loop(std::string& output, const CommandLoopStateSnapshot& command_loop) {
+    output += "{\"keymaps\":[";
+    for (std::size_t index = 0; index < command_loop.keymaps.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_json_string(output, command_loop.keymaps[index]);
+    }
+    output += "],\"pending_keys\":";
+    append_json_string(output, command_loop.pending_keys);
+    output += ",\"pending_keymap\":";
+    append_json_string(output, command_loop.pending_keymap);
+    output += ",\"repeat_count\":";
+    if (command_loop.repeat_count) {
+        output += std::to_string(*command_loop.repeat_count);
+    } else {
+        output += "null";
+    }
+    output += ",\"last_command\":";
+    append_json_string(output, command_loop.last_command);
+    output += ",\"minibuffer\":{\"active\":";
+    append_bool(output, command_loop.minibuffer.active);
+    output += ",\"prompt\":";
+    append_json_string(output, command_loop.minibuffer.prompt);
+    output += ",\"input\":";
+    append_json_string(output, command_loop.minibuffer.input);
+    output += ",\"history\":";
+    append_json_string(output, command_loop.minibuffer.history);
+    output += ",\"completion_provider\":";
+    append_json_string(output, command_loop.minibuffer.completion_provider);
+    output += "}}";
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -144,6 +177,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.preedit);
     output += ",\"last_key\":";
     append_json_string(output, editor.last_key);
+    output += ",\"command_loop\":";
+    append_command_loop(output, editor.command_loop);
     output += ",\"quit_armed\":";
     append_bool(output, editor.quit_armed);
     output += ",\"quit\":";
@@ -581,6 +616,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
                              frame.editor.viewport.top_line, frame.editor.viewport.left_column);
     } else if (path == "editor.line_signs") {
         append_line_signs(output, frame.editor.line_signs);
+    } else if (path == "editor.command_loop") {
+        append_command_loop(output, frame.editor.command_loop);
     } else if (path == "scene") {
         append_scene(output, frame.scene);
     } else if (path == "scene.cursor") {
@@ -867,6 +904,11 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << "\" dirty=" << (frame.editor.dirty ? "true" : "false")
            << " caret=" << frame.editor.caret_position.line << ':'
            << frame.editor.caret_display_column << " byte=" << frame.editor.caret.value << '\n';
+    output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
+           << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
+           << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
+           << printable(frame.editor.command_loop.last_command) << "\" minibuffer="
+           << (frame.editor.command_loop.minibuffer.active ? "active" : "inactive") << '\n';
     output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
     if (frame.scene.cursor_visible) {
         output << frame.scene.cursor_row << ':' << frame.scene.cursor_col;

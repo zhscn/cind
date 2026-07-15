@@ -5,9 +5,28 @@
 #include "ui/line_signs.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace cind::gui {
+
+struct MinibufferStateSnapshot {
+    bool active = false;
+    std::string prompt;
+    std::string input;
+    std::string history;
+    std::string completion_provider;
+};
+
+struct CommandLoopStateSnapshot {
+    std::vector<std::string> keymaps;
+    std::string pending_keys;
+    std::string pending_keymap;
+    std::optional<std::int64_t> repeat_count;
+    std::string last_command;
+    MinibufferStateSnapshot minibuffer;
+};
 
 struct EditorStateSnapshot {
     std::string path;
@@ -25,6 +44,7 @@ struct EditorStateSnapshot {
     std::string message;
     std::string preedit;
     std::string last_key;
+    CommandLoopStateSnapshot command_loop;
     bool quit_armed = false;
     bool quit = false;
 };

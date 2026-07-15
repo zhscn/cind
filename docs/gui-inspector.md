@@ -106,6 +106,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.caret` | caret 的 byte、line 和 column |
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
+| `editor.command_loop` | active keymap、pending key sequence、repeat、last command 和 minibuffer 状态 |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor |
 | `scene.region.<role>` | 指定 region，例如 `scene.region.line-numbers` |
@@ -121,6 +122,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 
 ```sh
 cmk run -p gui cind-ui-inspect -- get scene.region.line-numbers
+cmk run -p gui cind-ui-inspect -- get editor.command_loop
 cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
 cmk run -p gui cind-ui-inspect -- get render.damage
@@ -133,7 +135,7 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 完整快照使用带版本号的 JSON schema。顶层包含：
 
 - `editor`：文件、revision、文档大小、行数、dirty 状态、caret、viewport、line signs、
-  tab width、style 来源、消息和最近按键。
+  tab width、style 来源、消息、最近按键以及 command loop/minibuffer 状态。
 - `scene`：cell 网格、cursor、region 几何和 display primitives。Scene region 使用
   0-based cell 坐标并声明 vertical anchor；scene cursor 使用 1-based 坐标。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell
