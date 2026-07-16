@@ -1,5 +1,6 @@
 #include "editor/buffer.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
 #include <limits>
