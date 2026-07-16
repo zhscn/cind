@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -112,6 +113,25 @@ SkRect region_pixel_rect(const ui::Region& region, int cell_width, int cell_heig
     return SkRect::MakeLTRB(bounds.left(), top, bounds.right(), std::max(top, bottom));
 }
 
+struct ShapedText {
+    std::string text;
+    sk_sp<SkTextBlob> blob;
+    float advance = 0.0F;
+    SkRect shape_bounds;
+};
+
+struct PositionedText {
+    std::string role;
+    ShapedText shaped;
+    SkPoint origin;
+};
+
+struct PopupItemLayout {
+    SkRect row;
+    PositionedText label;
+    std::optional<PositionedText> detail;
+};
+
 struct PopupLayout {
     const ui::Region* region = nullptr;
     const ui::Region::PopupContent* content = nullptr;
@@ -123,6 +143,14 @@ struct PopupLayout {
     std::size_t item_count = 0;
     bool input_active = false;
     std::string input;
+    float horizontal_scroll = 0.0F;
+    std::vector<PositionedText> header_text;
+    std::vector<PopupItemLayout> items;
+    std::size_t input_cursor = 0;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<SkRect> cursor;
 };
 
 struct LogicalViewport {
@@ -130,28 +158,56 @@ struct LogicalViewport {
     float height = 0.0F;
 };
 
-class TextAdvanceRunHandler final : public SkShaper::RunHandler {
-public:
-    void beginLine() override { line_advance_ = 0.0F; }
-    void runInfo(const RunInfo&) override {}
-    void commitRunInfo() override {}
+struct PixelViewport {
+    int width = 0;
+    int height = 0;
+    float device_scale = 1.0F;
+};
 
-    Buffer runBuffer(const RunInfo& info) override {
-        glyphs_.resize(info.glyphCount);
-        positions_.resize(info.glyphCount);
-        return {glyphs_.data(), positions_.data(), nullptr, nullptr, {0.0F, 0.0F}};
+class TextLayoutRunHandler final : public SkShaper::RunHandler {
+public:
+    void beginLine() override {
+        current_position_ = SkPoint::Make(0.0F, line_top_);
+        maximum_ascent_ = 0.0F;
+        maximum_descent_ = 0.0F;
+        maximum_leading_ = 0.0F;
     }
 
-    void commitRunBuffer(const RunInfo& info) override { line_advance_ += info.fAdvance.x(); }
+    void runInfo(const RunInfo& info) override {
+        SkFontMetrics metrics{};
+        info.fFont.getMetrics(&metrics);
+        maximum_ascent_ = std::min(maximum_ascent_, metrics.fAscent);
+        maximum_descent_ = std::max(maximum_descent_, metrics.fDescent);
+        maximum_leading_ = std::max(maximum_leading_, metrics.fLeading);
+    }
 
-    void commitLine() override { advance_ = std::max(advance_, line_advance_); }
+    void commitRunInfo() override { current_position_.fY -= maximum_ascent_; }
+
+    Buffer runBuffer(const RunInfo& info) override {
+        if (info.glyphCount > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            throw std::length_error("shaped text has too many glyphs");
+        }
+        const auto& buffer = builder_.allocRunPos(info.fFont, static_cast<int>(info.glyphCount));
+        return {buffer.glyphs, buffer.points(), nullptr, nullptr, current_position_};
+    }
+
+    void commitRunBuffer(const RunInfo& info) override { current_position_ += info.fAdvance; }
+
+    void commitLine() override {
+        advance_ = std::max(advance_, current_position_.x());
+        line_top_ += maximum_descent_ + maximum_leading_ - maximum_ascent_;
+    }
 
     float advance() const { return advance_; }
+    sk_sp<SkTextBlob> make_blob() { return builder_.make(); }
 
 private:
-    std::vector<SkGlyphID> glyphs_;
-    std::vector<SkPoint> positions_;
-    float line_advance_ = 0.0F;
+    SkTextBlobBuilder builder_;
+    SkPoint current_position_ = SkPoint::Make(0.0F, 0.0F);
+    float maximum_ascent_ = 0.0F;
+    float maximum_descent_ = 0.0F;
+    float maximum_leading_ = 0.0F;
+    float line_top_ = 0.0F;
     float advance_ = 0.0F;
 };
 
@@ -218,23 +274,30 @@ std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport 
                        .rows_top = header.bottom() + panel_header_gap,
                        .item_count = item_count,
                        .input_active = input_active,
-                       .input = content.input.value_or(std::string{})};
+                       .input = content.input.value_or(std::string{}),
+                       .horizontal_scroll = 0.0F,
+                       .header_text = {},
+                       .items = {},
+                       .input_cursor = 0,
+                       .cursor_advance = 0.0F,
+                       .unclamped_cursor_x = 0.0F,
+                       .cursor_clamped = false,
+                       .cursor = std::nullopt};
 }
 
 std::string popup_prompt(const ui::Region::PopupContent& popup) {
     return popup_label(popup.title) + ":";
 }
 
-std::string popup_input_text(const ui::Region::PopupContent& popup, std::string_view input) {
-    std::string text = popup_prompt(popup);
-    text += " ";
-    text += input;
-    return text;
-}
-
 float popup_text_left(const PopupLayout& layout, float natural_width) {
     const float available_width = layout.header.width() - 2.0F * panel_padding_x;
     return layout.header.left() + panel_padding_x + std::min(0.0F, available_width - natural_width);
+}
+
+SkRect positioned_shape_bounds(const PositionedText& text) {
+    SkRect bounds = text.shaped.shape_bounds;
+    bounds.offset(text.origin.x(), text.origin.y());
+    return bounds;
 }
 
 bool contains(const ui::Rect& rect, int row, int col) {
@@ -395,7 +458,32 @@ float footer_height_for(ui::RegionRole role, float cell_height) {
     return cell_height;
 }
 
+void validate_layout_viewport(LogicalViewport logical, PixelViewport output) {
+    if (!(output.device_scale > 0.0F)) {
+        throw std::invalid_argument("SkiaPresenter received an invalid device scale");
+    }
+    const float rendered_width = static_cast<float>(output.width) / output.device_scale;
+    const float rendered_height = static_cast<float>(output.height) / output.device_scale;
+    if (std::abs(logical.width - rendered_width) > 0.01F ||
+        std::abs(logical.height - rendered_height) > 0.01F) {
+        throw std::invalid_argument("Skia frame layout does not match the render viewport");
+    }
+}
+
 } // namespace
+
+struct SkiaFrameLayout::Storage {
+    const ui::Scene* scene = nullptr;
+    const void* presenter_identity = nullptr;
+    float viewport_width = 0.0F;
+    float viewport_height = 0.0F;
+    std::optional<PopupLayout> popup;
+};
+
+SkiaFrameLayout::~SkiaFrameLayout() = default;
+SkiaFrameLayout::SkiaFrameLayout(SkiaFrameLayout&&) noexcept = default;
+SkiaFrameLayout& SkiaFrameLayout::operator=(SkiaFrameLayout&&) noexcept = default;
+SkiaFrameLayout::SkiaFrameLayout(std::unique_ptr<Storage> storage) : storage_(std::move(storage)) {}
 
 void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
                                      const std::optional<SkiaLogicalRect>& previous_cursor,
@@ -485,44 +573,116 @@ struct SkiaPresenter::Impl {
                 .footer_heights = ui::editor_footer_heights(static_cast<float>(cell_height))};
     }
 
-    sk_sp<SkTextBlob> shape_text(const std::string& text, const SkFont& text_font, SkScalar x,
-                                 SkScalar y) {
+    ShapedText shape_text(std::string text, const SkFont& text_font) const {
         if (text.empty()) {
-            return nullptr;
+            return {.text = std::move(text),
+                    .blob = nullptr,
+                    .advance = 0.0F,
+                    .shape_bounds = SkRect::MakeEmpty()};
         }
-        SkTextBlobBuilderRunHandler handler(text.c_str(), SkPoint::Make(x, y));
+        TextLayoutRunHandler handler;
         shaper->shape(text.data(), text.size(), text_font, true, SK_ScalarMax, &handler);
-        return handler.makeBlob();
+        sk_sp<SkTextBlob> blob = handler.make_blob();
+        return {.text = std::move(text),
+                .blob = blob,
+                .advance = handler.advance(),
+                .shape_bounds = blob ? blob->bounds() : SkRect::MakeEmpty()};
     }
 
-    sk_sp<SkTextBlob> shape_text(const std::string& text, SkScalar x, SkScalar y) {
-        return shape_text(text, font, x, y);
-    }
+    ShapedText shape_text(std::string text) const { return shape_text(std::move(text), font); }
 
-    float text_width(std::string_view text) const {
-        if (text.empty()) {
-            return 0.0F;
-        }
-        TextAdvanceRunHandler handler;
-        shaper->shape(text.data(), text.size(), font, true, SK_ScalarMax, &handler);
-        return handler.advance();
-    }
-
-    std::optional<SkRect> popup_cursor_rect(const PopupLayout& layout) const {
-        if (!layout.input_active || layout.content == nullptr) {
+    std::optional<PopupLayout> prepare_popup_layout(const ui::Scene& scene,
+                                                    LogicalViewport viewport) const {
+        std::optional<PopupLayout> prepared =
+            popup_layout(scene, viewport, vertical_metrics(viewport.height));
+        if (!prepared) {
             return std::nullopt;
         }
-        const std::string full_text = popup_input_text(*layout.content, layout.input);
-        const std::size_t cursor = std::min(
-            layout.content->input_cursor.value_or(layout.input.size()), layout.input.size());
-        const std::string cursor_text =
-            popup_input_text(*layout.content, std::string_view(layout.input).substr(0, cursor));
-        const float left = popup_text_left(layout, text_width(full_text));
-        const float x = std::clamp(left + text_width(cursor_text), layout.header.left() + 8.0F,
-                                   layout.header.right() - 3.0F);
-        const float y =
+        PopupLayout& layout = *prepared;
+        const ui::Region::PopupContent& popup = *layout.content;
+        const float header_text_top =
             layout.header.top() + (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
-        return SkRect::MakeXYWH(x, y, 2.0F, static_cast<float>(cell_height));
+        if (layout.input_active) {
+            ShapedText prompt = shape_text(popup_prompt(popup));
+            ShapedText space = shape_text(" ");
+            ShapedText input = shape_text(layout.input);
+            const std::string count_text =
+                std::format("{}/{}", popup.selected_item.value_or(0) + 1, popup.total_items);
+            ShapedText count = shape_text(count_text);
+            const float count_advance = count.advance;
+            const float natural_width = prompt.advance + space.advance + input.advance;
+            const float natural_left = layout.header.left() + panel_padding_x;
+            const float text_left = popup_text_left(layout, natural_width);
+            layout.horizontal_scroll = text_left - natural_left;
+            const float input_left = text_left + prompt.advance + space.advance;
+            layout.header_text.push_back({.role = "prompt",
+                                          .shaped = std::move(prompt),
+                                          .origin = SkPoint::Make(text_left, header_text_top)});
+            layout.header_text.push_back({.role = "input",
+                                          .shaped = std::move(input),
+                                          .origin = SkPoint::Make(input_left, header_text_top)});
+            layout.header_text.push_back(
+                {.role = "count",
+                 .shaped = std::move(count),
+                 .origin = SkPoint::Make(layout.header.right() - panel_padding_x - count_advance,
+                                         header_text_top)});
+
+            layout.input_cursor =
+                std::min(popup.input_cursor.value_or(layout.input.size()), layout.input.size());
+            ShapedText cursor_prefix = shape_text(layout.input.substr(0, layout.input_cursor));
+            layout.cursor_advance = cursor_prefix.advance;
+            layout.unclamped_cursor_x = input_left + layout.cursor_advance;
+            const float cursor_x =
+                std::clamp(layout.unclamped_cursor_x, layout.header.left() + 8.0F,
+                           layout.header.right() - 3.0F);
+            layout.cursor_clamped = std::abs(cursor_x - layout.unclamped_cursor_x) > 0.01F;
+            layout.cursor =
+                SkRect::MakeXYWH(cursor_x, header_text_top, 2.0F, static_cast<float>(cell_height));
+        } else {
+            std::string label = popup_label(popup.title);
+            for (char& character : label) {
+                character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+            }
+            const float label_top =
+                layout.header.top() + (layout.header.height() - label_height) * 0.5F;
+            layout.header_text.push_back(
+                {.role = "label",
+                 .shaped = shape_text(std::move(label), label_font),
+                 .origin = SkPoint::Make(layout.header.left() + panel_padding_x, label_top)});
+        }
+
+        layout.items.reserve(layout.item_count);
+        for (std::size_t visible_index = 0; visible_index < layout.item_count; ++visible_index) {
+            if (visible_index >= popup.items.size()) {
+                break;
+            }
+            const ui::Region::PopupItem& item = popup.items[visible_index];
+            const SkRect row = SkRect::MakeLTRB(
+                layout.panel.left(),
+                layout.rows_top + static_cast<float>(visible_index) * layout.row_height,
+                layout.panel.right(),
+                layout.rows_top + static_cast<float>(visible_index + 1) * layout.row_height);
+            const float text_top =
+                row.top() + (row.height() - static_cast<float>(cell_height)) * 0.5F;
+            PopupItemLayout item_layout{
+                .row = row,
+                .label = {.role = "item-label",
+                          .shaped = shape_text(item.label),
+                          .origin = SkPoint::Make(row.left() + panel_padding_x, text_top)},
+                .detail = std::nullopt,
+            };
+            if (!item.detail.empty()) {
+                ShapedText detail = shape_text(item.detail);
+                const float detail_x = row.right() - panel_padding_x - detail.advance;
+                item_layout.detail = PositionedText{
+                    .role = "item-detail",
+                    .shaped = std::move(detail),
+                    .origin = SkPoint::Make(detail_x, text_top),
+                };
+            }
+            layout.items.push_back(std::move(item_layout));
+        }
+        return prepared;
     }
 
     void draw_hairline(SkCanvas& canvas, const SkRect& rect) {
@@ -577,18 +737,16 @@ struct SkiaPresenter::Impl {
                 bounds = incoming;
             }
         };
-        const auto draw_text = [&](std::string_view text, const SkFont& text_font, SkPoint origin,
-                                   std::uint32_t text_color, std::optional<SkRect>& shape_bounds) {
-            sk_sp<SkTextBlob> blob =
-                shape_text(std::string(text), text_font, origin.x(), origin.y());
-            if (!blob) {
+        const auto draw_text = [&](const PositionedText& text, std::uint32_t text_color,
+                                   std::optional<SkRect>& shape_bounds) {
+            if (!text.shaped.blob) {
                 return;
             }
             SkPaint paint;
             paint.setAntiAlias(true);
             paint.setColor(color(text_color));
-            canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
-            join_bounds(shape_bounds, blob->bounds());
+            canvas.drawTextBlob(text.shaped.blob, text.origin.x(), text.origin.y(), paint);
+            join_bounds(shape_bounds, positioned_shape_bounds(text));
         };
         const auto append_diagnostics = [&](std::size_t primitive_index, const SkRect& cell_bounds,
                                             const std::optional<SkRect>& shape_bounds,
@@ -634,57 +792,35 @@ struct SkiaPresenter::Impl {
                 probe = capture_probe(layout.header, raster);
             }
             std::optional<SkRect> shape_bounds;
-            const float text_top =
-                layout.header.top() +
-                (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
             if (layout.input_active) {
-                const std::string prompt = popup_prompt(popup);
-                const std::string full_text = popup_input_text(popup, layout.input);
-                const std::string count =
-                    std::format("{}/{}", popup.selected_item.value_or(0) + 1, popup.total_items);
                 canvas.save();
                 canvas.clipRect(layout.header);
-                float text_x = popup_text_left(layout, text_width(full_text));
-                draw_text(prompt, font, SkPoint::Make(text_x, text_top), theme.accent,
-                          shape_bounds);
-                text_x += text_width(prompt) + text_width(" ");
-                draw_text(layout.input, font, SkPoint::Make(text_x, text_top), theme.text,
-                          shape_bounds);
-                draw_text(count, font,
-                          SkPoint::Make(layout.header.right() - panel_padding_x - text_width(count),
-                                        text_top),
-                          theme.faint, shape_bounds);
+                for (const PositionedText& text : layout.header_text) {
+                    const std::uint32_t text_color = text.role == "prompt"  ? theme.accent
+                                                     : text.role == "count" ? theme.faint
+                                                                            : theme.text;
+                    draw_text(text, text_color, shape_bounds);
+                }
                 canvas.restore();
                 draw_hairline(canvas, SkRect::MakeXYWH(layout.panel.left(), layout.header.bottom(),
                                                        layout.panel.width(), 1.0F));
             } else {
-                std::string label = popup_label(popup.title);
-                for (char& character : label) {
-                    character =
-                        static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+                for (const PositionedText& text : layout.header_text) {
+                    draw_text(text, theme.muted, shape_bounds);
                 }
-                const float label_top =
-                    layout.header.top() + (layout.header.height() - label_height) * 0.5F;
-                draw_text(label, label_font,
-                          SkPoint::Make(layout.header.left() + panel_padding_x, label_top),
-                          theme.muted, shape_bounds);
             }
             append_diagnostics(0, layout.header, shape_bounds, probe);
         }
 
-        for (std::size_t visible_index = 0; visible_index < layout.item_count; ++visible_index) {
+        for (std::size_t visible_index = 0; visible_index < layout.items.size(); ++visible_index) {
             const std::size_t item_index = visible_index;
             const std::size_t primitive_index = item_index + 1;
             if (item_index >= popup.items.size() || primitive_index >= region.prims.size()) {
                 break;
             }
-            const ui::Region::PopupItem& item = popup.items[item_index];
+            const PopupItemLayout& item = layout.items[visible_index];
             const ui::Prim& primitive = region.prims[primitive_index];
-            const SkRect row = SkRect::MakeLTRB(
-                layout.panel.left(),
-                layout.rows_top + static_cast<float>(visible_index) * layout.row_height,
-                layout.panel.right(),
-                layout.rows_top + static_cast<float>(visible_index + 1) * layout.row_height);
+            const SkRect& row = item.row;
             if (primitive.selected) {
                 SkPaint fill;
                 fill.setAntiAlias(false);
@@ -696,17 +832,12 @@ struct SkiaPresenter::Impl {
             if (diagnostics) {
                 probe = capture_probe(row, raster);
             }
-            const float text_top =
-                row.top() + (row.height() - static_cast<float>(cell_height)) * 0.5F;
             std::optional<SkRect> shape_bounds;
             canvas.save();
             canvas.clipRect(row);
-            draw_text(item.label, font, SkPoint::Make(row.left() + panel_padding_x, text_top),
-                      primitive.selected ? theme.strong : theme.text, shape_bounds);
-            if (!item.detail.empty()) {
-                const float detail_x = row.right() - panel_padding_x - text_width(item.detail);
-                draw_text(item.detail, font, SkPoint::Make(detail_x, text_top), theme.muted,
-                          shape_bounds);
+            draw_text(item.label, primitive.selected ? theme.strong : theme.text, shape_bounds);
+            if (item.detail) {
+                draw_text(*item.detail, theme.muted, shape_bounds);
             }
             canvas.restore();
             append_diagnostics(primitive_index, row, shape_bounds, probe);
@@ -739,44 +870,59 @@ struct SkiaPresenter::Impl {
         const float text_top =
             bounds.top() + (bounds.height() - static_cast<float>(cell_height)) * 0.5F;
         const float center_y = bounds.centerY();
-        const auto draw_text = [&](std::string_view text, float x, std::uint32_t text_color) {
-            sk_sp<SkTextBlob> blob = shape_text(std::string(text), x, text_top);
-            if (!blob) {
+        const auto draw_text = [&](const ShapedText& text, SkPoint origin,
+                                   std::uint32_t text_color) {
+            if (!text.blob) {
                 return;
             }
             SkPaint paint;
             paint.setAntiAlias(true);
             paint.setColor(color(text_color));
-            canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
+            canvas.drawTextBlob(text.blob, origin.x(), origin.y(), paint);
+            SkRect bounds = text.shape_bounds;
+            bounds.offset(origin.x(), origin.y());
             if (shape_bounds) {
-                shape_bounds->join(blob->bounds());
+                shape_bounds->join(bounds);
             } else {
-                shape_bounds = blob->bounds();
+                shape_bounds = bounds;
             }
         };
         // The right group is placed first so the left group can clip against
         // it on narrow viewports.
         float right = bounds.right() - footer_padding_x;
-        const auto draw_right = [&](std::string_view text, std::uint32_t text_color, float gap) {
-            if (text.empty()) {
+        struct RightText {
+            std::string text;
+            std::uint32_t color = 0;
+            float trailing_gap = 0.0F;
+        };
+        const auto draw_right = [&](RightText segment) {
+            if (segment.text.empty()) {
                 return;
             }
-            right -= text_width(text);
-            draw_text(text, right, text_color);
-            right -= gap;
+            const ShapedText shaped = shape_text(std::move(segment.text));
+            right -= shaped.advance;
+            draw_text(shaped, SkPoint::Make(right, text_top), segment.color);
+            right -= segment.trailing_gap;
         };
         if (show_debug_status) {
-            draw_right(std::format("r{}", status.revision), theme.faint, footer_padding_x);
+            draw_right({.text = std::format("r{}", status.revision),
+                        .color = theme.faint,
+                        .trailing_gap = footer_padding_x});
         }
-        draw_right(status_percent(status), theme.muted, segment_gap);
-        draw_right(std::format("{}:{}", status.line, status.column), theme.text, segment_gap);
+        draw_right(
+            {.text = status_percent(status), .color = theme.muted, .trailing_gap = segment_gap});
+        draw_right({.text = std::format("{}:{}", status.line, status.column),
+                    .color = theme.text,
+                    .trailing_gap = segment_gap});
         if (!status.style_origin.empty()) {
-            draw_right("·", theme.faint, segment_gap);
-            draw_right(status.style_origin, theme.muted, segment_gap);
+            draw_right({.text = "·", .color = theme.faint, .trailing_gap = segment_gap});
+            draw_right(
+                {.text = status.style_origin, .color = theme.muted, .trailing_gap = segment_gap});
         }
         if (!status.key.empty()) {
+            const ShapedText key = shape_text(status.key);
             const float chip_height = static_cast<float>(cell_height) + 4.0F;
-            const float chip_width = text_width(status.key) + 14.0F;
+            const float chip_width = key.advance + 14.0F;
             const SkRect chip = SkRect::MakeXYWH(right - chip_width, center_y - chip_height * 0.5F,
                                                  chip_width, chip_height);
             SkPaint chip_fill;
@@ -789,7 +935,7 @@ struct SkiaPresenter::Impl {
             chip_stroke.setStrokeWidth(1.0F);
             chip_stroke.setColor(color(theme.hairline));
             canvas.drawRRect(SkRRect::MakeRectXY(chip, 5.0F, 5.0F), chip_stroke);
-            draw_text(status.key, chip.left() + 7.0F, theme.text);
+            draw_text(key, SkPoint::Make(chip.left() + 7.0F, text_top), theme.text);
             right = chip.left() - segment_gap;
         }
 
@@ -809,9 +955,11 @@ struct SkiaPresenter::Impl {
         }
         x += 7.0F + segment_gap;
         const std::string name = status_basename(status.path);
-        draw_text(name, x, theme.strong);
-        x += text_width(name) + segment_gap;
-        draw_text(status_directory(status.path), x, theme.muted);
+        const ShapedText shaped_name = shape_text(name);
+        draw_text(shaped_name, SkPoint::Make(x, text_top), theme.strong);
+        x += shaped_name.advance + segment_gap;
+        draw_text(shape_text(status_directory(status.path)), SkPoint::Make(x, text_top),
+                  theme.muted);
         canvas.restore();
         canvas.restore();
 
@@ -839,10 +987,40 @@ struct SkiaPresenter::Impl {
         }
     }
 
+    static SkiaPopupLayoutDiagnostics popup_diagnostics(const PopupLayout& layout) {
+        SkiaPopupLayoutDiagnostics diagnostics{
+            .panel_bounds = logical_rect(layout.panel),
+            .header_bounds = logical_rect(layout.header),
+            .horizontal_scroll = layout.horizontal_scroll,
+            .input_bytes = layout.input.size(),
+            .input_cursor = layout.input_cursor,
+            .cursor_advance = layout.cursor_advance,
+            .unclamped_cursor_x = layout.unclamped_cursor_x,
+            .cursor_clamped = layout.cursor_clamped,
+            .cursor_rect = std::nullopt,
+            .header_text = {},
+        };
+        if (layout.cursor) {
+            diagnostics.cursor_rect = logical_rect(*layout.cursor);
+        }
+        diagnostics.header_text.reserve(layout.header_text.size());
+        for (const PositionedText& text : layout.header_text) {
+            diagnostics.header_text.push_back(
+                {.role = text.role,
+                 .byte_count = text.shaped.text.size(),
+                 .advance = text.shaped.advance,
+                 .origin = {.x = text.origin.x(), .y = text.origin.y()},
+                 .shape_bounds = text.shaped.blob
+                                     ? std::optional(logical_rect(positioned_shape_bounds(text)))
+                                     : std::nullopt});
+        }
+        return diagnostics;
+    }
+
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale, SkiaRenderDiagnostics* diagnostics,
                 std::span<const SkiaLogicalRect> damage, bool full_repaint,
-                const SkiaAnimationFrame* animation) {
+                const SkiaAnimationFrame* animation, const PopupLayout* prepared_popup) {
         if (!(device_scale > 0.0F)) {
             throw std::invalid_argument("SkiaPresenter received an invalid device scale");
         }
@@ -862,6 +1040,8 @@ struct SkiaPresenter::Impl {
             diagnostics->descent = descent;
             diagnostics->leading = leading;
             diagnostics->baseline_from_row_top = -ascent;
+            diagnostics->popup_layout =
+                prepared_popup ? std::optional(popup_diagnostics(*prepared_popup)) : std::nullopt;
             diagnostics->primitives.clear();
             std::size_t primitive_count = 0;
             for (const ui::Region& region : scene.regions) {
@@ -888,9 +1068,7 @@ struct SkiaPresenter::Impl {
                                                           vertical_metrics(viewport_height));
             const SkRect grid_clip =
                 SkRect::MakeLTRB(0.0F, 0.0F, viewport_width, vertical_layout.grid_clip_bottom());
-            const std::optional<PopupLayout> panel =
-                popup_layout(layer_scene, {.width = viewport_width, .height = viewport_height},
-                             vertical_metrics(viewport_height));
+            const PopupLayout* panel = &layer_scene == &scene ? prepared_popup : nullptr;
             SkPaint fill;
             fill.setAntiAlias(false);
             for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
@@ -900,7 +1078,7 @@ struct SkiaPresenter::Impl {
                 if ((moving_grid && !paint_grid) || (!moving_grid && !paint_footer)) {
                     continue;
                 }
-                if (panel && panel->region == &region) {
+                if (panel != nullptr && panel->region == &region) {
                     paint_popup(canvas, *panel, region_index, raster, layer_diagnostics,
                                 damage_bounds);
                     continue;
@@ -943,8 +1121,8 @@ struct SkiaPresenter::Impl {
                                                            bounds.width(), 1.0F));
                 }
                 const bool footer_region = region.vertical_anchor == ui::VerticalAnchor::Bottom;
-                const bool suppress_echo_text =
-                    panel && panel->input_active && region.role == ui::RegionRole::EchoArea;
+                const bool suppress_echo_text = panel != nullptr && panel->input_active &&
+                                                region.role == ui::RegionRole::EchoArea;
                 for (std::size_t primitive_index = 0; primitive_index < region.prims.size();
                      ++primitive_index) {
                     if (suppress_echo_text) {
@@ -991,7 +1169,7 @@ struct SkiaPresenter::Impl {
                                                       : foreground(prim.style, theme));
                     std::optional<SkRect> draw_bounds;
                     std::optional<SkRect> shape_bounds;
-                    sk_sp<SkTextBlob> blob;
+                    ShapedText shaped;
                     if (prim.kind != ui::PrimKind::Text) {
                         if (prim.kind == ui::PrimKind::ChangeDeletion) {
                             draw_bounds = SkRect::MakeXYWH(
@@ -1001,9 +1179,10 @@ struct SkiaPresenter::Impl {
                                                            static_cast<SkScalar>(cell_height - 4));
                         }
                     } else {
-                        blob = shape_text(prim.text, x, top);
-                        if (blob) {
-                            shape_bounds = blob->bounds();
+                        shaped = shape_text(prim.text);
+                        if (shaped.blob) {
+                            shape_bounds = shaped.shape_bounds;
+                            shape_bounds->offset(x, top);
                             draw_bounds = shape_bounds;
                         }
                     }
@@ -1023,8 +1202,8 @@ struct SkiaPresenter::Impl {
                         } else {
                             canvas.drawRect(*draw_bounds, paint);
                         }
-                    } else if (blob) {
-                        canvas.drawTextBlob(blob, 0.0F, 0.0F, paint);
+                    } else if (shaped.blob) {
+                        canvas.drawTextBlob(shaped.blob, x, top, paint);
                     }
 
                     if (layer_diagnostics) {
@@ -1076,14 +1255,11 @@ struct SkiaPresenter::Impl {
             std::optional<SkRect> cursor_clip;
             bool cursor_in_footer = false;
             bool cursor_in_echo = false;
-            const std::optional<PopupLayout> panel =
-                popup_layout(scene, {.width = viewport_width, .height = viewport_height},
-                             vertical_metrics(viewport_height));
             const std::optional<SkRect> popup_cursor =
-                panel ? popup_cursor_rect(*panel) : std::nullopt;
+                prepared_popup != nullptr ? prepared_popup->cursor : std::nullopt;
             if (popup_cursor) {
                 cursor_in_footer = true;
-                cursor_clip = panel->header;
+                cursor_clip = prepared_popup->header;
             } else {
                 for (const ui::Region& region : scene.regions) {
                     if (contains(region.rect, cursor_row, cursor_col)) {
@@ -1213,6 +1389,16 @@ SkiaPresenter::~SkiaPresenter() = default;
 SkiaPresenter::SkiaPresenter(SkiaPresenter&&) noexcept = default;
 SkiaPresenter& SkiaPresenter::operator=(SkiaPresenter&&) noexcept = default;
 
+const SkiaFrameLayout::Storage& SkiaPresenter::checked_layout(const SkiaFrameLayout& layout) const {
+    if (!layout.storage_ || layout.storage_->scene == nullptr) {
+        throw std::invalid_argument("SkiaPresenter received an empty frame layout");
+    }
+    if (layout.storage_->presenter_identity != impl_.get()) {
+        throw std::invalid_argument("Skia frame layout belongs to another presenter");
+    }
+    return *layout.storage_;
+}
+
 int SkiaPresenter::cell_width() const {
     return impl_->cell_width;
 }
@@ -1244,6 +1430,22 @@ ui::SceneVerticalMetrics SkiaPresenter::vertical_metrics(float viewport_height) 
     return impl_->vertical_metrics(viewport_height);
 }
 
+SkiaFrameLayout SkiaPresenter::prepare_layout(const ui::Scene& scene, float viewport_width,
+                                              float viewport_height) const {
+    if (!std::isfinite(viewport_width) || !std::isfinite(viewport_height) ||
+        viewport_width < 0.0F || viewport_height < 0.0F) {
+        throw std::invalid_argument("SkiaPresenter received an invalid logical viewport");
+    }
+    auto storage = std::make_unique<SkiaFrameLayout::Storage>();
+    storage->scene = &scene;
+    storage->presenter_identity = impl_.get();
+    storage->viewport_width = viewport_width;
+    storage->viewport_height = viewport_height;
+    storage->popup =
+        impl_->prepare_popup_layout(scene, {.width = viewport_width, .height = viewport_height});
+    return SkiaFrameLayout(std::move(storage));
+}
+
 void SkiaPresenter::set_show_debug_status(bool show) {
     impl_->show_debug_status = show;
 }
@@ -1251,17 +1453,21 @@ void SkiaPresenter::set_show_debug_status(bool show) {
 std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const ui::Scene& scene,
                                                           float viewport_width,
                                                           float viewport_height) const {
+    const SkiaFrameLayout layout = prepare_layout(scene, viewport_width, viewport_height);
+    return cursor_rect(layout);
+}
+
+std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout& layout) const {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    const ui::Scene& scene = *storage.scene;
     if (!scene.cursor_visible) {
         return std::nullopt;
     }
-    if (const std::optional<PopupLayout> panel =
-            popup_layout(scene, {.width = viewport_width, .height = viewport_height},
-                         impl_->vertical_metrics(viewport_height))) {
-        if (const std::optional<SkRect> cursor = impl_->popup_cursor_rect(*panel)) {
-            return logical_rect(*cursor);
-        }
+    if (storage.popup && storage.popup->cursor) {
+        return logical_rect(*storage.popup->cursor);
     }
-    const ui::SceneVerticalLayout vertical_layout(scene, impl_->vertical_metrics(viewport_height));
+    const ui::SceneVerticalLayout vertical_layout(scene,
+                                                  impl_->vertical_metrics(storage.viewport_height));
     const int row = std::max(0, scene.cursor_row - 1);
     const int column = std::max(0, scene.cursor_col - 1);
     float x = static_cast<float>(column * impl_->cell_width);
@@ -1290,8 +1496,16 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
                                                          const ui::SceneDamage& damage,
                                                          float viewport_width,
                                                          float viewport_height) const {
-    const float frame_width = std::max(0.0F, viewport_width);
-    const float frame_height = std::max(0.0F, viewport_height);
+    const SkiaFrameLayout layout = prepare_layout(scene, viewport_width, viewport_height);
+    return damage_rects(layout, damage);
+}
+
+std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const SkiaFrameLayout& layout,
+                                                         const ui::SceneDamage& damage) const {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    const ui::Scene& scene = *storage.scene;
+    const float frame_width = storage.viewport_width;
+    const float frame_height = storage.viewport_height;
     if (damage.full_repaint) {
         return {{.x = 0.0F, .y = 0.0F, .width = frame_width, .height = frame_height}};
     }
@@ -1387,10 +1601,8 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
         }
     }
     if ((!damage.cell_rects.empty() || !damage.cursor_cells.empty())) {
-        if (const std::optional<PopupLayout> panel =
-                popup_layout(scene, {.width = frame_width, .height = frame_height},
-                             impl_->vertical_metrics(frame_height))) {
-            append_damage(rectangles, logical_rect(panel->shadow));
+        if (storage.popup) {
+            append_damage(rectangles, logical_rect(storage.popup->shadow));
         }
     }
     for (const ui::CellPoint& cursor : damage.cursor_cells) {
@@ -1417,23 +1629,75 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,
 void SkiaPresenter::render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                            std::size_t row_bytes, float device_scale,
                            SkiaRenderDiagnostics* diagnostics) {
-    impl_->render(scene, pixel_width, pixel_height, pixels, row_bytes, device_scale, diagnostics,
-                  std::span<const SkiaLogicalRect>{}, true, nullptr);
+    if (!(device_scale > 0.0F)) {
+        throw std::invalid_argument("SkiaPresenter received an invalid device scale");
+    }
+    const SkiaFrameLayout layout =
+        prepare_layout(scene, static_cast<float>(pixel_width) / device_scale,
+                       static_cast<float>(pixel_height) / device_scale);
+    render(layout, pixel_width, pixel_height, pixels, row_bytes, device_scale, diagnostics);
+}
+
+void SkiaPresenter::render(const SkiaFrameLayout& layout, int pixel_width, int pixel_height,
+                           void* pixels, std::size_t row_bytes, float device_scale,
+                           SkiaRenderDiagnostics* diagnostics) {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    validate_layout_viewport(
+        {.width = storage.viewport_width, .height = storage.viewport_height},
+        {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
+    impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
+                  diagnostics, std::span<const SkiaLogicalRect>{}, true, nullptr,
+                  storage.popup ? &*storage.popup : nullptr);
 }
 
 void SkiaPresenter::render_damage(const ui::Scene& scene, int pixel_width, int pixel_height,
                                   void* pixels, std::size_t row_bytes,
                                   std::span<const SkiaLogicalRect> damage, float device_scale) {
-    impl_->render(scene, pixel_width, pixel_height, pixels, row_bytes, device_scale, nullptr,
-                  damage, false, nullptr);
+    if (!(device_scale > 0.0F)) {
+        throw std::invalid_argument("SkiaPresenter received an invalid device scale");
+    }
+    const SkiaFrameLayout layout =
+        prepare_layout(scene, static_cast<float>(pixel_width) / device_scale,
+                       static_cast<float>(pixel_height) / device_scale);
+    render_damage(layout, pixel_width, pixel_height, pixels, row_bytes, damage, device_scale);
+}
+
+void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width, int pixel_height,
+                                  void* pixels, std::size_t row_bytes,
+                                  std::span<const SkiaLogicalRect> damage, float device_scale) {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    validate_layout_viewport(
+        {.width = storage.viewport_width, .height = storage.viewport_height},
+        {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
+    impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
+                  nullptr, damage, false, nullptr, storage.popup ? &*storage.popup : nullptr);
 }
 
 void SkiaPresenter::render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
                                     int pixel_width, int pixel_height, void* pixels,
                                     std::size_t row_bytes, float device_scale,
                                     SkiaRenderDiagnostics* diagnostics) {
-    impl_->render(scene, pixel_width, pixel_height, pixels, row_bytes, device_scale, diagnostics,
-                  std::span<const SkiaLogicalRect>{}, true, &animation);
+    if (!(device_scale > 0.0F)) {
+        throw std::invalid_argument("SkiaPresenter received an invalid device scale");
+    }
+    const SkiaFrameLayout layout =
+        prepare_layout(scene, static_cast<float>(pixel_width) / device_scale,
+                       static_cast<float>(pixel_height) / device_scale);
+    render_animated(layout, animation, pixel_width, pixel_height, pixels, row_bytes, device_scale,
+                    diagnostics);
+}
+
+void SkiaPresenter::render_animated(const SkiaFrameLayout& layout,
+                                    const SkiaAnimationFrame& animation, int pixel_width,
+                                    int pixel_height, void* pixels, std::size_t row_bytes,
+                                    float device_scale, SkiaRenderDiagnostics* diagnostics) {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    validate_layout_viewport(
+        {.width = storage.viewport_width, .height = storage.viewport_height},
+        {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
+    impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
+                  diagnostics, std::span<const SkiaLogicalRect>{}, true, &animation,
+                  storage.popup ? &*storage.popup : nullptr);
 }
 
 } // namespace cind::gui

@@ -36,6 +36,11 @@ struct ThemeInspection {
     std::uint32_t sign_deleted = 0;
 };
 
+struct LogicalPixelPointSnapshot {
+    float x = 0.0F;
+    float y = 0.0F;
+};
+
 struct LogicalPixelRectSnapshot {
     float x = 0.0F;
     float y = 0.0F;
@@ -97,6 +102,27 @@ struct PrimitiveRenderSnapshot {
     bool column_overflow = false;
 };
 
+struct TextLayoutSnapshot {
+    std::string role;
+    std::size_t byte_count = 0;
+    float advance = 0.0F;
+    LogicalPixelPointSnapshot origin;
+    std::optional<LogicalPixelRectSnapshot> shape_bounds;
+};
+
+struct PopupLayoutSnapshot {
+    LogicalPixelRectSnapshot panel_bounds;
+    LogicalPixelRectSnapshot header_bounds;
+    float horizontal_scroll = 0.0F;
+    std::size_t input_bytes = 0;
+    std::size_t input_cursor = 0;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<LogicalPixelRectSnapshot> cursor_rect;
+    std::vector<TextLayoutSnapshot> header_text;
+};
+
 struct RenderStateSnapshot {
     std::string video_driver;
     std::string render_driver;
@@ -117,6 +143,7 @@ struct RenderStateSnapshot {
     std::uint64_t pixel_hash = 0;
     RenderAnimationSnapshot animation;
     RenderDamageSnapshot damage;
+    std::optional<PopupLayoutSnapshot> popup_layout;
     std::vector<PrimitiveRenderSnapshot> primitives;
 };
 
@@ -131,7 +158,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 14;
+    static constexpr int schema_version = 15;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

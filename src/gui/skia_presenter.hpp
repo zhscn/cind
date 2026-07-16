@@ -98,19 +98,62 @@ struct SkiaPrimitiveRenderDiagnostics {
     bool column_overflow = false;
 };
 
+struct SkiaTextLayoutDiagnostics {
+    std::string role;
+    std::size_t byte_count = 0;
+    float advance = 0.0F;
+    SkiaLogicalPoint origin;
+    std::optional<SkiaLogicalRect> shape_bounds;
+};
+
+struct SkiaPopupLayoutDiagnostics {
+    SkiaLogicalRect panel_bounds;
+    SkiaLogicalRect header_bounds;
+    float horizontal_scroll = 0.0F;
+    std::size_t input_bytes = 0;
+    std::size_t input_cursor = 0;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<SkiaLogicalRect> cursor_rect;
+    std::vector<SkiaTextLayoutDiagnostics> header_text;
+};
+
 struct SkiaRenderDiagnostics {
     float ascent = 0.0F;
     float descent = 0.0F;
     float leading = 0.0F;
     float baseline_from_row_top = 0.0F;
+    std::optional<SkiaPopupLayoutDiagnostics> popup_layout;
     std::vector<SkiaPrimitiveRenderDiagnostics> primitives;
+};
+
+// Immutable, frame-scoped pixel layout prepared from one stable Scene and
+// logical viewport. The source Scene must outlive the layout and remain
+// unchanged. Painting, cursor geometry, damage conversion, IME placement, and
+// diagnostics consume this object so shaped text and chrome geometry have one
+// owner. A layout is consumed by the presenter that prepared it.
+class SkiaFrameLayout {
+public:
+    ~SkiaFrameLayout();
+    SkiaFrameLayout(SkiaFrameLayout&&) noexcept;
+    SkiaFrameLayout& operator=(SkiaFrameLayout&&) noexcept;
+
+    SkiaFrameLayout(const SkiaFrameLayout&) = delete;
+    SkiaFrameLayout& operator=(const SkiaFrameLayout&) = delete;
+
+private:
+    struct Storage;
+    explicit SkiaFrameLayout(std::unique_ptr<Storage> storage);
+
+    std::unique_ptr<Storage> storage_;
+    friend class SkiaPresenter;
 };
 
 // Raster Skia presenter for the backend-independent cell Scene. The caller
 // owns an N32-premultiplied pixel buffer and decides how to put it on screen.
-// Text uses a monospace cell grid, direct UTF-8 glyph drawing, and system font
-// fallback per non-ASCII code point; shaping and bidirectional layout are
-// outside this presenter's contract.
+// Grid text retains monospace cell placement. Pixel-positioned GUI chrome uses
+// Skia shaping and system font fallback through a prepared frame layout.
 class SkiaPresenter {
 public:
     explicit SkiaPresenter(std::string font_family = "monospace", float font_size = 16.0F,
@@ -133,6 +176,8 @@ public:
     // Vertical metrics with this presenter's footer heights, for callers that
     // need the same row mapping the painter uses (mouse hits, inspection).
     ui::SceneVerticalMetrics vertical_metrics(float viewport_height) const;
+    SkiaFrameLayout prepare_layout(const ui::Scene& scene, float viewport_width,
+                                   float viewport_height) const;
     // Shows the faint revision segment at the modeline's right edge.
     void set_show_debug_status(bool show);
 
@@ -140,21 +185,34 @@ public:
     // owns the caret while an interactive picker is active.
     std::optional<SkiaLogicalRect> cursor_rect(const ui::Scene& scene, float viewport_width,
                                                float viewport_height) const;
+    std::optional<SkiaLogicalRect> cursor_rect(const SkiaFrameLayout& layout) const;
     std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
                                               float viewport_width, float viewport_height) const;
+    std::vector<SkiaLogicalRect> damage_rects(const SkiaFrameLayout& layout,
+                                              const ui::SceneDamage& damage) const;
 
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
+                std::size_t row_bytes, float device_scale = 1.0F,
+                SkiaRenderDiagnostics* diagnostics = nullptr);
+    void render(const SkiaFrameLayout& layout, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale = 1.0F,
                 SkiaRenderDiagnostics* diagnostics = nullptr);
     void render_damage(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                        std::size_t row_bytes, std::span<const SkiaLogicalRect> damage,
                        float device_scale = 1.0F);
+    void render_damage(const SkiaFrameLayout& layout, int pixel_width, int pixel_height,
+                       void* pixels, std::size_t row_bytes, std::span<const SkiaLogicalRect> damage,
+                       float device_scale = 1.0F);
     void render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
+                         int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
+                         float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
+    void render_animated(const SkiaFrameLayout& layout, const SkiaAnimationFrame& animation,
                          int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
                          float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
 
 private:
     struct Impl;
+    const SkiaFrameLayout::Storage& checked_layout(const SkiaFrameLayout& layout) const;
     std::unique_ptr<Impl> impl_;
 };
 

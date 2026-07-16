@@ -353,13 +353,31 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
     std::vector<std::uint32_t> reference(retained.size());
     REQUIRE(tracker.update(scene).full_repaint);
-    presenter.render(scene, width, height, retained.data(), row_bytes);
+    const SkiaFrameLayout frame_layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(frame_layout, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
+    CHECK_THROWS_AS(presenter.render(frame_layout, width + 1, height, retained.data(), row_bytes),
+                    std::invalid_argument);
+    SkiaPresenter other_presenter("monospace", 15.0F, theme);
+    CHECK_THROWS_AS(other_presenter.cursor_rect(frame_layout), std::invalid_argument);
 
-    const std::optional<SkiaLogicalRect> cursor =
-        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::optional<SkiaLogicalRect> cursor = presenter.cursor_rect(frame_layout);
     REQUIRE(cursor);
     const SkiaLogicalRect end_cursor = cursor.value_or(SkiaLogicalRect{});
     CHECK(end_cursor.y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+    if (!diagnostics.popup_layout) {
+        FAIL("popup layout diagnostics are missing");
+        return;
+    }
+    const SkiaPopupLayoutDiagnostics& popup_diagnostics = *diagnostics.popup_layout;
+    CHECK(popup_diagnostics.input_bytes == popup_input.size());
+    CHECK(popup_diagnostics.input_cursor == popup_input.size());
+    CHECK(popup_diagnostics.cursor_rect.has_value());
+    CHECK(std::ranges::any_of(
+        popup_diagnostics.header_text, [&](const SkiaTextLayoutDiagnostics& text) {
+            return text.role == "input" && text.byte_count == popup_input.size();
+        }));
 
     int rightmost_input_pixel = -1;
     const int cursor_top = static_cast<int>(std::floor(end_cursor.y));
@@ -380,8 +398,9 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
           static_cast<float>(presenter.cell_width()));
 
     scene.regions.back().popup->input_cursor = 0;
-    const std::optional<SkiaLogicalRect> start_cursor =
-        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    const SkiaFrameLayout start_layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::optional<SkiaLogicalRect> start_cursor = presenter.cursor_rect(start_layout);
     REQUIRE(start_cursor);
     CHECK(start_cursor.value_or(SkiaLogicalRect{}).x < end_cursor.x);
     scene.regions.back().popup->input_cursor = popup_input.size();
@@ -389,17 +408,19 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     CHECK(std::ranges::find(retained, theme.raised) != retained.end());
 
     scene.regions.back().popup.value().input = "edi";
+    scene.regions.back().popup.value().input_cursor = 3;
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
     REQUIRE_FALSE(damage.cell_rects.empty());
-    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
-        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    const SkiaFrameLayout changed_layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(changed_layout, damage);
     REQUIRE_FALSE(rectangles.empty());
     CHECK(std::ranges::any_of(rectangles, [&](const SkiaLogicalRect& rect) {
         return rect.width > static_cast<float>(presenter.cell_width() * 50);
     }));
-    presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles);
-    presenter.render(scene, width, height, reference.data(), row_bytes);
+    presenter.render_damage(changed_layout, width, height, retained.data(), row_bytes, rectangles);
+    presenter.render(changed_layout, width, height, reference.data(), row_bytes);
     CHECK(retained == reference);
 }
 

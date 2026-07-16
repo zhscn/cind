@@ -115,6 +115,10 @@ void append_logical_rect(std::string& output, const LogicalPixelRectSnapshot& re
                           rect.width, rect.height);
 }
 
+void append_logical_point(std::string& output, const LogicalPixelPointSnapshot& point) {
+    output += std::format("{{\"x\":{},\"y\":{}}}", point.x, point.y);
+}
+
 void append_output_rect(std::string& output, const OutputPixelRectSnapshot& rect) {
     output += std::format("{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", rect.x, rect.y,
                           rect.width, rect.height);
@@ -457,6 +461,51 @@ void append_render_primitives(std::string& output,
     output.push_back(']');
 }
 
+void append_text_layout(std::string& output, const TextLayoutSnapshot& text) {
+    output += "{\"role\":";
+    append_json_string(output, text.role);
+    output +=
+        std::format(",\"byte_count\":{},\"advance\":{},\"origin\":", text.byte_count, text.advance);
+    append_logical_point(output, text.origin);
+    output += ",\"shape_bounds\":";
+    if (text.shape_bounds) {
+        append_logical_rect(output, *text.shape_bounds);
+    } else {
+        output += "null";
+    }
+    output.push_back('}');
+}
+
+void append_popup_layout(std::string& output, const std::optional<PopupLayoutSnapshot>& popup) {
+    if (!popup) {
+        output += "null";
+        return;
+    }
+    output += "{\"coordinate_space\":\"logical-pixels\",\"panel_bounds\":";
+    append_logical_rect(output, popup->panel_bounds);
+    output += ",\"header_bounds\":";
+    append_logical_rect(output, popup->header_bounds);
+    output += std::format(",\"horizontal_scroll\":{},\"input_bytes\":{},\"input_cursor\":{},"
+                          "\"cursor_advance\":{},\"unclamped_cursor_x\":{},\"cursor_clamped\":",
+                          popup->horizontal_scroll, popup->input_bytes, popup->input_cursor,
+                          popup->cursor_advance, popup->unclamped_cursor_x);
+    append_bool(output, popup->cursor_clamped);
+    output += ",\"cursor_rect\":";
+    if (popup->cursor_rect) {
+        append_logical_rect(output, *popup->cursor_rect);
+    } else {
+        output += "null";
+    }
+    output += ",\"header_text\":[";
+    for (std::size_t index = 0; index < popup->header_text.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_text_layout(output, popup->header_text[index]);
+    }
+    output += "]}";
+}
+
 void append_render_damage(std::string& output, const RenderDamageSnapshot& damage) {
     output += "{\"full_repaint\":";
     append_bool(output, damage.full_repaint);
@@ -551,6 +600,8 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_render_animation(output, render.animation);
     output += ",\"damage\":";
     append_render_damage(output, render.damage);
+    output += ",\"popup_layout\":";
+    append_popup_layout(output, render.popup_layout);
     output += ",\"primitives\":";
     append_render_primitives(output, render.primitives);
     output.push_back('}');
@@ -771,6 +822,77 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.render.rows != frame.scene.rows || frame.render.columns != frame.scene.cols) {
         violations.emplace_back("render grid does not match scene geometry");
     }
+    const ui::Region* popup_region = frame.scene.find(ui::RegionRole::Popup);
+    const ui::Region::PopupContent* popup =
+        popup_region != nullptr && popup_region->popup ? &*popup_region->popup : nullptr;
+    if (popup != nullptr && !frame.render.popup_layout) {
+        violations.emplace_back("scene popup has no render popup layout");
+    }
+    if (frame.render.popup_layout) {
+        const PopupLayoutSnapshot& layout = *frame.render.popup_layout;
+        if (popup == nullptr) {
+            violations.emplace_back("render popup layout has no scene popup");
+        } else {
+            const std::size_t input_bytes = popup->input ? popup->input->size() : 0;
+            const std::size_t input_cursor =
+                popup->input ? popup->input_cursor.value_or(input_bytes) : 0;
+            if (layout.input_bytes != input_bytes || layout.input_cursor != input_cursor) {
+                violations.emplace_back("render popup input does not match scene popup");
+            }
+            const auto input_text =
+                std::ranges::find_if(layout.header_text, [](const TextLayoutSnapshot& text) {
+                    return text.role == "input";
+                });
+            if (popup->input) {
+                if (input_text == layout.header_text.end() ||
+                    input_text->byte_count != popup->input->size()) {
+                    violations.emplace_back("render popup has no matching input text layout");
+                }
+                if (!layout.cursor_rect) {
+                    violations.emplace_back("render popup input has no cursor layout");
+                }
+                if (input_text != layout.header_text.end() &&
+                    std::abs(input_text->origin.x + layout.cursor_advance -
+                             layout.unclamped_cursor_x) > 0.01F) {
+                    violations.emplace_back("render popup cursor advance disagrees with input");
+                }
+            } else if (input_text != layout.header_text.end() || layout.cursor_rect) {
+                violations.emplace_back("non-input popup has interactive text layout");
+            }
+        }
+        if (layout.horizontal_scroll > 0.01F) {
+            violations.emplace_back("render popup horizontal scroll is positive");
+        }
+        const float panel_right = layout.panel_bounds.x + layout.panel_bounds.width;
+        const float panel_bottom = layout.panel_bounds.y + layout.panel_bounds.height;
+        const float header_right = layout.header_bounds.x + layout.header_bounds.width;
+        const float header_bottom = layout.header_bounds.y + layout.header_bounds.height;
+        if (layout.header_bounds.x < layout.panel_bounds.x - 0.01F ||
+            layout.header_bounds.y < layout.panel_bounds.y - 0.01F ||
+            header_right > panel_right + 0.01F || header_bottom > panel_bottom + 0.01F) {
+            violations.emplace_back("render popup header is outside its panel");
+        }
+        if (layout.cursor_rect) {
+            const float cursor_right = layout.cursor_rect->x + layout.cursor_rect->width;
+            const float cursor_bottom = layout.cursor_rect->y + layout.cursor_rect->height;
+            if (layout.cursor_rect->x < layout.header_bounds.x - 0.01F ||
+                layout.cursor_rect->y < layout.header_bounds.y - 0.01F ||
+                cursor_right > header_right + 0.01F || cursor_bottom > header_bottom + 0.01F) {
+                violations.emplace_back("render popup cursor is outside its header");
+            }
+            if (!layout.cursor_clamped &&
+                std::abs(layout.cursor_rect->x - layout.unclamped_cursor_x) > 0.01F) {
+                violations.emplace_back("render popup cursor does not match shaped advance");
+            }
+        }
+        for (const TextLayoutSnapshot& text : layout.header_text) {
+            if (!std::isfinite(text.advance) || text.advance < 0.0F ||
+                !std::isfinite(text.origin.x) || !std::isfinite(text.origin.y)) {
+                violations.emplace_back("render popup text layout is not finite");
+                break;
+            }
+        }
+    }
     const ui::Region* text_area = frame.scene.find(ui::RegionRole::TextArea);
     if (!frame.render.animation.scroll && frame.scene.cursor_visible && text_area) {
         const int cursor_row = frame.scene.cursor_row - 1;
@@ -944,6 +1066,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_render_animation(output, frame.render.animation);
     } else if (path == "render.damage") {
         append_render_damage(output, frame.render.damage);
+    } else if (path == "render.popup_layout") {
+        append_popup_layout(output, frame.render.popup_layout);
     } else if (path == "render.primitives") {
         append_render_primitives(output, frame.render.primitives);
     } else if (path.starts_with("render.primitive.")) {
@@ -1355,6 +1479,19 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    primitives=" << frame.render.primitives.size()
            << " row-overflows=" << row_overflows
            << " draw-bounds-cross-clip=" << draw_bounds_clip_crossings << '\n';
+    if (frame.render.popup_layout) {
+        const PopupLayoutSnapshot& popup = *frame.render.popup_layout;
+        output << "    popup-layout panel=(" << popup.panel_bounds.x << ',' << popup.panel_bounds.y
+               << ' ' << popup.panel_bounds.width << 'x' << popup.panel_bounds.height
+               << ") scroll-x=" << popup.horizontal_scroll << " input=" << popup.input_cursor << '/'
+               << popup.input_bytes << " cursor-advance=" << popup.cursor_advance
+               << (popup.cursor_clamped ? " clamped" : "") << '\n';
+        for (const TextLayoutSnapshot& text : popup.header_text) {
+            output << "      text:" << printable(text.role) << " bytes=" << text.byte_count
+                   << " advance=" << text.advance << " origin=" << text.origin.x << ':'
+                   << text.origin.y << '\n';
+        }
+    }
     output << "    animation=" << (frame.render.animation.active ? "active" : "idle")
            << " scroll=" << (frame.render.animation.scroll ? "true" : "false")
            << " cursor=" << (frame.render.animation.cursor ? "true" : "false")

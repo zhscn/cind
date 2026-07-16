@@ -20,7 +20,7 @@ using namespace cind::ui;
 namespace {
 
 void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
-                        bool full_reference_match = true) {
+                        bool full_reference_match = true, bool popup_cursor_mismatch = false) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -138,6 +138,30 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                    .full_reference_match = full_reference_match,
                    .rects = {{.logical = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
                               .output = {.x = 0, .y = 0, .width = 45, .height = 30}}}},
+        .popup_layout =
+            PopupLayoutSnapshot{
+                .panel_bounds = {.x = 40.0F, .y = 4.0F, .width = 120.0F, .height = 72.0F},
+                .header_bounds = {.x = 40.0F, .y = 8.0F, .width = 120.0F, .height = 28.0F},
+                .horizontal_scroll = 0.0F,
+                .input_bytes = 0,
+                .input_cursor = 0,
+                .cursor_advance = 0.0F,
+                .unclamped_cursor_x = popup_cursor_mismatch ? 116.0F : 112.0F,
+                .cursor_clamped = popup_cursor_mismatch,
+                .cursor_rect =
+                    LogicalPixelRectSnapshot{
+                        .x = 112.0F, .y = 12.0F, .width = 2.0F, .height = 20.0F},
+                .header_text = {{.role = "prompt",
+                                 .byte_count = 8,
+                                 .advance = 70.0F,
+                                 .origin = {.x = 52.0F, .y = 12.0F},
+                                 .shape_bounds = std::nullopt},
+                                {.role = "input",
+                                 .byte_count = 0,
+                                 .advance = 0.0F,
+                                 .origin = {.x = 112.0F, .y = 12.0F},
+                                 .shape_bounds = std::nullopt}},
+            },
         .primitives =
             {{.region_index = 0,
               .primitive_index = 0,
@@ -182,7 +206,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":14") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":15") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -198,6 +222,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
+    CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
+          std::string::npos);
     CHECK(snapshot.find("\"first_item\":0,\"total_items\":1,\"selected_item\":0") !=
           std::string::npos);
     CHECK(snapshot.find("\"violations\":[]") != std::string::npos);
@@ -218,6 +244,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(interaction.ok);
     CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
     CHECK(interaction.payload.find("\"input_cursor\":0") != std::string::npos);
+
+    const InspectionResponse popup_layout = run_inspection_query(hub, "get render.popup_layout");
+    REQUIRE(popup_layout.ok);
+    CHECK(popup_layout.payload.find("\"cursor_advance\":0") != std::string::npos);
+    CHECK(popup_layout.payload.find("\"role\":\"input\"") != std::string::npos);
 
     const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
     REQUIRE(buffers.ok);
@@ -316,6 +347,16 @@ TEST_CASE("inspection reports retained raster divergence") {
     REQUIRE(frame);
     REQUIRE(frame->violations.size() == 1);
     CHECK(frame->violations.front() == "retained raster differs from full reference render");
+}
+
+TEST_CASE("inspection reports popup shaped cursor divergence") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "render popup cursor advance disagrees with input");
 }
 
 TEST_CASE("inspection server uses a private Unix socket and framed responses") {
