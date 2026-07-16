@@ -94,6 +94,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     scene.cols = 10;
     scene.cursor_row = 1;
     scene.cursor_col = 4;
+    scene.active_text_row = scroll_frame ? std::optional(0) : std::nullopt;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
     body.prims.push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
@@ -192,8 +193,15 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .scroll_velocity = 4.0F,
                       .visual_scroll_top = 0.5F,
                       .target_scroll_top = 1.0F,
-                      .layers = {{.scroll_top = 0.0F, .grid_offset_y = -10.0F},
-                                 {.scroll_top = 1.0F, .grid_offset_y = 10.0F}},
+                      .layers = {{.scroll_top = 0.0F,
+                                  .grid_offset_y = -10.0F,
+                                  .clip_top = 0.0F,
+                                  .clip_bottom = 10.0F},
+                                 {.scroll_top = 1.0F,
+                                  .grid_offset_y = 10.0F,
+                                  .clip_top = 10.0F,
+                                  .clip_bottom = 68.0F}},
+                      .active_line_y = 10.0F,
                       .cursor_rect = std::nullopt,
                   }
                 : RenderAnimationSnapshot{},
@@ -265,7 +273,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":18") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":19") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -402,8 +410,9 @@ TEST_CASE("inspection exposes continuous document scroll layers") {
     REQUIRE(response.ok);
     const std::string& animation = response.payload;
     CHECK(animation.find("\"visual_scroll_top\":0.5") != std::string::npos);
-    CHECK(animation.find("\"layers\":[{\"scroll_top\":0,\"grid_offset_y\":-10}") !=
-          std::string::npos);
+    CHECK(animation.find("\"active_line_y\":10") != std::string::npos);
+    CHECK(animation.find("\"layers\":[{\"scroll_top\":0,\"grid_offset_y\":-10,"
+                         "\"clip_top\":0,\"clip_bottom\":10}") != std::string::npos);
 }
 
 TEST_CASE("inspection reports renderer primitives that cross scene rows") {

@@ -1469,11 +1469,15 @@ struct SkiaPresenter::Impl {
                     *layer.scene, {.width = viewport_width, .height = viewport_height}));
             }
         }
+        const std::optional<float> animation_active_line_top =
+            animation ? animation->active_line_y : std::nullopt;
 
         const auto paint_layer = [&](const ui::Scene& layer_scene, float grid_offset_y,
                                      bool paint_grid, bool paint_footer,
                                      SkiaRenderDiagnostics* layer_diagnostics,
-                                     const SkRect* damage_bounds, const DocumentLayout* document) {
+                                     const SkRect* damage_bounds, const DocumentLayout* document,
+                                     std::optional<float> active_line_top,
+                                     const SkRect* grid_layer_clip) {
             const ui::SceneVerticalLayout vertical_layout(layer_scene,
                                                           vertical_metrics(viewport_height));
             const SkRect grid_clip =
@@ -1503,7 +1507,10 @@ struct SkiaPresenter::Impl {
                 if (moving_grid) {
                     bounds.offset(0.0F, grid_offset_y);
                 }
-                if (damage_bounds && !SkRect::Intersects(bounds, *damage_bounds)) {
+                const SkRect* effective_damage_bounds =
+                    moving_grid && grid_layer_clip ? grid_layer_clip : damage_bounds;
+                if (effective_damage_bounds &&
+                    !SkRect::Intersects(bounds, *effective_damage_bounds)) {
                     continue;
                 }
                 if (region.role == ui::RegionRole::StatusBar && region.status) {
@@ -1516,17 +1523,22 @@ struct SkiaPresenter::Impl {
                 canvas.save();
                 if (moving_grid) {
                     canvas.clipRect(grid_clip);
+                    if (grid_layer_clip) {
+                        canvas.clipRect(*grid_layer_clip);
+                    }
                 }
                 canvas.clipRect(bounds);
                 canvas.drawRect(bounds, fill);
-                if (layer_scene.active_text_row && moving_grid &&
+                if ((active_line_top || layer_scene.active_text_row) && moving_grid &&
                     (region.role == ui::RegionRole::TextArea ||
                      region.role == ui::RegionRole::LineNumbers ||
                      region.role == ui::RegionRole::ChangeSigns)) {
                     const float active_top =
-                        bounds.top() +
-                        static_cast<float>(*layer_scene.active_text_row - region.rect.row) *
-                            static_cast<float>(cell_height);
+                        active_line_top
+                            ? *active_line_top
+                            : bounds.top() + static_cast<float>(*layer_scene.active_text_row -
+                                                                region.rect.row) *
+                                                 static_cast<float>(cell_height);
                     fill.setColor(color(theme.active_line));
                     canvas.drawRect(SkRect::MakeXYWH(bounds.left(), active_top, bounds.width(),
                                                      static_cast<float>(cell_height)),
@@ -1534,7 +1546,7 @@ struct SkiaPresenter::Impl {
                 }
                 if (document != nullptr && document->region == &region) {
                     paint_document(canvas, *document, region_index, raster, layer_diagnostics,
-                                   damage_bounds, grid_offset_y);
+                                   effective_damage_bounds, grid_offset_y);
                     canvas.restore();
                     continue;
                 }
@@ -1568,7 +1580,8 @@ struct SkiaPresenter::Impl {
                         static_cast<SkScalar>(std::max(1, ui::display_width(prim.text)) *
                                               cell_width),
                         static_cast<SkScalar>(cell_height));
-                    if (damage_bounds && !SkRect::Intersects(cell_bounds, *damage_bounds)) {
+                    if (effective_damage_bounds &&
+                        !SkRect::Intersects(cell_bounds, *effective_damage_bounds)) {
                         continue;
                     }
 
@@ -1585,8 +1598,11 @@ struct SkiaPresenter::Impl {
                     SkPaint paint;
                     paint.setAntiAlias(true);
                     const bool active_line_number =
-                        layer_scene.active_text_row && region.role == ui::RegionRole::LineNumbers &&
-                        prim.row == *layer_scene.active_text_row - region.rect.row;
+                        region.role == ui::RegionRole::LineNumbers &&
+                        (active_line_top
+                             ? std::abs(top - *active_line_top) < 0.01F
+                             : layer_scene.active_text_row &&
+                                   prim.row == *layer_scene.active_text_row - region.rect.row);
                     paint.setColor(active_line_number ? color(theme.text)
                                                       : foreground(prim.style, theme));
                     std::optional<SkRect> draw_bounds;
@@ -1760,12 +1776,26 @@ struct SkiaPresenter::Impl {
                 for (std::size_t index = 0; index < animation->scroll_layers.size(); ++index) {
                     const SkiaScrollLayer& layer = animation->scroll_layers[index];
                     const std::optional<DocumentLayout>& document = animation_documents[index];
+                    if (!std::isfinite(layer.clip_top) || !std::isfinite(layer.clip_bottom) ||
+                        layer.clip_bottom <= layer.clip_top) {
+                        continue;
+                    }
+                    const float ink_guard_bottom =
+                        index + 1 < animation->scroll_layers.size()
+                            ? std::min(animation->scroll_layers.back().clip_bottom,
+                                       layer.clip_bottom + static_cast<float>(cell_height))
+                            : layer.clip_bottom;
+                    const SkRect layer_clip =
+                        SkRect::MakeLTRB(0.0F, layer.clip_top, viewport_width, ink_guard_bottom);
                     paint_layer(*layer.scene, layer.grid_offset_y, true, false, nullptr, nullptr,
-                                document ? &*document : nullptr);
+                                document ? &*document : nullptr, animation_active_line_top,
+                                &layer_clip);
                 }
-                paint_layer(scene, 0.0F, false, true, diagnostics, nullptr, prepared_document);
+                paint_layer(scene, 0.0F, false, true, diagnostics, nullptr, prepared_document,
+                            std::nullopt, nullptr);
             } else {
-                paint_layer(scene, 0.0F, true, true, diagnostics, nullptr, prepared_document);
+                paint_layer(scene, 0.0F, true, true, diagnostics, nullptr, prepared_document,
+                            std::nullopt, nullptr);
             }
             paint_cursor(animation ? animation->cursor_grid_offset_y : 0.0F,
                          animation ? animation->cursor_position : std::optional<SkiaLogicalPoint>{},
@@ -1784,7 +1814,8 @@ struct SkiaPresenter::Impl {
             canvas.save();
             canvas.clipRect(bounds);
             canvas.drawRect(bounds, clear);
-            paint_layer(scene, 0.0F, true, true, nullptr, &bounds, prepared_document);
+            paint_layer(scene, 0.0F, true, true, nullptr, &bounds, prepared_document, std::nullopt,
+                        nullptr);
             paint_cursor(0.0F, std::nullopt, &bounds);
             canvas.restore();
         }

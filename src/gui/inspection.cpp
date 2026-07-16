@@ -628,11 +628,18 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
         if (index != 0) {
             output.push_back(',');
         }
-        output +=
-            std::format("{{\"scroll_top\":{},\"grid_offset_y\":{}}}",
-                        animation.layers[index].scroll_top, animation.layers[index].grid_offset_y);
+        output += std::format(
+            "{{\"scroll_top\":{},\"grid_offset_y\":{},\"clip_top\":{},\"clip_bottom\":{}}}",
+            animation.layers[index].scroll_top, animation.layers[index].grid_offset_y,
+            animation.layers[index].clip_top, animation.layers[index].clip_bottom);
     }
-    output += "],\"cursor_rect\":";
+    output += "],\"active_line_y\":";
+    if (animation.active_line_y) {
+        output += std::format("{}", *animation.active_line_y);
+    } else {
+        output += "null";
+    }
+    output += ",\"cursor_rect\":";
     if (animation.cursor_rect) {
         append_logical_rect(output, *animation.cursor_rect);
     } else {
@@ -1142,12 +1149,49 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             !std::isfinite(animation.target_scroll_top)) {
             violations.emplace_back("render scroll positions are not finite");
         }
+        if (animation.active_line_y && !std::isfinite(*animation.active_line_y)) {
+            violations.emplace_back("render animated active line position is not finite");
+        }
+        if (frame.scene.active_text_row && frame.render.display_scale > 0.0F &&
+            frame.render.cell_height > 0) {
+            const float logical_height =
+                static_cast<float>(frame.render.output_height) / frame.render.display_scale;
+            const ui::SceneVerticalLayout layout(
+                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
+                              .viewport_height = logical_height,
+                              .footer_heights = ui::editor_footer_heights(
+                                  static_cast<float>(frame.render.cell_height))});
+            const float expected_active_line_y =
+                layout.row_top(*frame.scene.active_text_row) +
+                (animation.target_scroll_top - animation.visual_scroll_top) *
+                    static_cast<float>(frame.render.cell_height);
+            if (!animation.active_line_y ||
+                std::abs(*animation.active_line_y - expected_active_line_y) > 0.01F) {
+                violations.emplace_back(
+                    "render animated active line does not match current view state");
+            }
+        } else if (animation.active_line_y) {
+            violations.emplace_back("render scroll has an active line without current view state");
+        }
         if (animation.layers.empty() || animation.layers.size() > 2) {
             violations.emplace_back("render scroll does not have adjacent viewport layers");
         }
         float previous_scroll_top = -std::numeric_limits<float>::infinity();
+        float previous_clip_bottom = 0.0F;
+        std::optional<float> grid_bottom;
+        if (frame.render.display_scale > 0.0F && frame.render.cell_height > 0) {
+            const float logical_height =
+                static_cast<float>(frame.render.output_height) / frame.render.display_scale;
+            const ui::SceneVerticalLayout layout(
+                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
+                              .viewport_height = logical_height,
+                              .footer_heights = ui::editor_footer_heights(
+                                  static_cast<float>(frame.render.cell_height))});
+            grid_bottom = layout.grid_clip_bottom();
+        }
         for (const RenderScrollLayerSnapshot& layer : animation.layers) {
-            if (!std::isfinite(layer.scroll_top) || !std::isfinite(layer.grid_offset_y)) {
+            if (!std::isfinite(layer.scroll_top) || !std::isfinite(layer.grid_offset_y) ||
+                !std::isfinite(layer.clip_top) || !std::isfinite(layer.clip_bottom)) {
                 violations.emplace_back("render scroll layer is not finite");
                 continue;
             }
@@ -1160,7 +1204,19 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 violations.emplace_back(
                     "render scroll layer offset does not match document position");
             }
+            if (layer.clip_bottom <= layer.clip_top || layer.clip_top < -0.01F ||
+                (grid_bottom && layer.clip_bottom > *grid_bottom + 0.01F)) {
+                violations.emplace_back("render scroll layer clip is outside the grid");
+            }
+            if (std::abs(layer.clip_top - previous_clip_bottom) > 0.01F) {
+                violations.emplace_back("render scroll layer clips leave a gap or overlap");
+            }
             previous_scroll_top = layer.scroll_top;
+            previous_clip_bottom = layer.clip_bottom;
+        }
+        if (grid_bottom && !animation.layers.empty() &&
+            std::abs(previous_clip_bottom - *grid_bottom) > 0.01F) {
+            violations.emplace_back("render scroll layer clips do not cover the grid");
         }
         if (!animation.layers.empty() &&
             (animation.layers.front().scroll_top > animation.visual_scroll_top + 0.0001F ||
@@ -1789,7 +1845,11 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                 output << ',';
             }
             const RenderScrollLayerSnapshot& layer = frame.render.animation.layers[index];
-            output << layer.scroll_top << '@' << layer.grid_offset_y;
+            output << layer.scroll_top << '@' << layer.grid_offset_y << '[' << layer.clip_top << ','
+                   << layer.clip_bottom << ')';
+        }
+        if (frame.render.animation.active_line_y) {
+            output << " active-line-y=" << *frame.render.animation.active_line_y;
         }
         output << '\n';
     }

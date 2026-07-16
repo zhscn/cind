@@ -280,7 +280,7 @@ public:
             throw std::runtime_error(
                 std::format("SDL renderer creation failed: {}", SDL_GetError()));
         }
-        SDL_SetRenderVSync(renderer_.get(), 1);
+        vsync_enabled_ = SDL_SetRenderVSync(renderer_.get(), 1);
         if (!SDL_StartTextInput(window_.get())) {
             throw std::runtime_error(std::format("SDL text input failed: {}", SDL_GetError()));
         }
@@ -290,9 +290,16 @@ public:
         paint();
         while (!editor_.should_quit()) {
             SDL_Event event{};
-            const bool asynchronous = editor_.has_background_work() || animations_active();
-            const bool received =
-                asynchronous ? SDL_WaitEventTimeout(&event, 16) : SDL_WaitEvent(&event);
+            const bool animating = animations_active();
+            const bool asynchronous = editor_.has_background_work() || animating;
+            bool received = false;
+            if (animating && vsync_enabled_) {
+                received = SDL_PollEvent(&event);
+            } else if (asynchronous) {
+                received = SDL_WaitEventTimeout(&event, animating ? 1 : 16);
+            } else {
+                received = SDL_WaitEvent(&event);
+            }
             if (!received && !asynchronous) {
                 throw std::runtime_error(std::format("SDL event wait failed: {}", SDL_GetError()));
             }
@@ -652,7 +659,8 @@ private:
         last_cursor_target_ = target_cursor;
     }
 
-    AnimationPresentation animation_presentation(AnimationClock::time_point now) const {
+    AnimationPresentation animation_presentation(const ui::Scene& scene,
+                                                 AnimationClock::time_point now) const {
         AnimationPresentation presentation;
         if (scroll_animation_) {
             const SpringState state = scroll_state(*scroll_animation_, now);
@@ -670,10 +678,35 @@ private:
             for (const ScrollSceneLayer& layer : layers) {
                 presentation.frame.scroll_layers.push_back(
                     {.scene = layer.scene,
-                     .grid_offset_y = (layer.scroll_top - visual_top) * cell_height});
+                     .grid_offset_y = (layer.scroll_top - visual_top) * cell_height,
+                     .clip_top = 0.0F,
+                     .clip_bottom = 0.0F});
+            }
+            if (vertical_layout_) {
+                const float grid_bottom = vertical_layout_->grid_clip_bottom();
+                const auto layer_origin = [&](std::size_t index) {
+                    const SkiaScrollLayer& positioned = presentation.frame.scroll_layers[index];
+                    return positioned.scene->grid_offset_rows * cell_height +
+                           positioned.grid_offset_y;
+                };
+                for (std::size_t index = 0; index < presentation.frame.scroll_layers.size();
+                     ++index) {
+                    SkiaScrollLayer& positioned = presentation.frame.scroll_layers[index];
+                    positioned.clip_top =
+                        index == 0 ? 0.0F : std::clamp(layer_origin(index), 0.0F, grid_bottom);
+                    positioned.clip_bottom =
+                        index + 1 == presentation.frame.scroll_layers.size()
+                            ? grid_bottom
+                            : std::clamp(layer_origin(index + 1), 0.0F, grid_bottom);
+                }
             }
             presentation.frame.cursor_grid_offset_y =
                 (scroll_animation_->target_scroll_top - visual_top) * cell_height;
+            if (scene.active_text_row && vertical_layout_) {
+                presentation.frame.active_line_y =
+                    vertical_layout_->row_top(*scene.active_text_row) +
+                    presentation.frame.cursor_grid_offset_y;
+            }
             if (!presentation.scroll_finished) {
                 presentation.snapshot.active = true;
                 presentation.snapshot.scroll = true;
@@ -685,11 +718,14 @@ private:
                 presentation.snapshot.scroll_velocity = state.velocity;
                 presentation.snapshot.visual_scroll_top = visual_top;
                 presentation.snapshot.target_scroll_top = scroll_animation_->target_scroll_top;
+                presentation.snapshot.active_line_y = presentation.frame.active_line_y;
                 presentation.snapshot.layers.reserve(presentation.frame.scroll_layers.size());
                 for (std::size_t index = 0; index < layers.size(); ++index) {
                     presentation.snapshot.layers.push_back(
                         {.scroll_top = layers[index].scroll_top,
-                         .grid_offset_y = presentation.frame.scroll_layers[index].grid_offset_y});
+                         .grid_offset_y = presentation.frame.scroll_layers[index].grid_offset_y,
+                         .clip_top = presentation.frame.scroll_layers[index].clip_top,
+                         .clip_bottom = presentation.frame.scroll_layers[index].clip_bottom});
                 }
             }
         }
@@ -768,7 +804,7 @@ private:
                                  editor_snapshot.viewport.top_line_offset;
         update_animation_targets(scene, frame_layout, scroll_top,
                                  animation_context(editor_snapshot), geometry_changed, now);
-        const AnimationPresentation animation = animation_presentation(now);
+        const AnimationPresentation animation = animation_presentation(scene, now);
         const std::optional<SkiaLogicalRect> current_cursor =
             presented_cursor_rect(frame_layout, scene, animation.frame);
         const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
@@ -1116,6 +1152,7 @@ private:
     int page_rows_ = 22;
     float wheel_scroll_accumulator_ = 0.0F;
     bool suppress_text_input_ = false;
+    bool vsync_enabled_ = false;
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 

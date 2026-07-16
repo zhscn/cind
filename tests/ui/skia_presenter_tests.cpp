@@ -628,6 +628,9 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
     const int cell_height = presenter.cell_height();
     const int width = presenter.cell_width() * target.cols;
     const int height = cell_height * target.rows;
+    const float grid_bottom =
+        SceneVerticalLayout(target, presenter.vertical_metrics(static_cast<float>(height)))
+            .grid_clip_bottom();
     const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
     std::vector<std::uint32_t> source_pixels(static_cast<std::size_t>(width * height));
     std::vector<std::uint32_t> target_pixels(source_pixels.size());
@@ -636,18 +639,28 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
     presenter.render(target, width, height, target_pixels.data(), row_bytes);
 
     SkiaAnimationFrame start{
-        .scroll_layers = {{.scene = &source, .grid_offset_y = 0.0F},
-                          {.scene = &target, .grid_offset_y = static_cast<float>(cell_height)}},
+        .scroll_layers = {{.scene = &source,
+                           .grid_offset_y = 0.0F,
+                           .clip_top = 0.0F,
+                           .clip_bottom = static_cast<float>(cell_height)},
+                          {.scene = &target,
+                           .grid_offset_y = static_cast<float>(cell_height),
+                           .clip_top = static_cast<float>(cell_height),
+                           .clip_bottom = grid_bottom}},
         .cursor_grid_offset_y = static_cast<float>(cell_height),
+        .active_line_y = std::nullopt,
         .cursor_position = std::nullopt,
     };
     presenter.render_animated(target, start, width, height, animated_pixels.data(), row_bytes);
     CHECK(animated_pixels == source_pixels);
 
     SkiaAnimationFrame finish{
-        .scroll_layers = {{.scene = &source, .grid_offset_y = -static_cast<float>(cell_height)},
-                          {.scene = &target, .grid_offset_y = 0.0F}},
+        .scroll_layers = {{.scene = &target,
+                           .grid_offset_y = 0.0F,
+                           .clip_top = 0.0F,
+                           .clip_bottom = grid_bottom}},
         .cursor_grid_offset_y = 0.0F,
+        .active_line_y = std::nullopt,
         .cursor_position = std::nullopt,
     };
     presenter.render_animated(target, finish, width, height, animated_pixels.data(), row_bytes);
@@ -655,10 +668,15 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
 
     SkiaAnimationFrame middle{
         .scroll_layers = {{.scene = &source,
-                           .grid_offset_y = -static_cast<float>(cell_height) / 2.0F},
+                           .grid_offset_y = -static_cast<float>(cell_height) / 2.0F,
+                           .clip_top = 0.0F,
+                           .clip_bottom = static_cast<float>(cell_height) / 2.0F},
                           {.scene = &target,
-                           .grid_offset_y = static_cast<float>(cell_height) / 2.0F}},
+                           .grid_offset_y = static_cast<float>(cell_height) / 2.0F,
+                           .clip_top = static_cast<float>(cell_height) / 2.0F,
+                           .clip_bottom = grid_bottom}},
         .cursor_grid_offset_y = static_cast<float>(cell_height) / 2.0F,
+        .active_line_y = std::nullopt,
         .cursor_position = SkiaLogicalPoint{.x = static_cast<float>(presenter.cell_width()) / 2.0F,
                                             .y = static_cast<float>(cell_height) / 2.0F},
     };
@@ -699,16 +717,24 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
     const int cell_height = presenter.cell_height();
     const int width = presenter.cell_width() * target.cols;
     const int height = cell_height * target.rows;
+    const float grid_bottom =
+        SceneVerticalLayout(target, presenter.vertical_metrics(static_cast<float>(height)))
+            .grid_clip_bottom();
     const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
 
     presenter.render_animated(
         target,
         {.scroll_layers = {{.scene = &lower,
-                            .grid_offset_y = -0.75F * static_cast<float>(cell_height)},
+                            .grid_offset_y = -0.75F * static_cast<float>(cell_height),
+                            .clip_top = 0.0F,
+                            .clip_bottom = 0.25F * static_cast<float>(cell_height)},
                            {.scene = &upper,
-                            .grid_offset_y = 0.25F * static_cast<float>(cell_height)}},
+                            .grid_offset_y = 0.25F * static_cast<float>(cell_height),
+                            .clip_top = 0.25F * static_cast<float>(cell_height),
+                            .clip_bottom = grid_bottom}},
          .cursor_grid_offset_y = 3.25F * static_cast<float>(cell_height),
+         .active_line_y = std::nullopt,
          .cursor_position = std::nullopt},
         width, height, pixels.data(), row_bytes);
 
@@ -722,6 +748,86 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
             leading_edge_has_document || std::ranges::find(first, last, theme.selection) != last;
     }
     CHECK(leading_edge_has_document);
+}
+
+TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    const auto make_scene = [](int first_line, int active_row) {
+        Scene scene;
+        scene.rows = 8;
+        scene.cols = 20;
+        scene.cursor_visible = false;
+        scene.active_text_row = active_row;
+        Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
+        for (int row = 0; row < body.rect.rows; ++row) {
+            body.prims.push_back(
+                {row, 0, std::format("line {:03}", first_line + row), StyleClass::Text, false});
+        }
+        Region status{
+            RegionRole::StatusBar, {6, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+        Region echo{
+            RegionRole::EchoArea, {7, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+        scene.regions = {std::move(body), std::move(status), std::move(echo)};
+        return scene;
+    };
+
+    const Scene lower = make_scene(0, 4);
+    const Scene middle = make_scene(1, 4);
+    const Scene target = make_scene(2, 1);
+    const int cell_height = presenter.cell_height();
+    const int width = presenter.cell_width() * target.cols;
+    const int height = cell_height * target.rows;
+    const float grid_bottom =
+        SceneVerticalLayout(target, presenter.vertical_metrics(static_cast<float>(height)))
+            .grid_clip_bottom();
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> before(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> after(before.size());
+    const float active_line_y = 2.0F * static_cast<float>(cell_height);
+
+    presenter.render_animated(
+        target,
+        {.scroll_layers = {{.scene = &lower,
+                            .grid_offset_y = -0.999F * static_cast<float>(cell_height),
+                            .clip_top = 0.0F,
+                            .clip_bottom = 0.001F * static_cast<float>(cell_height)},
+                           {.scene = &middle,
+                            .grid_offset_y = 0.001F * static_cast<float>(cell_height),
+                            .clip_top = 0.001F * static_cast<float>(cell_height),
+                            .clip_bottom = grid_bottom}},
+         .cursor_grid_offset_y = 1.001F * static_cast<float>(cell_height),
+         .active_line_y = active_line_y + 0.001F * static_cast<float>(cell_height),
+         .cursor_position = std::nullopt},
+        width, height, before.data(), row_bytes);
+    presenter.render_animated(
+        target,
+        {.scroll_layers = {{.scene = &middle,
+                            .grid_offset_y = -0.001F * static_cast<float>(cell_height),
+                            .clip_top = 0.0F,
+                            .clip_bottom = 0.999F * static_cast<float>(cell_height)},
+                           {.scene = &target,
+                            .grid_offset_y = 0.999F * static_cast<float>(cell_height),
+                            .clip_top = 0.999F * static_cast<float>(cell_height),
+                            .clip_bottom = grid_bottom}},
+         .cursor_grid_offset_y = 0.999F * static_cast<float>(cell_height),
+         .active_line_y = active_line_y - 0.001F * static_cast<float>(cell_height),
+         .cursor_position = std::nullopt},
+        width, height, after.data(), row_bytes);
+
+    const int sample_x = width - 2;
+    const int sample_y = static_cast<int>(active_line_y) + cell_height / 2;
+    const auto pixel = [width, sample_x, sample_y](const std::vector<std::uint32_t>& pixels) {
+        return pixels[static_cast<std::size_t>(sample_y) * static_cast<std::size_t>(width) +
+                      static_cast<std::size_t>(sample_x)];
+    };
+    CHECK(pixel(before) == theme.active_line);
+    CHECK(pixel(after) == theme.active_line);
+    std::size_t changed_pixels = 0;
+    for (std::size_t index = 0; index < before.size(); ++index) {
+        changed_pixels += before[index] != after[index] ? 1 : 0;
+    }
+    CHECK(changed_pixels < before.size() / 50);
 }
 
 TEST_CASE("Skia presenter lays the modeline out from structured status content") {
@@ -826,6 +932,7 @@ TEST_CASE("Skia partial rendering clears a cancelled cursor animation position")
     presenter.render_animated(scene,
                               {.scroll_layers = {},
                                .cursor_grid_offset_y = 0.0F,
+                               .active_line_y = std::nullopt,
                                .cursor_position = SkiaLogicalPoint{.x = interpolated_cursor.x,
                                                                    .y = interpolated_cursor.y}},
                               width, height, retained.data(), row_bytes);
