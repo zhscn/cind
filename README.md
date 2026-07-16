@@ -14,7 +14,7 @@ On Fedora, install the development dependencies with:
 ```sh
 sudo dnf install \
   cmake ninja-build gcc-c++ pkgconf-pkg-config \
-  utf8proc-devel SDL3-devel libepoxy-devel freetype-devel fontconfig-devel \
+  utf8proc-devel libuv-devel SDL3-devel libepoxy-devel freetype-devel fontconfig-devel \
   libicu-devel libjpeg-turbo-devel libpng-devel harfbuzz-devel
 ```
 
@@ -92,3 +92,4 @@ preferred.
 - [GUI architecture](docs/gui-architecture.md)
 - [GUI inspector](docs/gui-inspector.md)
 - [Command and interaction architecture](docs/command-loop.md)
+- [Asynchronous runtime](docs/async-runtime.md)

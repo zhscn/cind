@@ -12,11 +12,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
+
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
 
 namespace cind::tui {
 
@@ -25,6 +31,81 @@ namespace {
 bool is_utf8_continuation(char byte) {
     return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
 }
+
+class EventLoopWakeup {
+public:
+    EventLoopWakeup() {
+        int descriptors[2] = {-1, -1};
+        if (::pipe(descriptors) != 0) {
+            throw std::system_error(errno, std::generic_category(), "cannot create TUI wake pipe");
+        }
+        read_fd_ = descriptors[0];
+        write_fd_ = descriptors[1];
+        if (!add_flags(read_fd_) || !add_flags(write_fd_)) {
+            const int error = errno;
+            ::close(read_fd_);
+            ::close(write_fd_);
+            throw std::system_error(error, std::generic_category(),
+                                    "cannot configure TUI wake pipe");
+        }
+    }
+
+    ~EventLoopWakeup() {
+        ::close(read_fd_);
+        ::close(write_fd_);
+    }
+    EventLoopWakeup(const EventLoopWakeup&) = delete;
+    EventLoopWakeup& operator=(const EventLoopWakeup&) = delete;
+
+    void notify() const noexcept {
+        constexpr char byte = 1;
+        ssize_t result = 0;
+        do {
+            result = ::write(write_fd_, &byte, 1);
+        } while (result < 0 && errno == EINTR);
+        (void)result;
+    }
+
+    bool wait_for_input() {
+        pollfd descriptors[2] = {{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0},
+                                 {.fd = read_fd_, .events = POLLIN, .revents = 0}};
+        int result = 0;
+        do {
+            result = ::poll(descriptors, 2, -1);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0) {
+            throw std::system_error(errno, std::generic_category(), "TUI input poll failed");
+        }
+        if ((descriptors[1].revents & static_cast<short>(POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            throw std::runtime_error("TUI wake pipe failed");
+        }
+        if ((descriptors[1].revents & POLLIN) != 0) {
+            drain();
+            return false;
+        }
+        return (descriptors[0].revents & static_cast<short>(POLLIN | POLLHUP | POLLERR)) != 0;
+    }
+
+private:
+    static bool add_flags(int descriptor) noexcept {
+        const int status_flags = ::fcntl(descriptor, F_GETFL);
+        if (status_flags == -1 || ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) == -1) {
+            return false;
+        }
+        const int descriptor_flags = ::fcntl(descriptor, F_GETFD);
+        return descriptor_flags != -1 &&
+               ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != -1;
+    }
+
+    void drain() const noexcept {
+        char bytes[64];
+        while (::read(read_fd_, bytes, sizeof(bytes)) > 0) {
+        }
+    }
+
+    int read_fd_ = -1;
+    int write_fd_ = -1;
+};
 
 std::optional<KeyStroke> normalize_key(const Key& key) {
     switch (key.kind) {
@@ -80,7 +161,7 @@ class Editor {
 public:
     Editor(const std::string& path, std::string initial, CppIndentStyle style,
            std::string style_origin, std::uint32_t initial_line)
-        : term_(),
+        : term_(), wakeup_(),
           application_({.path = path,
                         .initial_text = std::move(initial),
                         .style = style,
@@ -91,7 +172,8 @@ public:
                                                   term_.set_clipboard_text(text);
                                                   return {};
                                               },
-                                              .read_clipboard = {}}}),
+                                              .read_clipboard = {},
+                                              .wake_event_loop = [this] { wakeup_.notify(); }}}),
           search_commands_(application_.search_commands()),
           command_loop_(application_.command_loop()), message_(application_.message()) {
         register_commands();
@@ -105,7 +187,7 @@ public:
         while (!application_.should_quit()) {
             (void)application_.poll_background_work();
             render();
-            handle_key(term_.read_key());
+            handle_key(wait_key());
         }
         return 0;
     }
@@ -113,6 +195,17 @@ public:
 private:
     EditSession& session() { return application_.session(); }
     const EditSession& session() const { return application_.session(); }
+
+    Key wait_key() {
+        while (true) {
+            if (wakeup_.wait_for_input()) {
+                return term_.read_key();
+            }
+            if (application_.poll_background_work()) {
+                render();
+            }
+        }
+    }
 
     // ---- geometry ---------------------------------------------------------
 
@@ -212,7 +305,7 @@ private:
         std::optional<std::string> result;
         while (true) {
             render();
-            const Key key = term_.read_key();
+            const Key key = wait_key();
             if (key.kind == KeyKind::Enter) {
                 result = prompt_input_;
                 break;
@@ -243,7 +336,7 @@ private:
         char answer = 0;
         while (true) {
             render();
-            const Key key = term_.read_key();
+            const Key key = wait_key();
             if (key.kind == KeyKind::Escape || key.kind == KeyKind::Eof ||
                 (key.kind == KeyKind::Ctrl && key.ch == 'g')) {
                 break;
@@ -561,6 +654,7 @@ private:
     }
 
     Terminal term_;
+    EventLoopWakeup wakeup_;
     EditorApplication application_;
     SearchCommands& search_commands_;
     CommandLoop& command_loop_;

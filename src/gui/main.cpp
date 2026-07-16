@@ -195,9 +195,10 @@ struct TextureDeleter {
 
 class SdlWindow {
 public:
-    SdlWindow(EditorModel& editor, SkiaPresenter& presenter, InspectionHub* inspection)
+    SdlWindow(EditorModel& editor, SkiaPresenter& presenter, InspectionHub* inspection,
+              Uint32 background_event)
         : editor_(editor), presenter_(presenter), frame_controller_(presenter),
-          inspection_(inspection) {
+          inspection_(inspection), background_event_(background_event) {
         constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
         window_.reset(SDL_CreateWindow("cind · Skia · Wayland", 1100, 760, flags));
         if (!window_) {
@@ -221,16 +222,15 @@ public:
         while (!editor_.should_quit()) {
             SDL_Event event{};
             const bool animating = frame_controller_.animations_active();
-            const bool asynchronous = editor_.has_background_work() || animating;
             bool received = false;
             if (animating && vsync_enabled_) {
                 received = SDL_PollEvent(&event);
-            } else if (asynchronous) {
-                received = SDL_WaitEventTimeout(&event, animating ? 1 : 16);
+            } else if (animating) {
+                received = SDL_WaitEventTimeout(&event, 1);
             } else {
                 received = SDL_WaitEvent(&event);
             }
-            if (!received && !asynchronous) {
+            if (!received && !animating) {
                 throw std::runtime_error(std::format("SDL event wait failed: {}", SDL_GetError()));
             }
             bool repaint = false;
@@ -291,6 +291,9 @@ private:
     }
 
     EventResult handle_event(const SDL_Event& event) {
+        if (event.type == background_event_) {
+            return {true, false};
+        }
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -353,7 +356,10 @@ private:
         }
     }
 
-    static std::string event_type(const SDL_Event& event) {
+    std::string event_type(const SDL_Event& event) const {
+        if (event.type == background_event_) {
+            return "background-ready";
+        }
         switch (event.type) {
         case SDL_EVENT_QUIT:
             return "quit";
@@ -815,6 +821,7 @@ private:
     SkiaPresenter& presenter_;
     GuiFrameController frame_controller_;
     InspectionHub* inspection_ = nullptr;
+    Uint32 background_event_ = 0;
     std::unique_ptr<SDL_Window, WindowDeleter> window_;
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
@@ -916,6 +923,11 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
     auto [style, style_origin] = load_style(path);
 
     SdlRuntime runtime;
+    const Uint32 background_event = SDL_RegisterEvents(1);
+    if (background_event == 0) {
+        throw std::runtime_error(
+            std::format("SDL user event allocation failed: {}", SDL_GetError()));
+    }
     EditorPlatformServices platform_services{
         .write_clipboard = [](std::string_view text) -> std::expected<void, std::string> {
             const std::string owned(text);
@@ -932,7 +944,13 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
                 return std::unexpected(std::format("SDL_GetClipboardText: {}", error));
             }
             return std::string(text.get());
-        }};
+        },
+        .wake_event_loop =
+            [background_event] {
+                SDL_Event event{};
+                event.type = background_event;
+                (void)SDL_PushEvent(&event);
+            }};
     EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line,
                        std::move(platform_services));
     SkiaPresenter presenter(std::move(font_family), font_size, {}, smoothing);
@@ -944,7 +962,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
         presenter.set_show_debug_status(true);
         std::fprintf(stderr, "cind-gui inspector: %s\n", inspector->socket_path().c_str());
     }
-    SdlWindow window(editor, presenter, inspection.get());
+    SdlWindow window(editor, presenter, inspection.get(), background_event);
     window.run();
     return 0;
 }

@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <charconv>
-#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -77,7 +76,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
               message_ = std::move(message);
               reveal_caret_ = true;
           }),
-      command_loop_(runtime_), platform_services_(std::move(spec.platform_services)) {
+      command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
+      async_runtime_(std::move(platform_services_.wake_event_loop)) {
     register_commands();
     register_interaction_providers();
 
@@ -446,41 +446,11 @@ std::uint32_t EditorApplication::save_generation(WindowId window) const {
 }
 
 bool EditorApplication::has_background_work() const {
-    return std::ranges::any_of(buffers_, [](const std::unique_ptr<BufferState>& state) {
-        return state->pending_save.has_value();
-    });
+    return async_runtime_.has_work();
 }
 
 bool EditorApplication::poll_background_work() {
-    bool changed = false;
-    for (const std::unique_ptr<BufferState>& state : buffers_) {
-        if (!state->pending_save || state->pending_save->result.wait_for(std::chrono::seconds(0)) !=
-                                        std::future_status::ready) {
-            continue;
-        }
-        std::error_code error;
-        try {
-            error = state->pending_save->result.get();
-        } catch (const std::system_error& exception) {
-            error = exception.code();
-        } catch (const std::bad_alloc&) {
-            error = std::make_error_code(std::errc::not_enough_memory);
-        } catch (...) {
-            error = std::make_error_code(std::errc::io_error);
-        }
-        const Buffer& buffer = runtime_.buffers().get(state->buffer);
-        const std::string display = buffer.resource_uri().value_or(buffer.name());
-        if (error) {
-            message_ = std::format("save failed: {}", error.message());
-        } else {
-            mark_saved(state->buffer, std::move(state->pending_save->content));
-            message_ = buffer.modified() ? std::format("saved {} · newer edits remain", display)
-                                         : std::format("saved {}", display);
-        }
-        state->pending_save.reset();
-        changed = true;
-    }
-    return changed;
+    return async_runtime_.drain() != 0;
 }
 
 void EditorApplication::request_quit(bool force) {
@@ -1246,26 +1216,78 @@ void EditorApplication::save() {
     const DocumentSnapshot snapshot = runtime_.buffers().get(state.buffer).snapshot();
     Text content = snapshot.content();
     std::string target_path = *resource;
+    const BufferId buffer = state.buffer;
     try {
-        state.pending_save.emplace(PendingSave{
-            content, std::async(std::launch::async, [path = std::move(target_path),
-                                                     content = std::move(content)]() noexcept {
-                try {
-                    return save_file_atomically(path, content);
-                } catch (const std::system_error& exception) {
-                    return exception.code();
-                } catch (const std::bad_alloc&) {
-                    return std::make_error_code(std::errc::not_enough_memory);
-                } catch (...) {
-                    return std::make_error_code(std::errc::io_error);
+        state.pending_save.emplace(PendingSave{.content = content, .task = {}});
+        state.pending_save->task = async_runtime_.submit({
+            .work = [this, buffer, path = std::move(target_path), content = std::move(content)](
+                        const std::stop_token& cancellation) -> AsyncCompletion {
+                if (cancellation.stop_requested()) {
+                    return {};
                 }
-            })});
+                std::error_code error;
+                try {
+                    error = save_file_atomically(path, content);
+                } catch (const std::system_error& exception) {
+                    error = exception.code();
+                } catch (const std::bad_alloc&) {
+                    error = std::make_error_code(std::errc::not_enough_memory);
+                } catch (...) {
+                    error = std::make_error_code(std::errc::io_error);
+                }
+                return [this, buffer, error] { finish_save(buffer, error); };
+            },
+            .cancelled =
+                [this, buffer] {
+                    BufferState& cancelled = state_for(buffer);
+                    cancelled.pending_save.reset();
+                    message_ = "save cancelled";
+                },
+            .failed =
+                [this, buffer](const std::exception_ptr& exception) {
+                    std::error_code error = std::make_error_code(std::errc::io_error);
+                    try {
+                        if (exception) {
+                            std::rethrow_exception(exception);
+                        }
+                    } catch (const std::system_error& system) {
+                        error = system.code();
+                    } catch (const std::bad_alloc&) {
+                        error = std::make_error_code(std::errc::not_enough_memory);
+                    } catch (...) {
+                        error = std::make_error_code(std::errc::io_error);
+                    }
+                    finish_save(buffer, error);
+                },
+        });
         message_ = std::format("saving {}…", *resource);
     } catch (const std::system_error& exception) {
+        state.pending_save.reset();
         message_ = std::format("save failed: {}", exception.code().message());
     } catch (const std::bad_alloc&) {
+        state.pending_save.reset();
         message_ = "save failed: not enough memory";
+    } catch (const std::exception& exception) {
+        state.pending_save.reset();
+        message_ = std::format("save failed: {}", exception.what());
     }
+}
+
+void EditorApplication::finish_save(BufferId buffer_id, std::error_code error) {
+    BufferState& state = state_for(buffer_id);
+    if (!state.pending_save) {
+        return;
+    }
+    const Buffer& buffer = runtime_.buffers().get(buffer_id);
+    const std::string display = buffer.resource_uri().value_or(buffer.name());
+    if (error) {
+        message_ = std::format("save failed: {}", error.message());
+    } else {
+        mark_saved(buffer_id, std::move(state.pending_save->content));
+        message_ = buffer.modified() ? std::format("saved {} · newer edits remain", display)
+                                     : std::format("saved {}", display);
+    }
+    state.pending_save.reset();
 }
 
 void EditorApplication::mark_saved(BufferId buffer, Text content) {

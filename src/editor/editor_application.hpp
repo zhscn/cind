@@ -1,5 +1,6 @@
 #pragma once
 
+#include "async/runtime.hpp"
 #include "cli/session.hpp"
 #include "editor/basic_commands.hpp"
 #include "editor/command_loop.hpp"
@@ -11,7 +12,6 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <future>
 #include <memory>
 #include <optional>
 #include <span>
@@ -26,6 +26,9 @@ namespace cind {
 struct EditorPlatformServices {
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
     std::function<std::expected<std::string, std::string>()> read_clipboard;
+    // Thread-safe native event-loop notification. The callback only wakes the
+    // frontend; editor state is applied later by poll_background_work().
+    AsyncRuntime::Wakeup wake_event_loop;
 };
 
 struct EditorApplicationSpec {
@@ -69,6 +72,8 @@ public:
 
     EditorRuntime& runtime() { return runtime_; }
     const EditorRuntime& runtime() const { return runtime_; }
+    AsyncRuntime& async_runtime() { return async_runtime_; }
+    const AsyncRuntime& async_runtime() const { return async_runtime_; }
     BufferId buffer_id() const;
     BufferId buffer_id(WindowId window) const;
     ViewId view_id() const;
@@ -144,7 +149,7 @@ public:
 private:
     struct PendingSave {
         Text content;
-        std::future<std::error_code> result;
+        AsyncTaskId task;
     };
 
     struct BufferState {
@@ -193,6 +198,7 @@ private:
     std::optional<std::string> store_kill(std::string text);
     std::optional<std::string> import_clipboard();
     void save();
+    void finish_save(BufferId buffer, std::error_code error);
     void mark_saved(BufferId buffer, Text content);
     void switch_relative(int delta);
 
@@ -236,6 +242,9 @@ private:
     bool reveal_caret_ = true;
     bool quit_armed_ = false;
     bool quit_ = false;
+    // Declared last so shutdown cancels and joins background work before any
+    // editor state captured by completion callbacks is destroyed.
+    AsyncRuntime async_runtime_;
 };
 
 } // namespace cind

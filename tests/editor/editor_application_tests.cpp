@@ -7,16 +7,38 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <string>
-#include <thread>
 
 using namespace cind;
 
 namespace {
+
+class WakeSignal {
+public:
+    void notify() {
+        {
+            std::scoped_lock lock(mutex_);
+            notified_ = true;
+        }
+        changed_.notify_one();
+    }
+
+    bool wait() {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(2), [this] { return notified_; });
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool notified_ = false;
+};
 
 EditorApplication make_application(std::string path, std::string initial,
                                    EditorPlatformServices platform_services = {}) {
@@ -76,15 +98,18 @@ TEST_CASE("background saving is independent of a graphical event loop") {
     std::filesystem::remove(path, ignored);
 
     {
-        EditorApplication application = make_application(path.string(), "old");
+        WakeSignal wake;
+        EditorApplication application = make_application(
+            path.string(), "old",
+            {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                 wake.notify();
+             }});
         application.insert_text("x");
         send_keys(application, "C-x C-s");
         application.insert_text("y");
 
-        for (int attempt = 0; attempt < 200 && application.has_background_work(); ++attempt) {
-            (void)application.poll_background_work();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+        REQUIRE(wake.wait());
+        CHECK(application.poll_background_work());
         REQUIRE_FALSE(application.has_background_work());
         CHECK(application.dirty());
     }
@@ -384,7 +409,8 @@ TEST_CASE("copy and kill commands synchronize with the platform clipboard") {
         },
         .read_clipboard = [&clipboard]() -> std::expected<std::string, std::string> {
             return clipboard;
-        }};
+        },
+        .wake_event_loop = {}};
     EditorApplication application = make_application("sample.cc", "abc", std::move(services));
 
     send_keys(application, "C-SPC C-f M-w");
@@ -402,7 +428,8 @@ TEST_CASE("copy and kill commands synchronize with the platform clipboard") {
 TEST_CASE("yank imports the platform clipboard when the internal kill slot is empty") {
     EditorPlatformServices services{
         .write_clipboard = {},
-        .read_clipboard = []() -> std::expected<std::string, std::string> { return "outside"; }};
+        .read_clipboard = []() -> std::expected<std::string, std::string> { return "outside"; },
+        .wake_event_loop = {}};
     EditorApplication application = make_application("sample.cc", "text", std::move(services));
 
     send_keys(application, "C-y");

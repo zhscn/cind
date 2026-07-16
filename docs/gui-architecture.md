@@ -168,6 +168,10 @@ SDL is a platform shell rather than a widget toolkit in this design. It owns the
 scale, input method, clipboard integration, renderer and texture upload. Scene composition and hit
 semantics remain valid for another window-system or graphics backend.
 
+Background work enters the frontend through a wakeup rather than a render timer. The shared
+[asynchronous runtime](async-runtime.md) posts an SDL user event when main-thread completions are
+ready; the event loop drains those completions before deciding whether to compose another frame.
+
 ## Inspector boundary
 
 The inspector publishes model state, semantic Scene content, ViewTree order, prepared layout
