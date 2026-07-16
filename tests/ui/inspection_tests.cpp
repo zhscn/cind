@@ -69,6 +69,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .provider_revision = 1,
                       .scripted_providers = 4,
                       .binding_revision = 1,
+                      .input_state_revision = 3,
+                      .scripted_input_states = 1,
                       .last_error = std::nullopt},
         .interaction =
             {.active = true,
@@ -400,6 +402,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(scripting.payload.find("\"provider_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_providers\":4") != std::string::npos);
     CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
+    CHECK(scripting.payload.find("\"input_state_revision\":3") != std::string::npos);
+    CHECK(scripting.payload.find("\"scripted_input_states\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");

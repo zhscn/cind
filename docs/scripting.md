@@ -32,8 +32,8 @@ inspection snapshot. C++ exceptions raised by a host primitive are translated in
 conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command and
-provider counts, command/provider/keymap installation revisions, and the most recent error. This
-state is diagnostic and is not a plugin ABI.
+provider and input-state counts, command/provider/keymap/input-state installation revisions, and
+the most recent error. This state is diagnostic and is not a plugin ABI.
 
 ## Host capabilities
 
@@ -52,6 +52,12 @@ The native module exports:
 (bind-remap! host keymap-name command-name replacement-name)
 (keymap-bindings host keymap-name)
 (resolve-key-sequence host keymap-names key-sequence)
+(define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
+(set-base-input-state! host view-id state-name)
+(push-input-state! host view-id state-name)
+(pop-input-state! host view-id)
+(reset-input-states! host view-id)
+(view-input-states host view-id)
 (enabled-command-names host context)
 (open-buffer-summaries host)
 (project-root host project-id)
@@ -118,6 +124,19 @@ entries have the form `#(command keys command #f)`, prefix entries are
 keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
+
+`define-input-state!` creates or reconfigures a named state. `keymaps` is an ordered proper list or
+vector of keymap names; `text-input` is `accept` or `ignore`; `cursor` is `beam`, `block`, or
+`underline`; and `indicator` is presentation text. An optional handler receives the View ID and
+canonical key notation. It returns `pass`, `consume`, or `#(dispatch command-name)`. Handler errors
+are retained by the scripting runtime and consume the key without escaping into a frontend event
+loop.
+
+The state mutation procedures address a generational View ID. Base replacement initializes or
+changes the durable state. Push adds a transient state, pop removes one transient state, and reset
+removes all transients while preserving the base. `view-input-states` returns the stack from durable
+state to top as a vector of names. Every application View is initialized with the `emacs` state
+defined by `(cind core)`; its empty state keymap list preserves the default Emacs keymap policy.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of

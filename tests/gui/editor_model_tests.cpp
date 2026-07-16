@@ -133,6 +133,8 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);
+    CHECK(state.scripting.input_state_revision == 1);
+    CHECK(state.scripting.scripted_input_states == 1);
     CHECK_FALSE(scrolled.cursor_visible);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 6));

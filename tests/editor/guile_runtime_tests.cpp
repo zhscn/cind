@@ -113,6 +113,28 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
     CHECK(guile.snapshot().binding_revision == 2);
 }
 
+TEST_CASE("bundled Guile policy defines the default input state") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<std::size_t, std::string> first = guile.install_input_states();
+    const std::expected<std::size_t, std::string> second = guile.install_input_states();
+
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    CHECK(*first == 1);
+    CHECK(*second == 1);
+    const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
+    REQUIRE(emacs);
+    const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
+    CHECK(definition.keymaps.empty());
+    CHECK(definition.text_input == TextInputPolicy::Accept);
+    CHECK(definition.cursor == InputCursorShape::Beam);
+    CHECK_FALSE(definition.handler);
+    CHECK(guile.snapshot().input_state_revision == 2);
+    CHECK(guile.snapshot().scripted_input_states == 1);
+}
+
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
 

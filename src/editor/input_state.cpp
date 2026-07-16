@@ -31,6 +31,18 @@ InputStateId InputStateRegistry::define(Definition definition) {
     return id;
 }
 
+void InputStateRegistry::configure(InputStateId id, Definition definition) {
+    if (sealed_) {
+        throw std::logic_error("input state registry is sealed");
+    }
+    validate(definition);
+    Definition& current = definition_for_configuration(id);
+    if (definition.name != current.name) {
+        throw std::invalid_argument("input state configuration cannot change its name");
+    }
+    current = std::move(definition);
+}
+
 const InputStateRegistry::Definition& InputStateRegistry::definition(InputStateId id) const {
     if (!id.valid() || id.value >= definitions_.size()) {
         throw std::out_of_range("unknown input state id");

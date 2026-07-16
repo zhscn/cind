@@ -82,6 +82,7 @@ public:
     explicit InputStateRegistry(const KeymapRegistry& keymaps) : keymaps_(&keymaps) {}
 
     InputStateId define(Definition definition);
+    void configure(InputStateId id, Definition definition);
     void seal() { sealed_ = true; }
     bool sealed() const { return sealed_; }
 

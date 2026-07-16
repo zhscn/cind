@@ -29,13 +29,20 @@ struct ScriptProvider {
     SCM complete = SCM_UNDEFINED;
 };
 
+struct ScriptInputState {
+    SCM handler = SCM_BOOL_F;
+};
+
 struct GuileState {
     std::thread::id owner;
     bool active = true;
     std::vector<ScriptCommand> commands;
     std::vector<ScriptProvider> providers;
+    std::vector<ScriptInputState> input_states;
     std::uint64_t command_revision = 0;
     std::uint64_t provider_revision = 0;
+    std::uint64_t input_state_revision = 0;
+    std::size_t input_state_definitions = 0;
     std::optional<std::string> last_error;
 };
 
@@ -46,6 +53,7 @@ struct HostLease {
     std::size_t commands_installed = 0;
     std::size_t providers_installed = 0;
     std::size_t bindings_installed = 0;
+    std::size_t input_states_installed = 0;
 };
 
 SCM host_type = SCM_UNDEFINED;
@@ -179,6 +187,9 @@ bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_
 InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
                                                  std::size_t provider_index,
                                                  CommandContext& context, std::string_view query);
+InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
+                                                    std::size_t state_index, EditorRuntime& runtime,
+                                                    ViewId view, KeyStroke key);
 
 // The Guile ABI fixes four adjacent SCM arguments; Scheme-level names and
 // validation preserve their semantic order.
@@ -522,6 +533,189 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
         scm_misc_error("resolve-key-sequence", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("resolve-key-sequence", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes seven adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM text_input_value,
+                       SCM cursor_value, SCM indicator_value, SCM handler_value) {
+    if (!scm_is_string(indicator_value)) {
+        scm_wrong_type_arg_msg("define-input-state!", 6, indicator_value, "string");
+    }
+    if (!scheme_false(handler_value) && !scheme_true(scm_procedure_p(handler_value))) {
+        scm_wrong_type_arg_msg("define-input-state!", 7, handler_value, "procedure or #f");
+    }
+    try {
+        HostLease& host = require_host(host_object, "define-input-state!");
+        const std::string name = scheme_name(name_value, "define-input-state!", 2);
+        const std::vector<KeymapId> keymaps =
+            keymap_layers_from_scheme(host, keymaps_value, "define-input-state!");
+        TextInputPolicy text_input;
+        if (symbol_is(text_input_value, "accept")) {
+            text_input = TextInputPolicy::Accept;
+        } else if (symbol_is(text_input_value, "ignore")) {
+            text_input = TextInputPolicy::Ignore;
+        } else {
+            scm_wrong_type_arg_msg("define-input-state!", 4, text_input_value,
+                                   "'accept or 'ignore");
+        }
+        InputCursorShape cursor;
+        if (symbol_is(cursor_value, "beam")) {
+            cursor = InputCursorShape::Beam;
+        } else if (symbol_is(cursor_value, "block")) {
+            cursor = InputCursorShape::Block;
+        } else if (symbol_is(cursor_value, "underline")) {
+            cursor = InputCursorShape::Underline;
+        } else {
+            scm_wrong_type_arg_msg("define-input-state!", 5, cursor_value,
+                                   "'beam, 'block, or 'underline");
+        }
+
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("define-input-state!", "Guile runtime has expired", SCM_EOL);
+        }
+        const std::size_t state_index = state->input_states.size();
+        if (!scheme_false(handler_value)) {
+            (void)scm_gc_protect_object(handler_value);
+        }
+        try {
+            state->input_states.push_back({.handler = handler_value});
+            InputStateHandler handler;
+            if (!scheme_false(handler_value)) {
+                const std::weak_ptr<GuileState> weak = state;
+                EditorRuntime* runtime = host.runtime;
+                handler = [weak, state_index, runtime](ViewId view,
+                                                       KeyStroke key) -> InputStateHandlerResult {
+                    const std::shared_ptr<GuileState> locked = weak.lock();
+                    if (!locked || !locked->active) {
+                        return std::unexpected("Guile input state runtime has expired");
+                    }
+                    return invoke_script_input_handler(locked, state_index, *runtime, view, key);
+                };
+            }
+            InputStateRegistry::Definition definition{.name = name,
+                                                      .keymaps = keymaps,
+                                                      .text_input = text_input,
+                                                      .cursor = cursor,
+                                                      .indicator = scheme_string(indicator_value),
+                                                      .handler = std::move(handler)};
+            const std::optional<InputStateId> existing = host.runtime->input_states().find(name);
+            InputStateId id;
+            if (existing) {
+                id = *existing;
+                host.runtime->input_states().configure(id, std::move(definition));
+            } else {
+                id = host.runtime->input_states().define(std::move(definition));
+                ++state->input_state_definitions;
+            }
+            ++host.input_states_installed;
+            return scm_from_uint32(id.value);
+        } catch (...) {
+            state->input_states.pop_back();
+            if (!scheme_false(handler_value)) {
+                (void)scm_gc_unprotect_object(handler_value);
+            }
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-input-state!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-input-state!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+InputStateId require_input_state(HostLease& host, SCM value, const char* caller, int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<InputStateId> state = host.runtime->input_states().find(name);
+    if (!state) {
+        scm_misc_error(caller, "unknown input state: ~S", scm_list_1(value));
+    }
+    return *state;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_base_input_state(SCM host_object, SCM view_value, SCM state_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-base-input-state!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-base-input-state!", 2);
+        const InputStateId state =
+            require_input_state(host, state_value, "set-base-input-state!", 3);
+        host.runtime->views().set_base_input_state(view, state);
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-base-input-state!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-base-input-state!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM push_input_state(SCM host_object, SCM view_value, SCM state_value) {
+    try {
+        HostLease& host = require_host(host_object, "push-input-state!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "push-input-state!", 2);
+        const InputStateId state = require_input_state(host, state_value, "push-input-state!", 3);
+        host.runtime->views().push_input_state(view, state);
+    } catch (const std::exception& exception) {
+        scm_misc_error("push-input-state!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("push-input-state!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM pop_input_state(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "pop-input-state!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "pop-input-state!", 2);
+        const std::optional<InputStateId> removed = host.runtime->views().pop_input_state(view);
+        return removed ? name_symbol(host.runtime->input_states().definition(*removed).name)
+                       : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        scm_misc_error("pop-input-state!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("pop-input-state!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM reset_input_states(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "reset-input-states!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "reset-input-states!", 2);
+        host.runtime->views().reset_input_states(view);
+    } catch (const std::exception& exception) {
+        scm_misc_error("reset-input-states!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("reset-input-states!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_input_states(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "view-input-states");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-input-states", 2);
+        const std::vector<InputStateId>& stack =
+            host.runtime->views().get(view).input_states().stack();
+        SCM result = scm_c_make_vector(stack.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < stack.size(); ++index) {
+            scm_c_vector_set_x(
+                result, index,
+                name_symbol(host.runtime->input_states().definition(stack[index]).name));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("view-input-states", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("view-input-states", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1513,6 +1707,18 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(keymap_bindings));
     (void)scm_c_define_gsubr("resolve-key-sequence", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(resolve_key_sequence));
+    (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_input_state));
+    (void)scm_c_define_gsubr("set-base-input-state!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_base_input_state));
+    (void)scm_c_define_gsubr("push-input-state!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(push_input_state));
+    (void)scm_c_define_gsubr("pop-input-state!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(pop_input_state));
+    (void)scm_c_define_gsubr("reset-input-states!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(reset_input_states));
+    (void)scm_c_define_gsubr("view-input-states", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_input_states));
     (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
@@ -1584,6 +1790,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
                  "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+                 "define-input-state!", "set-base-input-state!", "push-input-state!",
+                 "pop-input-state!", "reset-input-states!", "view-input-states",
                  "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
                  "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
                  "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
@@ -1608,8 +1816,10 @@ struct GuileCall {
         InstallCommands,
         InstallProviders,
         InstallKeymaps,
+        InstallInputStates,
         InvokeCommand,
         InvokeProvider,
+        InvokeInputHandler,
         CheckEnabled,
     };
 
@@ -1622,6 +1832,8 @@ struct GuileCall {
     std::string query;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
+    ViewId view;
+    KeyStroke key;
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
     bool enabled = false;
@@ -1843,6 +2055,11 @@ SCM call_body(void* data) {
                 scm_call_1(scm_c_public_ref("cind core", "install-default-keymaps!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallInputStates:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "install-input-states!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InvokeCommand:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      command_invocation_value(*call.invocation));
@@ -1852,6 +2069,11 @@ SCM call_body(void* data) {
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      scm_from_utf8_string(call.query.c_str()));
             call.provider_candidates = provider_candidates_from_scheme(call.result);
+            break;
+        case GuileCall::Operation::InvokeInputHandler:
+            call.result =
+                scm_call_2(call.procedure, entity_id(call.view.slot, call.view.generation),
+                           scm_from_utf8_string(format_key_stroke(call.key).c_str()));
             break;
         case GuileCall::Operation::CheckEnabled:
             call.result = scm_call_1(call.procedure, command_context_value(*call.context));
@@ -1948,6 +2170,45 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
     return std::move(call.provider_candidates);
 }
 
+InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
+                                                    std::size_t state_index, EditorRuntime& runtime,
+                                                    ViewId view, KeyStroke key) {
+    if (std::this_thread::get_id() != state->owner || !state->active ||
+        state_index >= state->input_states.size()) {
+        return std::unexpected("Guile input state handler used outside its runtime");
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeInputHandler;
+    call.procedure = state->input_states[state_index].handler;
+    call.view = view;
+    call.key = key;
+    const std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = result.error();
+        return std::unexpected(std::format("Guile input state handler failed: {}", result.error()));
+    }
+    state->last_error.reset();
+    if (symbol_is(*result, "pass")) {
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Pass, .command = {}};
+    }
+    if (symbol_is(*result, "consume")) {
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume, .command = {}};
+    }
+    if (scm_is_vector(*result) && scm_c_vector_length(*result) == 2 &&
+        symbol_is(scm_c_vector_ref(*result, 0), "dispatch")) {
+        const SCM command_value = scm_c_vector_ref(*result, 1);
+        const std::string name = scheme_name(command_value, "input-state-handler", 2);
+        const std::optional<CommandId> command = runtime.commands().find(name);
+        if (!command) {
+            return std::unexpected(std::format("unknown input state command '{}'", name));
+        }
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
+                                       .command = *command};
+    }
+    return std::unexpected(
+        "Guile input state handler must return pass, consume, or #(dispatch command)");
+}
+
 bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_t command_index,
                             const CommandContext& context) {
     if (std::this_thread::get_id() != state->owner || !state->active ||
@@ -2006,6 +2267,12 @@ public:
             (void)scm_gc_unprotect_object(provider.complete);
         }
         state_->providers.clear();
+        for (const ScriptInputState& input_state : state_->input_states) {
+            if (!scheme_false(input_state.handler)) {
+                (void)scm_gc_unprotect_object(input_state.handler);
+            }
+        }
+        state_->input_states.clear();
         lease_->runtime = nullptr;
         lease_->state.reset();
         scm_foreign_object_set_x(host_, 0, nullptr);
@@ -2074,6 +2341,27 @@ public:
         return installed;
     }
 
+    std::expected<std::size_t, std::string> install_input_states() {
+        require_owner_thread();
+        lease_->input_states_installed = 0;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallInputStates;
+        call.host = host_;
+        std::expected<SCM, std::string> result = run_guile_call(call);
+        if (!result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != lease_->input_states_installed) {
+            state_->last_error =
+                "Guile input state policy returned an inconsistent definition count";
+            return std::unexpected(*state_->last_error);
+        }
+        ++state_->input_state_revision;
+        state_->last_error.reset();
+        return call.count;
+    }
+
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
@@ -2083,6 +2371,8 @@ public:
                 .provider_revision = state_->provider_revision,
                 .scripted_providers = state_->providers.size(),
                 .binding_revision = binding_revision_,
+                .input_state_revision = state_->input_state_revision,
+                .scripted_input_states = state_->input_state_definitions,
                 .last_error = state_->last_error};
     }
 
@@ -2115,6 +2405,10 @@ std::expected<std::size_t, std::string> GuileRuntime::install_core_providers() {
 
 std::expected<std::size_t, std::string> GuileRuntime::install_default_keymaps() {
     return impl_->install_default_keymaps();
+}
+
+std::expected<std::size_t, std::string> GuileRuntime::install_input_states() {
+    return impl_->install_input_states();
 }
 
 GuileRuntimeSnapshot GuileRuntime::snapshot() const {

@@ -3,6 +3,7 @@
   #:use-module (cind host)
   #:export (install-core-commands!
             install-core-providers!
+            install-input-states!
             install-default-keymaps!))
 
 (define (last-string-argument invocation)
@@ -571,6 +572,10 @@
                 (define-interaction-provider! host (car provider) (cdr provider)))
               providers)
     (length providers)))
+
+(define (install-input-states! host)
+  (define-input-state! host 'emacs '#() 'accept 'beam "" #f)
+  1)
 
 (define control-x-bindings
   '(("C-s" . "file.save")

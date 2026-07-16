@@ -367,6 +367,8 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .provider_revision = guile.provider_revision,
                                            .scripted_providers = guile.scripted_providers,
                                            .binding_revision = guile.binding_revision,
+                                           .input_state_revision = guile.input_state_revision,
+                                           .scripted_input_states = guile.scripted_input_states,
                                            .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {

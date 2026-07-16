@@ -254,6 +254,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             }
         });
     register_commands();
+    register_input_states();
     cpp_mode_ = ensure_cpp_mode(runtime_).mode;
     register_interaction_providers();
 
@@ -1137,6 +1138,7 @@ ViewId EditorApplication::create_view(WindowId window, BufferId buffer, TextOffs
     BufferState& buffer_state = state_for(buffer);
     const ViewId view = runtime_.views().create(buffer, caret);
     try {
+        runtime_.views().set_base_input_state(view, default_input_state_);
         auto state = std::make_unique<ViewState>();
         state->window = window;
         state->buffer = buffer;
@@ -1148,6 +1150,19 @@ ViewId EditorApplication::create_view(WindowId window, BufferId buffer, TextOffs
         throw;
     }
     return view;
+}
+
+void EditorApplication::register_input_states() {
+    const std::expected<std::size_t, std::string> installed = guile_.install_input_states();
+    if (!installed) {
+        throw std::runtime_error(
+            std::format("Guile input state policy failed: {}", installed.error()));
+    }
+    const std::optional<InputStateId> state = runtime_.input_states().find("emacs");
+    if (!state) {
+        throw std::logic_error("Guile input state policy did not define emacs");
+    }
+    default_input_state_ = *state;
 }
 
 bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {

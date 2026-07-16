@@ -249,6 +249,7 @@ private:
     bool location_navigation_available(const CommandContext& context) const;
 
     void register_commands();
+    void register_input_states();
     void register_interaction_providers();
     void register_keymaps();
     void sync_keymaps();
@@ -287,6 +288,7 @@ private:
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
+    InputStateId default_input_state_;
     ModeId cpp_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;
