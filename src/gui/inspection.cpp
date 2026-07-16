@@ -394,6 +394,22 @@ void append_location_navigation(std::string& output,
     output += std::format(",\"location_count\":{}}}", navigation.location_count);
 }
 
+void append_scripting(std::string& output, const ScriptingStateSnapshot& scripting) {
+    output += "{\"engine\":";
+    append_json_string(output, scripting.engine);
+    output += ",\"version\":";
+    append_json_string(output, scripting.version);
+    output += ",\"modules\":";
+    append_strings(output, scripting.modules);
+    output += std::format(",\"binding_revision\":{},\"last_error\":", scripting.binding_revision);
+    if (scripting.last_error) {
+        append_json_string(output, *scripting.last_error);
+    } else {
+        output += "null";
+    }
+    output.push_back('}');
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -422,6 +438,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.input_focus);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
+    output += ",\"scripting\":";
+    append_scripting(output, editor.scripting);
     output += ",\"interaction\":";
     append_interaction(output, editor.interaction);
     output += ",\"buffers\":";
@@ -1736,6 +1754,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_line_signs(output, frame.editor.line_signs);
     } else if (path == "editor.command_loop") {
         append_command_loop(output, frame.editor.command_loop);
+    } else if (path == "editor.scripting") {
+        append_scripting(output, frame.editor.scripting);
     } else if (path == "editor.interaction") {
         append_interaction(output, frame.editor.interaction);
     } else if (path == "editor.buffers") {
@@ -2183,6 +2203,13 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
            << printable(frame.editor.command_loop.last_command) << "\"\n";
+    output << "    scripting=" << printable(frame.editor.scripting.engine) << ' '
+           << printable(frame.editor.scripting.version)
+           << " binding-revision=" << frame.editor.scripting.binding_revision;
+    if (frame.editor.scripting.last_error) {
+        output << " error=\"" << printable(*frame.editor.scripting.last_error) << '"';
+    }
+    output << '\n';
     for (const KeymapLayerStateSnapshot& layer : frame.editor.command_loop.layers) {
         output << "      keymap \"" << printable(layer.name)
                << "\" scope=" << printable(layer.scope);

@@ -1,0 +1,3 @@
+# Guile initializes process-wide VM and BDW GC state without a matching
+# shutdown API. Cind-owned foreign host allocations are released explicitly.
+leak:libguile-3.0.so

@@ -126,6 +126,9 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     const EditorStateSnapshot state = model.inspect();
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
+    CHECK(state.scripting.engine == "guile");
+    CHECK(state.scripting.modules == std::vector<std::string>{"cind core"});
+    CHECK(state.scripting.binding_revision == 1);
     CHECK_FALSE(scrolled.cursor_visible);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 6));

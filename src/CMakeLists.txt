@@ -60,7 +60,6 @@ add_library(cind_application STATIC
   editor/command.cpp
   editor/command_loop.cpp
   editor/cpp_mode.cpp
-  editor/default_keymap.cpp
   editor/interaction.cpp
   editor/keymap.cpp
   editor/language.cpp
@@ -75,6 +74,32 @@ add_library(cind_application STATIC
 )
 target_link_libraries(cind_application PUBLIC cind_async cind_document PRIVATE PkgConfig::Utf8Proc)
 
+set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
+set(CIND_CORE_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/core.scm")
+set(CIND_CORE_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/core.scm")
+add_custom_command(
+  OUTPUT "${CIND_CORE_SCHEME_OUTPUT}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${CIND_SCHEME_OUTPUT_DIR}/cind"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${CIND_CORE_SCHEME_SOURCE}" "${CIND_CORE_SCHEME_OUTPUT}"
+  DEPENDS "${CIND_CORE_SCHEME_SOURCE}"
+  VERBATIM
+)
+add_custom_target(cind_scheme_resources DEPENDS "${CIND_CORE_SCHEME_OUTPUT}")
+
+add_library(cind_guile STATIC
+  script/guile_runtime.cpp
+)
+target_include_directories(cind_guile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(cind_guile PRIVATE
+  CIND_BUNDLED_SCHEME_DIR="${CIND_SCHEME_OUTPUT_DIR}"
+)
+add_dependencies(cind_guile cind_scheme_resources)
+target_link_libraries(cind_guile
+  PUBLIC cind_application
+  PRIVATE PkgConfig::Guile
+)
+
 add_library(cind_editor STATIC
   cli/session.cpp
   cli/style_loader.cpp
@@ -84,7 +109,7 @@ add_library(cind_editor STATIC
   editor/search_commands.cpp
 )
 target_link_libraries(cind_editor
-  PUBLIC cind_async cind_indent cind_application cind_project_io
+  PUBLIC cind_async cind_indent cind_application cind_guile cind_project_io
   PRIVATE cind_ui Threads::Threads
 )
 

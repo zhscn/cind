@@ -12,6 +12,7 @@ option(CIND_BUILD_GUI "Build the Skia/SDL3 Wayland editor frontend" OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Utf8Proc REQUIRED IMPORTED_TARGET libutf8proc)
 pkg_check_modules(Libuv REQUIRED IMPORTED_TARGET libuv)
+pkg_check_modules(Guile REQUIRED IMPORTED_TARGET guile-3.0)
 find_package(Threads REQUIRED)
 
 if (CIND_BUILD_GUI)

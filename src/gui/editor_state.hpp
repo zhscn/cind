@@ -100,6 +100,14 @@ struct CommandLoopStateSnapshot {
     std::string last_command;
 };
 
+struct ScriptingStateSnapshot {
+    std::string engine;
+    std::string version;
+    std::vector<std::string> modules;
+    std::uint64_t binding_revision = 0;
+    std::optional<std::string> last_error;
+};
+
 struct EditorStateSnapshot {
     std::string path;
     RevisionId revision = 0;
@@ -120,6 +128,7 @@ struct EditorStateSnapshot {
     std::uint32_t active_window_generation = 0;
     std::string input_focus;
     CommandLoopStateSnapshot command_loop;
+    ScriptingStateSnapshot scripting;
     InteractionStateSnapshot interaction;
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;

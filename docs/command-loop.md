@@ -83,8 +83,10 @@ The default keymap follows Emacs conventions:
 - `M-g n`, `M-g p`, and `` C-x ` `` navigate the current location list across source buffers;
 - `C-c e` and `C-c s` expand and contract the structural selection.
 
-`bind_default_editor_keys` binds only commands registered by the application composition. Optional
-capabilities can therefore join the shared TUI and GUI keymap without duplicating binding tables.
+The bundled Guile module `(cind core)` owns these default binding tables. Its installer binds only
+commands present in the application composition, so optional capabilities can join the shared TUI
+and GUI keymap without duplicating policy in C++. The keymap registry and precedence rules remain
+C++ mechanisms.
 
 ## Command loop and prefix help
 
@@ -136,20 +138,16 @@ popup content in a bottom-aligned overlay.
 ## Extension boundary
 
 Command names, keymap names, IDs, `SettingValue` arguments, `CommandContext`, interaction requests,
-and named providers form the scripting host boundary. `CommandContext` explicitly identifies the
-Window, View, Buffer, Project, and Runtime involved in an invocation. An extension language can
-define commands, bind sequences, and register providers during startup without receiving pointers
-to frontend or C++ model objects. Definitions are sealed after configuration; window, buffer, view,
-project, and application values remain mutable through explicit runtime APIs.
-
-The host contract does not depend on a particular scripting language. A language binding translates
-its callable value to a registry command and translates command actions back to the data structures
-above. Interpreter lifetime, garbage collection, interruption, and capability policy remain outside
-the input and editor-state model.
+and named providers form the Guile host boundary. `CommandContext` explicitly identifies the
+Window, View, Buffer, Project, and Runtime involved in an invocation. Scheme receives explicit host
+capabilities instead of frontend objects or a process-global current editor. Definitions are sealed
+after configuration; window, buffer, view, project, and application values remain mutable through
+explicit runtime APIs. [Guile scripting architecture](scripting.md) defines interpreter ownership,
+module loading, error containment, and the development-service boundary.
 
 ## Inspection
 
-The GUI inspector exposes `editor.command_loop`, `editor.interaction`, `editor.buffers`,
+The GUI inspector exposes `editor.command_loop`, `editor.scripting`, `editor.interaction`, `editor.buffers`,
 `editor.windows`, `editor.location_navigation`, and `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
 keymap, repeat count, and last command. Interaction state includes prompt kind, input caret,

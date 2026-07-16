@@ -22,9 +22,19 @@ add_executable(application_tests editor/application_tests.cpp)
 target_link_libraries(application_tests PRIVATE cind_application doctest::doctest)
 add_test(NAME application_tests COMMAND application_tests)
 
+add_executable(guile_runtime_tests editor/guile_runtime_tests.cpp)
+target_link_libraries(guile_runtime_tests PRIVATE cind_guile doctest::doctest)
+add_test(NAME guile_runtime_tests COMMAND guile_runtime_tests)
+set_tests_properties(guile_runtime_tests PROPERTIES
+  ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/cmake/lsan.supp"
+)
+
 add_executable(editor_application_tests editor/editor_application_tests.cpp)
 target_link_libraries(editor_application_tests PRIVATE cind_editor doctest::doctest)
 add_test(NAME editor_application_tests COMMAND editor_application_tests)
+set_tests_properties(editor_application_tests PROPERTIES
+  ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/cmake/lsan.supp"
+)
 
 add_executable(terminal_tests tui/terminal_tests.cpp)
 target_link_libraries(terminal_tests PRIVATE cind_tui_terminal doctest::doctest)
@@ -62,6 +72,9 @@ if (CIND_BUILD_GUI)
     doctest::doctest
   )
   add_test(NAME editor_model_tests COMMAND editor_model_tests)
+  set_tests_properties(editor_model_tests PROPERTIES
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/cmake/lsan.supp"
+  )
 
   add_executable(inspection_tests ui/inspection_tests.cpp)
   target_link_libraries(inspection_tests PRIVATE cind_inspection doctest::doctest)

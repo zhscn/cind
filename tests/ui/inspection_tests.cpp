@@ -61,6 +61,11 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .pending_keymap = "application.global",
              .repeat_count = 4,
              .last_command = "edit.insert"},
+        .scripting = {.engine = "guile",
+                      .version = "3.0.9",
+                      .modules = {"cind core"},
+                      .binding_revision = 1,
+                      .last_error = std::nullopt},
         .interaction =
             {.active = true,
              .kind = "picker",
@@ -339,7 +344,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":28") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":29") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -380,6 +385,13 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(command_loop.payload.find("\"parents\":[\"interaction.text\"]") != std::string::npos);
     CHECK(command_loop.payload.find("\"override_keymaps\":[\"editor.system\"]") !=
           std::string::npos);
+
+    const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
+    REQUIRE(scripting.ok);
+    CHECK(scripting.payload.find("\"engine\":\"guile\"") != std::string::npos);
+    CHECK(scripting.payload.find("\"modules\":[\"cind core\"]") != std::string::npos);
+    CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
+    CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);

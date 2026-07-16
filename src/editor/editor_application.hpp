@@ -9,6 +9,7 @@
 #include "editor/project_service.hpp"
 #include "editor/search_commands.hpp"
 #include "formatting/cpp_indent_style.hpp"
+#include "script/guile_runtime.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -106,6 +107,7 @@ public:
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionController& interaction() { return interaction_; }
     const InteractionController& interaction() const { return interaction_; }
+    GuileRuntimeSnapshot scripting() const { return guile_.snapshot(); }
     KeymapId default_keymap() const { return keymap_; }
 
     void refresh_default_keymap();
@@ -277,6 +279,7 @@ private:
     CommandResult accept_project_search(CommandContext&, const CommandInvocation&);
 
     EditorRuntime runtime_;
+    GuileRuntime guile_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;

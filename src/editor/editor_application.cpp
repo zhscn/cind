@@ -3,7 +3,6 @@
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "editor/cpp_mode.hpp"
-#include "editor/default_keymap.hpp"
 #include "project/project_files.hpp"
 #include "project/search_results.hpp"
 #include "syntax/structure.hpp"
@@ -71,7 +70,7 @@ struct LoadedFileData {
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
-    : interaction_(runtime_.interaction_providers()),
+    : guile_(runtime_), interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
           {.page_rows = [this] { return command_page_rows_; },
@@ -186,7 +185,10 @@ const TokenBuffer& EditorApplication::syntax_tokens(WindowId window) const {
 }
 
 void EditorApplication::refresh_default_keymap() {
-    (void)bind_default_editor_keys(runtime_, keymap_);
+    std::expected<std::size_t, std::string> installed = guile_.install_default_keymaps();
+    if (!installed) {
+        throw std::runtime_error(std::format("Guile keymap policy failed: {}", installed.error()));
+    }
 }
 
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
@@ -1660,7 +1662,6 @@ void EditorApplication::register_keymaps() {
     interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
     runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     refresh_default_keymap();
-    (void)bind_default_application_keys(runtime_, application_keymap_);
 
     const auto command = [this](std::string_view name) {
         const std::optional<CommandId> id = runtime_.commands().find(name);

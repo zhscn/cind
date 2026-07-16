@@ -358,6 +358,12 @@ EditorStateSnapshot EditorModel::inspect() {
     if (const std::optional<KeymapId> keymap = command_loop.pending_keymap()) {
         command_state.pending_keymap = runtime.keymaps().definition(*keymap).name;
     }
+    GuileRuntimeSnapshot guile = application_.scripting();
+    ScriptingStateSnapshot scripting_state{.engine = std::move(guile.engine),
+                                           .version = std::move(guile.version),
+                                           .modules = std::move(guile.modules),
+                                           .binding_revision = guile.binding_revision,
+                                           .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
         interaction_state = {.active = true,
@@ -455,6 +461,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .active_window_generation = active_window.generation,
             .input_focus = std::string(application_.input_focus()),
             .command_loop = std::move(command_state),
+            .scripting = std::move(scripting_state),
             .interaction = std::move(interaction_state),
             .buffers = std::move(buffers),
             .windows = std::move(windows),
