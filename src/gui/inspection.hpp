@@ -80,6 +80,7 @@ struct RenderAnimationSnapshot {
     bool active = false;
     bool scroll = false;
     bool cursor = false;
+    std::string cursor_owner = "none";
     float scroll_progress = 1.0F;
     float cursor_progress = 1.0F;
     float scroll_velocity = 0.0F;
@@ -199,7 +200,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 19;
+    static constexpr int schema_version = 20;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

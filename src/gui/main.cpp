@@ -50,7 +50,7 @@ struct OutputSize {
 
 using AnimationClock = std::chrono::steady_clock;
 
-constexpr std::chrono::milliseconds cursor_animation_duration{70};
+constexpr std::chrono::milliseconds view_animation_duration{70};
 constexpr float scroll_spring_frequency = 32.0F;
 constexpr float scroll_position_tolerance = 0.001F;
 constexpr float scroll_velocity_tolerance = 0.01F;
@@ -68,17 +68,27 @@ float ease_out_cubic(float progress) {
     return 1.0F - remaining * remaining * remaining;
 }
 
-float interpolate(float from, float to, float progress) {
-    return from + (to - from) * progress;
-}
-
-SkiaLogicalPoint interpolate(SkiaLogicalPoint from, SkiaLogicalPoint to, float progress) {
-    return {.x = interpolate(from.x, to.x, progress), .y = interpolate(from.y, to.y, progress)};
-}
-
-bool same_point(SkiaLogicalPoint left, SkiaLogicalPoint right) {
+bool same_rect(const SkiaLogicalRect& left, const SkiaLogicalRect& right) {
     constexpr float tolerance = 0.01F;
-    return std::abs(left.x - right.x) < tolerance && std::abs(left.y - right.y) < tolerance;
+    return std::abs(left.x - right.x) < tolerance && std::abs(left.y - right.y) < tolerance &&
+           std::abs(left.width - right.width) < tolerance &&
+           std::abs(left.height - right.height) < tolerance;
+}
+
+std::string_view cursor_owner_name(SkiaCursorOwner owner) {
+    switch (owner) {
+    case SkiaCursorOwner::None:
+        return "none";
+    case SkiaCursorOwner::Document:
+        return "document";
+    case SkiaCursorOwner::Popup:
+        return "popup";
+    case SkiaCursorOwner::Echo:
+        return "echo";
+    case SkiaCursorOwner::Other:
+        return "other";
+    }
+    return "none";
 }
 
 bool touches_or_intersects(const OutputPixelRectSnapshot& left,
@@ -344,16 +354,16 @@ private:
         AnimationClock::time_point sampled_at;
     };
 
-    struct CursorAnimation {
-        SkiaLogicalPoint from;
-        SkiaLogicalPoint target;
+    struct ViewAnimation {
+        SkiaViewPresentation from;
+        SkiaViewPresentation target;
         AnimationClock::time_point started;
     };
 
     struct AnimationPresentation {
         bool active = false;
         bool scroll_finished = false;
-        bool cursor_finished = false;
+        bool view_finished = false;
         SkiaAnimationFrame frame;
         RenderAnimationSnapshot snapshot;
     };
@@ -534,7 +544,7 @@ private:
     }
 
     bool animations_active() const {
-        return scroll_animation_.has_value() || cursor_animation_.has_value();
+        return scroll_animation_.has_value() || view_animation_.has_value();
     }
 
     SpringState scroll_state(const ScrollAnimation& animation,
@@ -546,67 +556,20 @@ private:
                                         .elapsed_seconds = elapsed});
     }
 
-    SkiaLogicalPoint cursor_position(const CursorAnimation& animation,
-                                     AnimationClock::time_point now) const {
+    SkiaViewPresentation view_presentation(const ViewAnimation& animation,
+                                           AnimationClock::time_point now) const {
         const float progress =
-            ease_out_cubic(animation_progress(animation.started, cursor_animation_duration, now));
-        return interpolate(animation.from, animation.target, progress);
+            ease_out_cubic(animation_progress(animation.started, view_animation_duration, now));
+        return interpolate_view_presentation(animation.from, animation.target, progress);
     }
 
-    std::optional<SkiaLogicalPoint> scene_cursor_position(const SkiaFrameLayout& layout) const {
-        if (!vertical_layout_) {
-            return std::nullopt;
-        }
-        const std::optional<SkiaLogicalRect> cursor = presenter_.cursor_rect(layout);
-        return cursor ? std::optional<SkiaLogicalPoint>(
-                            SkiaLogicalPoint{.x = cursor->x, .y = cursor->y})
-                      : std::nullopt;
-    }
-
-    bool scene_cursor_uses_grid_offset(const ui::Scene& scene) const {
-        if (const ui::Region* popup = scene.find(ui::RegionRole::Popup);
-            popup && popup->popup && popup->popup->input) {
-            return false;
-        }
-        const int cursor_row = scene.cursor_row - 1;
-        const int cursor_col = scene.cursor_col - 1;
-        for (const ui::Region& region : scene.regions) {
-            const ui::Rect& rect = region.rect;
-            if (cursor_row >= rect.row && cursor_row < rect.row + rect.rows &&
-                cursor_col >= rect.col && cursor_col < rect.col + rect.cols) {
-                return region.vertical_anchor == ui::VerticalAnchor::Grid;
-            }
-        }
-        return true;
-    }
-
-    std::optional<SkiaLogicalRect> presented_cursor_rect(const SkiaFrameLayout& layout,
-                                                         const ui::Scene& scene,
-                                                         const SkiaAnimationFrame& frame) const {
-        std::optional<SkiaLogicalPoint> position = frame.cursor_position;
-        if (!position) {
-            position = scene_cursor_position(layout);
-            if (position && !frame.scroll_layers.empty() && scene_cursor_uses_grid_offset(scene)) {
-                position->y += frame.cursor_grid_offset_y;
-            }
-        }
-        if (!position) {
-            return std::nullopt;
-        }
-        return SkiaLogicalRect{.x = position->x,
-                               .y = position->y,
-                               .width = 2.0F,
-                               .height = static_cast<float>(presenter_.cell_height())};
-    }
-
-    void update_animation_targets(const ui::Scene& scene, const SkiaFrameLayout& layout,
+    void update_animation_targets(const ui::Scene& scene, const SkiaViewPresentation& target_view,
                                   float scroll_top, const AnimationContext& context,
                                   bool geometry_changed, AnimationClock::time_point now) {
-        const std::optional<SkiaLogicalPoint> target_cursor = scene_cursor_position(layout);
         if (geometry_changed || !last_scene_ || !last_scroll_top_ || !last_animation_context_ ||
             *last_animation_context_ != context) {
             scroll_animation_.reset();
-            cursor_animation_.reset();
+            view_animation_.reset();
         } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
             const float line_delta = scroll_top - *last_scroll_top_;
             if (std::abs(line_delta) <= 4) {
@@ -630,38 +593,42 @@ private:
             } else {
                 scroll_animation_.reset();
             }
-            cursor_animation_.reset();
+            view_animation_.reset();
         } else if (scroll_animation_) {
             const SpringState motion = scroll_state(*scroll_animation_, now);
             scroll_animation_->timeline.insert(scene, scroll_top);
             scroll_animation_->timeline.retain_motion_range(motion.position,
                                                             scroll_animation_->target_scroll_top);
-        } else if (!scroll_animation_ && target_cursor && last_cursor_target_ &&
-                   !same_point(*last_cursor_target_, *target_cursor)) {
-            const SkiaLogicalPoint from =
-                cursor_animation_ ? cursor_position(*cursor_animation_, now) : *last_cursor_target_;
+        } else if (!scroll_animation_ && target_view.cursor_rect && last_view_target_ &&
+                   last_view_target_->cursor_rect &&
+                   (target_view.cursor_owner != last_view_target_->cursor_owner ||
+                    !same_rect(*last_view_target_->cursor_rect, *target_view.cursor_rect))) {
+            const SkiaViewPresentation from =
+                view_animation_ ? view_presentation(*view_animation_, now) : *last_view_target_;
             const float maximum_x_distance = static_cast<float>(presenter_.cell_width() * 4);
             const float maximum_y_distance = static_cast<float>(presenter_.cell_height() * 2);
-            if (std::abs(target_cursor->x - from.x) <= maximum_x_distance &&
-                std::abs(target_cursor->y - from.y) <= maximum_y_distance) {
-                cursor_animation_ =
-                    CursorAnimation{.from = from, .target = *target_cursor, .started = now};
+            if (from.cursor_rect && from.cursor_owner == target_view.cursor_owner &&
+                std::abs(target_view.cursor_rect->x - from.cursor_rect->x) <= maximum_x_distance &&
+                std::abs(target_view.cursor_rect->y - from.cursor_rect->y) <= maximum_y_distance) {
+                view_animation_ =
+                    ViewAnimation{.from = from, .target = target_view, .started = now};
             } else {
-                cursor_animation_.reset();
+                view_animation_.reset();
             }
-        } else if (!target_cursor) {
-            cursor_animation_.reset();
+        } else if (!target_view.cursor_rect) {
+            view_animation_.reset();
         }
 
         last_scene_ = scene;
         last_scroll_top_ = scroll_top;
         last_animation_context_ = context;
-        last_cursor_target_ = target_cursor;
+        last_view_target_ = target_view;
     }
 
-    AnimationPresentation animation_presentation(const ui::Scene& scene,
+    AnimationPresentation animation_presentation(const SkiaViewPresentation& target_view,
                                                  AnimationClock::time_point now) const {
         AnimationPresentation presentation;
+        presentation.frame.view = target_view;
         if (scroll_animation_) {
             const SpringState state = scroll_state(*scroll_animation_, now);
             const bool at_rest =
@@ -700,13 +667,6 @@ private:
                             : std::clamp(layer_origin(index + 1), 0.0F, grid_bottom);
                 }
             }
-            presentation.frame.cursor_grid_offset_y =
-                (scroll_animation_->target_scroll_top - visual_top) * cell_height;
-            if (scene.active_text_row && vertical_layout_) {
-                presentation.frame.active_line_y =
-                    vertical_layout_->row_top(*scene.active_text_row) +
-                    presentation.frame.cursor_grid_offset_y;
-            }
             if (!presentation.scroll_finished) {
                 presentation.snapshot.active = true;
                 presentation.snapshot.scroll = true;
@@ -718,7 +678,6 @@ private:
                 presentation.snapshot.scroll_velocity = state.velocity;
                 presentation.snapshot.visual_scroll_top = visual_top;
                 presentation.snapshot.target_scroll_top = scroll_animation_->target_scroll_top;
-                presentation.snapshot.active_line_y = presentation.frame.active_line_y;
                 presentation.snapshot.layers.reserve(presentation.frame.scroll_layers.size());
                 for (std::size_t index = 0; index < layers.size(); ++index) {
                     presentation.snapshot.layers.push_back(
@@ -729,22 +688,29 @@ private:
                 }
             }
         }
-        if (cursor_animation_) {
+        if (view_animation_) {
             const float linear_progress =
-                animation_progress(cursor_animation_->started, cursor_animation_duration, now);
-            const SkiaLogicalPoint position = cursor_position(*cursor_animation_, now);
+                animation_progress(view_animation_->started, view_animation_duration, now);
+            presentation.frame.view = view_presentation(*view_animation_, now);
             presentation.active = true;
-            presentation.cursor_finished = linear_progress >= 1.0F;
-            presentation.frame.cursor_position = position;
-            if (!presentation.cursor_finished) {
+            presentation.view_finished = linear_progress >= 1.0F;
+            if (!presentation.view_finished) {
                 presentation.snapshot.active = true;
                 presentation.snapshot.cursor = true;
                 presentation.snapshot.cursor_progress = ease_out_cubic(linear_progress);
+            }
+        }
+        if (presentation.snapshot.active) {
+            presentation.snapshot.cursor_owner =
+                cursor_owner_name(presentation.frame.view.cursor_owner);
+            presentation.snapshot.active_line_y = presentation.frame.view.active_line_y;
+            if (presentation.frame.view.cursor_rect) {
+                const SkiaLogicalRect& cursor = *presentation.frame.view.cursor_rect;
                 presentation.snapshot.cursor_rect = LogicalPixelRectSnapshot{
-                    .x = position.x,
-                    .y = position.y,
-                    .width = 2.0F,
-                    .height = static_cast<float>(presenter_.cell_height()),
+                    .x = cursor.x,
+                    .y = cursor.y,
+                    .width = cursor.width,
+                    .height = cursor.height,
                 };
             }
         }
@@ -755,8 +721,8 @@ private:
         if (presentation.scroll_finished) {
             scroll_animation_.reset();
         }
-        if (presentation.cursor_finished) {
-            cursor_animation_.reset();
+        if (presentation.view_finished) {
+            view_animation_.reset();
         }
     }
 
@@ -802,11 +768,11 @@ private:
         EditorStateSnapshot editor_snapshot = editor_.inspect();
         const float scroll_top = static_cast<float>(editor_snapshot.viewport.top_line) +
                                  editor_snapshot.viewport.top_line_offset;
-        update_animation_targets(scene, frame_layout, scroll_top,
-                                 animation_context(editor_snapshot), geometry_changed, now);
-        const AnimationPresentation animation = animation_presentation(scene, now);
-        const std::optional<SkiaLogicalRect> current_cursor =
-            presented_cursor_rect(frame_layout, scene, animation.frame);
+        const SkiaViewPresentation target_view = presenter_.view_presentation(frame_layout);
+        update_animation_targets(scene, target_view, scroll_top, animation_context(editor_snapshot),
+                                 geometry_changed, now);
+        const AnimationPresentation animation = animation_presentation(target_view, now);
+        const std::optional<SkiaLogicalRect>& current_cursor = animation.frame.view.cursor_rect;
         const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
         std::vector<SkiaLogicalRect> logical_damage;
         if (animation.active) {
@@ -1136,11 +1102,11 @@ private:
     ui::SceneDamageTracker damage_tracker_;
     std::optional<ui::SceneVerticalLayout> vertical_layout_;
     std::optional<ScrollAnimation> scroll_animation_;
-    std::optional<CursorAnimation> cursor_animation_;
+    std::optional<ViewAnimation> view_animation_;
     std::optional<ui::Scene> last_scene_;
     std::optional<float> last_scroll_top_;
     std::optional<AnimationContext> last_animation_context_;
-    std::optional<SkiaLogicalPoint> last_cursor_target_;
+    std::optional<SkiaViewPresentation> last_view_target_;
     std::optional<SkiaLogicalRect> presented_cursor_rect_;
     int texture_width_ = 0;
     int texture_height_ = 0;

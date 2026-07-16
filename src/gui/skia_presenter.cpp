@@ -550,6 +550,31 @@ void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
     }
 }
 
+SkiaViewPresentation interpolate_view_presentation(const SkiaViewPresentation& from,
+                                                   const SkiaViewPresentation& target,
+                                                   float progress) {
+    SkiaViewPresentation result = target;
+    if (from.cursor_owner != target.cursor_owner || !from.cursor_rect || !target.cursor_rect) {
+        return result;
+    }
+
+    const float amount = std::clamp(progress, 0.0F, 1.0F);
+    const auto interpolate_value = [amount](float first, float last) {
+        return first + (last - first) * amount;
+    };
+    result.cursor_rect = SkiaLogicalRect{
+        .x = interpolate_value(from.cursor_rect->x, target.cursor_rect->x),
+        .y = interpolate_value(from.cursor_rect->y, target.cursor_rect->y),
+        .width = interpolate_value(from.cursor_rect->width, target.cursor_rect->width),
+        .height = interpolate_value(from.cursor_rect->height, target.cursor_rect->height),
+    };
+    if (target.cursor_owner == SkiaCursorOwner::Document && from.active_line_y &&
+        target.active_line_y) {
+        result.active_line_y = interpolate_value(*from.active_line_y, *target.active_line_y);
+    }
+    return result;
+}
+
 struct SkiaPresenter::Impl {
     Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme,
          SkiaFontSmoothing requested_smoothing)
@@ -1470,7 +1495,7 @@ struct SkiaPresenter::Impl {
             }
         }
         const std::optional<float> animation_active_line_top =
-            animation ? animation->active_line_y : std::nullopt;
+            animation ? animation->view.active_line_y : std::nullopt;
 
         const auto paint_layer = [&](const ui::Scene& layer_scene, float grid_offset_y,
                                      bool paint_grid, bool paint_footer,
@@ -1600,7 +1625,9 @@ struct SkiaPresenter::Impl {
                     const bool active_line_number =
                         region.role == ui::RegionRole::LineNumbers &&
                         (active_line_top
-                             ? std::abs(top - *active_line_top) < 0.01F
+                             ? *active_line_top + static_cast<float>(cell_height) * 0.5F >= top &&
+                                   *active_line_top + static_cast<float>(cell_height) * 0.5F <
+                                       top + static_cast<float>(cell_height)
                              : layer_scene.active_text_row &&
                                    prim.row == *layer_scene.active_text_row - region.rect.row);
                     paint.setColor(active_line_number ? color(theme.text)
@@ -1681,10 +1708,9 @@ struct SkiaPresenter::Impl {
             }
         };
 
-        const auto paint_cursor = [&](float grid_offset_y,
-                                      const std::optional<SkiaLogicalPoint>& position,
+        const auto paint_cursor = [&](float grid_offset_y, const SkiaViewPresentation* view,
                                       const SkRect* damage_bounds) {
-            if (!scene.cursor_visible) {
+            if (!scene.cursor_visible || (view != nullptr && !view->cursor_rect)) {
                 return;
             }
             const ui::SceneVerticalLayout vertical_layout(scene, vertical_metrics(viewport_height));
@@ -1747,12 +1773,16 @@ struct SkiaPresenter::Impl {
                 cursor_x = document_cursor->left();
                 cursor_y = document_cursor->top() + grid_offset_y;
             }
-            if (position) {
-                cursor_x = position->x;
-                cursor_y = position->y;
+            SkScalar cursor_width = 2.0F;
+            SkScalar cursor_height = static_cast<SkScalar>(cell_height);
+            if (view != nullptr && view->cursor_rect) {
+                cursor_x = view->cursor_rect->x;
+                cursor_y = view->cursor_rect->y;
+                cursor_width = view->cursor_rect->width;
+                cursor_height = view->cursor_rect->height;
             }
             const SkRect cursor_bounds =
-                SkRect::MakeXYWH(cursor_x, cursor_y, 2.0F, static_cast<SkScalar>(cell_height));
+                SkRect::MakeXYWH(cursor_x, cursor_y, cursor_width, cursor_height);
             if (damage_bounds && !SkRect::Intersects(cursor_bounds, *damage_bounds)) {
                 return;
             }
@@ -1795,11 +1825,9 @@ struct SkiaPresenter::Impl {
                             std::nullopt, nullptr);
             } else {
                 paint_layer(scene, 0.0F, true, true, diagnostics, nullptr, prepared_document,
-                            std::nullopt, nullptr);
+                            animation_active_line_top, nullptr);
             }
-            paint_cursor(animation ? animation->cursor_grid_offset_y : 0.0F,
-                         animation ? animation->cursor_position : std::optional<SkiaLogicalPoint>{},
-                         nullptr);
+            paint_cursor(0.0F, animation ? &animation->view : nullptr, nullptr);
             return;
         }
         SkPaint clear;
@@ -1816,7 +1844,7 @@ struct SkiaPresenter::Impl {
             canvas.drawRect(bounds, clear);
             paint_layer(scene, 0.0F, true, true, nullptr, &bounds, prepared_document, std::nullopt,
                         nullptr);
-            paint_cursor(0.0F, std::nullopt, &bounds);
+            paint_cursor(0.0F, nullptr, &bounds);
             canvas.restore();
         }
     }
@@ -1931,30 +1959,47 @@ std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const ui::Scene& scene
                                                           float viewport_width,
                                                           float viewport_height) const {
     const SkiaFrameLayout layout = prepare_layout(scene, viewport_width, viewport_height);
-    return cursor_rect(layout);
+    return view_presentation(layout).cursor_rect;
 }
 
-std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout& layout) const {
+SkiaViewPresentation SkiaPresenter::view_presentation(const SkiaFrameLayout& layout) const {
     const SkiaFrameLayout::Storage& storage = checked_layout(layout);
     const ui::Scene& scene = *storage.scene;
-    if (!scene.cursor_visible) {
-        return std::nullopt;
-    }
-    if (storage.popup && storage.popup->cursor) {
-        return logical_rect(*storage.popup->cursor);
-    }
-    if (storage.echo && storage.echo->cursor) {
-        return logical_rect(*storage.echo->cursor);
-    }
-    if (storage.document && storage.document->cursor) {
-        return logical_rect(*storage.document->cursor);
-    }
     const ui::SceneVerticalLayout vertical_layout(scene,
                                                   impl_->vertical_metrics(storage.viewport_height));
+    SkiaViewPresentation result;
+    if (scene.active_text_row) {
+        result.active_line_y = vertical_layout.row_top(*scene.active_text_row);
+    }
+    if (!scene.cursor_visible) {
+        return result;
+    }
+    if (storage.popup && storage.popup->cursor) {
+        result.cursor_owner = SkiaCursorOwner::Popup;
+        result.cursor_rect = logical_rect(*storage.popup->cursor);
+        return result;
+    }
+    if (storage.echo && storage.echo->cursor) {
+        result.cursor_owner = SkiaCursorOwner::Echo;
+        result.cursor_rect = logical_rect(*storage.echo->cursor);
+        return result;
+    }
+    if (storage.document && storage.document->cursor) {
+        result.cursor_owner = SkiaCursorOwner::Document;
+        result.cursor_rect = logical_rect(*storage.document->cursor);
+        return result;
+    }
     const int row = std::max(0, scene.cursor_row - 1);
     const int column = std::max(0, scene.cursor_col - 1);
     float x = static_cast<float>(column * impl_->cell_width);
     float y = vertical_layout.row_top(row);
+    result.cursor_owner = SkiaCursorOwner::Other;
+    for (const ui::Region& region : scene.regions) {
+        if (region.role == ui::RegionRole::TextArea && contains(region.rect, row, column)) {
+            result.cursor_owner = SkiaCursorOwner::Document;
+            break;
+        }
+    }
     const std::optional<int>& anchor = vertical_layout.bottom_anchor_row();
     if (anchor && row >= *anchor) {
         y += (vertical_layout.row_height(row) - static_cast<float>(impl_->cell_height)) * 0.5F;
@@ -1967,12 +2012,17 @@ std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout&
             }
         }
     }
-    return SkiaLogicalRect{
+    result.cursor_rect = SkiaLogicalRect{
         .x = x,
         .y = y,
         .width = 2.0F,
         .height = static_cast<float>(impl_->cell_height),
     };
+    return result;
+}
+
+std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout& layout) const {
+    return view_presentation(layout).cursor_rect;
 }
 
 ui::CellPoint SkiaPresenter::hit_test(const SkiaFrameLayout& layout, SkiaLogicalPoint point) const {

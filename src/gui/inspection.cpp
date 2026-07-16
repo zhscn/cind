@@ -619,6 +619,8 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
     append_bool(output, animation.scroll);
     output += ",\"cursor\":";
     append_bool(output, animation.cursor);
+    output += ",\"cursor_owner\":";
+    append_json_string(output, animation.cursor_owner);
     output +=
         std::format(",\"scroll_progress\":{},\"cursor_progress\":{},\"scroll_velocity\":{},"
                     "\"visual_scroll_top\":{},\"target_scroll_top\":{},\"layers\":[",
@@ -1117,7 +1119,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             }
         }
     }
-    if (!frame.render.animation.scroll && frame.scene.cursor_visible && text_area) {
+    if (frame.scene.cursor_visible && text_area) {
         const int cursor_row = frame.scene.cursor_row - 1;
         if (cursor_row >= text_area->rect.row &&
             cursor_row < text_area->rect.row + text_area->rect.rows &&
@@ -1144,10 +1146,73 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (!std::isfinite(animation.scroll_velocity)) {
         violations.emplace_back("render scroll velocity is not finite");
     }
+    if (animation.active) {
+        std::string_view expected_cursor_owner = "other";
+        if (!frame.scene.cursor_visible) {
+            expected_cursor_owner = "none";
+        } else if (frame.render.popup_layout && frame.render.popup_layout->cursor_rect) {
+            expected_cursor_owner = "popup";
+        } else if (frame.render.echo_layout && frame.render.echo_layout->cursor_rect) {
+            expected_cursor_owner = "echo";
+        } else if (frame.render.document_layout && frame.render.document_layout->cursor_rect) {
+            expected_cursor_owner = "document";
+        }
+        if (animation.cursor_owner != expected_cursor_owner) {
+            violations.emplace_back("render animation cursor owner does not match shaped layout");
+        }
+        if (frame.scene.cursor_visible && !animation.cursor_rect) {
+            violations.emplace_back("render animation has no presented cursor bounds");
+        } else if (!frame.scene.cursor_visible && animation.cursor_rect) {
+            violations.emplace_back("render animation has cursor bounds for a hidden cursor");
+        }
+        if (animation.cursor_rect) {
+            const LogicalPixelRectSnapshot& cursor = *animation.cursor_rect;
+            const float logical_width =
+                frame.render.display_scale > 0.0F
+                    ? static_cast<float>(frame.render.output_width) / frame.render.display_scale
+                    : 0.0F;
+            const float logical_height =
+                frame.render.display_scale > 0.0F
+                    ? static_cast<float>(frame.render.output_height) / frame.render.display_scale
+                    : 0.0F;
+            if (!std::isfinite(cursor.x) || !std::isfinite(cursor.y) ||
+                !std::isfinite(cursor.width) || !std::isfinite(cursor.height) ||
+                cursor.width <= 0.0F || cursor.height <= 0.0F) {
+                violations.emplace_back("render animation cursor bounds are invalid");
+            } else if (cursor.x < -0.01F || cursor.y < -0.01F ||
+                       cursor.x + cursor.width > logical_width + 0.01F ||
+                       cursor.y + cursor.height > logical_height + 0.01F) {
+                violations.emplace_back("render animation cursor is outside the output");
+            }
+        }
+        if (animation.cursor && animation.cursor_owner == "document") {
+            if (!animation.cursor_rect || !animation.active_line_y) {
+                violations.emplace_back(
+                    "render document cursor animation has no synchronized active line");
+            } else if (std::abs(animation.cursor_rect->y - *animation.active_line_y) > 0.01F) {
+                violations.emplace_back("render document cursor and active line are out of phase");
+            }
+        }
+    }
     if (animation.scroll) {
         if (!std::isfinite(animation.visual_scroll_top) ||
             !std::isfinite(animation.target_scroll_top)) {
             violations.emplace_back("render scroll positions are not finite");
+        }
+        const LogicalPixelRectSnapshot* view_cursor = nullptr;
+        if (frame.render.popup_layout && frame.render.popup_layout->cursor_rect) {
+            view_cursor = &*frame.render.popup_layout->cursor_rect;
+        } else if (frame.render.echo_layout && frame.render.echo_layout->cursor_rect) {
+            view_cursor = &*frame.render.echo_layout->cursor_rect;
+        } else if (frame.render.document_layout && frame.render.document_layout->cursor_rect) {
+            view_cursor = &*frame.render.document_layout->cursor_rect;
+        }
+        if (view_cursor && animation.cursor_rect &&
+            (std::abs(animation.cursor_rect->x - view_cursor->x) > 0.01F ||
+             std::abs(animation.cursor_rect->y - view_cursor->y) > 0.01F ||
+             std::abs(animation.cursor_rect->width - view_cursor->width) > 0.01F ||
+             std::abs(animation.cursor_rect->height - view_cursor->height) > 0.01F)) {
+            violations.emplace_back("render scroll cursor does not match current view state");
         }
         if (animation.active_line_y && !std::isfinite(*animation.active_line_y)) {
             violations.emplace_back("render animated active line position is not finite");
@@ -1161,10 +1226,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                               .viewport_height = logical_height,
                               .footer_heights = ui::editor_footer_heights(
                                   static_cast<float>(frame.render.cell_height))});
-            const float expected_active_line_y =
-                layout.row_top(*frame.scene.active_text_row) +
-                (animation.target_scroll_top - animation.visual_scroll_top) *
-                    static_cast<float>(frame.render.cell_height);
+            const float expected_active_line_y = layout.row_top(*frame.scene.active_text_row);
             if (!animation.active_line_y ||
                 std::abs(*animation.active_line_y - expected_active_line_y) > 0.01F) {
                 violations.emplace_back(
@@ -1834,6 +1896,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    animation=" << (frame.render.animation.active ? "active" : "idle")
            << " scroll=" << (frame.render.animation.scroll ? "true" : "false")
            << " cursor=" << (frame.render.animation.cursor ? "true" : "false")
+           << " cursor-owner=" << frame.render.animation.cursor_owner
            << " scroll-progress=" << frame.render.animation.scroll_progress
            << " scroll-velocity=" << frame.render.animation.scroll_velocity
            << " cursor-progress=" << frame.render.animation.cursor_progress << '\n';

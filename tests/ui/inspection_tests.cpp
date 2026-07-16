@@ -22,7 +22,9 @@ namespace {
 void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                         bool full_reference_match = true, bool popup_cursor_mismatch = false,
                         bool echo_frame = false, bool echo_cursor_mismatch = false,
-                        bool scroll_frame = false) {
+                        bool scroll_frame = false, bool scroll_cursor_detached = false,
+                        bool document_cursor_animation = false,
+                        bool document_cursor_desynced = false) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -94,7 +96,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     scene.cols = 10;
     scene.cursor_row = 1;
     scene.cursor_col = 4;
-    scene.active_text_row = scroll_frame ? std::optional(0) : std::nullopt;
+    scene.active_text_row =
+        scroll_frame || document_cursor_animation ? std::optional(0) : std::nullopt;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
     body.prims.push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
@@ -136,7 +139,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .origin = {.x = 12.0F, .y = 76.0F},
                      .shape_bounds = std::nullopt},
         };
-    } else {
+    } else if (!document_cursor_animation) {
         scene.regions = {body, status, popup};
         popup_layout = PopupLayoutSnapshot{
             .panel_bounds = {.x = 40.0F, .y = 4.0F, .width = 120.0F, .height = 72.0F},
@@ -160,6 +163,54 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                              .origin = {.x = 112.0F, .y = 12.0F},
                              .shape_bounds = std::nullopt}},
         };
+    } else {
+        scene.regions = {body, status};
+    }
+    RenderAnimationSnapshot animation;
+    if (scroll_frame) {
+        animation = RenderAnimationSnapshot{
+            .active = true,
+            .scroll = true,
+            .cursor = false,
+            .cursor_owner = "popup",
+            .scroll_progress = 0.5F,
+            .cursor_progress = 1.0F,
+            .scroll_velocity = 4.0F,
+            .visual_scroll_top = 0.5F,
+            .target_scroll_top = 1.0F,
+            .layers = {{.scroll_top = 0.0F,
+                        .grid_offset_y = -10.0F,
+                        .clip_top = 0.0F,
+                        .clip_bottom = 10.0F},
+                       {.scroll_top = 1.0F,
+                        .grid_offset_y = 10.0F,
+                        .clip_top = 10.0F,
+                        .clip_bottom = 68.0F}},
+            .active_line_y = 0.0F,
+            .cursor_rect =
+                LogicalPixelRectSnapshot{
+                    .x = 112.0F,
+                    .y = scroll_cursor_detached ? 32.0F : 12.0F,
+                    .width = 2.0F,
+                    .height = 20.0F,
+                },
+        };
+    } else if (document_cursor_animation) {
+        animation = RenderAnimationSnapshot{
+            .active = true,
+            .scroll = false,
+            .cursor = true,
+            .cursor_owner = "document",
+            .scroll_progress = 1.0F,
+            .cursor_progress = 0.5F,
+            .scroll_velocity = 0.0F,
+            .visual_scroll_top = 0.0F,
+            .target_scroll_top = 0.0F,
+            .layers = {},
+            .active_line_y = document_cursor_desynced ? 0.0F : 10.0F,
+            .cursor_rect =
+                LogicalPixelRectSnapshot{.x = 30.0F, .y = 10.0F, .width = 2.0F, .height = 20.0F},
+        };
     }
     RenderStateSnapshot render{
         .video_driver = "wayland",
@@ -182,30 +233,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .baseline_from_row_top = 15.0F},
         .theme = {.canvas = 0xFF1E1E1E},
         .pixel_hash = 42,
-        .animation =
-            scroll_frame
-                ? RenderAnimationSnapshot{
-                      .active = true,
-                      .scroll = true,
-                      .cursor = false,
-                      .scroll_progress = 0.5F,
-                      .cursor_progress = 1.0F,
-                      .scroll_velocity = 4.0F,
-                      .visual_scroll_top = 0.5F,
-                      .target_scroll_top = 1.0F,
-                      .layers = {{.scroll_top = 0.0F,
-                                  .grid_offset_y = -10.0F,
-                                  .clip_top = 0.0F,
-                                  .clip_bottom = 10.0F},
-                                 {.scroll_top = 1.0F,
-                                  .grid_offset_y = 10.0F,
-                                  .clip_top = 10.0F,
-                                  .clip_bottom = 68.0F}},
-                      .active_line_y = 10.0F,
-                      .cursor_rect = std::nullopt,
-                  }
-                : RenderAnimationSnapshot{},
-        .damage = {.full_repaint = scroll_frame,
+        .animation = std::move(animation),
+        .damage = {.full_repaint = scroll_frame || document_cursor_animation,
                    .damaged_cells = 1,
                    .damaged_output_pixels = 1350,
                    .output_fraction = 0.03,
@@ -256,6 +285,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
               .row_overflow = false,
               .column_overflow = false}},
     };
+    if (document_cursor_animation) {
+        render.primitives.resize(1);
+    }
     hub.publish(std::move(editor), std::move(scene), std::move(render), event);
 }
 
@@ -273,7 +305,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":19") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":20") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -410,9 +442,30 @@ TEST_CASE("inspection exposes continuous document scroll layers") {
     REQUIRE(response.ok);
     const std::string& animation = response.payload;
     CHECK(animation.find("\"visual_scroll_top\":0.5") != std::string::npos);
-    CHECK(animation.find("\"active_line_y\":10") != std::string::npos);
+    CHECK(animation.find("\"cursor_owner\":\"popup\"") != std::string::npos);
+    CHECK(animation.find("\"active_line_y\":0") != std::string::npos);
     CHECK(animation.find("\"layers\":[{\"scroll_top\":0,\"grid_offset_y\":-10,"
                          "\"clip_top\":0,\"clip_bottom\":10}") != std::string::npos);
+}
+
+TEST_CASE("inspection reports a scroll cursor detached from the current view") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, false, false, true, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "render scroll cursor does not match current view state");
+}
+
+TEST_CASE("inspection reports a document cursor and active line out of phase") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, false, false, false, false, true, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "render document cursor and active line are out of phase");
 }
 
 TEST_CASE("inspection reports renderer primitives that cross scene rows") {

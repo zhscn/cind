@@ -69,6 +69,30 @@ struct SkiaLogicalPoint {
     float y = 0.0F;
 };
 
+enum class SkiaCursorOwner : std::uint8_t {
+    None,
+    Document,
+    Popup,
+    Echo,
+    Other,
+};
+
+// Pixel-space state for the transient view overlay. It is derived once from
+// the prepared shaped layout, then shared by animation, painting, damage, and
+// inspection so caret and active-line presentation cannot drift apart.
+struct SkiaViewPresentation {
+    SkiaCursorOwner cursor_owner = SkiaCursorOwner::None;
+    std::optional<SkiaLogicalRect> cursor_rect;
+    std::optional<float> active_line_y;
+};
+
+// Interpolates one same-surface view transition. Document caret and
+// active-line positions share the same progress; cross-surface focus changes
+// adopt the target presentation directly.
+SkiaViewPresentation interpolate_view_presentation(const SkiaViewPresentation& from,
+                                                   const SkiaViewPresentation& target,
+                                                   float progress);
+
 // Adds the previous and current cursor bounds when the presented cursor moves.
 // This bridges transient animation positions into a retained partial-render
 // frame, whose scene damage only knows cell-aligned logical cursor targets.
@@ -86,13 +110,11 @@ struct SkiaScrollLayer {
 // Transient presentation state layered over a composed Scene. A scroll frame
 // paints the viewport snapshots adjacent to the current visual document
 // position at independent pixel offsets while keeping bottom-anchored regions
-// fixed. active_line_y and cursor_position carry current-view presentation
-// state independently from the content snapshots.
+// fixed. view carries the complete current-view overlay independently from
+// the content snapshots.
 struct SkiaAnimationFrame {
     std::vector<SkiaScrollLayer> scroll_layers;
-    float cursor_grid_offset_y = 0.0F;
-    std::optional<float> active_line_y;
-    std::optional<SkiaLogicalPoint> cursor_position;
+    SkiaViewPresentation view;
 };
 
 struct SkiaPrimitiveRenderDiagnostics {
@@ -224,6 +246,7 @@ public:
 
     // Returns the graphical caret bounds in logical pixels. A popup prompt
     // owns the caret while an interactive picker is active.
+    SkiaViewPresentation view_presentation(const SkiaFrameLayout& layout) const;
     std::optional<SkiaLogicalRect> cursor_rect(const ui::Scene& scene, float viewport_width,
                                                float viewport_height) const;
     std::optional<SkiaLogicalRect> cursor_rect(const SkiaFrameLayout& layout) const;

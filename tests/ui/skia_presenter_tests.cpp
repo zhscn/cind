@@ -110,6 +110,7 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
     const SkiaFrameLayout layout =
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    CHECK(presenter.view_presentation(layout).cursor_owner == SkiaCursorOwner::Document);
     SkiaRenderDiagnostics diagnostics;
     presenter.render(layout, width, height, pixels.data(), row_bytes, 1.0F, &diagnostics);
 
@@ -161,6 +162,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
     REQUIRE(tracker.update(scene).full_repaint);
     const SkiaFrameLayout layout =
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    CHECK(presenter.view_presentation(layout).cursor_owner == SkiaCursorOwner::Echo);
     SkiaRenderDiagnostics diagnostics;
     presenter.render(layout, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
     const std::optional<SkiaLogicalRect> cursor = presenter.cursor_rect(layout);
@@ -474,6 +476,7 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     REQUIRE(tracker.update(scene).full_repaint);
     const SkiaFrameLayout frame_layout =
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    CHECK(presenter.view_presentation(frame_layout).cursor_owner == SkiaCursorOwner::Popup);
     SkiaRenderDiagnostics diagnostics;
     presenter.render(frame_layout, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
     CHECK_THROWS_AS(presenter.render(frame_layout, width + 1, height, retained.data(), row_bytes),
@@ -603,15 +606,43 @@ TEST_CASE("Skia damage rendering matches a full reference frame") {
     CHECK(retained == reference);
 }
 
-TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor") {
+TEST_CASE("Skia document view presentation keeps caret and active line in phase") {
+    const SkiaViewPresentation from{
+        .cursor_owner = SkiaCursorOwner::Document,
+        .cursor_rect = SkiaLogicalRect{.x = 10.0F, .y = 20.0F, .width = 2.0F, .height = 20.0F},
+        .active_line_y = 20.0F,
+    };
+    const SkiaViewPresentation target{
+        .cursor_owner = SkiaCursorOwner::Document,
+        .cursor_rect = SkiaLogicalRect{.x = 14.0F, .y = 60.0F, .width = 2.0F, .height = 20.0F},
+        .active_line_y = 60.0F,
+    };
+
+    const SkiaViewPresentation middle = interpolate_view_presentation(from, target, 0.5F);
+    REQUIRE(middle.cursor_rect);
+    REQUIRE(middle.active_line_y);
+    CHECK(middle.cursor_rect->x == doctest::Approx(12.0F));
+    CHECK(middle.cursor_rect->y == doctest::Approx(40.0F));
+    CHECK(*middle.active_line_y == doctest::Approx(middle.cursor_rect->y));
+
+    SkiaViewPresentation popup = target;
+    popup.cursor_owner = SkiaCursorOwner::Popup;
+    popup.cursor_rect = SkiaLogicalRect{.x = 80.0F, .y = 12.0F, .width = 2.0F, .height = 20.0F};
+    const SkiaViewPresentation focus_change = interpolate_view_presentation(from, popup, 0.5F);
+    REQUIRE(focus_change.cursor_rect);
+    CHECK(focus_change.cursor_owner == SkiaCursorOwner::Popup);
+    CHECK(focus_change.cursor_rect->x == doctest::Approx(80.0F));
+    CHECK(focus_change.cursor_rect->y == doctest::Approx(12.0F));
+}
+
+TEST_CASE("Skia animation frames scroll only the grid") {
     SkiaTheme theme;
     SkiaPresenter presenter("monospace", 16.0F, theme);
-    const auto make_scene = [](std::string first, std::string second, int cursor_row) {
+    const auto make_scene = [](std::string first, std::string second) {
         Scene scene;
         scene.rows = 4;
         scene.cols = 12;
-        scene.cursor_row = cursor_row;
-        scene.cursor_col = 1;
+        scene.cursor_visible = false;
         Region body{RegionRole::TextArea, {0, 0, 2, 12}, {}};
         body.prims.push_back({0, 0, std::move(first), StyleClass::Text, false});
         body.prims.push_back({1, 0, std::move(second), StyleClass::Text, false});
@@ -623,8 +654,8 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
         return scene;
     };
 
-    const Scene source = make_scene("one", "two", 2);
-    const Scene target = make_scene("two", "three", 1);
+    const Scene source = make_scene("one", "two");
+    const Scene target = make_scene("two", "three");
     const int cell_height = presenter.cell_height();
     const int width = presenter.cell_width() * target.cols;
     const int height = cell_height * target.rows;
@@ -647,9 +678,7 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
                            .grid_offset_y = static_cast<float>(cell_height),
                            .clip_top = static_cast<float>(cell_height),
                            .clip_bottom = grid_bottom}},
-        .cursor_grid_offset_y = static_cast<float>(cell_height),
-        .active_line_y = std::nullopt,
-        .cursor_position = std::nullopt,
+        .view = {},
     };
     presenter.render_animated(target, start, width, height, animated_pixels.data(), row_bytes);
     CHECK(animated_pixels == source_pixels);
@@ -659,9 +688,7 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
                            .grid_offset_y = 0.0F,
                            .clip_top = 0.0F,
                            .clip_bottom = grid_bottom}},
-        .cursor_grid_offset_y = 0.0F,
-        .active_line_y = std::nullopt,
-        .cursor_position = std::nullopt,
+        .view = {},
     };
     presenter.render_animated(target, finish, width, height, animated_pixels.data(), row_bytes);
     CHECK(animated_pixels == target_pixels);
@@ -675,19 +702,81 @@ TEST_CASE("Skia animation frames scroll only the grid and interpolate the cursor
                            .grid_offset_y = static_cast<float>(cell_height) / 2.0F,
                            .clip_top = static_cast<float>(cell_height) / 2.0F,
                            .clip_bottom = grid_bottom}},
-        .cursor_grid_offset_y = static_cast<float>(cell_height) / 2.0F,
-        .active_line_y = std::nullopt,
-        .cursor_position = SkiaLogicalPoint{.x = static_cast<float>(presenter.cell_width()) / 2.0F,
-                                            .y = static_cast<float>(cell_height) / 2.0F},
+        .view = {},
     };
     presenter.render_animated(target, middle, width, height, animated_pixels.data(), row_bytes);
     const auto pixel = [&](int x, int y) {
         return animated_pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
                                static_cast<std::size_t>(x)];
     };
-    CHECK(pixel(presenter.cell_width() / 2, cell_height / 2) == theme.cursor);
     CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.surface);
     CHECK(pixel(width - 1, cell_height * 3 + cell_height / 2) == theme.canvas);
+}
+
+TEST_CASE("Skia scroll keeps the current cursor at both viewport edges") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    const auto make_scene = [](int cursor_row) {
+        Scene scene;
+        scene.rows = 8;
+        scene.cols = 20;
+        scene.cursor_row = cursor_row;
+        scene.cursor_col = 5;
+        Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
+        for (int row = 0; row < body.rect.rows; ++row) {
+            body.prims.push_back({row, 0, std::format("row {}", row), StyleClass::Text, false});
+        }
+        Region status{
+            RegionRole::StatusBar, {6, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+        Region echo{
+            RegionRole::EchoArea, {7, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+        scene.regions = {std::move(body), std::move(status), std::move(echo)};
+        return scene;
+    };
+
+    const auto check_edge = [&](int cursor_row, float content_offset_rows) {
+        const Scene scene = make_scene(cursor_row);
+        const int cell_height = presenter.cell_height();
+        const int width = presenter.cell_width() * scene.cols;
+        const int height = (scene.rows - 2) * cell_height +
+                           static_cast<int>(std::ceil(presenter.status_bar_height() +
+                                                      presenter.echo_area_height()));
+        const float grid_bottom =
+            SceneVerticalLayout(scene, presenter.vertical_metrics(static_cast<float>(height)))
+                .grid_clip_bottom();
+        const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+        std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+        const SkiaFrameLayout layout =
+            presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+        const SkiaViewPresentation view = presenter.view_presentation(layout);
+        const std::optional<SkiaLogicalRect>& cursor = view.cursor_rect;
+        REQUIRE(cursor);
+        REQUIRE(cursor->y >= 0.0F);
+        REQUIRE(cursor->y + cursor->height <= grid_bottom);
+
+        presenter.render_animated(
+            scene,
+            {.scroll_layers = {{.scene = &scene,
+                                .grid_offset_y =
+                                    content_offset_rows * static_cast<float>(cell_height),
+                                .clip_top = 0.0F,
+                                .clip_bottom = grid_bottom}},
+             .view = view},
+            width, height, pixels.data(), row_bytes);
+
+        const int cursor_x = static_cast<int>(std::floor(cursor->x));
+        const int cursor_top = static_cast<int>(std::floor(cursor->y));
+        const int cursor_bottom = static_cast<int>(std::ceil(cursor->y + cursor->height));
+        for (int y = cursor_top; y < cursor_bottom; ++y) {
+            const std::size_t index =
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(cursor_x);
+            CHECK(pixels[index] == theme.cursor);
+        }
+    };
+
+    check_edge(1, -2.5F);
+    check_edge(6, 2.5F);
 }
 
 TEST_CASE("Skia scroll layers keep the leading edge populated after sustained retargeting") {
@@ -733,9 +822,7 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
                             .grid_offset_y = 0.25F * static_cast<float>(cell_height),
                             .clip_top = 0.25F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},
-         .cursor_grid_offset_y = 3.25F * static_cast<float>(cell_height),
-         .active_line_y = std::nullopt,
-         .cursor_position = std::nullopt},
+         .view = {}},
         width, height, pixels.data(), row_bytes);
 
     const int leading_edge_height = std::max(1, cell_height / 4);
@@ -796,9 +883,9 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
                             .grid_offset_y = 0.001F * static_cast<float>(cell_height),
                             .clip_top = 0.001F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},
-         .cursor_grid_offset_y = 1.001F * static_cast<float>(cell_height),
-         .active_line_y = active_line_y + 0.001F * static_cast<float>(cell_height),
-         .cursor_position = std::nullopt},
+         .view = {.cursor_owner = SkiaCursorOwner::None,
+                  .cursor_rect = std::nullopt,
+                  .active_line_y = active_line_y}},
         width, height, before.data(), row_bytes);
     presenter.render_animated(
         target,
@@ -810,9 +897,9 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
                             .grid_offset_y = 0.999F * static_cast<float>(cell_height),
                             .clip_top = 0.999F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},
-         .cursor_grid_offset_y = 0.999F * static_cast<float>(cell_height),
-         .active_line_y = active_line_y - 0.001F * static_cast<float>(cell_height),
-         .cursor_position = std::nullopt},
+         .view = {.cursor_owner = SkiaCursorOwner::None,
+                  .cursor_rect = std::nullopt,
+                  .active_line_y = active_line_y}},
         width, height, after.data(), row_bytes);
 
     const int sample_x = width - 2;
@@ -828,6 +915,61 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
         changed_pixels += before[index] != after[index] ? 1 : 0;
     }
     CHECK(changed_pixels < before.size() / 50);
+}
+
+TEST_CASE("Skia line-number emphasis follows the animated document caret midpoint") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    Scene scene;
+    scene.rows = 5;
+    scene.cols = 12;
+    scene.cursor_visible = false;
+    scene.active_text_row = 1;
+    Region numbers{RegionRole::LineNumbers, {0, 0, 3, 2}, {}, SurfaceClass::Gutter};
+    numbers.prims.push_back({0, 0, "1", StyleClass::Gutter, false});
+    numbers.prims.push_back({1, 0, "2", StyleClass::Gutter, false});
+    numbers.prims.push_back({2, 0, "3", StyleClass::Gutter, false});
+    Region body{RegionRole::TextArea, {0, 2, 3, 10}, {}};
+    Region status{
+        RegionRole::StatusBar, {3, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {4, 0, 1, 12}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    scene.regions = {std::move(numbers), std::move(body), std::move(status), std::move(echo)};
+
+    const int cell_width = presenter.cell_width();
+    const int cell_height = presenter.cell_height();
+    const int width = cell_width * scene.cols;
+    const int height =
+        3 * cell_height +
+        static_cast<int>(std::ceil(presenter.status_bar_height() + presenter.echo_area_height()));
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    const auto render_at = [&](float active_line_y) {
+        std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+        presenter.render_animated(scene,
+                                  {.scroll_layers = {},
+                                   .view = {.cursor_owner = SkiaCursorOwner::None,
+                                            .cursor_rect = std::nullopt,
+                                            .active_line_y = active_line_y}},
+                                  width, height, pixels.data(), row_bytes);
+        return pixels;
+    };
+    const auto count_text_pixels = [&](const std::vector<std::uint32_t>& pixels, int row) {
+        std::size_t count = 0;
+        for (int y = row * cell_height; y < (row + 1) * cell_height; ++y) {
+            const auto first = pixels.begin() +
+                               static_cast<std::ptrdiff_t>(y) * static_cast<std::ptrdiff_t>(width);
+            count +=
+                static_cast<std::size_t>(std::count(first, first + 2 * cell_width, theme.text));
+        }
+        return count;
+    };
+
+    const std::vector<std::uint32_t> before = render_at(0.25F * static_cast<float>(cell_height));
+    const std::vector<std::uint32_t> after = render_at(0.75F * static_cast<float>(cell_height));
+    CHECK(count_text_pixels(before, 0) > 0);
+    CHECK(count_text_pixels(before, 1) == 0);
+    CHECK(count_text_pixels(after, 0) == 0);
+    CHECK(count_text_pixels(after, 1) > 0);
 }
 
 TEST_CASE("Skia presenter lays the modeline out from structured status content") {
@@ -931,10 +1073,9 @@ TEST_CASE("Skia partial rendering clears a cancelled cursor animation position")
     };
     presenter.render_animated(scene,
                               {.scroll_layers = {},
-                               .cursor_grid_offset_y = 0.0F,
-                               .active_line_y = std::nullopt,
-                               .cursor_position = SkiaLogicalPoint{.x = interpolated_cursor.x,
-                                                                   .y = interpolated_cursor.y}},
+                               .view = {.cursor_owner = SkiaCursorOwner::Document,
+                                        .cursor_rect = interpolated_cursor,
+                                        .active_line_y = std::nullopt}},
                               width, height, retained.data(), row_bytes);
 
     scene = make_scene(5, 11);
