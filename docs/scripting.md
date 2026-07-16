@@ -24,14 +24,16 @@ thread and outlives every Scheme callback registered for that application. Guile
 is process-wide, while access to an editor instance is represented by an explicit foreign host
 object. Scheme code does not resolve an implicit current application.
 
-The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind core)` is
-loaded before application keymaps are configured. Calls from C++ enter Guile through a condition
-boundary; a Scheme condition becomes a C++ error value and is retained in the scripting inspection
-snapshot. C++ exceptions raised by a host primitive are translated into Scheme conditions.
+The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
+defines the public command value API, and `(cind core)` defines the built-in policy. Both modules
+are loaded before application keymaps are configured. Calls from C++ enter Guile through a
+condition boundary; a Scheme condition becomes a C++ error value and is retained in the scripting
+inspection snapshot. C++ exceptions raised by a host primitive are translated into Scheme
+conditions.
 
-`editor.scripting` exposes the engine and Guile version, loaded policy modules, the successful
-keymap-installation revision, and the most recent error. This state is diagnostic and is not a
-plugin ABI.
+`editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted-command
+count, command and keymap installation revisions, and the most recent error. This state is
+diagnostic and is not a plugin ABI.
 
 ## Host capabilities
 
@@ -39,20 +41,53 @@ plugin ABI.
 object as an explicit first argument. A host object is valid only for its owning application and
 does not expose raw editor pointers to Scheme.
 
-The current host procedure is:
+The native module exports:
 
 ```scheme
+(define-command! host command-name execute enabled)
 (bind-key-if-command! host keymap-name key-sequence command-name)
 ```
 
-It resolves named keymaps and commands through `EditorRuntime`. An absent command returns `#f`,
-which lets a policy describe bindings for optional application capabilities. An absent keymap or an
-invalid key sequence raises a Scheme condition. A successful binding returns `#t`.
+`define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
+immutable command context and invocation value. `enabled` receives the same context and is either a
+predicate or `#f`. The runtime protects registered procedures from collection and invalidates them
+with their owning application.
 
-The `(cind core)` module owns the default Emacs-style editor and application keymaps. C++ creates
-the registries and focus hierarchy, then asks the Scheme policy to populate them. Interaction-local
-editing and the always-active system escape map remain bootstrap mechanisms until their host APIs
-can express the same lifecycle and precedence contracts.
+`bind-key-if-command!` resolves named keymaps and commands through `EditorRuntime`. An absent
+command returns `#f`, which lets a policy describe bindings for optional application capabilities.
+An absent keymap or an invalid key sequence raises a Scheme condition. A successful binding returns
+`#t`.
+
+## Scripted commands
+
+A command context is an association list containing generational `window`, `buffer`, `view`, and
+optional `project` IDs. Each ID is a two-element vector of slot and generation. An invocation is a
+vector containing a typed argument vector and an optional repeat count. Command arguments use the
+same boolean, integer, real and string domain as `SettingValue`.
+
+A Scheme command imports `(cind command)` and returns one tagged vector through its constructors:
+
+| Tag | Meaning |
+| --- | --- |
+| `completed` | complete with an optional typed value |
+| `error` | return a command error string |
+| `dispatch` | continue through the named command pipeline |
+| `interaction` | request a text or picker interaction using a named provider and accept command |
+
+The bridge validates the complete value before constructing a C++ command action. Named dispatch
+and accept commands are resolved through the invoking `EditorRuntime`; a script cannot inject a
+foreign registry ID. Scheme conditions and bridge exceptions become `CommandError` values and are
+retained in `editor.scripting.last_error`.
+
+`(cind core)` defines the command palette and its dispatching accept command, buffer-switch prompt,
+goto-line prompt, project-search prompt and project-aware enabled predicate, and key-help prompt.
+Their accept commands use native adapters for filesystem, buffer, caret, project-search, and message
+mutation.
+
+The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
+creates the registries and focus hierarchy, then asks the Scheme policy to populate them.
+Interaction-local editing and the always-active system escape map are bootstrap mechanisms with
+their own lifecycle and precedence contracts.
 
 Additional host APIs follow the same boundary:
 

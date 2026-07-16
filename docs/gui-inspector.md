@@ -124,7 +124,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、repeat 和 last command |
-| `editor.scripting` | Guile 版本、已加载的策略模块、binding revision 和最近一次 host 错误 |
+| `editor.scripting` | Guile 版本、策略模块、scripted command 数量、command/keymap revision 和最近一次 host 错误 |
 | `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |

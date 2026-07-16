@@ -1411,16 +1411,6 @@ void EditorApplication::register_commands() {
         session().set_selection({.anchor = previous.start, .head = previous.end});
     });
 
-    command_palette_accept_ = runtime_.commands().define(
-        "command.palette.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_command_palette(context, invocation);
-        });
-    runtime_.commands().define(
-        "command.palette", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_command_palette(context, invocation);
-        });
-
     open_file_accept_ = runtime_.commands().define(
         "file.open.accept", [this](CommandContext& context, const CommandInvocation& invocation) {
             return accept_open_file(context, invocation);
@@ -1444,10 +1434,6 @@ void EditorApplication::register_commands() {
         [this](CommandContext& context, const CommandInvocation& invocation) {
             return accept_switch_buffer(context, invocation);
         });
-    runtime_.commands().define(
-        "buffer.switch", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_switch_buffer(context, invocation);
-        });
     define("buffer.next", [this](const CommandInvocation&) { switch_relative(1); });
     define("buffer.previous", [this](const CommandInvocation&) { switch_relative(-1); });
     runtime_.commands().define(
@@ -1468,11 +1454,6 @@ void EditorApplication::register_commands() {
         [this](CommandContext& context, const CommandInvocation& invocation) {
             return accept_goto_line(context, invocation);
         });
-    runtime_.commands().define(
-        "cursor.goto-line", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_goto_line(context, invocation);
-        });
-
     project_find_file_accept_ = runtime_.commands().define(
         "project.find-file.accept",
         [this](CommandContext& context, const CommandInvocation& invocation) {
@@ -1490,13 +1471,6 @@ void EditorApplication::register_commands() {
         [this](CommandContext& context, const CommandInvocation& invocation) {
             return accept_project_search(context, invocation);
         });
-    runtime_.commands().define(
-        "project.search",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_project_search(context, invocation);
-        },
-        [](const CommandContext& context) { return context.project_id().has_value(); });
-
     help_keys_accept_ = runtime_.commands().define(
         "help.keys.accept",
         [this](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
@@ -1506,17 +1480,10 @@ void EditorApplication::register_commands() {
             }
             return CommandCompleted{};
         });
-    runtime_.commands().define("help.keys",
-                               [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-                                   return InteractionRequest{.kind = InteractionKind::Picker,
-                                                             .prompt = "Key bindings: ",
-                                                             .initial_input = {},
-                                                             .history = "key-bindings",
-                                                             .provider = "key-bindings",
-                                                             .allow_custom_input = false,
-                                                             .accept_command = help_keys_accept_,
-                                                             .arguments = {}};
-                               });
+    std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
+    if (!installed) {
+        throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));
+    }
 }
 
 void EditorApplication::register_interaction_providers() {
@@ -1933,31 +1900,6 @@ void EditorApplication::switch_relative(int delta) {
     (void)switch_buffer(buffers_[static_cast<std::size_t>(next)]->buffer);
 }
 
-CommandResult EditorApplication::begin_command_palette(CommandContext&,
-                                                       const CommandInvocation&) const {
-    return InteractionRequest{.kind = InteractionKind::Picker,
-                              .prompt = "Command: ",
-                              .initial_input = {},
-                              .history = "commands",
-                              .provider = "commands",
-                              .allow_custom_input = false,
-                              .accept_command = command_palette_accept_,
-                              .arguments = {}};
-}
-
-CommandResult EditorApplication::accept_command_palette(CommandContext& context,
-                                                        const CommandInvocation& invocation) {
-    const std::string* name = submitted_string(invocation);
-    if (name == nullptr) {
-        return std::unexpected(CommandError{"command palette requires a command name"});
-    }
-    const std::optional<CommandId> command = runtime_.commands().find(*name);
-    if (!command || *command == command_palette_accept_) {
-        return std::unexpected(CommandError{std::format("unknown command '{}'", *name)});
-    }
-    return runtime_.commands().invoke(*command, context);
-}
-
 CommandResult EditorApplication::begin_open_file(CommandContext&, const CommandInvocation&) const {
     const Buffer& buffer = session().buffer();
     const fs::path directory =
@@ -2027,18 +1969,6 @@ CommandResult EditorApplication::accept_save_as(CommandContext& context,
     return CommandCompleted{};
 }
 
-CommandResult EditorApplication::begin_switch_buffer(CommandContext&,
-                                                     const CommandInvocation&) const {
-    return InteractionRequest{.kind = InteractionKind::Picker,
-                              .prompt = "Switch buffer: ",
-                              .initial_input = {},
-                              .history = "buffers",
-                              .provider = "buffers",
-                              .allow_custom_input = false,
-                              .accept_command = switch_buffer_accept_,
-                              .arguments = {}};
-}
-
 CommandResult EditorApplication::accept_switch_buffer(CommandContext&,
                                                       const CommandInvocation& invocation) {
     const std::string* name = submitted_string(invocation);
@@ -2050,17 +1980,6 @@ CommandResult EditorApplication::accept_switch_buffer(CommandContext&,
         return std::unexpected(CommandError{std::format("unknown buffer '{}'", *name)});
     }
     return CommandCompleted{};
-}
-
-CommandResult EditorApplication::begin_goto_line(CommandContext&, const CommandInvocation&) const {
-    return InteractionRequest{.kind = InteractionKind::Text,
-                              .prompt = "Go to line: ",
-                              .initial_input = {},
-                              .history = "line-numbers",
-                              .provider = {},
-                              .allow_custom_input = true,
-                              .accept_command = goto_line_accept_,
-                              .arguments = {}};
 }
 
 CommandResult EditorApplication::accept_goto_line(CommandContext& context,
@@ -2135,21 +2054,6 @@ CommandResult EditorApplication::accept_project_find_file(CommandContext& contex
     std::expected<void, std::string> opened = open_file(*path, context.window_id(), std::nullopt);
     return opened ? CommandResult{CommandCompleted{}}
                   : CommandResult{std::unexpected(CommandError{opened.error()})};
-}
-
-CommandResult EditorApplication::begin_project_search(CommandContext& context,
-                                                      const CommandInvocation&) {
-    if (!context.project_id()) {
-        return std::unexpected(CommandError{"current buffer has no project"});
-    }
-    return InteractionRequest{.kind = InteractionKind::Text,
-                              .prompt = "Project search: ",
-                              .initial_input = {},
-                              .history = "project-search",
-                              .provider = {},
-                              .allow_custom_input = true,
-                              .accept_command = project_search_accept_,
-                              .arguments = {}};
 }
 
 CommandResult EditorApplication::accept_project_search(CommandContext& context,

@@ -104,6 +104,8 @@ struct ScriptingStateSnapshot {
     std::string engine;
     std::string version;
     std::vector<std::string> modules;
+    std::uint64_t command_revision = 0;
+    std::size_t scripted_commands = 0;
     std::uint64_t binding_revision = 0;
     std::optional<std::string> last_error;
 };

@@ -263,19 +263,14 @@ private:
     void mark_saved(BufferId buffer, Text content);
     void switch_relative(int delta);
 
-    CommandResult begin_command_palette(CommandContext&, const CommandInvocation&) const;
-    CommandResult accept_command_palette(CommandContext&, const CommandInvocation&);
     CommandResult begin_open_file(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_open_file(CommandContext&, const CommandInvocation&);
     CommandResult begin_save_as(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_save_as(CommandContext&, const CommandInvocation&);
-    CommandResult begin_switch_buffer(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_switch_buffer(CommandContext&, const CommandInvocation&);
-    CommandResult begin_goto_line(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_goto_line(CommandContext&, const CommandInvocation&);
     CommandResult begin_project_find_file(CommandContext&, const CommandInvocation&);
     CommandResult accept_project_find_file(CommandContext&, const CommandInvocation&);
-    CommandResult begin_project_search(CommandContext&, const CommandInvocation&);
     CommandResult accept_project_search(CommandContext&, const CommandInvocation&);
 
     EditorRuntime runtime_;
@@ -298,7 +293,6 @@ private:
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
-    CommandId command_palette_accept_;
     CommandId open_file_accept_;
     CommandId save_as_accept_;
     CommandId switch_buffer_accept_;

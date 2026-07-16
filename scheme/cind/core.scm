@@ -1,6 +1,55 @@
 (define-module (cind core)
+  #:use-module (cind command)
   #:use-module (cind host)
-  #:export (install-default-keymaps!))
+  #:export (install-core-commands!
+            install-default-keymaps!))
+
+(define (command-palette-accept context invocation)
+  (let ((arguments (invocation-arguments invocation)))
+    (if (and (> (vector-length arguments) 0)
+             (string? (vector-ref arguments (- (vector-length arguments) 1))))
+        (command-dispatch (vector-ref arguments (- (vector-length arguments) 1)))
+        (command-error "command palette requires a command name"))))
+
+(define (command-palette context invocation)
+  (interaction 'picker "Command: " "" "commands" "commands" #f
+               "command.palette.accept"))
+
+(define (buffer-switch context invocation)
+  (interaction 'picker "Switch buffer: " "" "buffers" "buffers" #f
+               "buffer.switch.accept"))
+
+(define (goto-line context invocation)
+  (interaction 'text "Go to line: " "" "line-numbers" "" #t
+               "cursor.goto-line.accept"))
+
+(define (project-search context invocation)
+  (interaction 'text "Project search: " "" "project-search" "" #t
+               "project.search.accept"))
+
+(define (help-keys context invocation)
+  (interaction 'picker "Key bindings: " "" "key-bindings" "key-bindings" #f
+               "help.keys.accept"))
+
+(define (context-has-project? context)
+  (and (context-project context) #t))
+
+(define core-commands
+  (list (list "command.palette.accept" command-palette-accept #f)
+        (list "command.palette" command-palette #f)
+        (list "buffer.switch" buffer-switch #f)
+        (list "cursor.goto-line" goto-line #f)
+        (list "project.search" project-search context-has-project?)
+        (list "help.keys" help-keys #f)))
+
+(define (install-core-commands! host)
+  (for-each (lambda (definition)
+              (define-command! host
+                               (list-ref definition 0)
+                               (list-ref definition 1)
+                               (list-ref definition 2)))
+            core-commands)
+  (length core-commands))
 
 (define editor-bindings
   '(("C-x C-s" . "file.save")

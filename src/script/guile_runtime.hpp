@@ -16,6 +16,8 @@ struct GuileRuntimeSnapshot {
     std::string engine;
     std::string version;
     std::vector<std::string> modules;
+    std::uint64_t command_revision = 0;
+    std::size_t scripted_commands = 0;
     std::uint64_t binding_revision = 0;
     std::optional<std::string> last_error;
 };
@@ -31,6 +33,7 @@ public:
     GuileRuntime(const GuileRuntime&) = delete;
     GuileRuntime& operator=(const GuileRuntime&) = delete;
 
+    std::expected<std::size_t, std::string> install_core_commands();
     std::expected<std::size_t, std::string> install_default_keymaps();
     GuileRuntimeSnapshot snapshot() const;
 

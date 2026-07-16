@@ -63,7 +63,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .last_command = "edit.insert"},
         .scripting = {.engine = "guile",
                       .version = "3.0.9",
-                      .modules = {"cind core"},
+                      .modules = {"cind command", "cind core"},
+                      .command_revision = 1,
+                      .scripted_commands = 6,
                       .binding_revision = 1,
                       .last_error = std::nullopt},
         .interaction =
@@ -344,7 +346,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":29") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":30") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -389,7 +391,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);
     CHECK(scripting.payload.find("\"engine\":\"guile\"") != std::string::npos);
-    CHECK(scripting.payload.find("\"modules\":[\"cind core\"]") != std::string::npos);
+    CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind core\"]") !=
+          std::string::npos);
+    CHECK(scripting.payload.find("\"command_revision\":1") != std::string::npos);
+    CHECK(scripting.payload.find("\"scripted_commands\":6") != std::string::npos);
     CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 
