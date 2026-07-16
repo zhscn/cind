@@ -170,4 +170,20 @@ void ViewRegistry::clear_selection(ViewId id) {
     view.mark_.reset();
 }
 
+void ViewRegistry::set_base_input_state(ViewId view, InputStateId state) {
+    get(view).input_states_.set_base(*input_states_, view, state);
+}
+
+void ViewRegistry::push_input_state(ViewId view, InputStateId state) {
+    get(view).input_states_.push(*input_states_, view, state);
+}
+
+std::optional<InputStateId> ViewRegistry::pop_input_state(ViewId view) {
+    return get(view).input_states_.pop(*input_states_, view);
+}
+
+void ViewRegistry::reset_input_states(ViewId view) {
+    get(view).input_states_.reset(*input_states_, view);
+}
+
 } // namespace cind

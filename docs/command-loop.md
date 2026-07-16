@@ -20,11 +20,12 @@ Editor state ─> ui::Scene ─┬─> ANSI renderer
                            └─> Skia renderer
 ```
 
-`EditorRuntime` owns command, keymap, interaction-provider, buffer, view, and window registries. A
-`Buffer` owns text, revision history, modes, buffer-local settings, and buffer-local keymaps. A
-`View` refers to one buffer and owns caret, selection, viewport, view-local settings, and view-local
-keymaps. A `Window` is a focus and display target that binds one View and may contribute
-window-local keymaps. Multiple Views can refer to the same Buffer without sharing display state.
+`EditorRuntime` owns command, keymap, input-state, interaction-provider, buffer, view, and window
+registries. A `Buffer` owns text, revision history, modes, buffer-local settings, and buffer-local
+keymaps. A `View` refers to one buffer and owns caret, selection, viewport, input-state stack,
+view-local settings, and view-local keymaps. A `Window` is a focus and display target that binds one
+View and may contribute window-local keymaps. Multiple Views can refer to the same Buffer without
+sharing display state.
 
 `EditorApplication` owns buffer save state and the EditSession associated with each window-buffer
 view. Switching buffers changes the active Window's View binding; returning to a buffer restores
@@ -58,12 +59,25 @@ replacement is not remapped recursively. This keeps minor-mode command substitut
 key placement and makes the complete layered resolver a side-effect-free query shared by dispatch
 and scripting.
 
-The focused target supplies an ordered keymap stack from most specific to least specific. A document
-window uses Window, View, Buffer, enabled minor modes in reverse activation order, major mode,
-`editor.default`, and `application.global`. An interaction uses its local map followed by
-`application.global`; picker maps inherit the common interaction text map. Window, Buffer, and mode
-maps belonging to the obscured document are not active while the interaction owns focus, so an
-unbound editing key cannot mutate the document behind a popup.
+The focused target supplies an ordered keymap stack from most specific to least specific. Each View
+may own a stack of registered input states. The bottom element is its durable state and elements
+above it are transient states. Transient state keymaps are inserted from stack top to bottom ahead
+of the durable state's maps, followed by Window, View, Buffer, enabled minor modes in reverse
+activation order, major mode, `editor.default`, and `application.global`. Duplicate map identities
+are kept only at their highest-priority occurrence. Views displaying the same Buffer have
+independent state stacks.
+
+Push, pop and base replacement publish typed state-change events containing the View and the
+previous and next state identities. Resetting a stack emits one pop event per transient state and
+preserves the base. An input state may also provide a key handler. The focused View's top handler
+runs before layered lookup and returns pass, consume, dispatch-command or an error. Passing refreshes
+the state layers and continues through the command loop. Consuming and errors clear pending chords;
+dispatch-command enters the same checked command execution path as keymap lookup.
+
+An interaction uses its local map followed by `application.global`; picker maps inherit the common
+interaction text map. Window, View, state, Buffer, and mode maps belonging to the obscured document
+are not active while the interaction owns focus, and document input-state handlers are bypassed, so
+an unbound editing key cannot mutate the document behind a popup.
 
 Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
 first layer that recognizes that complete sequence decides whether it is a command or a prefix. A

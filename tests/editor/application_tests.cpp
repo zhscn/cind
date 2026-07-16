@@ -597,6 +597,79 @@ TEST_CASE("keymaps compose explicit prefix maps and one-pass command remaps") {
     CHECK_THROWS_AS(runtime.keymaps().bind_prefix(goto_map, "z", base), std::invalid_argument);
 }
 
+TEST_CASE("input states are registered globally and stacked per view") {
+    EditorRuntime runtime;
+    const KeymapId normal_map = runtime.keymaps().define("state.normal");
+    const KeymapId transient_map = runtime.keymaps().define("state.transient");
+    const InputStateId emacs = runtime.input_states().define({.name = "emacs",
+                                                              .keymaps = {},
+                                                              .text_input = TextInputPolicy::Accept,
+                                                              .cursor = InputCursorShape::Beam,
+                                                              .indicator = "E",
+                                                              .handler = {}});
+    const InputStateId normal =
+        runtime.input_states().define({.name = "normal",
+                                       .keymaps = {normal_map},
+                                       .text_input = TextInputPolicy::Ignore,
+                                       .cursor = InputCursorShape::Block,
+                                       .indicator = "N",
+                                       .handler = {}});
+    const InputStateId transient =
+        runtime.input_states().define({.name = "transient",
+                                       .keymaps = {transient_map},
+                                       .text_input = TextInputPolicy::Ignore,
+                                       .cursor = InputCursorShape::Underline,
+                                       .indicator = "K",
+                                       .handler = {}});
+
+    const BufferId buffer = runtime.buffers().create({.name = "state-test",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId left = runtime.views().create(buffer);
+    const ViewId right = runtime.views().create(buffer);
+    CHECK_THROWS_AS(runtime.views().push_input_state(left, transient), std::logic_error);
+    std::vector<InputStateChange> changes;
+    const InputStateRegistry::ListenerId listener = runtime.input_states().subscribe(
+        [&](const InputStateChange& change) { changes.push_back(change); });
+
+    runtime.views().set_base_input_state(left, emacs);
+    runtime.views().set_base_input_state(right, normal);
+    runtime.views().push_input_state(left, transient);
+    runtime.views().set_base_input_state(left, normal);
+    const ViewInputStates& left_states = runtime.views().get(left).input_states();
+    const ViewInputStates& right_states = runtime.views().get(right).input_states();
+
+    REQUIRE(left_states.stack().size() == 2);
+    CHECK(left_states.stack()[0] == normal);
+    CHECK(left_states.stack()[1] == transient);
+    REQUIRE(right_states.stack().size() == 1);
+    CHECK(right_states.stack()[0] == normal);
+    CHECK(left_states.top() == transient);
+    CHECK(left_states.base() == normal);
+    CHECK(runtime.input_states().definition(transient).indicator == "K");
+    CHECK(changes.size() == 4);
+    CHECK(changes[2] ==
+          InputStateChange{
+              .view = left, .kind = InputStateChangeKind::Push, .from = emacs, .to = transient});
+    CHECK(changes[3] ==
+          InputStateChange{
+              .view = left, .kind = InputStateChangeKind::Base, .from = emacs, .to = normal});
+
+    CHECK(runtime.views().pop_input_state(left) == transient);
+    CHECK_FALSE(runtime.views().pop_input_state(left).has_value());
+    runtime.views().push_input_state(left, transient);
+    runtime.views().push_input_state(left, emacs);
+    runtime.views().reset_input_states(left);
+    REQUIRE(left_states.stack().size() == 1);
+    CHECK(left_states.stack()[0] == normal);
+
+    CHECK(runtime.input_states().unsubscribe(listener));
+    CHECK_FALSE(runtime.input_states().unsubscribe(listener));
+    CHECK_THROWS_AS(runtime.views().push_input_state(left, InputStateId{}), std::out_of_range);
+}
+
 TEST_CASE("focused text input moves and deletes by grapheme cluster") {
     TextInput input("a👩‍💻b");
     CHECK(input.caret() == input.text().size());

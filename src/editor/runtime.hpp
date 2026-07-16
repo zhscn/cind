@@ -2,6 +2,7 @@
 
 #include "editor/buffer.hpp"
 #include "editor/command.hpp"
+#include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
 #include "editor/keymap.hpp"
 #include "editor/mode.hpp"
@@ -39,6 +40,8 @@ public:
     const CommandRegistry& commands() const { return commands_; }
     KeymapRegistry& keymaps() { return keymaps_; }
     const KeymapRegistry& keymaps() const { return keymaps_; }
+    InputStateRegistry& input_states() { return input_states_; }
+    const InputStateRegistry& input_states() const { return input_states_; }
     InteractionProviderRegistry& interaction_providers() { return interaction_providers_; }
     const InteractionProviderRegistry& interaction_providers() const {
         return interaction_providers_;
@@ -58,12 +61,13 @@ private:
     SettingsLayer application_settings_;
     LanguageRegistry languages_;
     ModeRegistry modes_;
+    CommandRegistry commands_;
+    KeymapRegistry keymaps_;
+    InputStateRegistry input_states_;
     BufferRegistry buffers_;
     ProjectRegistry projects_;
     ViewRegistry views_;
     WindowRegistry windows_;
-    CommandRegistry commands_;
-    KeymapRegistry keymaps_;
     InteractionProviderRegistry interaction_providers_;
     bool extensions_sealed_ = false;
 };

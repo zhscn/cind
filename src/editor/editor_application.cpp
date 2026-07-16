@@ -353,6 +353,41 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     command_page_rows_ = std::max(1, page_rows);
     last_key_ = format_key_stroke(key);
     sync_keymaps();
+    if (!interaction_.active()) {
+        const View& active_view = runtime_.views().get(view_id());
+        if (const std::optional<InputStateId> state = active_view.input_states().top()) {
+            const InputStateRegistry::Definition& definition =
+                runtime_.input_states().definition(*state);
+            if (definition.handler) {
+                InputStateHandlerResult handled = definition.handler(active_view.id(), key);
+                if (!handled) {
+                    command_loop_.cancel_pending();
+                    message_ = handled.error();
+                    sync_keymaps();
+                    return true;
+                }
+                if (handled->kind == InputStateHandlerActionKind::Consume) {
+                    command_loop_.cancel_pending();
+                    sync_keymaps();
+                    return true;
+                }
+                if (handled->kind == InputStateHandlerActionKind::Dispatch) {
+                    if (!handled->command) {
+                        command_loop_.cancel_pending();
+                        message_ = "input state handler returned an invalid command";
+                        sync_keymaps();
+                        return true;
+                    }
+                    CommandContext context = command_context();
+                    const bool consumed =
+                        handle_loop_result(command_loop_.execute(handled->command, context));
+                    sync_keymaps();
+                    return consumed;
+                }
+                sync_keymaps();
+            }
+        }
+    }
     CommandContext context = command_context();
     const bool interaction_focus = interaction_.active();
     const bool consumed = handle_loop_result(command_loop_.dispatch(key, context));
@@ -1642,6 +1677,14 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
     const Window& window = runtime_.windows().get(active_window_);
     const View& view = runtime_.views().get(window.view_id());
     const Buffer& buffer = runtime_.buffers().get(view.buffer_id());
+    const std::vector<InputStateId>& input_states = view.input_states().stack();
+    for (auto state = input_states.rbegin(); state != input_states.rend(); ++state) {
+        const InputStateRegistry::Definition& definition =
+            runtime_.input_states().definition(*state);
+        append(definition.keymaps,
+               std::format("input-state:{}{}", definition.name,
+                           state + 1 == input_states.rend() ? "" : ":transient"));
+    }
     append(window.keymaps(), "window");
     append(view.keymaps(), "view");
     append(buffer.keymaps(), "buffer");

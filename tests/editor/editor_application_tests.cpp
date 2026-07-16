@@ -94,6 +94,62 @@ TEST_CASE("frontend commands join the shared default keymap") {
     CHECK(application.last_command() == "search.replace");
 }
 
+TEST_CASE("per-view input states precede window layers and may handle keys") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    int selected = 0;
+    const auto command = [&](std::string name, int value) {
+        return runtime.commands().define(
+            std::move(name),
+            [&, value](CommandContext&, const CommandInvocation&) -> CommandResult {
+                selected = value;
+                return CommandCompleted{};
+            });
+    };
+    const CommandId base_command = command("test.state.base", 1);
+    const CommandId transient_command = command("test.state.transient", 2);
+    const CommandId handled_command = command("test.state.handler", 3);
+    const KeymapId base_map = runtime.keymaps().define("test.state.base-map");
+    const KeymapId transient_map = runtime.keymaps().define("test.state.transient-map");
+    runtime.keymaps().bind(base_map, "z", base_command);
+    runtime.keymaps().bind(transient_map, "z", transient_command);
+    const InputStateId base = runtime.input_states().define(
+        {.name = "test-base", .keymaps = {base_map}, .indicator = "B", .handler = {}});
+    const InputStateId transient = runtime.input_states().define(
+        {.name = "test-transient",
+         .keymaps = {transient_map},
+         .text_input = TextInputPolicy::Ignore,
+         .cursor = InputCursorShape::Block,
+         .indicator = "T",
+         .handler = [handled_command](ViewId, KeyStroke key) -> InputStateHandlerResult {
+             if (format_key_stroke(key) == "q") {
+                 return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume,
+                                                .command = {}};
+             }
+             if (format_key_stroke(key) == "d") {
+                 return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
+                                                .command = handled_command};
+             }
+             return InputStateHandlerAction{};
+         }});
+    runtime.views().set_base_input_state(application.view_id(), base);
+    runtime.views().push_input_state(application.view_id(), transient);
+
+    CHECK(application.handle_key(KeyStroke::character_key(U'z'), 10));
+    CHECK(selected == 2);
+    REQUIRE(application.active_keymap_layers().size() >= 2);
+    CHECK(application.active_keymap_layers()[0].scope == "input-state:test-transient:transient");
+    CHECK(application.active_keymap_layers()[1].scope == "input-state:test-base");
+    CHECK(application.handle_key(KeyStroke::character_key(U'd'), 10));
+    CHECK(selected == 3);
+    CHECK(application.handle_key(KeyStroke::character_key(U'q'), 10));
+    CHECK(selected == 3);
+
+    CHECK(runtime.views().pop_input_state(application.view_id()) == transient);
+    CHECK(application.handle_key(KeyStroke::character_key(U'z'), 10));
+    CHECK(selected == 1);
+}
+
 TEST_CASE("background saving is independent of a graphical event loop") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /

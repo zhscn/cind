@@ -3,6 +3,7 @@
 #include "document/text_types.hpp"
 #include "editor/buffer.hpp"
 #include "editor/ids.hpp"
+#include "editor/input_state.hpp"
 #include "editor/settings.hpp"
 
 #include <cstdint>
@@ -37,6 +38,7 @@ public:
     const SettingsLayer& settings() const { return settings_; }
     std::vector<KeymapId>& keymaps() { return keymaps_; }
     const std::vector<KeymapId>& keymaps() const { return keymaps_; }
+    const ViewInputStates& input_states() const { return input_states_; }
     std::uint32_t attached_window_count() const { return attached_windows_; }
 
 private:
@@ -53,13 +55,15 @@ private:
     ViewportState viewport_;
     SettingsLayer settings_;
     std::vector<KeymapId> keymaps_;
+    ViewInputStates input_states_;
     std::uint32_t attached_windows_ = 0;
 };
 
 class ViewRegistry {
 public:
-    ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings)
-        : buffers_(&buffers), settings_(&settings) {}
+    ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings,
+                 InputStateRegistry& input_states)
+        : buffers_(&buffers), settings_(&settings), input_states_(&input_states) {}
     ~ViewRegistry();
 
     ViewRegistry(const ViewRegistry&) = delete;
@@ -79,6 +83,10 @@ public:
     std::optional<TextRange> selection(ViewId id) const;
     void set_selection(ViewId id, SelectionEndpoints selection);
     void clear_selection(ViewId id);
+    void set_base_input_state(ViewId view, InputStateId state);
+    void push_input_state(ViewId view, InputStateId state);
+    std::optional<InputStateId> pop_input_state(ViewId view);
+    void reset_input_states(ViewId view);
 
 private:
     struct Slot {
@@ -91,6 +99,7 @@ private:
 
     BufferRegistry* buffers_;
     const SettingRegistry* settings_;
+    InputStateRegistry* input_states_;
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_slots_;
 };
