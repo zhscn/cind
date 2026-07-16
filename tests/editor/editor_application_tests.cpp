@@ -137,6 +137,10 @@ TEST_CASE("which-key help and command palette use searchable interaction provide
         application.interaction().state()->candidates, [](const InteractionCandidate& candidate) {
             return candidate.label == "C-x C-s" && candidate.detail == "file.save";
         }));
+    CHECK(std::ranges::any_of(
+        application.interaction().state()->candidates, [](const InteractionCandidate& candidate) {
+            return candidate.label == "C-x C-c" && candidate.detail == "application.quit";
+        }));
     send_keys(application, "C-g");
 
     send_keys(application, "M-x");
@@ -144,11 +148,15 @@ TEST_CASE("which-key help and command palette use searchable interaction provide
     CHECK(application.interaction().state()->request.provider == "commands");
     REQUIRE(application.interaction().state()->candidates.size() > 2);
     CHECK(application.input_focus() == "interaction");
-    REQUIRE(application.active_keymap_layers().size() == 1);
+    REQUIRE(application.active_keymap_layers().size() == 2);
     CHECK(application.runtime()
               .keymaps()
               .definition(application.active_keymap_layers().front().keymap)
               .name == "interaction.picker");
+    CHECK(application.runtime()
+              .keymaps()
+              .definition(application.active_keymap_layers().back().keymap)
+              .name == "application.global");
 
     send_keys(application, "C-n");
     CHECK(application.interaction().state()->selected == 1);
@@ -169,7 +177,50 @@ TEST_CASE("which-key help and command palette use searchable interaction provide
     CHECK(application.runtime()
               .keymaps()
               .definition(application.active_keymap_layers().back().keymap)
-              .name == "editor.default");
+              .name == "application.global");
+}
+
+TEST_CASE("interaction local keymap edits its own input") {
+    EditorApplication application = make_application("sample.cc", "text");
+    const TextOffset document_caret = application.session().caret();
+
+    send_keys(application, "M-x");
+    application.insert_text("abc");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->input.text() == "abc");
+    CHECK(application.interaction().state()->input.caret() == 3);
+
+    send_keys(application, "C-b C-b");
+    CHECK(application.interaction().state()->input.caret() == 1);
+    application.insert_text("X");
+    CHECK(application.interaction().state()->input.text() == "aXbc");
+    CHECK(application.interaction().state()->input.caret() == 2);
+    send_keys(application, "C-f");
+    CHECK(application.interaction().state()->input.caret() == 3);
+    send_keys(application, "C-a C-d");
+    CHECK(application.interaction().state()->input.text() == "Xbc");
+    CHECK(application.interaction().state()->input.caret() == 0);
+    send_keys(application, "C-e");
+    CHECK(application.interaction().state()->input.caret() == 3);
+    CHECK(application.session().caret() == document_caret);
+
+    send_keys(application, "C-g");
+}
+
+TEST_CASE("application global prefix remains active while picker owns focus") {
+    EditorApplication application = make_application("sample.cc", "text");
+
+    send_keys(application, "M-x");
+    REQUIRE(application.interaction().state() != nullptr);
+    REQUIRE_FALSE(application.interaction().state()->candidates.empty());
+    send_keys(application, "C-x");
+    REQUIRE(application.command_loop().pending_keymap());
+    CHECK(application.runtime()
+              .keymaps()
+              .definition(*application.command_loop().pending_keymap())
+              .name == "application.global");
+    send_keys(application, "C-c");
+    CHECK(application.should_quit());
 }
 
 TEST_CASE("active window assembles explicit window view buffer mode and global keymaps") {
@@ -219,6 +270,46 @@ TEST_CASE("active window assembles explicit window view buffer mode and global k
     runtime.modes().definition_for_configuration(major).keymaps.clear();
     send_keys(application, "C-z");
     CHECK(selected_layer == 1);
+}
+
+TEST_CASE("minor mode keymaps use reverse activation precedence and sparse fallback") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    int selected_mode = 0;
+    const auto define_minor = [&](std::string name, int value) {
+        const CommandId command = runtime.commands().define(
+            name + ".command",
+            [&, value](CommandContext&, const CommandInvocation&) -> CommandResult {
+                selected_mode = value;
+                return CommandCompleted{};
+            });
+        const KeymapId keymap = runtime.keymaps().define(name + ".map");
+        runtime.keymaps().bind(keymap, "C-z", command);
+        runtime.keymaps().bind(keymap, value == 1 ? "C-c a" : "C-c b", command);
+        const ModeId mode = runtime.modes().define(name, ModeKind::Minor);
+        runtime.modes().definition_for_configuration(mode).keymaps.push_back(keymap);
+        return mode;
+    };
+    const ModeId first = define_minor("test.minor.first", 1);
+    const ModeId second = define_minor("test.minor.second", 2);
+    BufferModes& modes = application.session().buffer().modes();
+    REQUIRE(modes.enable_minor(runtime.modes(), first));
+    REQUIRE(modes.enable_minor(runtime.modes(), second));
+
+    send_keys(application, "C-z");
+    CHECK(selected_mode == 2);
+    send_keys(application, "C-c a");
+    CHECK(selected_mode == 1);
+
+    send_keys(application, "M-x");
+    REQUIRE(application.active_keymap_layers().size() == 2);
+    CHECK(application.active_keymap_layers().front().scope == "interaction");
+    CHECK(application.active_keymap_layers().back().scope == "global");
+    send_keys(application, "C-g");
+
+    REQUIRE(modes.disable_minor(second));
+    send_keys(application, "C-z");
+    CHECK(selected_mode == 1);
 }
 
 TEST_CASE("Emacs mark kill yank and structural commands are frontend independent") {

@@ -124,7 +124,8 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
     popup.prims.push_back({0, 0, "Command", StyleClass::Popup, false});
     popup.prims.push_back({1, 0, "first", StyleClass::Popup, true});
     popup.popup = Region::PopupContent{.title = "Command",
-                                       .input = "",
+                                       .input = "ab",
+                                       .input_cursor = 2,
                                        .first_item = 0,
                                        .total_items = 20,
                                        .selected_item = 0,
@@ -137,6 +138,11 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
     const SceneDamage changed = tracker.update(scene);
     CHECK_FALSE(changed.full_repaint);
     CHECK_FALSE(changed.cell_rects.empty());
+
+    scene.regions.back().popup->input_cursor = 1;
+    const SceneDamage moved = tracker.update(scene);
+    CHECK_FALSE(moved.full_repaint);
+    CHECK_FALSE(moved.cell_rects.empty());
 }
 
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {

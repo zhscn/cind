@@ -45,15 +45,27 @@ the command executes.
 
 ## Keymaps and default bindings
 
-A keymap is a named trie from key sequences to command IDs. A trie node is either a complete command
-or a prefix; binding a command where a prefix exists, or extending an existing command binding,
-fails during configuration. An exact binding may be replaced before the registry is sealed.
+A keymap is a named trie from key sequences to command IDs and may inherit one parent keymap. A trie
+node is either a complete command or a prefix; binding a command where a prefix exists, or extending
+an existing command binding, fails during configuration. Child bindings override exact parent
+bindings while unbound branches inherit parent behavior. Parent cycles are rejected.
 
-The active Window supplies an ordered keymap stack from most specific to least specific: Window,
-View, Buffer, enabled minor modes, major mode, and the application-global map. The first layer that
-recognizes the current sequence owns it. A prefix in a more specific layer masks a complete binding
-in a less specific layer. A focused interaction replaces this stack with its transient map, making
-prompt behavior modal without branching in the frontend or application key dispatcher.
+The focused target supplies an ordered keymap stack from most specific to least specific. A document
+window uses Window, View, Buffer, enabled minor modes in reverse activation order, major mode,
+`editor.default`, and `application.global`. An interaction uses its local map followed by
+`application.global`; picker maps inherit the common interaction text map. Window, Buffer, and mode
+maps belonging to the obscured document are not active while the interaction owns focus, so an
+unbound editing key cannot mutate the document behind a popup.
+
+Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
+first layer that recognizes that complete sequence decides whether it is a command or a prefix. A
+sparse prefix in a high-priority map therefore contributes its own continuations without hiding
+different continuations in lower maps. A command or prefix defined by the higher map for the same
+complete sequence still takes precedence.
+
+`application.global` contains bindings that are valid independently of the focused text target,
+including `C-x C-c`. Document editing and buffer commands remain in `editor.default`; interaction
+editing remains in the interaction keymap family.
 
 Always-active override maps are resolved before a pending sequence. The built-in system override
 binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix or focused interaction through the
@@ -76,18 +88,18 @@ capabilities can therefore join the shared TUI and GUI keymap without duplicatin
 ## Command loop and prefix help
 
 One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap
-stack, always-active override maps, a pending multi-key sequence, its owning keymap, and an optional
-repeat count. Dispatch returns a structured status:
+stack, always-active override maps, a pending multi-key sequence, its highest-precedence matching
+keymap, and an optional repeat count. Dispatch returns a structured status:
 not handled, prefix, executed, awaiting input, disabled, cancelled, or error.
 
 An undefined key after a recognized prefix consumes the sequence and clears pending and repeat
 state. A single unbound key remains available to the platform text-input path. `C-g` invokes
 `keyboard.quit` from the system override map.
 
-The keymap registry enumerates the immediate continuations of any trie prefix. While a sequence is
-pending, the scene contains a popup listing the next keys and their command names. This is the
-which-key view. It derives its contents from the active keymap, so runtime and user bindings appear
-without a separate help table.
+The command loop merges immediate continuations across active keymaps and their parents using the
+same precedence as dispatch. While a sequence is pending, the scene contains a popup listing the
+next keys and their command names. This is the which-key view. Runtime, mode, inherited, and user
+bindings appear without a separate help table.
 
 Commands receive `CommandContext`, which names the runtime, window, buffer, and view explicitly.
 Settings resolution follows the same context. Command callbacks do not depend on process-global
@@ -101,11 +113,13 @@ candidate-provider name, an accept command ID, and typed arguments. The command 
 `EditorApplication`; `InteractionController` owns the active state while the frontend continues its
 normal event loop.
 
-Text input appends to the interaction input. Interaction keymaps bind Backspace to code-point
-deletion, `C-n`/Down/Tab and `C-p`/Up to picker navigation, Enter to submission, and Escape to
-cancel. Submission returns a named command dispatch that the command loop follows, so the accepted
-command remains visible as the executed command. An accept command may return another request,
-which supports multi-step interactions without retaining a C++ closure.
+An interaction owns a single-line UTF-8 `TextInput` with a caret on an extended grapheme boundary.
+Text events insert at the caret and refresh candidates. The common interaction keymap binds
+`C-f`/`C-b`, Right/Left, `C-a`/`C-e`, Home/End, Backspace, `C-d`/Delete, Enter, and Escape to editing,
+submission, and cancellation commands. The picker child map adds `C-n`/Down/Tab and `C-p`/Up for
+candidate navigation. Submission returns a named command dispatch that the command loop follows,
+so the accepted command remains visible as the executed command. An accept command may return
+another request, which supports multi-step interactions without retaining a C++ closure.
 
 Candidate providers return semantic values, labels, details, and filter text. The controller applies
 case-insensitive, whitespace-separated orderless filtering and stable ranking. Command, key-binding,
@@ -132,10 +146,11 @@ the input and editor-state model.
 ## Inspection
 
 The GUI inspector exposes `editor.command_loop`, `editor.interaction`, `editor.buffers`,
-`editor.windows`, and `editor.focus`. Command-loop state includes keymap names with their scopes,
-override maps, pending keys, the owning keymap, repeat count, and last command. Interaction state
-includes prompt kind, input, provider, selection, generation, errors, and candidates. Buffer state
-includes resource and lifecycle data; Window state identifies each Window's bound View and Buffer.
+`editor.windows`, and `editor.focus`. Command-loop state includes keymap names with their scopes and
+parent chains, override maps, pending keys, the highest matching keymap, repeat count, and last
+command. Interaction state includes prompt kind, input caret, provider, selection, generation,
+errors, and candidates. Buffer state includes resource and lifecycle data; Window state identifies
+each Window's bound View and Buffer.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible
 item window, global item count and selection alongside its terminal-compatible primitives, cell
 geometry, surface, and overlay anchor.

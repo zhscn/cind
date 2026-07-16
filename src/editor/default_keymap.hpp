@@ -14,4 +14,8 @@ class EditorRuntime;
 // registered.
 std::size_t bind_default_editor_keys(EditorRuntime& runtime, KeymapId keymap);
 
+// Installs bindings that are valid independently of the focused text target.
+// Focus-specific stacks use this map as their final fallback.
+std::size_t bind_default_application_keys(EditorRuntime& runtime, KeymapId keymap);
+
 } // namespace cind

@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <new>
@@ -311,13 +312,8 @@ std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
 }
 
 std::vector<KeyBindingHint> EditorApplication::pending_key_hints() const {
-    const std::optional<KeymapId> keymap = command_loop_.pending_keymap();
-    if (!keymap) {
-        return {};
-    }
     std::vector<KeyBindingHint> result;
-    for (const KeymapCompletion& completion :
-         runtime_.keymaps().completions(*keymap, command_loop_.pending_sequence())) {
+    for (const KeymapCompletion& completion : command_loop_.pending_completions()) {
         std::string command;
         if (completion.command) {
             command = runtime_.commands().definition(*completion.command).name;
@@ -567,6 +563,41 @@ void EditorApplication::register_commands() {
         "interaction.erase-backward",
         [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
             (void)interaction_.erase_backward(context);
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.erase-forward",
+        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.erase_forward(context);
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.backward-character",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_backward();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.forward-character",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_forward();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.line-start",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_to_start();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.line-end",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_to_end();
             return CommandCompleted{};
         },
         interaction_enabled);
@@ -887,7 +918,8 @@ void EditorApplication::register_interaction_providers() {
     runtime_.interaction_providers().define("key-bindings", [this](CommandContext&,
                                                                    std::string_view) {
         std::vector<InteractionCandidate> candidates;
-        for (const KeymapId keymap : command_loop_.keymaps()) {
+        for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
+            const KeymapId keymap = layer.keymap;
             for (const KeymapBinding& binding : runtime_.keymaps().bindings(keymap)) {
                 const std::string keys = format_key_sequence(binding.sequence);
                 const std::string& command = runtime_.commands().definition(binding.command).name;
@@ -908,10 +940,13 @@ void EditorApplication::register_interaction_providers() {
 
 void EditorApplication::register_keymaps() {
     keymap_ = runtime_.keymaps().define("editor.default");
+    application_keymap_ = runtime_.keymaps().define("application.global");
     system_keymap_ = runtime_.keymaps().define("editor.system");
     interaction_text_keymap_ = runtime_.keymaps().define("interaction.text");
     interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
+    runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     refresh_default_keymap();
+    (void)bind_default_application_keys(runtime_, application_keymap_);
 
     const auto command = [this](std::string_view name) {
         const std::optional<CommandId> id = runtime_.commands().find(name);
@@ -921,10 +956,23 @@ void EditorApplication::register_keymaps() {
         return *id;
     };
     runtime_.keymaps().bind(system_keymap_, "C-g", command("keyboard.quit"));
-    for (const KeymapId map : {interaction_text_keymap_, interaction_picker_keymap_}) {
-        runtime_.keymaps().bind(map, "RET", command("interaction.submit"));
-        runtime_.keymaps().bind(map, "Backspace", command("interaction.erase-backward"));
-        runtime_.keymaps().bind(map, "ESC", command("keyboard.quit"));
+    for (const auto& [keys, name] :
+         std::initializer_list<std::pair<std::string_view, std::string_view>>{
+             {"RET", "interaction.submit"},
+             {"Backspace", "interaction.erase-backward"},
+             {"C-d", "interaction.erase-forward"},
+             {"Delete", "interaction.erase-forward"},
+             {"C-b", "interaction.backward-character"},
+             {"Left", "interaction.backward-character"},
+             {"C-f", "interaction.forward-character"},
+             {"Right", "interaction.forward-character"},
+             {"C-a", "interaction.line-start"},
+             {"Home", "interaction.line-start"},
+             {"C-e", "interaction.line-end"},
+             {"End", "interaction.line-end"},
+             {"ESC", "keyboard.quit"},
+         }) {
+        runtime_.keymaps().bind(interaction_text_keymap_, keys, command(name));
     }
     for (std::string_view keys : {"C-n", "Down", "TAB"}) {
         runtime_.keymaps().bind(interaction_picker_keymap_, keys,
@@ -937,13 +985,12 @@ void EditorApplication::register_keymaps() {
     command_loop_.set_override_keymaps({system_keymap_});
 }
 
-std::vector<ActiveKeymapLayer> EditorApplication::window_keymap_layers() const {
-    std::vector<ActiveKeymapLayer> layers;
+std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
+    std::vector<KeymapLayer> layers;
     const auto append = [&](std::span<const KeymapId> maps, std::string_view scope) {
         for (const KeymapId map : maps) {
-            if (std::ranges::any_of(layers, [map](const ActiveKeymapLayer& layer) {
-                    return layer.keymap == map;
-                })) {
+            if (std::ranges::any_of(
+                    layers, [map](const KeymapLayer& layer) { return layer.keymap == map; })) {
                 continue;
             }
             layers.push_back({.keymap = map, .scope = std::string(scope)});
@@ -966,36 +1013,32 @@ std::vector<ActiveKeymapLayer> EditorApplication::window_keymap_layers() const {
             runtime_.modes().definition(*buffer.modes().major());
         append(definition.keymaps, std::format("major-mode:{}", definition.name));
     }
-    append(std::span(&keymap_, 1), "global");
+    append(std::span(&keymap_, 1), "editor");
+    append(std::span(&application_keymap_, 1), "global");
     return layers;
 }
 
 void EditorApplication::sync_keymaps() {
-    std::vector<ActiveKeymapLayer> layers;
+    std::vector<KeymapLayer> layers;
     if (const InteractionState* interaction = interaction_.state()) {
         layers.push_back({.keymap = interaction->request.kind == InteractionKind::Picker
                                         ? interaction_picker_keymap_
                                         : interaction_text_keymap_,
                           .scope = "interaction"});
+        layers.push_back({.keymap = application_keymap_, .scope = "global"});
     } else {
         layers = window_keymap_layers();
     }
+    const std::span<const KeymapLayer> active = command_loop_.keymap_layers();
     const bool changed =
-        layers.size() != active_keymap_layers_.size() ||
-        !std::ranges::equal(layers, active_keymap_layers_,
-                            [](const ActiveKeymapLayer& left, const ActiveKeymapLayer& right) {
-                                return left.keymap == right.keymap && left.scope == right.scope;
-                            });
+        layers.size() != active.size() ||
+        !std::ranges::equal(layers, active, [](const KeymapLayer& left, const KeymapLayer& right) {
+            return left.keymap == right.keymap && left.scope == right.scope;
+        });
     if (!changed) {
         return;
     }
-    active_keymap_layers_ = std::move(layers);
-    std::vector<KeymapId> keymaps;
-    keymaps.reserve(active_keymap_layers_.size());
-    for (const ActiveKeymapLayer& layer : active_keymap_layers_) {
-        keymaps.push_back(layer.keymap);
-    }
-    command_loop_.set_keymaps(std::move(keymaps));
+    command_loop_.set_keymap_layers(std::move(layers));
 }
 
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {

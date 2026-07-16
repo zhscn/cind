@@ -156,6 +156,15 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     CHECK(popup->popup.value().title == "Command: ");
     CHECK(std::ranges::any_of(popup->prims,
                               [](const ui::Prim& primitive) { return primitive.selected; }));
+
+    model.insert_text("edit");
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'b', KeyModifier::Control), 10));
+    scene = model.compose(16, 100);
+    popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup);
+    CHECK(popup->popup->input == "edit");
+    CHECK(popup->popup->input_cursor == 3);
 }
 
 TEST_CASE("command palette retains a global selection and stable list viewport") {

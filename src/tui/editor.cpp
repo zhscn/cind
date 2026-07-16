@@ -346,13 +346,17 @@ private:
         const InteractionState* interaction = application_.interaction().state();
         const bool any_prompt = interaction != nullptr || prompt_active_;
         const std::string echo_text =
-            interaction        ? interaction->request.prompt + interaction->input
+            interaction        ? interaction->request.prompt + interaction->input.text()
             : prompt_active_   ? prompt_label_ + prompt_input_
             : message_.empty() ? "C-x C-s save  C-x C-f open  C-x b buffer  C-x C-c quit  "
                                  "C-s search  M-x commands  C-h b help"
                                : message_;
         std::optional<int> echo_cursor;
-        if (any_prompt) {
+        if (interaction != nullptr) {
+            echo_cursor = ui::display_width(interaction->request.prompt) +
+                          ui::display_width(std::string_view(interaction->input.text())
+                                                .substr(0, interaction->input.caret()));
+        } else if (any_prompt) {
             echo_cursor = ui::display_width(echo_text);
         }
         const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
@@ -360,13 +364,15 @@ private:
         std::string popup_title;
         std::optional<std::size_t> popup_selection;
         std::optional<std::string_view> popup_input;
+        std::optional<std::size_t> popup_input_cursor;
         if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
             popup_title = interaction->request.prompt;
             popup_selection = interaction->candidates.empty()
                                   ? std::nullopt
                                   : std::optional<std::size_t>(interaction->selected);
             popup_items.reserve(interaction->candidates.size());
-            popup_input = interaction->input;
+            popup_input = interaction->input.text();
+            popup_input_cursor = interaction->input.caret();
             for (const InteractionCandidate& candidate : interaction->candidates) {
                 popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
             }
@@ -402,7 +408,8 @@ private:
                                                     .popup_title = popup_title,
                                                     .popup_items = popup_items,
                                                     .popup_selection = popup_selection,
-                                                    .popup_input = popup_input},
+                                                    .popup_input = popup_input,
+                                                    .popup_input_cursor = popup_input_cursor},
                                                    viewport, popup_viewport_);
         state.top_line = viewport.top_line;
         state.top_line_offset = viewport.top_line_offset;

@@ -2,16 +2,20 @@
 
 #include "editor/runtime.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
 namespace cind {
 
-void CommandLoop::set_keymaps(std::vector<KeymapId> keymaps) {
-    for (const KeymapId keymap : keymaps) {
-        (void)runtime_->keymaps().definition(keymap);
+void CommandLoop::set_keymap_layers(std::vector<KeymapLayer> layers) {
+    for (const KeymapLayer& layer : layers) {
+        (void)runtime_->keymaps().definition(layer.keymap);
+        if (layer.scope.empty()) {
+            throw std::invalid_argument("keymap layer requires a scope");
+        }
     }
-    keymaps_ = std::move(keymaps);
+    keymap_layers_ = std::move(layers);
     cancel_pending();
 }
 
@@ -43,16 +47,12 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
     pending_.push_back(key);
     const std::string sequence_text = format_key_sequence(pending_);
     KeymapMatch match;
-    std::optional<KeymapId> matched_keymap = pending_keymap_;
-    if (pending_keymap_) {
-        match = runtime_->keymaps().resolve(*pending_keymap_, pending_);
-    } else {
-        for (const KeymapId keymap : keymaps_) {
-            match = runtime_->keymaps().resolve(keymap, pending_);
-            if (match.kind != KeymapMatchKind::None) {
-                matched_keymap = keymap;
-                break;
-            }
+    std::optional<KeymapId> matched_keymap;
+    for (const KeymapLayer& layer : keymap_layers_) {
+        match = runtime_->keymaps().resolve(layer.keymap, pending_);
+        if (match.kind != KeymapMatchKind::None) {
+            matched_keymap = layer.keymap;
+            break;
         }
     }
 
@@ -82,6 +82,25 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
     CommandInvocation invocation{.arguments = {}, .repeat_count = repeat_count_};
     repeat_count_.reset();
     return invoke(match.command, context, invocation, sequence_text);
+}
+
+std::vector<KeymapCompletion> CommandLoop::pending_completions() const {
+    if (pending_.empty()) {
+        return {};
+    }
+    std::vector<KeymapCompletion> result;
+    for (const KeymapLayer& layer : keymap_layers_) {
+        for (const KeymapCompletion& completion :
+             runtime_->keymaps().completions(layer.keymap, pending_)) {
+            if (std::ranges::any_of(result, [&](const KeymapCompletion& existing) {
+                    return existing.key == completion.key;
+                })) {
+                continue;
+            }
+            result.push_back(completion);
+        }
+    }
+    return result;
 }
 
 CommandLoopResult CommandLoop::execute(CommandId command, CommandContext& context,

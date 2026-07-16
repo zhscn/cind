@@ -209,9 +209,27 @@ KeymapId KeymapRegistry::define(std::string name) {
         throw std::invalid_argument(std::format("keymap '{}' is already defined", name));
     }
     const KeymapId id{static_cast<std::uint32_t>(definitions_.size())};
-    definitions_.push_back(StoredKeymap{.definition = Definition{std::move(name)}});
+    definitions_.push_back(
+        StoredKeymap{.definition = Definition{std::move(name)}, .parent = std::nullopt});
     by_name_.emplace(definitions_.back().definition.name, id);
     return id;
+}
+
+void KeymapRegistry::set_parent(KeymapId keymap, std::optional<KeymapId> parent) {
+    if (sealed_) {
+        throw std::logic_error("keymap registry is sealed");
+    }
+    StoredKeymap& map = stored(keymap);
+    if (parent) {
+        (void)stored(*parent);
+        for (std::optional<KeymapId> ancestor = parent; ancestor;
+             ancestor = stored(*ancestor).parent) {
+            if (*ancestor == keymap) {
+                throw std::invalid_argument("keymap parent cycle");
+            }
+        }
+    }
+    map.parent = parent;
 }
 
 void KeymapRegistry::bind(KeymapId keymap, std::span<const KeyStroke> sequence, CommandId command) {
@@ -272,71 +290,108 @@ const KeymapRegistry::Definition& KeymapRegistry::definition(KeymapId id) const 
     return stored(id).definition;
 }
 
+std::optional<KeymapId> KeymapRegistry::parent(KeymapId id) const {
+    return stored(id).parent;
+}
+
 std::optional<KeymapId> KeymapRegistry::find(std::string_view name) const {
     const auto found = by_name_.find(std::string(name));
     return found == by_name_.end() ? std::nullopt : std::optional(found->second);
 }
 
 KeymapMatch KeymapRegistry::resolve(KeymapId keymap, std::span<const KeyStroke> sequence) const {
-    const StoredKeymap& map = stored(keymap);
-    std::uint32_t node_index = 0;
-    for (const KeyStroke key : sequence) {
-        const Node& node = map.nodes[node_index];
-        const auto child = std::ranges::find_if(
-            node.children, [&](const auto& entry) { return entry.first == key; });
-        if (child == node.children.end()) {
-            return {};
+    for (std::optional<KeymapId> current = keymap; current; current = stored(*current).parent) {
+        const StoredKeymap& map = stored(*current);
+        std::uint32_t node_index = 0;
+        bool found = true;
+        for (const KeyStroke key : sequence) {
+            const Node& node = map.nodes[node_index];
+            const auto child = std::ranges::find_if(
+                node.children, [&](const auto& entry) { return entry.first == key; });
+            if (child == node.children.end()) {
+                found = false;
+                break;
+            }
+            node_index = child->second;
         }
-        node_index = child->second;
+        if (!found) {
+            continue;
+        }
+        const Node& terminal = map.nodes[node_index];
+        if (terminal.command) {
+            return {.kind = KeymapMatchKind::Command, .command = *terminal.command};
+        }
+        if (!terminal.children.empty()) {
+            return {.kind = KeymapMatchKind::Prefix, .command = {}};
+        }
     }
-    const Node& terminal = map.nodes[node_index];
-    if (terminal.command) {
-        return {.kind = KeymapMatchKind::Command, .command = *terminal.command};
-    }
-    return terminal.children.empty() ? KeymapMatch{}
-                                     : KeymapMatch{.kind = KeymapMatchKind::Prefix, .command = {}};
+    return {};
 }
 
 std::vector<KeymapCompletion> KeymapRegistry::completions(KeymapId keymap,
                                                           std::span<const KeyStroke> prefix) const {
-    const StoredKeymap& map = stored(keymap);
-    std::uint32_t node_index = 0;
-    for (const KeyStroke key : prefix) {
-        const Node& node = map.nodes[node_index];
-        const auto child = std::ranges::find_if(
-            node.children, [&](const auto& entry) { return entry.first == key; });
-        if (child == node.children.end()) {
-            return {};
-        }
-        node_index = child->second;
-    }
-
     std::vector<KeymapCompletion> result;
-    const Node& node = map.nodes[node_index];
-    result.reserve(node.children.size());
-    for (const auto& [key, child_index] : node.children) {
-        const Node& child = map.nodes[child_index];
-        result.push_back({.key = key, .command = child.command, .prefix = !child.children.empty()});
+    for (std::optional<KeymapId> current = keymap; current; current = stored(*current).parent) {
+        const StoredKeymap& map = stored(*current);
+        std::uint32_t node_index = 0;
+        bool found = true;
+        for (const KeyStroke key : prefix) {
+            const Node& node = map.nodes[node_index];
+            const auto child = std::ranges::find_if(
+                node.children, [&](const auto& entry) { return entry.first == key; });
+            if (child == node.children.end()) {
+                found = false;
+                break;
+            }
+            node_index = child->second;
+        }
+        if (!found) {
+            continue;
+        }
+
+        const Node& node = map.nodes[node_index];
+        if (node.command) {
+            break;
+        }
+        for (const auto& [key, child_index] : node.children) {
+            if (std::ranges::any_of(result, [key](const KeymapCompletion& completion) {
+                    return completion.key == key;
+                })) {
+                continue;
+            }
+            const Node& child = map.nodes[child_index];
+            result.push_back(
+                {.key = key, .command = child.command, .prefix = !child.children.empty()});
+        }
     }
     return result;
 }
 
 std::vector<KeymapBinding> KeymapRegistry::bindings(KeymapId keymap) const {
-    const StoredKeymap& map = stored(keymap);
     std::vector<KeymapBinding> result;
-    KeySequence sequence;
-    const auto visit = [&](this const auto& self, std::uint32_t node_index) -> void {
-        const Node& node = map.nodes[node_index];
-        if (node.command) {
-            result.push_back({.sequence = sequence, .command = *node.command});
-        }
-        for (const auto& [key, child_index] : node.children) {
-            sequence.push_back(key);
-            self(child_index);
-            sequence.pop_back();
-        }
-    };
-    visit(0);
+    for (std::optional<KeymapId> current = keymap; current; current = stored(*current).parent) {
+        const StoredKeymap& map = stored(*current);
+        KeySequence sequence;
+        const auto visit = [&](this const auto& self, std::uint32_t node_index) -> void {
+            const Node& node = map.nodes[node_index];
+            if (node.command) {
+                const KeymapMatch effective = resolve(keymap, sequence);
+                if (effective.kind == KeymapMatchKind::Command &&
+                    effective.command == *node.command &&
+                    std::ranges::none_of(result, [&](const KeymapBinding& binding) {
+                        return binding.sequence == sequence;
+                    })) {
+                    result.push_back({.sequence = sequence, .command = *node.command});
+                }
+            }
+            for (const auto& [key, child_index] : node.children) {
+                sequence.push_back(key);
+                self(child_index);
+                sequence.pop_back();
+            }
+        };
+        visit(0);
+    }
     return result;
 }
 

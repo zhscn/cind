@@ -176,6 +176,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         popup->popup->title = input.popup_title;
         if (input.popup_input) {
             popup->popup->input = std::string(*input.popup_input);
+            popup->popup->input_cursor =
+                std::min(input.popup_input_cursor.value_or(input.popup_input->size()),
+                         input.popup_input->size());
         }
         popup->popup->first_item = first;
         popup->popup->total_items = input.popup_items.size();

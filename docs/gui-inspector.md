@@ -146,14 +146,15 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 - `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
   command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
-  名称和 window/view/buffer/mode/global/interaction 作用域。
+  名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；交互状态的
+  `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
 - `scene`：cell 网格、cursor、活动文本行、region 几何和 display primitives。Scene
   region 使用 0-based cell 坐标并声明 vertical anchor；`grid_offset_rows` 表示顶部行的
   分数偏移；scene cursor 使用 1-based 坐标。Popup region 还携带结构化 title、input、
-  `first_item`、`total_items`、`selected_item` 以及可见项的 label 和 detail，供 GUI
-  进行独立于 cell 网格的浮层布局并检查 list viewport；StatusBar region 同样携带结构化
-  path、dirty、line、column、line_count、revision、style_origin 和 key，供 GUI
-  modeline 独立排版（TUI 仍消费 cell primitives）。
+  `input_cursor`、`first_item`、`total_items`、`selected_item` 以及可见项的 label 和 detail，
+  供 GUI 进行独立于 cell 网格的浮层布局并检查 text/list viewport；StatusBar region 同样
+  携带结构化 path、dirty、line、column、line_count、revision、style_origin 和 key，供
+  GUI modeline 独立排版（TUI 仍消费 cell primitives）。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell
   大小、字体、主题、pixel hash、animation progress/velocity、damage 和 primitive
   diagnostics。
@@ -328,6 +329,8 @@ response。
 
 - Frame 只在完成绘制后发布；没有重绘时，模型的中间状态不会成为 inspector frame。
 - Window 列表包含且仅包含一个 active window，其 ID 与 `editor.active_window` 一致。
+- Command keymap stack 的末层是 `global`；interaction 获得焦点时首层是 `interaction`，
+  document window 的 local/mode layers 不进入该焦点栈。
 - Popup 的可见项位于 `[first_item, first_item + items.size())`，选中项使用全局索引并位于
   该区间内；可见项与 popup primitives 一一对应。
 - Event ring 固定保留 256 条记录。请求早于可用范围时，事件批次使用 `gap: true`

@@ -3,6 +3,7 @@
 #include "editor/runtime.hpp"
 
 #include <array>
+#include <span>
 #include <string_view>
 
 namespace cind {
@@ -14,8 +15,7 @@ struct Binding {
     std::string_view command;
 };
 
-constexpr std::array kBindings{
-    Binding{"C-x C-c", "application.quit"},
+constexpr std::array kEditorBindings{
     Binding{"C-x C-s", "file.save"},
     Binding{"C-x C-w", "file.save-as"},
     Binding{"C-x C-f", "file.open"},
@@ -71,17 +71,29 @@ constexpr std::array kBindings{
     Binding{"End", "cursor.line-end"},
 };
 
-} // namespace
+constexpr std::array kApplicationBindings{
+    Binding{"C-x C-c", "application.quit"},
+};
 
-std::size_t bind_default_editor_keys(EditorRuntime& runtime, KeymapId keymap) {
+std::size_t bind_keys(EditorRuntime& runtime, KeymapId keymap, std::span<const Binding> bindings) {
     std::size_t count = 0;
-    for (const Binding& binding : kBindings) {
+    for (const Binding& binding : bindings) {
         if (const std::optional<CommandId> command = runtime.commands().find(binding.command)) {
             runtime.keymaps().bind(keymap, binding.keys, *command);
             ++count;
         }
     }
     return count;
+}
+
+} // namespace
+
+std::size_t bind_default_editor_keys(EditorRuntime& runtime, KeymapId keymap) {
+    return bind_keys(runtime, keymap, kEditorBindings);
+}
+
+std::size_t bind_default_application_keys(EditorRuntime& runtime, KeymapId keymap) {
+    return bind_keys(runtime, keymap, kApplicationBindings);
 }
 
 } // namespace cind

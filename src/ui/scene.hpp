@@ -85,6 +85,7 @@ struct Region {
     struct PopupContent {
         std::string title;
         std::optional<std::string> input;
+        std::optional<std::size_t> input_cursor;
         std::size_t first_item = 0;
         std::size_t total_items = 0;
         std::optional<std::size_t> selected_item;

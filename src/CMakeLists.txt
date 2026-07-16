@@ -55,10 +55,11 @@ add_library(cind_application STATIC
   editor/project.cpp
   editor/runtime.cpp
   editor/settings.cpp
+  editor/text_input.cpp
   editor/view.cpp
   editor/window.cpp
 )
-target_link_libraries(cind_application PUBLIC cind_document)
+target_link_libraries(cind_application PUBLIC cind_document PRIVATE PkgConfig::Utf8Proc)
 
 add_library(cind_editor STATIC
   cli/session.cpp

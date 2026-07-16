@@ -223,9 +223,14 @@ std::optional<SkRect> popup_cursor_rect(const PopupLayout& layout, CellMetrics c
         return std::nullopt;
     }
     const std::string text = popup_input_text(*layout.content, layout.input);
+    const std::size_t cursor =
+        std::min(layout.content->input_cursor.value_or(layout.input.size()), layout.input.size());
+    const std::string cursor_text =
+        popup_input_text(*layout.content, std::string_view(layout.input).substr(0, cursor));
     const float left = popup_text_left(layout, text, cell.width);
-    const float x = std::clamp(left + static_cast<float>(ui::display_width(text) * cell.width),
-                               layout.header.left() + 8.0F, layout.header.right() - 3.0F);
+    const float x =
+        std::clamp(left + static_cast<float>(ui::display_width(cursor_text) * cell.width),
+                   layout.header.left() + 8.0F, layout.header.right() - 3.0F);
     const float y =
         layout.header.top() + (layout.header.height() - static_cast<float>(cell.height)) * 0.5F;
     return SkRect::MakeXYWH(x, y, 2.0F, static_cast<float>(cell.height));

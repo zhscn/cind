@@ -31,8 +31,10 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     const InteractionState* interaction = application_.interaction().state();
     const std::string_view echo = [&]() -> std::string_view {
         if (interaction != nullptr) {
-            interaction_echo = interaction->request.prompt + interaction->input;
-            echo_cursor = ui::display_width(interaction_echo);
+            interaction_echo = interaction->request.prompt + interaction->input.text();
+            echo_cursor = ui::display_width(interaction->request.prompt) +
+                          ui::display_width(std::string_view(interaction->input.text())
+                                                .substr(0, interaction->input.caret()));
             return interaction_echo;
         }
         return preedit_.empty() ? std::string_view(application_.message())
@@ -43,13 +45,15 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     std::string popup_title;
     std::optional<std::size_t> popup_selection;
     std::optional<std::string_view> popup_input;
+    std::optional<std::size_t> popup_input_cursor;
     if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
         popup_title = interaction->request.prompt;
         popup_selection = interaction->candidates.empty()
                               ? std::nullopt
                               : std::optional<std::size_t>(interaction->selected);
         popup_items.reserve(interaction->candidates.size());
-        popup_input = interaction->input;
+        popup_input = interaction->input.text();
+        popup_input_cursor = interaction->input.caret();
         for (const InteractionCandidate& candidate : interaction->candidates) {
             popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
         }
@@ -87,7 +91,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                                 .popup_title = popup_title,
                                                 .popup_items = popup_items,
                                                 .popup_selection = popup_selection,
-                                                .popup_input = popup_input},
+                                                .popup_input = popup_input,
+                                                .popup_input_cursor = popup_input_cursor},
                                                viewport, popup_viewport_);
     state.top_line = viewport.top_line;
     state.top_line_offset = viewport.top_line_offset;
@@ -167,12 +172,17 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .pending_keymap = {},
                                            .repeat_count = command_loop.repeat_count(),
                                            .last_command = application_.last_command()};
-    for (const KeymapId keymap : command_loop.keymaps()) {
-        command_state.keymaps.push_back(runtime.keymaps().definition(keymap).name);
-    }
-    for (const ActiveKeymapLayer& layer : application_.active_keymap_layers()) {
-        command_state.layers.push_back(
-            {.name = runtime.keymaps().definition(layer.keymap).name, .scope = layer.scope});
+    for (const KeymapLayer& layer : command_loop.keymap_layers()) {
+        command_state.keymaps.push_back(runtime.keymaps().definition(layer.keymap).name);
+        KeymapLayerStateSnapshot layer_state{.name =
+                                                 runtime.keymaps().definition(layer.keymap).name,
+                                             .scope = layer.scope,
+                                             .parents = {}};
+        for (std::optional<KeymapId> parent = runtime.keymaps().parent(layer.keymap); parent;
+             parent = runtime.keymaps().parent(*parent)) {
+            layer_state.parents.push_back(runtime.keymaps().definition(*parent).name);
+        }
+        command_state.layers.push_back(std::move(layer_state));
     }
     for (const KeymapId keymap : command_loop.override_keymaps()) {
         command_state.override_keymaps.push_back(runtime.keymaps().definition(keymap).name);
@@ -186,7 +196,8 @@ EditorStateSnapshot EditorModel::inspect() {
                              .kind = interaction->request.kind == InteractionKind::Picker ? "picker"
                                                                                           : "text",
                              .prompt = interaction->request.prompt,
-                             .input = interaction->input,
+                             .input = interaction->input.text(),
+                             .input_cursor = interaction->input.caret(),
                              .history = interaction->request.history,
                              .provider = interaction->request.provider,
                              .allow_custom_input = interaction->request.allow_custom_input,

@@ -54,11 +54,6 @@ struct OpenWindowSnapshot {
     bool active = false;
 };
 
-struct ActiveKeymapLayer {
-    KeymapId keymap;
-    std::string scope;
-};
-
 struct KeyBindingHint {
     std::string key;
     std::string command;
@@ -98,8 +93,8 @@ public:
     std::expected<void, std::string> kill_buffer(BufferId buffer, bool force = false);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
-    std::span<const ActiveKeymapLayer> active_keymap_layers() const {
-        return active_keymap_layers_;
+    std::span<const KeymapLayer> active_keymap_layers() const {
+        return command_loop_.keymap_layers();
     }
     std::string_view input_focus() const {
         return interaction_.active() ? std::string_view("interaction") : std::string_view("window");
@@ -175,7 +170,7 @@ private:
     void register_interaction_providers();
     void register_keymaps();
     void sync_keymaps();
-    std::vector<ActiveKeymapLayer> window_keymap_layers() const;
+    std::vector<KeymapLayer> window_keymap_layers() const;
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();
@@ -205,10 +200,10 @@ private:
     SearchCommands search_commands_;
     CommandLoop command_loop_;
     KeymapId keymap_;
+    KeymapId application_keymap_;
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
-    std::vector<ActiveKeymapLayer> active_keymap_layers_;
     CommandId command_palette_accept_;
     CommandId open_file_accept_;
     CommandId save_as_accept_;

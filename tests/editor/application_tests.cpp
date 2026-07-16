@@ -311,7 +311,8 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     runtime.keymaps().bind(local_map, "C-a", local);
 
     CommandLoop loop(runtime);
-    loop.set_keymaps({local_map, base_map});
+    loop.set_keymap_layers(
+        {{.keymap = local_map, .scope = "local"}, {.keymap = base_map, .scope = "global"}});
     const KeySequence chord = *parse_key_sequence("C-x C-f");
     CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
     const std::vector<KeymapCompletion> completions =
@@ -334,14 +335,75 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     runtime.keymaps().bind(local_map, "C-x C-l", local);
     CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
     CHECK(loop.pending_keymap() == local_map);
-    const CommandLoopResult masked = loop.dispatch(chord[1], context);
-    CHECK(masked.status == CommandLoopStatus::NotHandled);
-    CHECK(masked.consumed);
+    const std::vector<KeymapCompletion> layered_completions = loop.pending_completions();
+    CHECK(std::ranges::any_of(layered_completions, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "C-l";
+    }));
+    CHECK(std::ranges::any_of(layered_completions, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "C-f";
+    }));
+    const CommandLoopResult sparse_fallback = loop.dispatch(chord[1], context);
+    CHECK(sparse_fallback.status == CommandLoopStatus::Executed);
     CHECK(local_calls == 1);
-    CHECK(base_calls == 1);
+    CHECK(base_calls == 2);
+
+    runtime.keymaps().bind(local_map, "C-x C-f", local);
+    CHECK(loop.dispatch(chord[0], context).status == CommandLoopStatus::Prefix);
+    CHECK(loop.dispatch(chord[1], context).status == CommandLoopStatus::Executed);
+    CHECK(local_calls == 2);
+    CHECK(base_calls == 2);
 
     CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-x", local), std::invalid_argument);
     CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-a C-b", local), std::invalid_argument);
+}
+
+TEST_CASE("keymap parents compose sparse local bindings") {
+    EditorRuntime runtime;
+    const CommandId inherited = runtime.commands().define(
+        "parent.command", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    const CommandId local = runtime.commands().define(
+        "child.command", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    const KeymapId parent = runtime.keymaps().define("parent");
+    const KeymapId child = runtime.keymaps().define("child");
+    runtime.keymaps().bind(parent, "C-a", inherited);
+    runtime.keymaps().bind(parent, "C-x C-f", inherited);
+    runtime.keymaps().bind(child, "C-b", local);
+    runtime.keymaps().bind(child, "C-x C-l", local);
+    runtime.keymaps().set_parent(child, parent);
+
+    CHECK(runtime.keymaps().resolve(child, *parse_key_sequence("C-a")).command == inherited);
+    CHECK(runtime.keymaps().resolve(child, *parse_key_sequence("C-b")).command == local);
+    const KeySequence prefix = *parse_key_sequence("C-x");
+    CHECK(runtime.keymaps().resolve(child, prefix).kind == KeymapMatchKind::Prefix);
+    const std::vector<KeymapCompletion> completions = runtime.keymaps().completions(child, prefix);
+    CHECK(std::ranges::any_of(completions, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "C-l";
+    }));
+    CHECK(std::ranges::any_of(completions, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "C-f";
+    }));
+    const std::vector<KeymapBinding> bindings = runtime.keymaps().bindings(child);
+    CHECK(std::ranges::any_of(bindings, [inherited](const KeymapBinding& binding) {
+        return format_key_sequence(binding.sequence) == "C-a" && binding.command == inherited;
+    }));
+    CHECK_THROWS_AS(runtime.keymaps().set_parent(parent, child), std::invalid_argument);
+}
+
+TEST_CASE("focused text input moves and deletes by grapheme cluster") {
+    TextInput input("a👩‍💻b");
+    CHECK(input.caret() == input.text().size());
+    REQUIRE(input.move_backward());
+    CHECK(input.caret() == input.text().size() - 1);
+    REQUIRE(input.move_backward());
+    CHECK(input.caret() == 1);
+    REQUIRE(input.move_forward());
+    REQUIRE(input.erase_backward());
+    CHECK(input.text() == "ab");
+    CHECK(input.caret() == 1);
 }
 
 TEST_CASE("interaction controller owns non-blocking command input") {
@@ -378,18 +440,20 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     runtime.keymaps().bind(keymap, "C-f", start);
 
     CommandLoop loop(runtime);
-    loop.set_keymaps({keymap});
+    loop.set_keymap_layers({{.keymap = keymap, .scope = "test"}});
     const CommandLoopResult started = loop.dispatch(parse_key_sequence("C-f")->front(), context);
     CHECK(started.status == CommandLoopStatus::AwaitingInput);
     REQUIRE(started.interaction.has_value());
     InteractionController interaction(runtime.interaction_providers());
     REQUIRE(interaction.start(*started.interaction, context).has_value());
     REQUIRE(interaction.state() != nullptr);
-    CHECK(interaction.state()->input == "needle");
+    CHECK(interaction.state()->input.text() == "needle");
+    CHECK(interaction.state()->input.caret() == 6);
 
     interaction.insert("é", context);
     CHECK(interaction.erase_backward(context));
-    CHECK(interaction.state()->input == "needle");
+    CHECK(interaction.state()->input.text() == "needle");
+    CHECK(interaction.state()->input.caret() == 6);
     interaction.insert("-next", context);
     const std::expected<InteractionSubmission, std::string> submission = interaction.submit();
     REQUIRE(submission.has_value());

@@ -54,6 +54,7 @@ struct EditorSceneInput {
     // Present for an interactive picker. The GUI places this input inside
     // the popup; the TUI continues to expose it through the echo area.
     std::optional<std::string_view> popup_input;
+    std::optional<std::size_t> popup_input_cursor;
 };
 
 // Composes the editor's standard five-region frame and scrolls `viewport` just

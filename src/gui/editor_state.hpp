@@ -22,6 +22,7 @@ struct InteractionStateSnapshot {
     std::string kind;
     std::string prompt;
     std::string input;
+    std::size_t input_cursor = 0;
     std::string history;
     std::string provider;
     bool allow_custom_input = false;
@@ -57,6 +58,7 @@ struct OpenWindowStateSnapshot {
 struct KeymapLayerStateSnapshot {
     std::string name;
     std::string scope;
+    std::vector<std::string> parents;
 };
 
 struct CommandLoopStateSnapshot {

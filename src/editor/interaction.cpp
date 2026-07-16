@@ -22,7 +22,8 @@ std::vector<std::string> query_terms(std::string_view query) {
     std::vector<std::string> terms;
     std::size_t position = 0;
     while (position < query.size()) {
-        while (position < query.size() && std::isspace(static_cast<unsigned char>(query[position]))) {
+        while (position < query.size() &&
+               std::isspace(static_cast<unsigned char>(query[position]))) {
             ++position;
         }
         const std::size_t start = position;
@@ -79,7 +80,7 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
     }
     std::string input = request.initial_input;
     state_.emplace(InteractionState{.request = std::move(request),
-                                    .input = std::move(input),
+                                    .input = TextInput(std::move(input)),
                                     .candidates = {},
                                     .selected = 0,
                                     .generation = 0,
@@ -92,22 +93,41 @@ void InteractionController::insert(std::string_view text, CommandContext& contex
     if (!state_ || text.empty()) {
         return;
     }
-    state_->input.append(text);
-    refresh(context);
+    if (state_->input.insert(text)) {
+        refresh(context);
+    }
 }
 
 bool InteractionController::erase_backward(CommandContext& context) {
-    if (!state_ || state_->input.empty()) {
+    if (!state_ || !state_->input.erase_backward()) {
         return false;
     }
-    std::size_t start = state_->input.size() - 1;
-    while (start > 0 &&
-           (static_cast<unsigned char>(state_->input[start]) & 0xC0U) == 0x80U) {
-        --start;
-    }
-    state_->input.resize(start);
     refresh(context);
     return true;
+}
+
+bool InteractionController::erase_forward(CommandContext& context) {
+    if (!state_ || !state_->input.erase_forward()) {
+        return false;
+    }
+    refresh(context);
+    return true;
+}
+
+bool InteractionController::move_backward() {
+    return state_ && state_->input.move_backward();
+}
+
+bool InteractionController::move_forward() {
+    return state_ && state_->input.move_forward();
+}
+
+bool InteractionController::move_to_start() {
+    return state_ && state_->input.move_to_start();
+}
+
+bool InteractionController::move_to_end() {
+    return state_ && state_->input.move_to_end();
 }
 
 bool InteractionController::move_selection(int delta) {
@@ -137,7 +157,7 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
     if (!state_) {
         return std::unexpected("no interaction is active");
     }
-    std::string value = state_->input;
+    std::string value = state_->input.text();
     if (state_->request.kind == InteractionKind::Picker && !state_->candidates.empty()) {
         value = state_->candidates[state_->selected].value;
     } else if (state_->request.kind == InteractionKind::Picker &&
@@ -192,8 +212,9 @@ void InteractionController::refresh(CommandContext& context) {
         return;
     }
     try {
-        state_->candidates = rank(
-            providers_->complete(state_->request.provider, context, state_->input), state_->input);
+        state_->candidates =
+            rank(providers_->complete(state_->request.provider, context, state_->input.text()),
+                 state_->input.text());
     } catch (const std::exception& exception) {
         state_->error = exception.what();
     }
@@ -209,8 +230,8 @@ InteractionController::rank(std::vector<InteractionCandidate> candidates, std::s
     std::vector<RankedCandidate> ranked;
     ranked.reserve(candidates.size());
     for (InteractionCandidate& candidate : candidates) {
-        const std::string haystack = lowercase(candidate.filter_text.empty()
-                                                    ? std::string_view(candidate.label)
+        const std::string haystack =
+            lowercase(candidate.filter_text.empty() ? std::string_view(candidate.label)
                                                     : std::string_view(candidate.filter_text));
         std::size_t score = haystack.size();
         bool matches = true;

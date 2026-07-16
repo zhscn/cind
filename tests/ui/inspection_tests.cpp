@@ -46,18 +46,23 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .active_window_slot = 0,
         .active_window_generation = 1,
         .input_focus = "interaction",
-        .command_loop = {.keymaps = {"editor.default"},
-                         .layers = {{.name = "interaction.picker", .scope = "interaction"}},
-                         .override_keymaps = {"editor.system"},
-                         .pending_keys = "C-x",
-                         .pending_keymap = "editor.default",
-                         .repeat_count = 4,
-                         .last_command = "edit.insert"},
+        .command_loop =
+            {.keymaps = {"interaction.picker", "application.global"},
+             .layers = {{.name = "interaction.picker",
+                         .scope = "interaction",
+                         .parents = {"interaction.text"}},
+                        {.name = "application.global", .scope = "global", .parents = {}}},
+             .override_keymaps = {"editor.system"},
+             .pending_keys = "C-x",
+             .pending_keymap = "application.global",
+             .repeat_count = 4,
+             .last_command = "edit.insert"},
         .interaction =
             {.active = true,
              .kind = "picker",
              .prompt = "Command: ",
              .input = {},
+             .input_cursor = 0,
              .history = {},
              .provider = "commands",
              .allow_custom_input = false,
@@ -98,6 +103,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     popup.prims.push_back({1, 0, "save ", StyleClass::Popup, true, PrimKind::Text, "popup:item:0"});
     popup.popup = Region::PopupContent{.title = "Help",
                                        .input = "",
+                                       .input_cursor = 0,
                                        .first_item = 0,
                                        .total_items = 1,
                                        .selected_item = 0,
@@ -176,7 +182,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":13") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":14") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -190,7 +196,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
-    CHECK(snapshot.find("\"pending_keymap\":\"editor.default\"") != std::string::npos);
+    CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
+    CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"first_item\":0,\"total_items\":1,\"selected_item\":0") !=
           std::string::npos);
     CHECK(snapshot.find("\"violations\":[]") != std::string::npos);
@@ -203,12 +210,14 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(command_loop.ok);
     CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
     CHECK(command_loop.payload.find("\"scope\":\"interaction\"") != std::string::npos);
+    CHECK(command_loop.payload.find("\"parents\":[\"interaction.text\"]") != std::string::npos);
     CHECK(command_loop.payload.find("\"override_keymaps\":[\"editor.system\"]") !=
           std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);
     CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
+    CHECK(interaction.payload.find("\"input_cursor\":0") != std::string::npos);
 
     const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
     REQUIRE(buffers.ok);

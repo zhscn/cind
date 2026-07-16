@@ -109,6 +109,7 @@ public:
     };
 
     KeymapId define(std::string name);
+    void set_parent(KeymapId keymap, std::optional<KeymapId> parent);
     void bind(KeymapId keymap, std::span<const KeyStroke> sequence, CommandId command);
     void bind(KeymapId keymap, std::string_view notation, CommandId command);
 
@@ -116,6 +117,7 @@ public:
     bool sealed() const { return sealed_; }
 
     const Definition& definition(KeymapId id) const;
+    std::optional<KeymapId> parent(KeymapId id) const;
     std::optional<KeymapId> find(std::string_view name) const;
     KeymapMatch resolve(KeymapId keymap, std::span<const KeyStroke> sequence) const;
     std::vector<KeymapCompletion> completions(KeymapId keymap,
@@ -130,6 +132,7 @@ private:
 
     struct StoredKeymap {
         Definition definition;
+        std::optional<KeymapId> parent;
         std::vector<Node> nodes = {Node{}};
     };
 

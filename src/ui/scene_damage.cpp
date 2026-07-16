@@ -130,6 +130,9 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     append_integer(signature, static_cast<std::uint32_t>(popup.input->size()));
                     signature.append(*popup.input);
                 }
+                append_integer(signature,
+                               static_cast<std::uint32_t>(popup.input_cursor.has_value()));
+                append_integer(signature, popup.input_cursor.value_or(0));
                 append_integer(signature, popup.first_item);
                 append_integer(signature, popup.total_items);
                 append_integer(signature,

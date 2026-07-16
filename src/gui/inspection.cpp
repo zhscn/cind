@@ -144,6 +144,8 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
         append_json_string(output, command_loop.layers[index].name);
         output += ",\"scope\":";
         append_json_string(output, command_loop.layers[index].scope);
+        output += ",\"parents\":";
+        append_strings(output, command_loop.layers[index].parents);
         output.push_back('}');
     }
     output += "],\"override_keymaps\":";
@@ -172,6 +174,7 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
     append_json_string(output, interaction.prompt);
     output += ",\"input\":";
     append_json_string(output, interaction.input);
+    output += std::format(",\"input_cursor\":{}", interaction.input_cursor);
     output += ",\"history\":";
     append_json_string(output, interaction.history);
     output += ",\"provider\":";
@@ -319,6 +322,12 @@ void append_region(std::string& output, const ui::Region& region) {
         output += ",\"input\":";
         if (region.popup->input) {
             append_json_string(output, *region.popup->input);
+        } else {
+            output += "null";
+        }
+        output += ",\"input_cursor\":";
+        if (region.popup->input_cursor) {
+            output += std::to_string(*region.popup->input_cursor);
         } else {
             output += "null";
         }
@@ -671,10 +680,24 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.editor.input_focus != expected_focus) {
         violations.emplace_back("editor input focus does not match interaction state");
     }
+    if (frame.editor.interaction.input_cursor > frame.editor.interaction.input.size()) {
+        violations.emplace_back("interaction input cursor is past the input end");
+    }
+    if (frame.editor.command_loop.keymaps.size() != frame.editor.command_loop.layers.size() ||
+        !std::ranges::equal(frame.editor.command_loop.keymaps, frame.editor.command_loop.layers,
+                            [](const std::string& keymap, const KeymapLayerStateSnapshot& layer) {
+                                return keymap == layer.name;
+                            })) {
+        violations.emplace_back("command keymap names do not match layer state");
+    }
     if (frame.editor.command_loop.layers.empty() ||
         (expected_focus == "interaction") !=
             (frame.editor.command_loop.layers.front().scope == "interaction")) {
         violations.emplace_back("command keymap layers do not match input focus");
+    }
+    if (frame.editor.command_loop.layers.empty() ||
+        frame.editor.command_loop.layers.back().scope != "global") {
+        violations.emplace_back("command keymap layers have no global fallback");
     }
     if (frame.scene.rows <= 0 || frame.scene.cols <= 0) {
         violations.emplace_back("scene geometry must be positive");
@@ -707,6 +730,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             }
         }
         (void)region.popup.transform([&](const ui::Region::PopupContent& popup) {
+            if (popup.input_cursor && (!popup.input || *popup.input_cursor > popup.input->size())) {
+                violations.emplace_back("popup input cursor is past the input end");
+            }
             if (popup.first_item > popup.total_items ||
                 popup.items.size() > popup.total_items - popup.first_item) {
                 violations.emplace_back("popup viewport is outside the item range");
@@ -1247,9 +1273,24 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
            << printable(frame.editor.command_loop.last_command) << "\"\n";
+    for (const KeymapLayerStateSnapshot& layer : frame.editor.command_loop.layers) {
+        output << "      keymap \"" << printable(layer.name)
+               << "\" scope=" << printable(layer.scope);
+        if (!layer.parents.empty()) {
+            output << " parents=";
+            for (std::size_t index = 0; index < layer.parents.size(); ++index) {
+                if (index != 0) {
+                    output << ',';
+                }
+                output << printable(layer.parents[index]);
+            }
+        }
+        output << '\n';
+    }
     output << "    interaction=" << (frame.editor.interaction.active ? "active" : "inactive")
            << " kind=" << printable(frame.editor.interaction.kind)
            << " provider=" << printable(frame.editor.interaction.provider)
+           << " input-cursor=" << frame.editor.interaction.input_cursor
            << " candidates=" << frame.editor.interaction.candidates.size() << '\n';
     output << "    buffers=" << frame.editor.buffers.size() << '\n';
     for (const OpenBufferStateSnapshot& buffer : frame.editor.buffers) {

@@ -336,6 +336,7 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     popup.popup = Region::PopupContent{
         .title = "Command: ",
         .input = "ed",
+        .input_cursor = 2,
         .first_item = 0,
         .total_items = 3,
         .selected_item = 0,
@@ -357,6 +358,12 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
         presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
     REQUIRE(cursor);
     CHECK(cursor.value().y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+    scene.regions.back().popup->input_cursor = 0;
+    const std::optional<SkiaLogicalRect> start_cursor =
+        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE(start_cursor);
+    CHECK(start_cursor->x < cursor->x);
+    scene.regions.back().popup->input_cursor = 2;
     CHECK(std::ranges::find(retained, theme.surface) != retained.end());
     CHECK(std::ranges::find(retained, theme.raised) != retained.end());
 
