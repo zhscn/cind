@@ -4,6 +4,7 @@
 #include "commands/file_io.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/default_keymap.hpp"
+#include "project/project_files.hpp"
 #include "syntax/structure.hpp"
 #include "ui/text_position.hpp"
 
@@ -63,6 +64,7 @@ struct LoadedFileData {
     std::string contents;
     CppIndentStyle style;
     std::string style_origin;
+    std::optional<ProjectDiscovery> project;
 };
 
 } // namespace
@@ -84,6 +86,15 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)) {
     interaction_.attach_async_runtime(async_runtime_);
+    project_service_ =
+        std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
+            if (InteractionState* active = interaction_.state();
+                active != nullptr && active->request.provider == "project-files" &&
+                session().buffer().project_id() == project) {
+                CommandContext context = command_context();
+                interaction_.refresh_candidates(context);
+            }
+        });
     register_commands();
     register_interaction_providers();
 
@@ -249,15 +260,26 @@ std::expected<void, std::string> EditorApplication::open_file(std::string_view i
                     .contents = std::move(file->contents),
                     .style = {},
                     .style_origin = "llvm (fallback)",
+                    .project = std::nullopt,
                 });
                 if (std::optional<LoadedStyle> loaded_style =
                         load_clang_format_style(fs::path(*requested_resource).parent_path())) {
                     loaded_data->style = loaded_style->style;
                     loaded_data->style_origin = loaded_style->config_path.filename().string();
                 }
+                std::expected<std::optional<ProjectDiscovery>, std::error_code> project =
+                    discover_project(*requested_resource, cancellation);
+                if (!project &&
+                    project.error() == std::make_error_code(std::errc::operation_canceled)) {
+                    throw AsyncTaskCancelled();
+                }
+                if (project) {
+                    loaded_data->project = std::move(*project);
+                }
                 return [this, loaded_data] {
                     finish_open(std::move(loaded_data->resource), std::move(loaded_data->contents),
-                                loaded_data->style, std::move(loaded_data->style_origin));
+                                loaded_data->style, std::move(loaded_data->style_origin),
+                                loaded_data->project);
                 };
             },
             .cancelled = [this, requested_resource] { cancel_open(*requested_resource); },
@@ -276,7 +298,8 @@ std::expected<void, std::string> EditorApplication::open_file(std::string_view i
 }
 
 void EditorApplication::finish_open(std::string resource, std::string contents,
-                                    CppIndentStyle style, std::string style_origin) {
+                                    CppIndentStyle style, std::string style_origin,
+                                    const std::optional<ProjectDiscovery>& project) {
     const auto pending = std::ranges::find_if(
         pending_opens_, [&](const PendingOpen& open) { return open.resource == resource; });
     if (pending == pending_opens_.end()) {
@@ -299,6 +322,7 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
                                               .read_only = false},
                                    style, std::move(style_origin));
         }
+        project_service_->attach_buffer(buffer, project);
         const WindowId target = runtime_.windows().try_get(requested_window) != nullptr
                                     ? requested_window
                                     : active_window_;
@@ -327,6 +351,108 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
     } catch (const std::exception& exception) {
         message_ = std::format("open failed: {}", exception.what());
     }
+}
+
+std::expected<void, std::string> EditorApplication::start_project_search(ProjectId project,
+                                                                         std::string query,
+                                                                         WindowId target_window) {
+    const Project* definition = runtime_.projects().try_get(project);
+    if (definition == nullptr || definition->roots().empty()) {
+        return std::unexpected("project has no root");
+    }
+    if (project_search_.process.valid()) {
+        (void)async_runtime_.terminate(project_search_.process);
+    }
+    const std::uint64_t generation = ++project_search_.generation;
+    const std::string root = definition->roots().front();
+    try {
+        project_search_.process = async_runtime_.spawn({
+            .file = "rg",
+            .arguments = {"--line-number", "--column", "--no-heading", "--color", "never",
+                          "--smart-case", "--", query, "."},
+            .working_directory = root,
+            .completed =
+                [this, project, target_window, generation,
+                 query = std::move(query)](AsyncProcessResult result) mutable {
+                    finish_project_search(project, target_window, generation, std::move(query),
+                                          std::move(result));
+                },
+            .cancelled = [this, generation] { cancel_project_search(generation); },
+            .failed =
+                [this, generation](const std::exception_ptr& failure) {
+                    fail_project_search(generation, failure);
+                },
+        });
+        message_ = std::format("searching project {}…", definition->name());
+        return {};
+    } catch (const std::exception& exception) {
+        project_search_.process = {};
+        return std::unexpected(exception.what());
+    }
+}
+
+void EditorApplication::finish_project_search(ProjectId project, WindowId target_window,
+                                              std::uint64_t generation, std::string query,
+                                              AsyncProcessResult result) {
+    if (project_search_.generation != generation || project_search_.process != result.process) {
+        return;
+    }
+    project_search_.process = {};
+    if (result.exit_status > 1 || result.term_signal != 0) {
+        std::string detail = std::move(result.standard_error);
+        while (!detail.empty() && (detail.back() == '\n' || detail.back() == '\r')) {
+            detail.pop_back();
+        }
+        message_ = detail.empty()
+                       ? std::format("project search failed with status {}", result.exit_status)
+                       : std::format("project search failed: {}", detail);
+        return;
+    }
+    try {
+        if (result.standard_output.empty()) {
+            result.standard_output = std::format("No matches for: {}\n", query);
+        }
+        const BufferId buffer =
+            create_buffer(BufferSpec{.name = std::format("*project grep: {}*", query),
+                                     .initial_text = std::move(result.standard_output),
+                                     .kind = BufferKind::Process,
+                                     .resource_uri = std::nullopt,
+                                     .read_only = true},
+                          CppIndentStyle{}, "process output");
+        runtime_.projects().assign(buffer, project);
+        const WindowId target =
+            runtime_.windows().try_get(target_window) != nullptr ? target_window : active_window_;
+        (void)show_buffer(target, buffer);
+        message_ = std::format("project search finished: {}", query);
+    } catch (const std::exception& exception) {
+        message_ = std::format("project search failed: {}", exception.what());
+    }
+}
+
+void EditorApplication::fail_project_search(std::uint64_t generation,
+                                            const std::exception_ptr& failure) {
+    if (project_search_.generation != generation) {
+        return;
+    }
+    project_search_.process = {};
+    try {
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+        message_ = "project search failed";
+    } catch (const std::exception& exception) {
+        message_ = std::format("project search failed: {}", exception.what());
+    } catch (...) {
+        message_ = "project search failed";
+    }
+}
+
+void EditorApplication::cancel_project_search(std::uint64_t generation) {
+    if (project_search_.generation != generation) {
+        return;
+    }
+    project_search_.process = {};
+    message_ = "project search cancelled";
 }
 
 void EditorApplication::fail_open(std::string_view resource, const std::exception_ptr& failure) {
@@ -1030,6 +1156,30 @@ void EditorApplication::register_commands() {
             return begin_goto_line(context, invocation);
         });
 
+    project_find_file_accept_ = runtime_.commands().define(
+        "project.find-file.accept",
+        [this](CommandContext& context, const CommandInvocation& invocation) {
+            return accept_project_find_file(context, invocation);
+        });
+    runtime_.commands().define(
+        "project.find-file",
+        [this](CommandContext& context, const CommandInvocation& invocation) {
+            return begin_project_find_file(context, invocation);
+        },
+        [](const CommandContext& context) { return context.project_id().has_value(); });
+
+    project_search_accept_ = runtime_.commands().define(
+        "project.search.accept",
+        [this](CommandContext& context, const CommandInvocation& invocation) {
+            return accept_project_search(context, invocation);
+        });
+    runtime_.commands().define(
+        "project.search",
+        [this](CommandContext& context, const CommandInvocation& invocation) {
+            return begin_project_search(context, invocation);
+        },
+        [](const CommandContext& context) { return context.project_id().has_value(); });
+
     help_keys_accept_ = runtime_.commands().define(
         "help.keys.accept",
         [this](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
@@ -1089,6 +1239,27 @@ void EditorApplication::register_interaction_providers() {
         }
         return candidates;
     });
+    runtime_.interaction_providers().define(
+        "project-files", [](CommandContext& context, std::string_view) {
+            std::vector<InteractionCandidate> candidates;
+            const Project* project = context.project();
+            if (project == nullptr || project->roots().empty()) {
+                return candidates;
+            }
+            const fs::path root(project->roots().front());
+            candidates.reserve(project->files().size());
+            for (const std::string& file : project->files()) {
+                fs::path relative = fs::path(file).lexically_relative(root);
+                if (relative.empty()) {
+                    relative = fs::path(file).filename();
+                }
+                candidates.push_back({.value = file,
+                                      .label = relative.string(),
+                                      .detail = relative.parent_path().string(),
+                                      .filter_text = relative.string() + " " + file});
+            }
+            return candidates;
+        });
     runtime_.interaction_providers().define(
         "files",
         [this](CommandContext&, std::string_view requested_query) -> InteractionProviderResult {
@@ -1530,6 +1701,8 @@ CommandResult EditorApplication::accept_save_as(CommandContext& context,
     try {
         runtime_.buffers().set_resource(context.buffer_id(), *path, BufferKind::File);
         runtime_.buffers().rename(context.buffer_id(), fs::path(*path).filename().string());
+        runtime_.projects().assign(context.buffer_id(),
+                                   runtime_.projects().find_for_resource(*path));
     } catch (const std::exception& exception) {
         return std::unexpected(CommandError{exception.what()});
     }
@@ -1614,6 +1787,68 @@ CommandResult EditorApplication::accept_goto_line(CommandContext& context,
     basic_commands_.reset_preferred_column(context.view_id());
     reveal_caret_ = true;
     return CommandCompleted{};
+}
+
+CommandResult EditorApplication::begin_project_find_file(CommandContext& context,
+                                                         const CommandInvocation&) {
+    const std::optional<ProjectId> project = context.project_id();
+    if (!project) {
+        return std::unexpected(CommandError{"current buffer has no project"});
+    }
+    const Project& definition = runtime_.projects().get(*project);
+    if (definition.index_revision() == 0 && !definition.indexing()) {
+        project_service_->request_index(*project);
+    }
+    return InteractionRequest{.kind = InteractionKind::Picker,
+                              .prompt = "Project file: ",
+                              .initial_input = {},
+                              .history = "project-files",
+                              .provider = "project-files",
+                              .allow_custom_input = false,
+                              .accept_command = project_find_file_accept_,
+                              .arguments = {}};
+}
+
+CommandResult EditorApplication::accept_project_find_file(CommandContext& context,
+                                                          const CommandInvocation& invocation) {
+    const std::string* path = submitted_string(invocation);
+    if (path == nullptr) {
+        return std::unexpected(CommandError{"project file picker requires a path"});
+    }
+    std::expected<void, std::string> opened = open_file(*path, context.window_id(), 0);
+    return opened ? CommandResult{CommandCompleted{}}
+                  : CommandResult{std::unexpected(CommandError{opened.error()})};
+}
+
+CommandResult EditorApplication::begin_project_search(CommandContext& context,
+                                                      const CommandInvocation&) {
+    if (!context.project_id()) {
+        return std::unexpected(CommandError{"current buffer has no project"});
+    }
+    return InteractionRequest{.kind = InteractionKind::Text,
+                              .prompt = "Project search: ",
+                              .initial_input = {},
+                              .history = "project-search",
+                              .provider = {},
+                              .allow_custom_input = true,
+                              .accept_command = project_search_accept_,
+                              .arguments = {}};
+}
+
+CommandResult EditorApplication::accept_project_search(CommandContext& context,
+                                                       const CommandInvocation& invocation) {
+    const std::string* query = submitted_string(invocation);
+    const std::optional<ProjectId> project = context.project_id();
+    if (query == nullptr || query->empty()) {
+        return std::unexpected(CommandError{"project search query is empty"});
+    }
+    if (!project) {
+        return std::unexpected(CommandError{"current buffer has no project"});
+    }
+    std::expected<void, std::string> started =
+        start_project_search(*project, *query, context.window_id());
+    return started ? CommandResult{CommandCompleted{}}
+                   : CommandResult{std::unexpected(CommandError{started.error()})};
 }
 
 } // namespace cind

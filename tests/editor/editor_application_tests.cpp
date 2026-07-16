@@ -161,6 +161,93 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
     std::filesystem::remove(path, ignored);
 }
 
+TEST_CASE("project discovery indexes files and feeds the project file picker") {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        std::format("cind-application-project-{}", static_cast<long>(::getpid()));
+    std::filesystem::create_directories(root / ".git");
+    std::filesystem::create_directories(root / "src");
+    {
+        std::ofstream output(root / "src" / "main.cpp");
+        output << "int main() {}\n";
+    }
+    {
+        std::ofstream output(root / "src" / "other.cpp");
+        output << "int other() {}\n";
+    }
+
+    {
+        WakeSignal wake;
+        EditorApplication application({
+            .path = (root / "src" / "main.cpp").string(),
+            .initial_text = std::nullopt,
+            .style = {},
+            .style_origin = "fallback",
+            .initial_line = 0,
+            .platform_services = {.write_clipboard = {},
+                                  .read_clipboard = {},
+                                  .wake_event_loop = [&wake] { wake.notify(); }},
+        });
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+
+        const std::optional<ProjectId> project_id = application.session().buffer().project_id();
+        REQUIRE(project_id.has_value());
+        const Project& project = application.runtime().projects().get(*project_id);
+        CHECK(project.roots() == std::vector<std::string>{root.string()});
+        CHECK(project.files().size() == 2);
+
+        {
+            std::ofstream output(root / "src" / "watched.cpp");
+            output << "int watched() {}\n";
+        }
+        const std::uint64_t original_revision = project.index_revision();
+        while (application.runtime().projects().get(*project_id).index_revision() ==
+               original_revision) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        CHECK(application.runtime().projects().get(*project_id).files().size() == 3);
+
+        send_keys(application, "C-x p f");
+        REQUIRE(application.interaction().state() != nullptr);
+        CHECK(application.interaction().state()->request.provider == "project-files");
+        CHECK(std::ranges::any_of(application.interaction().state()->candidates,
+                                  [](const InteractionCandidate& candidate) {
+                                      return candidate.label == "src/other.cpp";
+                                  }));
+        application.insert_text("other");
+        send_keys(application, "RET");
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        CHECK(application.session().buffer().resource_uri() ==
+              (root / "src" / "other.cpp").string());
+
+        send_keys(application, "C-x p g");
+        REQUIRE(application.interaction().state() != nullptr);
+        CHECK(application.interaction().state()->request.prompt == "Project search: ");
+        application.insert_text("int other");
+        send_keys(application, "RET");
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        CHECK(application.session().buffer().kind() == BufferKind::Process);
+        CHECK(application.session().buffer().read_only());
+        CHECK(application.session().snapshot().content().to_string().find("src/other.cpp") !=
+              std::string::npos);
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("default keymap follows Emacs movement search undo and prefix conventions") {
     EditorApplication application = make_application("sample.cc", "one two one");
 

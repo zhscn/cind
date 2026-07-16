@@ -144,6 +144,15 @@ bool ProjectRegistry::root_is_owned(std::string_view root) const {
     return false;
 }
 
+std::optional<ProjectId> ProjectRegistry::find_by_root(std::string_view root) const {
+    for (ProjectId id : all()) {
+        if (const auto& roots = get(id).roots(); std::ranges::find(roots, root) != roots.end()) {
+            return id;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<ProjectId> ProjectRegistry::find_for_resource(std::string_view uri) const {
     std::optional<ProjectId> best;
     std::size_t best_length = 0;
@@ -156,6 +165,34 @@ std::optional<ProjectId> ProjectRegistry::find_for_resource(std::string_view uri
         }
     }
     return best;
+}
+
+void ProjectRegistry::begin_index(ProjectId project_id) {
+    Project& project = get(project_id);
+    project.indexing_ = true;
+    project.index_error_.reset();
+}
+
+void ProjectRegistry::replace_index(ProjectId project_id, std::vector<std::string> files) {
+    Project& project = get(project_id);
+    std::ranges::sort(files);
+    const auto unique = std::ranges::unique(files).begin();
+    files.erase(unique, files.end());
+    project.files_ = std::move(files);
+    project.indexing_ = false;
+    project.index_error_.reset();
+    ++project.index_revision_;
+}
+
+void ProjectRegistry::cancel_index(ProjectId project_id) {
+    Project& project = get(project_id);
+    project.indexing_ = false;
+}
+
+void ProjectRegistry::fail_index(ProjectId project_id, std::string error) {
+    Project& project = get(project_id);
+    project.indexing_ = false;
+    project.index_error_ = std::move(error);
 }
 
 } // namespace cind

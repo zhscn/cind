@@ -1,9 +1,9 @@
 # Asynchronous runtime
 
-cind keeps editor state single-writer while allowing file operations and other blocking work to
-run concurrently. `AsyncRuntime` owns a dedicated libuv loop thread and submits blocking work to
-libuv's worker pool. Each `EditorApplication` owns one runtime for the lifetime of its buffers,
-views, commands and interactions.
+cind keeps editor state single-writer while allowing file operations, filesystem monitoring and
+child processes to run concurrently. `AsyncRuntime` owns a dedicated libuv loop thread and submits
+blocking work to libuv's worker pool. Each `EditorApplication` owns one runtime for the lifetime of
+its buffers, views, commands, projects and interactions.
 
 ```text
 editor thread                  libuv loop                 worker pool
@@ -34,6 +34,11 @@ queue. Its async callback drains the complete queue because multiple `uv_async_s
 represented by one loop callback. Libuv handles and requests are created, queued, cancelled and
 closed only on the loop thread.
 
+Directory watches and child processes use the same command and ready queues. Watch callbacks,
+process exit results, stdout, stderr and failures become immutable ready records before crossing
+back to the editor thread. Persistent watches do not count as background work; a delivered watch
+event and any indexing task it starts do.
+
 ## Task lifecycle
 
 `submit()` returns an `AsyncTaskId`. A task remains outstanding until its main-thread callback has
@@ -49,18 +54,35 @@ completion. A true return value means that the task was still known and received
 does not claim that worker execution was preempted.
 
 Destroying the runtime requests cancellation, waits for active libuv requests, closes its async
-handle and joins the loop thread. Ready callbacks that have not been drained are discarded during
-shutdown. `EditorApplication` declares the runtime after the state captured by its callbacks so
-this shutdown completes before buffers and registries are destroyed.
+handle, stops directory watches, terminates child processes and joins the loop thread. Ready
+callbacks that have not been drained are discarded during shutdown. `EditorApplication` declares
+the runtime after the state captured by its callbacks so this shutdown completes before buffers
+and registries are destroyed.
+
+## Native handles
+
+`watch_directory()` creates a non-recursive libuv filesystem watch and returns an
+`AsyncWatchId`. Started, changed and failed callbacks run on the editor thread. `unwatch()` makes
+already queued events inert and closes the native handle on the loop thread. Higher-level services
+compose recursive monitoring by retaining one watch for each indexed directory.
+
+`spawn()` starts a child process without a shell, captures stdout and stderr independently, and
+returns an `AsyncProcessId`. A normal exit is a completed process even when its status is nonzero;
+the caller owns tool-specific exit-code policy. `terminate()` requests process cancellation with
+`SIGTERM`. Runtime shutdown uses `SIGKILL` so an uncooperative child cannot retain the application
+lifetime. Captured output is bounded to 64 MiB per stream.
 
 ## Editor integration
 
 File reads, directory enumeration and atomic saves run as worker tasks. Application startup opens
-its requested file asynchronously and replaces the temporary scratch buffer after the read and
-style discovery complete. File save captures an immutable document snapshot and performs the
-atomic file replacement as one worker task. Its completion marks that snapshot as the save point.
-Edits made while the write is in progress stay modified, so asynchronous completion cannot mark
-newer content as saved.
+its requested file asynchronously and replaces the temporary scratch buffer after the read, style
+discovery and project discovery complete. File save captures an immutable document snapshot and
+performs the atomic file replacement as one worker task. Its completion marks that snapshot as the
+save point. Edits made while the write is in progress stay modified, so asynchronous completion
+cannot mark newer content as saved.
+
+Project indexing uses worker tasks, directory watches and generation checks. Project search runs
+`rg` through the process service and creates a read-only process buffer from its output.
 
 Modes and services can submit additional work through `EditorApplication::async_runtime()`. Their
 completion callbacks must validate any resource identity or revision they captured before applying

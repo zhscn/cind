@@ -259,6 +259,12 @@ TEST_CASE("projects own tooling scope without owning editor windows") {
     CHECK(runtime.projects().find_for_resource("file:///work/sub/main.cc") == inner);
     runtime.projects().assign(buffer, inner);
     CHECK(runtime.settings_for(buffer, view).get_as<std::string>(server) == "clangd");
+    runtime.projects().begin_index(inner);
+    CHECK(runtime.projects().get(inner).indexing());
+    runtime.projects().replace_index(inner, {"/work/sub/z.cpp", "/work/sub/a.cpp"});
+    CHECK(runtime.projects().get(inner).files() ==
+          std::vector<std::string>{"/work/sub/a.cpp", "/work/sub/z.cpp"});
+    CHECK(runtime.projects().get(inner).index_revision() == 1);
     CHECK_FALSE(runtime.projects().erase(inner));
     runtime.projects().assign(buffer, std::nullopt);
     CHECK(runtime.projects().erase(inner));

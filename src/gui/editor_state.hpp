@@ -56,6 +56,17 @@ struct OpenWindowStateSnapshot {
     bool active = false;
 };
 
+struct ProjectStateSnapshot {
+    std::uint32_t project_slot = 0;
+    std::uint32_t project_generation = 0;
+    std::string name;
+    std::vector<std::string> roots;
+    std::size_t file_count = 0;
+    std::uint64_t index_revision = 0;
+    bool indexing = false;
+    std::string index_error;
+};
+
 struct KeymapLayerStateSnapshot {
     std::string name;
     std::string scope;
@@ -95,6 +106,9 @@ struct EditorStateSnapshot {
     InteractionStateSnapshot interaction;
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;
+    std::vector<ProjectStateSnapshot> projects;
+    bool background_work = false;
+    bool project_search_running = false;
     bool quit_armed = false;
     bool quit = false;
 };

@@ -4,6 +4,11 @@ add_library(cind_async STATIC
 target_include_directories(cind_async PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cind_async PRIVATE PkgConfig::Libuv Threads::Threads)
 
+add_library(cind_project_io STATIC
+  project/project_files.cpp
+)
+target_include_directories(cind_project_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_library(cind_document STATIC
   document/document.cpp
   document/line_index.cpp
@@ -73,10 +78,11 @@ add_library(cind_editor STATIC
   cli/style_loader.cpp
   editor/basic_commands.cpp
   editor/editor_application.cpp
+  editor/project_service.cpp
   editor/search_commands.cpp
 )
 target_link_libraries(cind_editor
-  PUBLIC cind_async cind_indent cind_application
+  PUBLIC cind_async cind_indent cind_application cind_project_io
   PRIVATE cind_ui Threads::Threads
 )
 

@@ -5,6 +5,7 @@
 #include "editor/basic_commands.hpp"
 #include "editor/command_loop.hpp"
 #include "editor/interaction.hpp"
+#include "editor/project_service.hpp"
 #include "editor/search_commands.hpp"
 #include "formatting/cpp_indent_style.hpp"
 
@@ -141,6 +142,7 @@ public:
     void hide_caret() { reveal_caret_ = false; }
 
     bool has_background_work() const;
+    bool project_search_running() const { return project_search_.process.valid(); }
     bool poll_background_work();
     bool should_quit() const { return quit_; }
     bool quit_armed() const { return quit_armed_; }
@@ -169,6 +171,11 @@ private:
         std::optional<PendingSave> pending_save;
     };
 
+    struct ProjectSearchState {
+        std::uint64_t generation = 0;
+        AsyncProcessId process;
+    };
+
     struct ViewState {
         WindowId window;
         BufferId buffer;
@@ -195,6 +202,12 @@ private:
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
     void destroy_window(WindowId window);
+    std::expected<void, std::string> start_project_search(ProjectId project, std::string query,
+                                                          WindowId target_window);
+    void finish_project_search(ProjectId project, WindowId target_window, std::uint64_t generation,
+                               std::string query, AsyncProcessResult result);
+    void fail_project_search(std::uint64_t generation, const std::exception_ptr& failure);
+    void cancel_project_search(std::uint64_t generation);
 
     void register_commands();
     void register_interaction_providers();
@@ -210,7 +223,7 @@ private:
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
                                                std::uint32_t initial_line);
     void finish_open(std::string resource, std::string contents, CppIndentStyle style,
-                     std::string style_origin);
+                     std::string style_origin, const std::optional<ProjectDiscovery>& project);
     void fail_open(std::string_view resource, const std::exception_ptr& failure);
     void cancel_open(std::string_view resource);
     void finish_save(BufferId buffer, std::error_code error);
@@ -227,12 +240,18 @@ private:
     CommandResult accept_switch_buffer(CommandContext&, const CommandInvocation&);
     CommandResult begin_goto_line(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_goto_line(CommandContext&, const CommandInvocation&);
+    CommandResult begin_project_find_file(CommandContext&, const CommandInvocation&);
+    CommandResult accept_project_find_file(CommandContext&, const CommandInvocation&);
+    CommandResult begin_project_search(CommandContext&, const CommandInvocation&);
+    CommandResult accept_project_search(CommandContext&, const CommandInvocation&);
 
     EditorRuntime runtime_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
+    std::unique_ptr<ProjectService> project_service_;
     std::vector<PendingOpen> pending_opens_;
     std::optional<BufferId> startup_placeholder_;
+    ProjectSearchState project_search_;
     WindowId active_window_;
     WindowLayout window_layout_;
     InteractionController interaction_;
@@ -250,6 +269,8 @@ private:
     CommandId switch_buffer_accept_;
     CommandId help_keys_accept_;
     CommandId goto_line_accept_;
+    CommandId project_find_file_accept_;
+    CommandId project_search_accept_;
     int command_page_rows_ = 1;
     std::string message_;
     std::string last_key_;

@@ -341,6 +341,28 @@ void append_windows(std::string& output, const std::vector<OpenWindowStateSnapsh
     output.push_back(']');
 }
 
+void append_projects(std::string& output, const std::vector<ProjectStateSnapshot>& projects) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < projects.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const ProjectStateSnapshot& project = projects[index];
+        output += std::format("{{\"project\":{{\"slot\":{},\"generation\":{}}},\"name\":",
+                              project.project_slot, project.project_generation);
+        append_json_string(output, project.name);
+        output += ",\"roots\":";
+        append_strings(output, project.roots);
+        output += std::format(",\"file_count\":{},\"index_revision\":{},\"indexing\":",
+                              project.file_count, project.index_revision);
+        append_bool(output, project.indexing);
+        output += ",\"index_error\":";
+        append_json_string(output, project.index_error);
+        output.push_back('}');
+    }
+    output.push_back(']');
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -375,6 +397,12 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_buffers(output, editor.buffers);
     output += ",\"windows\":";
     append_windows(output, editor.windows);
+    output += ",\"projects\":";
+    append_projects(output, editor.projects);
+    output += ",\"background_work\":";
+    append_bool(output, editor.background_work);
+    output += ",\"project_search_running\":";
+    append_bool(output, editor.project_search_running);
     output += ",\"quit_armed\":";
     append_bool(output, editor.quit_armed);
     output += ",\"quit\":";
@@ -1683,6 +1711,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_buffers(output, frame.editor.buffers);
     } else if (path == "editor.windows") {
         append_windows(output, frame.editor.windows);
+    } else if (path == "editor.projects") {
+        append_projects(output, frame.editor.projects);
     } else if (path == "editor.focus") {
         output =
             std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",

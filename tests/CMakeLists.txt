@@ -2,6 +2,10 @@ add_executable(async_runtime_tests async/runtime_tests.cpp)
 target_link_libraries(async_runtime_tests PRIVATE cind_async doctest::doctest)
 add_test(NAME async_runtime_tests COMMAND async_runtime_tests)
 
+add_executable(project_files_tests project/project_files_tests.cpp)
+target_link_libraries(project_files_tests PRIVATE cind_project_io doctest::doctest)
+add_test(NAME project_files_tests COMMAND project_files_tests)
+
 add_executable(document_tests document/document_tests.cpp)
 target_link_libraries(document_tests PRIVATE cind_document doctest::doctest)
 add_test(NAME document_tests COMMAND document_tests)

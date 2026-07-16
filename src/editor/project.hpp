@@ -23,6 +23,10 @@ public:
     ProjectId id() const { return id_; }
     const std::string& name() const { return name_; }
     const std::vector<std::string>& roots() const { return roots_; }
+    const std::vector<std::string>& files() const { return files_; }
+    bool indexing() const { return indexing_; }
+    std::uint64_t index_revision() const { return index_revision_; }
+    const std::optional<std::string>& index_error() const { return index_error_; }
     SettingsLayer& settings() { return settings_; }
     const SettingsLayer& settings() const { return settings_; }
 
@@ -36,6 +40,10 @@ private:
     ProjectId id_;
     std::string name_;
     std::vector<std::string> roots_;
+    std::vector<std::string> files_;
+    bool indexing_ = false;
+    std::uint64_t index_revision_ = 0;
+    std::optional<std::string> index_error_;
     SettingsLayer settings_;
 };
 
@@ -57,7 +65,12 @@ public:
     std::vector<ProjectId> all() const;
 
     void assign(BufferId buffer, std::optional<ProjectId> project);
+    std::optional<ProjectId> find_by_root(std::string_view root) const;
     std::optional<ProjectId> find_for_resource(std::string_view uri) const;
+    void begin_index(ProjectId project);
+    void replace_index(ProjectId project, std::vector<std::string> files);
+    void cancel_index(ProjectId project);
+    void fail_index(ProjectId project, std::string error);
 
 private:
     struct Slot {

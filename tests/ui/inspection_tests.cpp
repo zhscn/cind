@@ -71,6 +71,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .provider = "commands",
              .allow_custom_input = false,
              .generation = 1,
+             .loading = false,
              .selected = 0,
              .error = {},
              .candidates = {{.value = "file.save", .label = "file.save", .detail = "command"}}},
@@ -82,7 +83,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .name = "sample.cc",
                      .resource = "/tmp/sample.cc",
                      .modified = true,
-                     .active = true}},
+                     .active = true,
+                     .saving = false}},
         .windows = {{.window_slot = 0,
                      .window_generation = 1,
                      .view_slot = 0,
@@ -90,6 +92,18 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .buffer_slot = 0,
                      .buffer_generation = 1,
                      .active = true}},
+        .projects = {{.project_slot = 0,
+                      .project_generation = 1,
+                      .name = "sample",
+                      .roots = {"/tmp/sample"},
+                      .file_count = 12,
+                      .index_revision = 3,
+                      .indexing = false,
+                      .index_error = {}}},
+        .background_work = false,
+        .project_search_running = false,
+        .quit_armed = false,
+        .quit = false,
     };
     Scene scene;
     scene.rows = 2;
@@ -317,7 +331,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":24") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":25") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -336,6 +350,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"damaged_output_pixels\":1350") != std::string::npos);
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
+    CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
@@ -381,6 +396,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse windows = run_inspection_query(hub, "get editor.windows");
     REQUIRE(windows.ok);
     CHECK(windows.payload.find("\"active\":true") != std::string::npos);
+
+    const InspectionResponse projects = run_inspection_query(hub, "get editor.projects");
+    REQUIRE(projects.ok);
+    CHECK(projects.payload.find("\"name\":\"sample\"") != std::string::npos);
+    CHECK(projects.payload.find("\"index_revision\":3") != std::string::npos);
 
     const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
     REQUIRE(focus.ok);

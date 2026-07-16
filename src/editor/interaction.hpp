@@ -87,6 +87,7 @@ public:
     bool move_to_end();
     bool move_selection(int delta);
     bool select(std::size_t index);
+    void refresh_candidates(CommandContext& context) { refresh(context); }
     std::expected<InteractionSubmission, std::string> submit();
     bool cancel();
 

@@ -19,6 +19,8 @@ constexpr std::array kEditorBindings{
     Binding{"C-x C-s", "file.save"},
     Binding{"C-x C-w", "file.save-as"},
     Binding{"C-x C-f", "file.open"},
+    Binding{"C-x p f", "project.find-file"},
+    Binding{"C-x p g", "project.search"},
     Binding{"C-x b", "buffer.switch"},
     Binding{"C-x k", "buffer.kill"},
     Binding{"C-x Right", "buffer.next"},

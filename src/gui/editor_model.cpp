@@ -400,6 +400,18 @@ EditorStateSnapshot EditorModel::inspect() {
                            .buffer_generation = window.buffer.generation,
                            .active = window.active});
     }
+    std::vector<ProjectStateSnapshot> projects;
+    for (const ProjectId project_id : runtime.projects().all()) {
+        const Project& project = runtime.projects().get(project_id);
+        projects.push_back({.project_slot = project_id.slot,
+                            .project_generation = project_id.generation,
+                            .name = project.name(),
+                            .roots = project.roots(),
+                            .file_count = project.files().size(),
+                            .index_revision = project.index_revision(),
+                            .indexing = project.indexing(),
+                            .index_error = project.index_error().value_or(std::string())});
+    }
     const WindowId active_window = application_.window_id();
     return {.path = application_.path(),
             .revision = snapshot.revision(),
@@ -425,6 +437,9 @@ EditorStateSnapshot EditorModel::inspect() {
             .interaction = std::move(interaction_state),
             .buffers = std::move(buffers),
             .windows = std::move(windows),
+            .projects = std::move(projects),
+            .background_work = application_.has_background_work(),
+            .project_search_running = application_.project_search_running(),
             .quit_armed = application_.quit_armed(),
             .quit = application_.should_quit()};
 }
