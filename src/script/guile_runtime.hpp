@@ -16,6 +16,11 @@ namespace cind {
 
 class EditorRuntime;
 
+struct GuileKeyBindingSummary {
+    std::string keys;
+    std::string command;
+};
+
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
@@ -35,6 +40,7 @@ struct GuileHostServices {
     std::function<void(WindowId)> delete_other_windows;
     std::function<std::expected<void, std::string>(WindowId, int)> select_other_window;
     std::function<void()> request_redraw;
+    std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
 };
 
 struct GuileRuntimeSnapshot {
@@ -43,6 +49,8 @@ struct GuileRuntimeSnapshot {
     std::vector<std::string> modules;
     std::uint64_t command_revision = 0;
     std::size_t scripted_commands = 0;
+    std::uint64_t provider_revision = 0;
+    std::size_t scripted_providers = 0;
     std::uint64_t binding_revision = 0;
     std::optional<std::string> last_error;
 };
@@ -59,6 +67,7 @@ public:
     GuileRuntime& operator=(const GuileRuntime&) = delete;
 
     std::expected<std::size_t, std::string> install_core_commands();
+    std::expected<std::size_t, std::string> install_core_providers();
     std::expected<std::size_t, std::string> install_default_keymaps();
     GuileRuntimeSnapshot snapshot() const;
 

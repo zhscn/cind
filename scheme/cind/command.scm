@@ -3,6 +3,7 @@
             command-error
             command-dispatch
             interaction
+            interaction-candidate
             context-window
             context-buffer
             context-view
@@ -32,6 +33,9 @@
           allow-custom-input?
           accept-command
           (list->vector arguments)))
+
+(define (interaction-candidate value label detail filter-text)
+  (vector value label detail filter-text))
 
 (define (context-value context key)
   (let ((entry (assq key context)))

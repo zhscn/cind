@@ -31,9 +31,9 @@ condition boundary; a Scheme condition becomes a C++ error value and is retained
 inspection snapshot. C++ exceptions raised by a host primitive are translated into Scheme
 conditions.
 
-`editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted-command
-count, command and keymap installation revisions, and the most recent error. This state is
-diagnostic and is not a plugin ABI.
+`editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command and
+provider counts, command/provider/keymap installation revisions, and the most recent error. This
+state is diagnostic and is not a plugin ABI.
 
 ## Host capabilities
 
@@ -45,10 +45,18 @@ The native module exports:
 
 ```scheme
 (define-command! host command-name execute enabled)
+(define-interaction-provider! host provider-name complete)
 (bind-key-if-command! host keymap-name key-sequence command-name)
+(enabled-command-names host context)
+(open-buffer-summaries host)
+(project-root host project-id)
+(project-files host project-id)
+(active-key-bindings host)
 (buffer-id-by-name host name)
 (buffer-resource host buffer-id)
 (path-parent host path)
+(path-relative host path base)
+(path-filename host path)
 (directory-path? host path)
 (path-as-directory host path)
 (display-buffer! host window-id buffer-id)
@@ -78,6 +86,18 @@ with their owning application.
 command returns `#f`, which lets a policy describe bindings for optional application capabilities.
 An absent keymap or an invalid key sequence raises a Scheme condition. A successful binding returns
 `#t`.
+
+`define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
+procedure receives an immutable command context and query string and returns a vector of
+four-element candidate vectors containing value, label, detail and filter text. The runtime
+protects the procedure from collection, validates the complete result and invalidates the callback
+with its application. Scheme conditions and malformed candidates become interaction errors and are
+retained in the scripting inspection snapshot.
+
+`enabled-command-names`, `open-buffer-summaries`, `project-root`, `project-files` and
+`active-key-bindings` expose immutable registry and application snapshots. Path operations provide
+platform-native relative, filename and parent calculations. These capabilities keep candidate
+selection and presentation in Scheme while C++ retains registry identity and filesystem syntax.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
@@ -142,6 +162,18 @@ The `(cind core)` module also owns the default Emacs-style editor and applicatio
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.
 Interaction-local editing and the always-active system escape map are bootstrap mechanisms with
 their own lifecycle and precedence contracts.
+
+## Scripted interaction providers
+
+`(cind core)` defines the synchronous `commands`, `buffers`, `project-files` and `key-bindings`
+providers. Scheme filters internal commands and formats semantic candidate fields from native
+snapshots. Query ranking remains in `InteractionController`, so native and scripted providers share
+the same ordering, selection and viewport behavior.
+
+The `files` provider remains native because directory enumeration is cancellable worker-thread I/O.
+It captures immutable query and resource values, runs through `AsyncRuntime`, and returns the same
+candidate structure to `InteractionController`. Scripted providers are editor-thread procedures and
+do not perform blocking work.
 
 Additional host APIs follow the same boundary:
 

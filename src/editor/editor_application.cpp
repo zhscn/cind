@@ -47,10 +47,6 @@ std::string directory_input(const fs::path& path) {
     return result;
 }
 
-bool internal_command(std::string_view name) {
-    return name.ends_with(".accept") || name.starts_with("interaction.");
-}
-
 struct LoadedFileData {
     std::string resource;
     std::string contents;
@@ -142,7 +138,20 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return select_other_window(window, delta) ? std::expected<void, std::string>{}
                                                          : std::unexpected(message_);
            },
-           .request_redraw = [this] { reveal_caret_ = true; }}),
+           .request_redraw = [this] { reveal_caret_ = true; },
+           .active_key_bindings =
+               [this] {
+                   std::vector<GuileKeyBindingSummary> result;
+                   for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
+                       for (const KeymapBinding& binding :
+                            runtime_.keymaps().bindings(layer.keymap)) {
+                           result.push_back(
+                               {.keys = format_key_sequence(binding.sequence),
+                                .command = runtime_.commands().definition(binding.command).name});
+                       }
+                   }
+                   return result;
+               }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1526,63 +1535,6 @@ void EditorApplication::register_commands() {
 }
 
 void EditorApplication::register_interaction_providers() {
-    runtime_.interaction_providers().define("commands", [this](CommandContext& context,
-                                                               std::string_view) {
-        std::vector<InteractionCandidate> candidates;
-        for (const CommandId command : runtime_.commands().all()) {
-            const CommandRegistry::Definition& definition = runtime_.commands().definition(command);
-            if (internal_command(definition.name) ||
-                !runtime_.commands().enabled(command, context)) {
-                continue;
-            }
-            candidates.push_back({.value = definition.name,
-                                  .label = definition.name,
-                                  .detail = "command",
-                                  .filter_text = definition.name});
-        }
-        return candidates;
-    });
-    runtime_.interaction_providers().define("buffers", [this](CommandContext&, std::string_view) {
-        std::vector<InteractionCandidate> candidates;
-        for (const OpenBufferSnapshot& buffer : open_buffers()) {
-            std::string detail = buffer.resource.value_or(std::string());
-            if (buffer.modified) {
-                if (detail.empty()) {
-                    detail = "modified";
-                } else {
-                    detail.append(" · modified");
-                }
-            }
-            candidates.push_back({.value = buffer.name,
-                                  .label = buffer.name,
-                                  .detail = detail,
-                                  .filter_text = buffer.resource
-                                                     ? buffer.name + " " + *buffer.resource
-                                                     : buffer.name});
-        }
-        return candidates;
-    });
-    runtime_.interaction_providers().define(
-        "project-files", [](CommandContext& context, std::string_view) {
-            std::vector<InteractionCandidate> candidates;
-            const Project* project = context.project();
-            if (project == nullptr || project->roots().empty()) {
-                return candidates;
-            }
-            const fs::path root(project->roots().front());
-            candidates.reserve(project->files().size());
-            for (const std::string& file : project->files()) {
-                fs::path relative = fs::path(file).lexically_relative(root);
-                if (relative.empty()) {
-                    relative = fs::path(file).filename();
-                }
-                candidates.push_back({.value = file,
-                                      .label = relative.string(),
-                                      .detail = relative.parent_path().string(),
-                                      .filter_text = relative.string() + " " + file});
-            }
-            return candidates;
-        });
     runtime_.interaction_providers().define(
         "files",
         [this](CommandContext&, std::string_view requested_query) -> InteractionProviderResult {
@@ -1637,27 +1589,11 @@ void EditorApplication::register_interaction_providers() {
                 return candidates;
             }};
         });
-    runtime_.interaction_providers().define("key-bindings", [this](CommandContext&,
-                                                                   std::string_view) {
-        std::vector<InteractionCandidate> candidates;
-        for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
-            const KeymapId keymap = layer.keymap;
-            for (const KeymapBinding& binding : runtime_.keymaps().bindings(keymap)) {
-                const std::string keys = format_key_sequence(binding.sequence);
-                const std::string& command = runtime_.commands().definition(binding.command).name;
-                std::string value = keys;
-                value.append("  ").append(command);
-                std::string filter_text = keys;
-                filter_text.push_back(' ');
-                filter_text.append(command);
-                candidates.push_back({.value = std::move(value),
-                                      .label = keys,
-                                      .detail = command,
-                                      .filter_text = std::move(filter_text)});
-            }
-        }
-        return candidates;
-    });
+    std::expected<std::size_t, std::string> installed = guile_.install_core_providers();
+    if (!installed) {
+        throw std::runtime_error(
+            std::format("Guile provider policy failed: {}", installed.error()));
+    }
 }
 
 void EditorApplication::register_keymaps() {

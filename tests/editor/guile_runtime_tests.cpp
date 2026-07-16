@@ -4,6 +4,7 @@
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -36,6 +37,19 @@ CommandId require_command(const EditorRuntime& runtime, std::string_view name) {
         return {};
     }
     return *command;
+}
+
+std::vector<InteractionCandidate> complete_provider(EditorRuntime& runtime, std::string_view name,
+                                                    CommandContext& context,
+                                                    std::string_view query = {}) {
+    InteractionProviderResult result =
+        runtime.interaction_providers().complete(name, context, query);
+    auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result);
+    if (candidates == nullptr) {
+        FAIL("provider returned asynchronous work: ", name);
+        return {};
+    }
+    return std::move(*candidates);
 }
 
 } // namespace
@@ -232,16 +246,46 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              other_window_selected = true;
              return {};
          },
-         .request_redraw = [&] { redraw_requested = true; }});
+         .request_redraw = [&] { redraw_requested = true; },
+         .active_key_bindings =
+             [] {
+                 return std::vector<GuileKeyBindingSummary>{
+                     {.keys = "C-x C-s", .command = "file.save"}};
+             }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
     CHECK(*installed == 29);
+    const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
+    REQUIRE(providers.has_value());
+    CHECK(*providers == 4);
     const CommandId save = require_command(runtime, "file.save");
 
     const CommandResult saved = runtime.commands().invoke(save, context);
     REQUIRE(saved.has_value());
     REQUIRE(buffer_saved);
     CHECK(saved_buffer == buffer);
+
+    const std::vector<InteractionCandidate> command_candidates =
+        complete_provider(runtime, "commands", context);
+    CHECK(std::ranges::any_of(command_candidates, [](const InteractionCandidate& candidate) {
+        return candidate.value == "file.save" && candidate.detail == "command";
+    }));
+    CHECK(std::ranges::none_of(command_candidates, [](const InteractionCandidate& candidate) {
+        return candidate.value.ends_with(".accept") || candidate.value.starts_with("interaction.");
+    }));
+
+    const std::vector<InteractionCandidate> buffer_candidates =
+        complete_provider(runtime, "buffers", context);
+    REQUIRE(buffer_candidates.size() == 2);
+    CHECK(buffer_candidates[0].value == "sample");
+    CHECK(buffer_candidates[1].value == "other");
+
+    const std::vector<InteractionCandidate> binding_candidates =
+        complete_provider(runtime, "key-bindings", context);
+    REQUIRE(binding_candidates.size() == 1);
+    CHECK(binding_candidates[0].value == "C-x C-s  file.save");
+    CHECK(binding_candidates[0].label == "C-x C-s");
+    CHECK(binding_candidates[0].detail == "file.save");
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -445,7 +489,16 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const ProjectId project =
         runtime.projects().create({.name = "sample", .roots = {"/tmp/sample"}});
     runtime.projects().assign(buffer, project);
+    runtime.projects().replace_index(project,
+                                     {"/tmp/sample/src/main.cpp", "/tmp/sample/include/main.hpp"});
     CHECK(runtime.commands().enabled(project_search, context));
+
+    const std::vector<InteractionCandidate> project_candidates =
+        complete_provider(runtime, "project-files", context);
+    REQUIRE(project_candidates.size() == 2);
+    CHECK(project_candidates[0].value == "/tmp/sample/include/main.hpp");
+    CHECK(project_candidates[0].label == "include/main.hpp");
+    CHECK(project_candidates[0].detail == "include");
 
     const CommandId project_find_file = require_command(runtime, "project.find-file");
     CHECK(runtime.commands().enabled(project_find_file, context));
@@ -495,5 +548,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
     CHECK(snapshot.scripted_commands == 29);
+    CHECK(snapshot.provider_revision == 1);
+    CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

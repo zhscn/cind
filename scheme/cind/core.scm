@@ -2,6 +2,7 @@
   #:use-module (cind command)
   #:use-module (cind host)
   #:export (install-core-commands!
+            install-core-providers!
             install-default-keymaps!))
 
 (define (last-string-argument invocation)
@@ -9,6 +10,94 @@
     (and (> (vector-length arguments) 0)
          (let ((argument (vector-ref arguments (- (vector-length arguments) 1))))
            (and (string? argument) argument)))))
+
+(define (string-prefix?* prefix text)
+  (and (>= (string-length text) (string-length prefix))
+       (string=? prefix (substring text 0 (string-length prefix)))))
+
+(define (string-suffix?* suffix text)
+  (and (>= (string-length text) (string-length suffix))
+       (string=? suffix
+                 (substring text
+                            (- (string-length text) (string-length suffix))
+                            (string-length text)))))
+
+(define (internal-command? name)
+  (or (string-suffix?* ".accept" name)
+      (string-prefix?* "interaction." name)))
+
+(define (commands-provider host context query)
+  (let ((names (enabled-command-names host context)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length names))
+          (list->vector (reverse candidates))
+          (let ((name (vector-ref names index)))
+            (loop (+ index 1)
+                  (if (internal-command? name)
+                      candidates
+                      (cons (interaction-candidate name name "command" name)
+                            candidates))))))))
+
+(define (buffers-provider host context query)
+  (let ((summaries (open-buffer-summaries host)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length summaries))
+          (list->vector (reverse candidates))
+          (let* ((summary (vector-ref summaries index))
+                 (name (vector-ref summary 0))
+                 (resource (vector-ref summary 1))
+                 (modified? (vector-ref summary 2))
+                 (detail (cond ((and resource modified?)
+                                (string-append resource " · modified"))
+                               (resource resource)
+                               (modified? "modified")
+                               (else "")))
+                 (filter-text (if resource
+                                  (string-append name " " resource)
+                                  name)))
+            (loop (+ index 1)
+                  (cons (interaction-candidate name name detail filter-text)
+                        candidates)))))))
+
+(define (project-files-provider host context query)
+  (let ((project (context-project context)))
+    (if (not project)
+        (vector)
+        (let ((root (project-root host project))
+              (files (project-files host project)))
+          (if (not root)
+              (vector)
+              (let loop ((index 0)
+                         (candidates '()))
+                (if (= index (vector-length files))
+                    (list->vector (reverse candidates))
+                    (let* ((file (vector-ref files index))
+                           (relative-value (path-relative host file root))
+                           (relative (if (= (string-length relative-value) 0)
+                                         (path-filename host file)
+                                         relative-value)))
+                      (loop (+ index 1)
+                            (cons (interaction-candidate
+                                   file relative (path-parent host relative)
+                                   (string-append relative " " file))
+                                  candidates))))))))))
+
+(define (key-bindings-provider host context query)
+  (let ((bindings (active-key-bindings host)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length bindings))
+          (list->vector (reverse candidates))
+          (let* ((binding (vector-ref bindings index))
+                 (keys (vector-ref binding 0))
+                 (command (vector-ref binding 1)))
+            (loop (+ index 1)
+                  (cons (interaction-candidate
+                         (string-append keys "  " command)
+                         keys command (string-append keys " " command))
+                        candidates)))))))
 
 (define (command-palette-accept context invocation)
   (let ((name (last-string-argument invocation)))
@@ -330,6 +419,27 @@
                                  (list-ref definition 2)))
               commands)
     (length commands)))
+
+(define (core-providers host)
+  (list (cons "commands"
+              (lambda (context query)
+                (commands-provider host context query)))
+        (cons "buffers"
+              (lambda (context query)
+                (buffers-provider host context query)))
+        (cons "project-files"
+              (lambda (context query)
+                (project-files-provider host context query)))
+        (cons "key-bindings"
+              (lambda (context query)
+                (key-bindings-provider host context query)))))
+
+(define (install-core-providers! host)
+  (let ((providers (core-providers host)))
+    (for-each (lambda (provider)
+                (define-interaction-provider! host (car provider) (cdr provider)))
+              providers)
+    (length providers)))
 
 (define editor-bindings
   '(("C-x C-s" . "file.save")

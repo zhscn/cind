@@ -25,11 +25,17 @@ struct ScriptCommand {
     SCM enabled = SCM_BOOL_F;
 };
 
+struct ScriptProvider {
+    SCM complete = SCM_UNDEFINED;
+};
+
 struct GuileState {
     std::thread::id owner;
     bool active = true;
     std::vector<ScriptCommand> commands;
+    std::vector<ScriptProvider> providers;
     std::uint64_t command_revision = 0;
+    std::uint64_t provider_revision = 0;
     std::optional<std::string> last_error;
 };
 
@@ -38,6 +44,7 @@ struct HostLease {
     std::shared_ptr<GuileState> state;
     GuileHostServices services;
     std::size_t commands_installed = 0;
+    std::size_t providers_installed = 0;
     std::size_t bindings_installed = 0;
 };
 
@@ -112,11 +119,33 @@ HostLease& require_host(SCM object, const char* caller) {
     return *host;
 }
 
+SCM context_entry(SCM context, const char* key, const char* caller) {
+    const SCM entry = scm_assq(scm_from_utf8_symbol(key), context);
+    if (scheme_false(entry)) {
+        scm_misc_error(caller, "command context is missing ~A",
+                       scm_list_1(scm_from_utf8_string(key)));
+    }
+    return scm_cdr(entry);
+}
+
+CommandContext command_context_from_scheme(HostLease& host, SCM context, const char* caller) {
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(context_entry(context, "window", caller), caller, 2);
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(context_entry(context, "buffer", caller), caller, 2);
+    const ViewId view =
+        entity_id_from_scheme<ViewTag>(context_entry(context, "view", caller), caller, 2);
+    return CommandContext(*host.runtime, window, buffer, view);
+}
+
 CommandResult invoke_script_command(const std::shared_ptr<GuileState>& state,
                                     std::size_t command_index, CommandContext& context,
                                     const CommandInvocation& invocation);
 bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_t command_index,
                             const CommandContext& context);
+InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
+                                                 std::size_t provider_index,
+                                                 CommandContext& context, std::string_view query);
 
 // The Guile ABI fixes four adjacent SCM arguments; Scheme-level names and
 // validation preserve their semantic order.
@@ -187,6 +216,58 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
     return SCM_BOOL_F;
 }
 
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("define-interaction-provider!", 2, name_value, "string");
+    }
+    if (!scheme_true(scm_procedure_p(complete_value))) {
+        scm_wrong_type_arg_msg("define-interaction-provider!", 3, complete_value, "procedure");
+    }
+    HostLease& host = require_host(host_object, "define-interaction-provider!");
+    const std::shared_ptr<GuileState> state = host.state;
+    if (!state || !state->active) {
+        scm_misc_error("define-interaction-provider!", "Guile runtime has expired", SCM_EOL);
+    }
+
+    try {
+        const std::string name = scheme_string(name_value);
+        const std::size_t provider_index = state->providers.size();
+        (void)scm_gc_protect_object(complete_value);
+        bool appended = false;
+        try {
+            state->providers.push_back({.complete = complete_value});
+            appended = true;
+            const std::weak_ptr<GuileState> weak = state;
+            host.runtime->interaction_providers().define(
+                name,
+                [weak, provider_index](CommandContext& context,
+                                       std::string_view query) -> InteractionProviderResult {
+                    const std::shared_ptr<GuileState> locked = weak.lock();
+                    if (!locked || !locked->active) {
+                        throw std::runtime_error("Guile provider runtime has expired");
+                    }
+                    return invoke_script_provider(locked, provider_index, context, query);
+                });
+            ++host.providers_installed;
+            return scm_from_size_t(provider_index);
+        } catch (...) {
+            if (appended) {
+                state->providers.pop_back();
+            }
+            (void)scm_gc_unprotect_object(complete_value);
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-interaction-provider!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-interaction-provider!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // names and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -220,6 +301,173 @@ SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM c
         scm_misc_error("bind-key-if-command!", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("bind-key-if-command!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM enabled_command_names(SCM host_object, SCM context_value) {
+    try {
+        HostLease& host = require_host(host_object, "enabled-command-names");
+        CommandContext context =
+            command_context_from_scheme(host, context_value, "enabled-command-names");
+        std::vector<std::string> names;
+        for (const CommandId command : host.runtime->commands().all()) {
+            if (host.runtime->commands().enabled(command, context)) {
+                names.push_back(host.runtime->commands().definition(command).name);
+            }
+        }
+        SCM result = scm_c_make_vector(names.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < names.size(); ++index) {
+            scm_c_vector_set_x(result, index, scm_from_utf8_string(names[index].c_str()));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("enabled-command-names", exception.what());
+    } catch (...) {
+        scm_misc_error("enabled-command-names", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM open_buffer_summaries(SCM host_object) {
+    HostLease& host = require_host(host_object, "open-buffer-summaries");
+    if (!host.services.open_buffers) {
+        scm_misc_error("open-buffer-summaries", "open-buffer snapshot capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::vector<BufferId> buffers = host.services.open_buffers();
+        SCM result = scm_c_make_vector(buffers.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < buffers.size(); ++index) {
+            const Buffer& buffer = host.runtime->buffers().get(buffers[index]);
+            SCM summary = scm_c_make_vector(3, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(summary, 0, scm_from_utf8_string(buffer.name().c_str()));
+            scm_c_vector_set_x(summary, 1,
+                               buffer.resource_uri()
+                                   ? scm_from_utf8_string(buffer.resource_uri()->c_str())
+                                   : SCM_BOOL_F);
+            scm_c_vector_set_x(summary, 2, scm_from_bool(buffer.modified()));
+            scm_c_vector_set_x(result, index, summary);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("open-buffer-summaries", exception.what());
+    } catch (...) {
+        scm_misc_error("open-buffer-summaries", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM project_root(SCM host_object, SCM project_value) {
+    try {
+        HostLease& host = require_host(host_object, "project-root");
+        const ProjectId project =
+            entity_id_from_scheme<ProjectTag>(project_value, "project-root", 2);
+        const Project& definition = host.runtime->projects().get(project);
+        return definition.roots().empty()
+                   ? SCM_BOOL_F
+                   : scm_from_utf8_string(definition.roots().front().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("project-root", exception.what());
+    } catch (...) {
+        scm_misc_error("project-root", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM project_files(SCM host_object, SCM project_value) {
+    try {
+        HostLease& host = require_host(host_object, "project-files");
+        const ProjectId project =
+            entity_id_from_scheme<ProjectTag>(project_value, "project-files", 2);
+        const std::vector<std::string>& files = host.runtime->projects().get(project).files();
+        SCM result = scm_c_make_vector(files.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < files.size(); ++index) {
+            scm_c_vector_set_x(result, index, scm_from_utf8_string(files[index].c_str()));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("project-files", exception.what());
+    } catch (...) {
+        scm_misc_error("project-files", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM path_relative(SCM host_object, SCM path_value, SCM base_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("path-relative", 2, path_value, "string");
+    }
+    if (!scm_is_string(base_value)) {
+        scm_wrong_type_arg_msg("path-relative", 3, base_value, "string");
+    }
+    (void)require_host(host_object, "path-relative");
+    try {
+        const std::string relative =
+            std::filesystem::path(scheme_string(path_value))
+                .lexically_relative(std::filesystem::path(scheme_string(base_value)))
+                .string();
+        return scm_from_utf8_string(relative.c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("path-relative", exception.what());
+    } catch (...) {
+        scm_misc_error("path-relative", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM path_filename(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("path-filename", 2, path_value, "string");
+    }
+    (void)require_host(host_object, "path-filename");
+    try {
+        const std::string filename =
+            std::filesystem::path(scheme_string(path_value)).filename().string();
+        return scm_from_utf8_string(filename.c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("path-filename", exception.what());
+    } catch (...) {
+        scm_misc_error("path-filename", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM active_key_bindings(SCM host_object) {
+    HostLease& host = require_host(host_object, "active-key-bindings");
+    if (!host.services.active_key_bindings) {
+        scm_misc_error("active-key-bindings", "key-binding snapshot capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::vector<GuileKeyBindingSummary> bindings = host.services.active_key_bindings();
+        SCM result = scm_c_make_vector(bindings.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < bindings.size(); ++index) {
+            SCM binding = scm_c_make_vector(2, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(binding, 0, scm_from_utf8_string(bindings[index].keys.c_str()));
+            scm_c_vector_set_x(binding, 1, scm_from_utf8_string(bindings[index].command.c_str()));
+            scm_c_vector_set_x(result, index, binding);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("active-key-bindings", exception.what());
+    } catch (...) {
+        scm_misc_error("active-key-bindings", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -724,8 +972,20 @@ void initialize_host_module(void*) {
     (void)scm_gc_protect_object(host_type);
     (void)scm_c_define_gsubr("define-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_command));
+    (void)scm_c_define_gsubr("define-interaction-provider!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_interaction_provider));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
+    (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(enabled_command_names));
+    (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(open_buffer_summaries));
+    (void)scm_c_define_gsubr("project-root", 2, 0, 0, reinterpret_cast<scm_t_subr>(project_root));
+    (void)scm_c_define_gsubr("project-files", 2, 0, 0, reinterpret_cast<scm_t_subr>(project_files));
+    (void)scm_c_define_gsubr("path-relative", 3, 0, 0, reinterpret_cast<scm_t_subr>(path_relative));
+    (void)scm_c_define_gsubr("path-filename", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_filename));
+    (void)scm_c_define_gsubr("active-key-bindings", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(active_key_bindings));
     (void)scm_c_define_gsubr("buffer-id-by-name", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_id_by_name));
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
@@ -761,12 +1021,15 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "buffer-resource",
-                 "path-parent", "directory-path?", "path-as-directory", "display-buffer!",
-                 "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-                 "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-                 "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
-                 "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export("define-command!", "define-interaction-provider!", "bind-key-if-command!",
+                 "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
+                 "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
+                 "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
+                 "display-buffer!", "move-caret-to-line!", "set-message!", "ensure-project-index!",
+                 "open-file!", "start-project-search!", "set-buffer-resource!", "save-buffer!",
+                 "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
+                 "delete-window!", "delete-other-windows!", "select-other-window!",
+                 "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -778,8 +1041,10 @@ struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
         InstallCommands,
+        InstallProviders,
         InstallKeymaps,
         InvokeCommand,
+        InvokeProvider,
         CheckEnabled,
     };
 
@@ -789,9 +1054,11 @@ struct GuileCall {
     SCM procedure = SCM_UNDEFINED;
     SCM result = SCM_UNDEFINED;
     std::size_t count = 0;
+    std::string query;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
     std::optional<CommandResult> command_result;
+    std::vector<InteractionCandidate> provider_candidates;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -961,6 +1228,34 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
     return std::unexpected(CommandError{"Guile command returned an unknown result kind"});
 }
 
+std::vector<InteractionCandidate> provider_candidates_from_scheme(SCM value) {
+    if (!scm_is_vector(value)) {
+        throw std::invalid_argument("Guile provider must return a vector of candidates");
+    }
+    const std::size_t count = scm_c_vector_length(value);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM candidate = scm_c_vector_ref(value, index);
+        if (!scm_is_vector(candidate) || scm_c_vector_length(candidate) != 4) {
+            throw std::invalid_argument("Guile provider candidate must be a four-element vector");
+        }
+        for (std::size_t field = 0; field < 4; ++field) {
+            if (!scm_is_string(scm_c_vector_ref(candidate, field))) {
+                throw std::invalid_argument("Guile provider candidate fields must be strings");
+            }
+        }
+    }
+    std::vector<InteractionCandidate> result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM candidate = scm_c_vector_ref(value, index);
+        result.push_back({.value = scheme_string(scm_c_vector_ref(candidate, 0)),
+                          .label = scheme_string(scm_c_vector_ref(candidate, 1)),
+                          .detail = scheme_string(scm_c_vector_ref(candidate, 2)),
+                          .filter_text = scheme_string(scm_c_vector_ref(candidate, 3))});
+    }
+    return result;
+}
+
 SCM call_body(void* data) {
     auto& call = *static_cast<GuileCall*>(data);
     try {
@@ -973,6 +1268,11 @@ SCM call_body(void* data) {
                 scm_call_1(scm_c_public_ref("cind core", "install-core-commands!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallProviders:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "install-core-providers!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InstallKeymaps:
             call.result =
                 scm_call_1(scm_c_public_ref("cind core", "install-default-keymaps!"), call.host);
@@ -982,6 +1282,11 @@ SCM call_body(void* data) {
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      command_invocation_value(*call.invocation));
             call.command_result = command_result_from_scheme(call.result, *call.context);
+            break;
+        case GuileCall::Operation::InvokeProvider:
+            call.result = scm_call_2(call.procedure, command_context_value(*call.context),
+                                     scm_from_utf8_string(call.query.c_str()));
+            call.provider_candidates = provider_candidates_from_scheme(call.result);
             break;
         case GuileCall::Operation::CheckEnabled:
             call.result = scm_call_1(call.procedure, command_context_value(*call.context));
@@ -1055,6 +1360,29 @@ CommandResult invoke_script_command(const std::shared_ptr<GuileState>& state,
     return std::move(*call.command_result);
 }
 
+InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
+                                                 std::size_t provider_index,
+                                                 CommandContext& context, std::string_view query) {
+    if (std::this_thread::get_id() != state->owner) {
+        throw std::logic_error("Guile provider invoked outside its editor thread");
+    }
+    if (!state->active || provider_index >= state->providers.size()) {
+        throw std::runtime_error("Guile provider runtime has expired");
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeProvider;
+    call.procedure = state->providers[provider_index].complete;
+    call.context = &context;
+    call.query = std::string(query);
+    std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = result.error();
+        throw std::runtime_error(std::format("Guile provider failed: {}", result.error()));
+    }
+    state->last_error.reset();
+    return std::move(call.provider_candidates);
+}
+
 bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_t command_index,
                             const CommandContext& context) {
     if (std::this_thread::get_id() != state->owner || !state->active ||
@@ -1109,6 +1437,10 @@ public:
             }
         }
         state_->commands.clear();
+        for (const ScriptProvider& provider : state_->providers) {
+            (void)scm_gc_unprotect_object(provider.complete);
+        }
+        state_->providers.clear();
         lease_->runtime = nullptr;
         lease_->state.reset();
         scm_foreign_object_set_x(host_, 0, nullptr);
@@ -1132,6 +1464,26 @@ public:
             return std::unexpected(*state_->last_error);
         }
         ++state_->command_revision;
+        state_->last_error.reset();
+        return call.count;
+    }
+
+    std::expected<std::size_t, std::string> install_core_providers() {
+        require_owner_thread();
+        lease_->providers_installed = 0;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallProviders;
+        call.host = host_;
+        std::expected<SCM, std::string> result = run_guile_call(call);
+        if (!result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != lease_->providers_installed || call.count != state_->providers.size()) {
+            state_->last_error = "Guile provider policy returned an inconsistent provider count";
+            return std::unexpected(*state_->last_error);
+        }
+        ++state_->provider_revision;
         state_->last_error.reset();
         return call.count;
     }
@@ -1163,6 +1515,8 @@ public:
                 .modules = {"cind command", "cind core"},
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
+                .provider_revision = state_->provider_revision,
+                .scripted_providers = state_->providers.size(),
                 .binding_revision = binding_revision_,
                 .last_error = state_->last_error};
     }
@@ -1188,6 +1542,10 @@ GuileRuntime::~GuileRuntime() = default;
 
 std::expected<std::size_t, std::string> GuileRuntime::install_core_commands() {
     return impl_->install_core_commands();
+}
+
+std::expected<std::size_t, std::string> GuileRuntime::install_core_providers() {
+    return impl_->install_core_providers();
 }
 
 std::expected<std::size_t, std::string> GuileRuntime::install_default_keymaps() {

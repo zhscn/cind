@@ -364,6 +364,8 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .modules = std::move(guile.modules),
                                            .command_revision = guile.command_revision,
                                            .scripted_commands = guile.scripted_commands,
+                                           .provider_revision = guile.provider_revision,
+                                           .scripted_providers = guile.scripted_providers,
                                            .binding_revision = guile.binding_revision,
                                            .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;

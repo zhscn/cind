@@ -402,9 +402,11 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
     output += ",\"modules\":";
     append_strings(output, scripting.modules);
     output += std::format(
-        ",\"command_revision\":{},\"scripted_commands\":{},\"binding_revision\":{},"
+        ",\"command_revision\":{},\"scripted_commands\":{},\"provider_revision\":{},"
+        "\"scripted_providers\":{},\"binding_revision\":{},"
         "\"last_error\":",
-        scripting.command_revision, scripting.scripted_commands, scripting.binding_revision);
+        scripting.command_revision, scripting.scripted_commands, scripting.provider_revision,
+        scripting.scripted_providers, scripting.binding_revision);
     if (scripting.last_error) {
         append_json_string(output, *scripting.last_error);
     } else {
@@ -2210,6 +2212,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << printable(frame.editor.scripting.version)
            << " commands=" << frame.editor.scripting.scripted_commands
            << " command-revision=" << frame.editor.scripting.command_revision
+           << " providers=" << frame.editor.scripting.scripted_providers
+           << " provider-revision=" << frame.editor.scripting.provider_revision
            << " binding-revision=" << frame.editor.scripting.binding_revision;
     if (frame.editor.scripting.last_error) {
         output << " error=\"" << printable(*frame.editor.scripting.last_error) << '"';
