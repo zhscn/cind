@@ -125,7 +125,24 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return result;
                },
            .kill_buffer = [this](BufferId buffer,
-                                 bool force) { return kill_buffer(buffer, force); }}),
+                                 bool force) { return kill_buffer(buffer, force); },
+           .request_quit = [this](bool force) { request_quit(force); },
+           .split_window = [this](WindowId window,
+                                  WindowSplitAxis axis) -> std::expected<void, std::string> {
+               return split_window(window, axis) ? std::expected<void, std::string>{}
+                                                 : std::unexpected("window cannot be split");
+           },
+           .delete_window = [this](WindowId window) -> std::expected<void, std::string> {
+               return delete_window(window) ? std::expected<void, std::string>{}
+                                            : std::unexpected(message_);
+           },
+           .delete_other_windows = [this](WindowId window) { delete_other_windows(window); },
+           .select_other_window = [this](WindowId window,
+                                         int delta) -> std::expected<void, std::string> {
+               return select_other_window(window, delta) ? std::expected<void, std::string>{}
+                                                         : std::unexpected(message_);
+           },
+           .request_redraw = [this] { reveal_caret_ = true; }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -639,20 +656,27 @@ bool EditorApplication::focus_window(WindowId window) {
 }
 
 bool EditorApplication::split_window(WindowSplitAxis axis) {
-    EditSession& source = session();
+    return split_window(active_window_, axis);
+}
+
+bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
+    if (!window_layout_.contains(target) || runtime_.windows().try_get(target) == nullptr) {
+        return false;
+    }
+    EditSession& source = session(target);
     const ViewportState source_viewport = source.view().viewport();
     const std::optional<SelectionEndpoints> source_selection =
         source.selection().transform([](TextRange range) {
             return SelectionEndpoints{.anchor = range.start, .head = range.end};
         });
-    const ViewId view = create_view({}, buffer_id(), source.caret());
+    const ViewId view = create_view({}, buffer_id(target), source.caret());
     runtime_.views().get(view).viewport() = source_viewport;
     if (source_selection) {
         runtime_.views().set_selection(view, *source_selection);
     }
     const WindowId window = runtime_.windows().create(view);
     view_state_for(view).window = window;
-    if (!window_layout_.split({.target = active_window_, .new_window = window, .axis = axis})) {
+    if (!window_layout_.split({.target = target, .new_window = window, .axis = axis})) {
         destroy_window(window);
         return false;
     }
@@ -662,14 +686,19 @@ bool EditorApplication::split_window(WindowSplitAxis axis) {
 }
 
 bool EditorApplication::delete_window() {
-    const std::optional<WindowId> replacement = window_layout_.next(active_window_);
-    if (!replacement || *replacement == active_window_ || !window_layout_.erase(active_window_)) {
+    return delete_window(active_window_);
+}
+
+bool EditorApplication::delete_window(WindowId target) {
+    const std::optional<WindowId> replacement = window_layout_.next(target);
+    if (!replacement || *replacement == target || !window_layout_.erase(target)) {
         message_ = "cannot delete the only window";
         return false;
     }
-    const WindowId removed = active_window_;
-    active_window_ = *replacement;
-    destroy_window(removed);
+    if (active_window_ == target) {
+        active_window_ = *replacement;
+    }
+    destroy_window(target);
     message_ = "window deleted";
     reveal_caret_ = true;
     sync_keymaps();
@@ -677,26 +706,39 @@ bool EditorApplication::delete_window() {
 }
 
 void EditorApplication::delete_other_windows() {
+    delete_other_windows(active_window_);
+}
+
+void EditorApplication::delete_other_windows(WindowId retained) {
+    if (!window_layout_.contains(retained) || runtime_.windows().try_get(retained) == nullptr) {
+        message_ = "unknown window";
+        return;
+    }
     if (window_layout_.leaves().size() <= 1) {
         message_ = "only window";
         return;
     }
     const std::vector<WindowId> windows(window_layout_.leaves().begin(),
                                         window_layout_.leaves().end());
-    (void)window_layout_.retain(active_window_);
+    (void)window_layout_.retain(retained);
     for (const WindowId window : windows) {
-        if (window != active_window_) {
+        if (window != retained) {
             destroy_window(window);
         }
     }
+    active_window_ = retained;
     message_ = "other windows deleted";
     reveal_caret_ = true;
     sync_keymaps();
 }
 
 bool EditorApplication::select_other_window(int delta) {
-    const std::optional<WindowId> target = window_layout_.next(active_window_, delta);
-    if (!target || *target == active_window_) {
+    return select_other_window(active_window_, delta);
+}
+
+bool EditorApplication::select_other_window(WindowId from, int delta) {
+    const std::optional<WindowId> target = window_layout_.next(from, delta);
+    if (!target || *target == from) {
         message_ = "only window";
         return false;
     }
@@ -1264,15 +1306,6 @@ void EditorApplication::register_commands() {
                                                                .previous = location_previous})
                               .mode;
 
-    define("application.quit", [this](const CommandInvocation&) { request_quit(); });
-    define("application.force-quit", [this](const CommandInvocation&) { request_quit(true); });
-    define("window.split-below",
-           [this](const CommandInvocation&) { (void)split_window(WindowSplitAxis::Rows); });
-    define("window.split-right",
-           [this](const CommandInvocation&) { (void)split_window(WindowSplitAxis::Columns); });
-    define("window.delete", [this](const CommandInvocation&) { (void)delete_window(); });
-    define("window.delete-others", [this](const CommandInvocation&) { delete_other_windows(); });
-    define("window.other", [this](const CommandInvocation&) { (void)select_other_window(); });
     define("keyboard.quit", [this](const CommandInvocation&) {
         if (interaction_.cancel()) {
             message_ = "cancelled";
@@ -1358,7 +1391,6 @@ void EditorApplication::register_commands() {
             const InteractionState* state = interaction_.state();
             return state != nullptr && state->request.kind == InteractionKind::Picker;
         });
-    define("editor.redraw", [this](const CommandInvocation&) { reveal_caret_ = true; });
     define("editor.position", [this](const CommandInvocation&) {
         const DocumentSnapshot snapshot = session().snapshot();
         const Text& text = snapshot.content();

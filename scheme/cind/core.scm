@@ -100,6 +100,31 @@
         (command-error error)
         (command-completed))))
 
+(define (completed-or-error error)
+  (if error (command-error error) (command-completed)))
+
+(define (application-quit host force?)
+  (request-quit! host force?)
+  (command-completed))
+
+(define (window-split host context axis)
+  (completed-or-error (split-window! host (context-window context) axis)))
+
+(define (window-delete host context)
+  (completed-or-error (delete-window! host (context-window context))))
+
+(define (window-delete-others host context)
+  (delete-other-windows! host (context-window context))
+  (command-completed))
+
+(define (window-other host context)
+  (completed-or-error
+   (select-other-window! host (context-window context) 1)))
+
+(define (editor-redraw host)
+  (request-redraw! host)
+  (command-completed))
+
 (define (goto-line context invocation)
   (interaction 'text "Go to line: " "" "line-numbers" "" #t
                "cursor.goto-line.accept"))
@@ -239,6 +264,38 @@
         (list "buffer.force-kill"
               (lambda (context invocation)
                 (buffer-kill host context #t))
+              #f)
+        (list "application.quit"
+              (lambda (context invocation)
+                (application-quit host #f))
+              #f)
+        (list "application.force-quit"
+              (lambda (context invocation)
+                (application-quit host #t))
+              #f)
+        (list "window.split-below"
+              (lambda (context invocation)
+                (window-split host context 'rows))
+              #f)
+        (list "window.split-right"
+              (lambda (context invocation)
+                (window-split host context 'columns))
+              #f)
+        (list "window.delete"
+              (lambda (context invocation)
+                (window-delete host context))
+              #f)
+        (list "window.delete-others"
+              (lambda (context invocation)
+                (window-delete-others host context))
+              #f)
+        (list "window.other"
+              (lambda (context invocation)
+                (window-other host context))
+              #f)
+        (list "editor.redraw"
+              (lambda (context invocation)
+                (editor-redraw host))
               #f)
         (list "cursor.goto-line.accept"
               (lambda (context invocation)

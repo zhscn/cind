@@ -123,6 +123,20 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool kill_forced = false;
     bool buffer_killed = false;
     std::string kill_error;
+    bool quit_requested = false;
+    bool quit_forced = false;
+    WindowId split_target;
+    WindowSplitAxis split_axis = WindowSplitAxis::Rows;
+    bool window_split = false;
+    WindowId deleted_window;
+    bool window_deleted = false;
+    WindowId retained_window;
+    bool other_windows_deleted = false;
+    WindowId other_window_source;
+    int other_window_delta = 0;
+    bool other_window_selected = false;
+    bool redraw_requested = false;
+    std::string window_error;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -179,10 +193,49 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              kill_forced = force;
              buffer_killed = true;
              return {};
-         }});
+         },
+         .request_quit =
+             [&](bool force) {
+                 quit_requested = true;
+                 quit_forced = force;
+             },
+         .split_window = [&](WindowId target,
+                             WindowSplitAxis axis) -> std::expected<void, std::string> {
+             if (!window_error.empty()) {
+                 return std::unexpected(window_error);
+             }
+             split_target = target;
+             split_axis = axis;
+             window_split = true;
+             return {};
+         },
+         .delete_window = [&](WindowId target) -> std::expected<void, std::string> {
+             if (!window_error.empty()) {
+                 return std::unexpected(window_error);
+             }
+             deleted_window = target;
+             window_deleted = true;
+             return {};
+         },
+         .delete_other_windows =
+             [&](WindowId retained) {
+                 retained_window = retained;
+                 other_windows_deleted = true;
+             },
+         .select_other_window = [&](WindowId source,
+                                    int delta) -> std::expected<void, std::string> {
+             if (!window_error.empty()) {
+                 return std::unexpected(window_error);
+             }
+             other_window_source = source;
+             other_window_delta = delta;
+             other_window_selected = true;
+             return {};
+         },
+         .request_redraw = [&] { redraw_requested = true; }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 21);
+    CHECK(*installed == 29);
     const CommandId save = require_command(runtime, "file.save");
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -303,6 +356,62 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(refused_kill.error().message == "buffer has unsaved changes");
     kill_error.clear();
 
+    const CommandResult quit =
+        runtime.commands().invoke(require_command(runtime, "application.quit"), context);
+    REQUIRE(quit.has_value());
+    REQUIRE(quit_requested);
+    CHECK_FALSE(quit_forced);
+    quit_requested = false;
+    const CommandResult force_quit =
+        runtime.commands().invoke(require_command(runtime, "application.force-quit"), context);
+    REQUIRE(force_quit.has_value());
+    REQUIRE(quit_requested);
+    CHECK(quit_forced);
+
+    const CommandResult split_below =
+        runtime.commands().invoke(require_command(runtime, "window.split-below"), context);
+    REQUIRE(split_below.has_value());
+    REQUIRE(window_split);
+    CHECK(split_target == window);
+    CHECK(split_axis == WindowSplitAxis::Rows);
+    window_split = false;
+    const CommandResult split_right =
+        runtime.commands().invoke(require_command(runtime, "window.split-right"), context);
+    REQUIRE(split_right.has_value());
+    REQUIRE(window_split);
+    CHECK(split_axis == WindowSplitAxis::Columns);
+
+    const CommandResult delete_others =
+        runtime.commands().invoke(require_command(runtime, "window.delete-others"), context);
+    REQUIRE(delete_others.has_value());
+    REQUIRE(other_windows_deleted);
+    CHECK(retained_window == window);
+
+    const CommandResult other_window =
+        runtime.commands().invoke(require_command(runtime, "window.other"), context);
+    REQUIRE(other_window.has_value());
+    REQUIRE(other_window_selected);
+    CHECK(other_window_source == window);
+    CHECK(other_window_delta == 1);
+
+    const CommandResult redraw =
+        runtime.commands().invoke(require_command(runtime, "editor.redraw"), context);
+    REQUIRE(redraw.has_value());
+    CHECK(redraw_requested);
+
+    window_error = "cannot delete the only window";
+    const CommandResult refused_delete =
+        runtime.commands().invoke(require_command(runtime, "window.delete"), context);
+    REQUIRE_FALSE(refused_delete.has_value());
+    CHECK(refused_delete.error().message == "cannot delete the only window");
+    CHECK_FALSE(window_deleted);
+    window_error.clear();
+    const CommandResult deleted =
+        runtime.commands().invoke(require_command(runtime, "window.delete"), context);
+    REQUIRE(deleted.has_value());
+    REQUIRE(window_deleted);
+    CHECK(deleted_window == window);
+
     const CommandResult unknown_buffer = runtime.commands().invoke(
         require_command(runtime, "buffer.switch.accept"), context,
         CommandInvocation{.arguments = {std::string("missing")}, .repeat_count = std::nullopt});
@@ -385,6 +494,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 21);
+    CHECK(snapshot.scripted_commands == 29);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

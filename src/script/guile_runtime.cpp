@@ -66,6 +66,8 @@ bool scheme_boolean(SCM value) {
     return (scm_is_bool)(value) != 0;
 }
 
+bool symbol_is(SCM value, const char* expected);
+
 SCM entity_id(std::uint32_t slot, std::uint32_t generation) {
     SCM result = scm_c_make_vector(2, SCM_UNSPECIFIED);
     scm_c_vector_set_x(result, 0, scm_from_uint32(slot));
@@ -582,6 +584,139 @@ SCM kill_buffer(SCM host_object, SCM buffer_value, SCM force_value) {
     return SCM_UNSPECIFIED;
 }
 
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM request_quit(SCM host_object, SCM force_value) {
+    if (!scheme_boolean(force_value)) {
+        scm_wrong_type_arg_msg("request-quit!", 2, force_value, "boolean");
+    }
+    HostLease& host = require_host(host_object, "request-quit!");
+    if (!host.services.request_quit) {
+        scm_misc_error("request-quit!", "application-quit capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.request_quit(scheme_true(force_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("request-quit!", exception.what());
+    } catch (...) {
+        scm_misc_error("request-quit!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM split_window(SCM host_object, SCM window_value, SCM axis_value) {
+    HostLease& host = require_host(host_object, "split-window!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "split-window!", 2);
+    WindowSplitAxis axis;
+    if (symbol_is(axis_value, "rows")) {
+        axis = WindowSplitAxis::Rows;
+    } else if (symbol_is(axis_value, "columns")) {
+        axis = WindowSplitAxis::Columns;
+    } else {
+        scm_wrong_type_arg_msg("split-window!", 3, axis_value, "'rows or 'columns");
+    }
+    if (!host.services.split_window) {
+        scm_misc_error("split-window!", "window-split capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> split = host.services.split_window(window, axis);
+        return split ? SCM_BOOL_F : scm_from_utf8_string(split.error().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("split-window!", exception.what());
+    } catch (...) {
+        scm_misc_error("split-window!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM delete_window(SCM host_object, SCM window_value) {
+    HostLease& host = require_host(host_object, "delete-window!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "delete-window!", 2);
+    if (!host.services.delete_window) {
+        scm_misc_error("delete-window!", "window-delete capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> removed = host.services.delete_window(window);
+        return removed ? SCM_BOOL_F : scm_from_utf8_string(removed.error().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("delete-window!", exception.what());
+    } catch (...) {
+        scm_misc_error("delete-window!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM delete_other_windows(SCM host_object, SCM window_value) {
+    HostLease& host = require_host(host_object, "delete-other-windows!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "delete-other-windows!", 2);
+    if (!host.services.delete_other_windows) {
+        scm_misc_error("delete-other-windows!", "window-retain capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.delete_other_windows(window);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("delete-other-windows!", exception.what());
+    } catch (...) {
+        scm_misc_error("delete-other-windows!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM select_other_window(SCM host_object, SCM window_value, SCM delta_value) {
+    if (scm_is_signed_integer(delta_value, std::numeric_limits<int>::min(),
+                              std::numeric_limits<int>::max()) == 0) {
+        scm_wrong_type_arg_msg("select-other-window!", 3, delta_value, "integer");
+    }
+    HostLease& host = require_host(host_object, "select-other-window!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "select-other-window!", 2);
+    if (!host.services.select_other_window) {
+        scm_misc_error("select-other-window!", "window-focus capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> selected =
+            host.services.select_other_window(window, scm_to_int(delta_value));
+        return selected ? SCM_BOOL_F : scm_from_utf8_string(selected.error().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("select-other-window!", exception.what());
+    } catch (...) {
+        scm_misc_error("select-other-window!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM request_redraw(SCM host_object) {
+    HostLease& host = require_host(host_object, "request-redraw!");
+    if (!host.services.request_redraw) {
+        scm_misc_error("request-redraw!", "redraw capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.request_redraw();
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("request-redraw!", exception.what());
+    } catch (...) {
+        scm_misc_error("request-redraw!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -616,11 +751,22 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffers));
     (void)scm_c_define_gsubr("kill-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(kill_buffer));
+    (void)scm_c_define_gsubr("request-quit!", 2, 0, 0, reinterpret_cast<scm_t_subr>(request_quit));
+    (void)scm_c_define_gsubr("split-window!", 3, 0, 0, reinterpret_cast<scm_t_subr>(split_window));
+    (void)scm_c_define_gsubr("delete-window!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(delete_window));
+    (void)scm_c_define_gsubr("delete-other-windows!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(delete_other_windows));
+    (void)scm_c_define_gsubr("select-other-window!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(select_other_window));
+    (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "buffer-resource",
                  "path-parent", "directory-path?", "path-as-directory", "display-buffer!",
                  "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
                  "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-                 "kill-buffer!", nullptr);
+                 "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
+                 "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {

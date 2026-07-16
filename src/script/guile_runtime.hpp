@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ids.hpp"
+#include "editor/window.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,12 @@ struct GuileHostServices {
     std::function<void(BufferId)> save_buffer;
     std::function<std::vector<BufferId>()> open_buffers;
     std::function<std::expected<void, std::string>(BufferId, bool)> kill_buffer;
+    std::function<void(bool)> request_quit;
+    std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
+    std::function<std::expected<void, std::string>(WindowId)> delete_window;
+    std::function<void(WindowId)> delete_other_windows;
+    std::function<std::expected<void, std::string>(WindowId, int)> select_other_window;
+    std::function<void()> request_redraw;
 };
 
 struct GuileRuntimeSnapshot {

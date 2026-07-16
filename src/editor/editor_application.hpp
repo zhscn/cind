@@ -227,6 +227,10 @@ private:
     bool show_buffer(WindowId window, BufferId buffer);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
+    bool split_window(WindowId target, WindowSplitAxis axis);
+    bool delete_window(WindowId target);
+    void delete_other_windows(WindowId retained);
+    bool select_other_window(WindowId from, int delta);
     void destroy_window(WindowId window);
     std::expected<void, std::string> start_project_search(ProjectId project, std::string query,
                                                           WindowId target_window);
