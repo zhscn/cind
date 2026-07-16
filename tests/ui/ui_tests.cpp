@@ -101,6 +101,8 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .revision = 0,
                                  .style_origin = {},
                                  .last_key = "C-x",
+                                 .cursor_shape = CursorShape::Block,
+                                 .input_state_indicator = "N",
                                  .pending_key = "C-x",
                                  .echo = "hello",
                                  .echo_cursor_column = std::nullopt,
@@ -129,9 +131,12 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     REQUIRE(status->status() != nullptr);
     REQUIRE(echo->echo() != nullptr);
     REQUIRE(popup->popup() != nullptr);
+    CHECK(first.cursor_shape == CursorShape::Block);
+    CHECK(status->status()->input_state == "N");
     CHECK(render_ansi(first).find("sample.cc") != std::string::npos);
     CHECK(render_ansi(first).find("hello") != std::string::npos);
     CHECK(render_ansi(first).find("command") != std::string::npos);
+    CHECK(render_ansi(first).find("\x1b[2 q") != std::string::npos);
 }
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
@@ -177,6 +182,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .revision = 3,
                                               .style_origin = ".clang-format",
                                               .last_key = {},
+                                              .input_state_indicator = {},
                                               .pending_key = {},
                                               .echo = {},
                                               .echo_cursor_column = std::nullopt,
@@ -433,7 +439,7 @@ TEST_CASE("ansi renderer: regions paint at absolute positions") {
     CHECK(frame.find("\x1b[2;5H\x1b[90m~") != std::string::npos);     // past-EOF marker
     CHECK(frame.find("\x1b[4;1H\x1b[7m f.cc ") != std::string::npos); // status row
     CHECK(frame.find("\x1b[5;1Hhello") != std::string::npos);         // echo row
-    CHECK(frame.ends_with("\x1b[1;5H\x1b[?25h"));
+    CHECK(frame.ends_with("\x1b[1;5H\x1b[6 q\x1b[?25h"));
 
     // Selected primitives add reverse video.
     Scene sel = scene;

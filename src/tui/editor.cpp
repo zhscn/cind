@@ -471,6 +471,7 @@ private:
                 popup_items.push_back({.label = hint.key, .detail = detail});
             }
         }
+        const InputStateRegistry::Definition& active_input_state = application_.input_state();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
                 application_.window_layout().partition(size.rows - 1, size.cols);
@@ -502,6 +503,8 @@ private:
                 const ui::LineSigns pane_signs =
                     ui::line_signs(pane_session.buffer().save_point(), pane_snapshot.content());
                 const bool active = placement.window == application_.window_id();
+                const InputStateRegistry::Definition& pane_input_state =
+                    application_.input_state(placement.window);
                 ui::Scene pane_scene = ui::compose_editor_scene(
                     {.text = pane_snapshot.content(),
                      .tokens = application_.syntax_tokens(placement.window),
@@ -517,6 +520,8 @@ private:
                      .style_origin = application_.style_origin(placement.window),
                      .last_key =
                          active ? std::string_view(application_.last_key()) : std::string_view(),
+                     .cursor_shape = pane_input_state.cursor,
+                     .input_state_indicator = pane_input_state.indicator,
                      .pending_key = {},
                      .echo = {},
                      .echo_cursor_column = std::nullopt,
@@ -580,6 +585,8 @@ private:
                                           .revision = snap.revision(),
                                           .style_origin = application_.style_origin(),
                                           .last_key = application_.last_key(),
+                                          .cursor_shape = active_input_state.cursor,
+                                          .input_state_indicator = active_input_state.indicator,
                                           .pending_key = {},
                                           .echo = echo_text,
                                           .echo_cursor_column = echo_cursor,
@@ -614,29 +621,32 @@ private:
         state.top_line_offset = view.viewport.top_line_offset;
         state.left_column = view.viewport.left_column;
         popup_viewport_ = view.popup;
-        ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
-                                                    .tokens = tokens(),
-                                                    .signs = signs(),
-                                                    .caret = session().caret(),
-                                                    .selection = selection(),
-                                                    .rows = size.rows,
-                                                    .cols = size.cols,
-                                                    .tab_width = tab_width(),
-                                                    .path = path(),
-                                                    .dirty = dirty(),
-                                                    .revision = snap.revision(),
-                                                    .style_origin = application_.style_origin(),
-                                                    .last_key = application_.last_key(),
-                                                    .pending_key = {},
-                                                    .echo = echo_text,
-                                                    .echo_cursor_column = echo_cursor,
-                                                    .echo_cursor_byte = echo_cursor_byte,
-                                                    .popup_title = popup_title,
-                                                    .popup_items = popup_items,
-                                                    .popup_selection = popup_selection,
-                                                    .popup_input = popup_input,
-                                                    .popup_input_cursor = popup_input_cursor},
-                                                   view);
+        ui::Scene scene =
+            ui::compose_editor_scene({.text = snap.content(),
+                                      .tokens = tokens(),
+                                      .signs = signs(),
+                                      .caret = session().caret(),
+                                      .selection = selection(),
+                                      .rows = size.rows,
+                                      .cols = size.cols,
+                                      .tab_width = tab_width(),
+                                      .path = path(),
+                                      .dirty = dirty(),
+                                      .revision = snap.revision(),
+                                      .style_origin = application_.style_origin(),
+                                      .last_key = application_.last_key(),
+                                      .cursor_shape = active_input_state.cursor,
+                                      .input_state_indicator = active_input_state.indicator,
+                                      .pending_key = {},
+                                      .echo = echo_text,
+                                      .echo_cursor_column = echo_cursor,
+                                      .echo_cursor_byte = echo_cursor_byte,
+                                      .popup_title = popup_title,
+                                      .popup_items = popup_items,
+                                      .popup_selection = popup_selection,
+                                      .popup_input = popup_input,
+                                      .popup_input_cursor = popup_input_cursor},
+                                     view);
         return scene;
     }
 

@@ -582,13 +582,13 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             scm_wrong_type_arg_msg("define-input-state!", 4, text_input_value,
                                    "'accept or 'ignore");
         }
-        InputCursorShape cursor;
+        CursorShape cursor;
         if (symbol_is(cursor_value, "beam")) {
-            cursor = InputCursorShape::Beam;
+            cursor = CursorShape::Beam;
         } else if (symbol_is(cursor_value, "block")) {
-            cursor = InputCursorShape::Block;
+            cursor = CursorShape::Block;
         } else if (symbol_is(cursor_value, "underline")) {
-            cursor = InputCursorShape::Underline;
+            cursor = CursorShape::Underline;
         } else {
             scm_wrong_type_arg_msg("define-input-state!", 5, cursor_value,
                                    "'beam, 'block, or 'underline");
@@ -2687,7 +2687,7 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "core"}) {
+        for (std::string_view module : {"command", "emacs", "toy-modal", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -2845,7 +2845,7 @@ public:
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
-                .modules = {"cind command", "cind core"},
+                .modules = {"cind command", "cind emacs", "cind toy-modal", "cind core"},
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,

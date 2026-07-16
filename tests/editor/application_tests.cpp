@@ -219,7 +219,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
         return runtime.input_states().define({.name = std::move(name),
                                               .keymaps = {},
                                               .text_input = TextInputPolicy::Ignore,
-                                              .cursor = InputCursorShape::Block,
+                                              .cursor = CursorShape::Block,
                                               .indicator = {},
                                               .handler = {}});
     };
@@ -698,21 +698,21 @@ TEST_CASE("input states are registered globally and stacked per view") {
     const InputStateId emacs = runtime.input_states().define({.name = "emacs",
                                                               .keymaps = {},
                                                               .text_input = TextInputPolicy::Accept,
-                                                              .cursor = InputCursorShape::Beam,
+                                                              .cursor = CursorShape::Beam,
                                                               .indicator = "E",
                                                               .handler = {}});
     const InputStateId normal =
         runtime.input_states().define({.name = "normal",
                                        .keymaps = {normal_map},
                                        .text_input = TextInputPolicy::Ignore,
-                                       .cursor = InputCursorShape::Block,
+                                       .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {}});
     const InputStateId transient =
         runtime.input_states().define({.name = "transient",
                                        .keymaps = {transient_map},
                                        .text_input = TextInputPolicy::Ignore,
-                                       .cursor = InputCursorShape::Underline,
+                                       .cursor = CursorShape::Underline,
                                        .indicator = "K",
                                        .handler = {}});
 

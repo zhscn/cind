@@ -166,6 +166,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         }
     }
     const std::string pending_key = application_.command_loop().pending_sequence_text();
+    const InputStateRegistry::Definition& active_input_state = application_.input_state();
     const ViewportState& state = session.view().viewport();
     const ui::EditorSceneViewState view{
         .viewport = {.top_line = state.top_line,
@@ -187,6 +188,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .revision = snapshot.revision(),
                                             .style_origin = application_.style_origin(),
                                             .last_key = application_.last_key(),
+                                            .cursor_shape = active_input_state.cursor,
+                                            .input_state_indicator = active_input_state.indicator,
                                             .pending_key = pending_key,
                                             .echo = echo,
                                             .echo_cursor_column = echo_cursor,
@@ -214,6 +217,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             .popup = {},
         };
         const bool active = placement.window == application_.window_id();
+        const InputStateRegistry::Definition& pane_input_state =
+            application_.input_state(placement.window);
         ui::Scene pane_scene = ui::compose_editor_scene(
             {.text = pane_snapshot.content(),
              .tokens = application_.syntax_tokens(placement.window),
@@ -229,6 +234,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
              .revision = pane_snapshot.revision(),
              .style_origin = application_.style_origin(placement.window),
              .last_key = active ? std::string_view(application_.last_key()) : std::string_view(),
+             .cursor_shape = pane_input_state.cursor,
+             .input_state_indicator = pane_input_state.indicator,
              .pending_key = {},
              .echo = {},
              .echo_cursor_column = std::nullopt,
@@ -464,6 +471,7 @@ EditorStateSnapshot EditorModel::inspect() {
                                .location_count = navigation.location_count};
     }
     const WindowId active_window = application_.window_id();
+    const InputStateRegistry::Definition& input_state = application_.input_state();
     return {.path = application_.path(),
             .revision = snapshot.revision(),
             .document_bytes = text.size_bytes(),
@@ -484,6 +492,9 @@ EditorStateSnapshot EditorModel::inspect() {
             .active_window_slot = active_window.slot,
             .active_window_generation = active_window.generation,
             .input_focus = std::string(application_.input_focus()),
+            .input_state = input_state.name,
+            .input_cursor_shape = std::string(cursor_shape_name(input_state.cursor)),
+            .input_state_indicator = input_state.indicator,
             .text_input_policy =
                 application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
             .command_loop = std::move(command_state),

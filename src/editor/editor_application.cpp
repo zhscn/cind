@@ -400,9 +400,20 @@ TextInputPolicy EditorApplication::text_input_policy() const {
     if (interaction_.active()) {
         return TextInputPolicy::Accept;
     }
-    const View& active_view = runtime_.views().get(view_id());
-    const std::optional<InputStateId> state = active_view.input_states().top();
-    return state ? runtime_.input_states().definition(*state).text_input : TextInputPolicy::Accept;
+    return input_state().text_input;
+}
+
+const InputStateRegistry::Definition& EditorApplication::input_state() const {
+    return input_state(active_window_);
+}
+
+const InputStateRegistry::Definition& EditorApplication::input_state(WindowId window) const {
+    const std::optional<InputStateId> state =
+        runtime_.views().get(view_id(window)).input_states().top();
+    if (!state) {
+        throw std::logic_error("view has no input state");
+    }
+    return runtime_.input_states().definition(*state);
 }
 
 void EditorApplication::insert_text(std::string_view text) {

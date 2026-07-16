@@ -127,17 +127,21 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
     CHECK(state.scripting.engine == "guile");
-    CHECK(state.scripting.modules == std::vector<std::string>{"cind command", "cind core"});
+    CHECK(state.scripting.modules ==
+          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 37);
+    CHECK(state.scripting.scripted_commands == 39);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
-    CHECK(state.scripting.scripted_input_states == 1);
+    CHECK(state.scripting.scripted_input_states == 2);
     CHECK(state.scripting.mode_revision == 1);
     CHECK(state.scripting.scripted_modes == 3);
     CHECK(state.text_input_policy == "accept");
+    CHECK(state.input_state == "emacs");
+    CHECK(state.input_cursor_shape == "beam");
+    CHECK(state.input_state_indicator.empty());
     REQUIRE(state.buffers.size() == 1);
     CHECK(state.buffers.front().interaction_class == "editing");
     CHECK(state.buffers.front().initial_input_state == "emacs");
@@ -149,6 +153,38 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     const ui::Scene revealed = compose_frame(model, 8, 80);
     CHECK(model.inspect().caret_position.line == 1);
     CHECK(revealed.cursor_visible);
+}
+
+TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy") {
+    EditorModel model("sample.cc", "abc", CppIndentStyle{}, "test", 1);
+    ui::Scene scene = compose_frame(model, 8, 80);
+    CHECK(scene.cursor_shape == CursorShape::Beam);
+
+    CHECK(model.handle_key(KeyStroke::character_key(U'c', KeyModifier::Control), 6));
+    CHECK(model.handle_key(KeyStroke::character_key(U'n'), 6));
+    EditorStateSnapshot state = model.inspect();
+    CHECK(state.input_state == "toy-normal");
+    CHECK(state.input_cursor_shape == "block");
+    CHECK(state.input_state_indicator == "N");
+    CHECK(state.text_input_policy == "ignore");
+
+    scene = compose_frame(model, 8, 80);
+    CHECK(scene.cursor_shape == CursorShape::Block);
+    const ui::Region* status = scene.find(ui::RegionRole::StatusBar);
+    REQUIRE(status != nullptr);
+    REQUIRE(status->status() != nullptr);
+    CHECK(status->status()->input_state == "N");
+
+    model.insert_text("z");
+    CHECK(model.inspect().document_bytes == 3);
+    CHECK(model.handle_key(KeyStroke::character_key(U'l'), 6));
+    CHECK(model.inspect().caret.value == 1);
+    CHECK(model.handle_key(KeyStroke::character_key(U'i'), 6));
+    state = model.inspect();
+    CHECK(state.input_state == "emacs");
+    CHECK(state.text_input_policy == "accept");
+    model.insert_text("z");
+    CHECK(model.inspect().document_bytes == 4);
 }
 
 TEST_CASE("caret reveal moves a fractional row to the top edge") {

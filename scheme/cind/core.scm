@@ -1,7 +1,9 @@
 (define-module (cind core)
   #:use-module (ice-9 optargs)
   #:use-module (cind command)
+  #:use-module (cind emacs)
   #:use-module (cind host)
+  #:use-module (cind toy-modal)
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
@@ -545,7 +547,8 @@
                 (help-keys-accept host context invocation))
               #f)
         (list "help.keys" help-keys #f))
-   (make-region-commands host)))
+   (make-region-commands host)
+   (toy-modal-command-definitions host)))
 
 (define (install-core-commands! host)
   (let ((commands (core-commands host)))
@@ -579,11 +582,8 @@
     (length providers)))
 
 (define (install-input-states! host)
-  (define-input-state! host 'emacs '#() 'accept 'beam "" #f)
-  (set-interaction-class-states!
-   host '((editing . emacs)
-          (interface . emacs)))
-  1)
+  (+ (install-emacs-input-state! host)
+     (install-toy-modal-input-state! host)))
 
 (define* (define-major-mode! host name
                             #:key
@@ -667,6 +667,7 @@
     ("C-M-u" . "cursor.up-list")
     ("C-c e" . "selection.expand")
     ("C-c s" . "selection.contract")
+    ("C-c n" . "toy-modal.enter-normal")
     ("M-g g" . "cursor.goto-line")
     ("M-g n" . "location.next-error")
     ("M-g p" . "location.previous-error")
@@ -712,4 +713,5 @@
   (+ 1
      (bind-all! host 'editor.control-x control-x-bindings)
      (bind-all! host 'editor.default editor-bindings)
-     (bind-all! host 'application.global application-bindings)))
+     (bind-all! host 'application.global application-bindings)
+     (install-toy-modal-keymap! host)))

@@ -134,6 +134,39 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
     CHECK(hit.column == scene.cursor_col - 1);
 }
 
+TEST_CASE("Skia presenter derives beam block and underline geometry from the Scene") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    Scene scene;
+    scene.rows = 2;
+    scene.cols = 20;
+    Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
+    body.primitives().push_back({0, 0, "abc", StyleClass::Text, false});
+    scene.regions.push_back(std::move(body));
+    scene.cursor_row = 1;
+    scene.cursor_col = 2;
+    const float width = static_cast<float>(presenter.cell_width() * scene.cols);
+    const float height = static_cast<float>(presenter.cell_height() * scene.rows);
+
+    scene.cursor_shape = cind::CursorShape::Beam;
+    const SkiaLogicalRect beam = presenter.cursor_rect(scene, width, height).value();
+    CHECK(beam.width == doctest::Approx(2.0F));
+    CHECK(beam.height == doctest::Approx(presenter.cell_height()));
+
+    scene.cursor_shape = cind::CursorShape::Block;
+    const SkiaLogicalRect block = presenter.cursor_rect(scene, width, height).value();
+    CHECK(block.x == doctest::Approx(beam.x));
+    CHECK(block.y == doctest::Approx(beam.y));
+    CHECK(block.width > beam.width);
+    CHECK(block.height == doctest::Approx(beam.height));
+
+    scene.cursor_shape = cind::CursorShape::Underline;
+    const SkiaLogicalRect underline = presenter.cursor_rect(scene, width, height).value();
+    CHECK(underline.x == doctest::Approx(beam.x));
+    CHECK(underline.width == doctest::Approx(block.width));
+    CHECK(underline.height == doctest::Approx(2.0F));
+    CHECK(underline.y + underline.height == doctest::Approx(beam.y + beam.height));
+}
+
 TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
     SkiaTheme theme;
     SkiaPresenter presenter("monospace", 16.0F, theme);
@@ -1008,6 +1041,7 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
             .revision = 7,
             .style_origin = ".clang-format",
             .key = std::move(key),
+            .input_state = {},
         });
         Region echo{
             RegionRole::EchoArea, {3, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
@@ -1090,7 +1124,8 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
                               .line_count = 1,
                               .revision = 0,
                               .style_origin = {},
-                              .key = {}});
+                              .key = {},
+                              .input_state = {}});
     Region inactive_status = pane_region(RegionRole::StatusBar, {2, 11, 1, 10}, "inactive/modeline",
                                          "window:1:1", false);
     inactive_status.set_status({.path = "idle.cc",
@@ -1100,7 +1135,8 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
                                 .line_count = 1,
                                 .revision = 0,
                                 .style_origin = {},
-                                .key = {}});
+                                .key = {},
+                                .input_state = {}});
     Region echo{RegionRole::EchoArea, {3, 0, 1, scene.cols},  {},
                 SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
     echo.set_echo({.text = "window split right", .cursor_byte = std::nullopt, .key = {}});
@@ -1180,7 +1216,8 @@ TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
                            .line_count = 1,
                            .revision = 0,
                            .style_origin = {},
-                           .key = {}});
+                           .key = {},
+                           .input_state = {}});
         return region;
     };
     Region active_status = status_region({2, 0, 1, 10}, "active/modeline", "window:0:1", true);

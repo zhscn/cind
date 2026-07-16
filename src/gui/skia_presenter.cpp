@@ -50,6 +50,21 @@ SkColor color(std::uint32_t argb) {
     return static_cast<SkColor>(argb);
 }
 
+SkRect cursor_geometry(CursorShape shape, const SkRect& cell) {
+    constexpr float stroke = 2.0F;
+    const float width = std::max(stroke, cell.width());
+    const float height = std::max(stroke, cell.height());
+    switch (shape) {
+    case CursorShape::Beam:
+        return SkRect::MakeXYWH(cell.x(), cell.y(), stroke, height);
+    case CursorShape::Block:
+        return SkRect::MakeXYWH(cell.x(), cell.y(), width, height);
+    case CursorShape::Underline:
+        return SkRect::MakeXYWH(cell.x(), cell.y() + height - stroke, width, stroke);
+    }
+    return SkRect::MakeXYWH(cell.x(), cell.y(), stroke, height);
+}
+
 // Nano's four-color syntax discipline: keywords are salient, literals pop
 // out, comments fade, everything else is plain text ink.
 SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
@@ -763,8 +778,11 @@ struct SkiaPresenter::Impl {
             layout.cursor_column = local_column;
             layout.cursor_advance = cursor_x - layout.bounds.left();
             layout.grid_cursor_x = static_cast<float>(cursor_column * cell_width);
-            layout.cursor =
-                SkRect::MakeXYWH(cursor_x, line.top, 2.0F, static_cast<float>(cell_height));
+            const float next_x = document_x_at_column(layout, line, local_column + 1);
+            const float cursor_cell_width = std::max(layout.space_advance, next_x - cursor_x);
+            layout.cursor = cursor_geometry(scene.cursor_shape,
+                                            SkRect::MakeXYWH(cursor_x, line.top, cursor_cell_width,
+                                                             static_cast<float>(cell_height)));
         }
         return layout;
     }
@@ -1309,6 +1327,11 @@ struct SkiaPresenter::Impl {
                         .color = theme.faint,
                         .trailing_gap = footer_padding_x});
         }
+        if (!status.input_state.empty()) {
+            draw_right({.text = status.input_state,
+                        .color = theme.salient,
+                        .trailing_gap = footer_padding_x});
+        }
         draw_right({.text = status_percent(status),
                     .color = theme.faint,
                     .trailing_gap = footer_padding_x});
@@ -1786,8 +1809,14 @@ struct SkiaPresenter::Impl {
                 cursor_x = document_cursor->left();
                 cursor_y = document_cursor->top() + grid_offset_y;
             }
-            SkScalar cursor_width = 2.0F;
-            SkScalar cursor_height = static_cast<SkScalar>(cell_height);
+            const SkRect target_cursor =
+                cursor_geometry(scene.cursor_shape,
+                                SkRect::MakeXYWH(cursor_x, cursor_y, static_cast<float>(cell_width),
+                                                 static_cast<float>(cell_height)));
+            cursor_x = target_cursor.left();
+            cursor_y = target_cursor.top();
+            SkScalar cursor_width = target_cursor.width();
+            SkScalar cursor_height = target_cursor.height();
             if (view != nullptr && view->cursor_rect) {
                 cursor_x = view->cursor_rect->x;
                 cursor_y = view->cursor_rect->y;
@@ -1801,7 +1830,9 @@ struct SkiaPresenter::Impl {
             }
             SkPaint fill;
             fill.setAntiAlias(false);
-            fill.setColor(color(theme.cursor));
+            fill.setColor(scene.cursor_shape == CursorShape::Block && !cursor_in_footer
+                              ? SkColorSetA(color(theme.cursor), 0xB0)
+                              : color(theme.cursor));
             canvas.save();
             if (!cursor_in_footer) {
                 canvas.clipRect(SkRect::MakeLTRB(0.0F, 0.0F, viewport_width,
@@ -2072,12 +2103,9 @@ SkiaViewPresentation SkiaPresenter::view_presentation(const SkiaFrameLayout& lay
             x += footer_padding_x;
         }
     }
-    result.cursor_rect = SkiaLogicalRect{
-        .x = x,
-        .y = y,
-        .width = 2.0F,
-        .height = static_cast<float>(impl_->cell_height),
-    };
+    result.cursor_rect = logical_rect(cursor_geometry(
+        scene.cursor_shape, SkRect::MakeXYWH(x, y, static_cast<float>(impl_->cell_width),
+                                             static_cast<float>(impl_->cell_height))));
     return result;
 }
 

@@ -144,6 +144,9 @@ struct EditorStateSnapshot {
     std::uint32_t active_window_slot = 0;
     std::uint32_t active_window_generation = 0;
     std::string input_focus;
+    std::string input_state;
+    std::string input_cursor_shape;
+    std::string input_state_indicator;
     std::string text_input_policy;
     CommandLoopStateSnapshot command_loop;
     ScriptingStateSnapshot scripting;

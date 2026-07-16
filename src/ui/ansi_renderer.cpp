@@ -46,6 +46,18 @@ std::string_view sgr_of(StyleClass style) {
     return "";
 }
 
+std::string_view cursor_sgr(CursorShape shape) {
+    switch (shape) {
+    case CursorShape::Beam:
+        return "\x1b[6 q";
+    case CursorShape::Block:
+        return "\x1b[2 q";
+    case CursorShape::Underline:
+        return "\x1b[4 q";
+    }
+    return "\x1b[6 q";
+}
+
 } // namespace
 
 std::string render_ansi(const Scene& scene) {
@@ -84,8 +96,12 @@ std::string render_ansi(const Scene& scene) {
                 std::string left = std::format(
                     " {}{}  {}:{}  rev {}  style {} ", status->path, status->dirty ? " [+]" : "",
                     status->line, status->column, status->revision, status->style_origin);
-                std::string key =
-                    status->key.empty() ? std::string() : std::format("key: {} ", status->key);
+                std::string key = status->input_state.empty()
+                                      ? std::string()
+                                      : std::format("[{}] ", status->input_state);
+                if (!status->key.empty()) {
+                    key += std::format("key: {} ", status->key);
+                }
                 key = std::string(clip_to_display_width(key, region.rect.cols));
                 const int key_width = display_width(key);
                 left = std::string(clip_to_display_width(left, region.rect.cols - key_width));
@@ -135,7 +151,8 @@ std::string render_ansi(const Scene& scene) {
     }
 
     if (scene.cursor_visible) {
-        out += std::format("\x1b[{};{}H\x1b[?25h", scene.cursor_row, scene.cursor_col);
+        out += std::format("\x1b[{};{}H{}\x1b[?25h", scene.cursor_row, scene.cursor_col,
+                           cursor_sgr(scene.cursor_shape));
     }
     return out;
 }

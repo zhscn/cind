@@ -99,6 +99,11 @@ interaction text map. Window, View, state, Buffer, and mode maps belonging to th
 are not active while the interaction owns focus, and document input-state handlers are bypassed, so
 an unbound editing key cannot mutate the document behind a popup.
 
+The focused document state also supplies its cursor shape and modeline indicator. These presentation
+properties travel through the shared Scene and are rendered by both terminal and graphical
+frontends. A popup or echo-area interaction owns a beam cursor independently of the obscured
+document state.
+
 Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
 first layer that recognizes that complete sequence decides whether it is a command or a prefix. A
 sparse prefix in a high-priority map therefore contributes its own continuations without hiding
@@ -125,10 +130,10 @@ The default keymap follows Emacs conventions:
 - `M-g n`, `M-g p`, and `` C-x ` `` navigate the current location list across source buffers;
 - `C-c e` and `C-c s` expand and contract the structural selection.
 
-The bundled Guile module `(cind core)` owns these default binding tables. Its installer binds only
-commands present in the application composition, so optional capabilities can join the shared TUI
-and GUI keymap without duplicating policy in C++. The keymap registry and precedence rules remain
-C++ mechanisms.
+The bundled Guile module `(cind core)` owns the default binding tables, while `(cind emacs)` owns
+the corresponding input strategy. The installer binds only commands present in the application
+composition, so optional capabilities can join the shared TUI and GUI keymap without duplicating
+policy in C++. The keymap registry and precedence rules remain C++ mechanisms.
 
 ## Command loop and prefix help
 
@@ -190,12 +195,14 @@ module loading, error containment, and the development-service boundary.
 
 ## Inspection
 
-The GUI inspector exposes `editor.command_loop`, `editor.scripting`, `editor.interaction`, `editor.buffers`,
-`editor.windows`, `editor.location_navigation`, and `editor.focus`. Command-loop state includes
+The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.scripting`,
+`editor.interaction`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
+`editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
 keymap, repeat count, and last command. Interaction state includes prompt kind, input caret,
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
-lifecycle data; Window state identifies each Window's bound View and Buffer.
+lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
+reports the active state name, text-input policy, cursor shape, and indicator.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible
 item window, global item count and selection alongside its cell geometry, surface, and overlay
 anchor. Each frontend projects this semantic content into its native layout.

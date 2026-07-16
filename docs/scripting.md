@@ -25,11 +25,11 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API, and `(cind core)` defines the built-in policy. Both modules
-are loaded before application keymaps are configured. Calls from C++ enter Guile through a
-condition boundary; a Scheme condition becomes a C++ error value and is retained in the scripting
-inspection snapshot. C++ exceptions raised by a host primitive are translated into Scheme
-conditions.
+defines the public command value API, `(cind emacs)` and `(cind toy-modal)` define input strategies,
+and `(cind core)` composes the built-in editor policy. These modules are loaded before application
+keymaps are configured. Calls from C++ enter Guile through a condition boundary; a Scheme condition
+becomes a C++ error value and is retained in the scripting inspection snapshot. C++ exceptions
+raised by a host primitive are translated into Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 provider, input-state, and mode counts, command/provider/keymap/input-state/mode installation
@@ -144,7 +144,9 @@ The state mutation procedures address a generational View ID. Base replacement i
 changes the durable state. Push adds a transient state, pop removes one transient state, and reset
 removes all transients while preserving the base. `view-input-states` returns the stack from durable
 state to top as a vector of names. Every application View is initialized with the `emacs` state
-defined by `(cind core)`; its empty state keymap list preserves the default Emacs keymap policy.
+defined by `(cind emacs)`; its empty state keymap list preserves the default Emacs keymap policy.
+The focused document state's cursor shape and indicator flow through the frontend-independent Scene.
+Interactions temporarily present a beam cursor because their text input owns focus.
 
 `observe-input-state-changes!` registers an editor-thread procedure for every base, push, and pop
 transition. It receives `#(kind view-id from-state-or-#f to-state-or-#f)`. Observer conditions are
@@ -264,6 +266,12 @@ named maps and populates them after built-in commands exist. The `C-x` family is
 so its identity and label are available to completion and inspection UI. Interaction-local editing
 and the always-active system escape map are bootstrap mechanisms with their own lifecycle and
 precedence contracts.
+
+`(cind toy-modal)` is a small strategy that exercises the same public mechanisms as an extension.
+`C-c n` selects its `toy-normal` base state, whose `toy-modal.normal` map provides `h`, `j`, `k`,
+`l`, `0`, `$`, and `x`, ignores direct text input, presents a block cursor, and displays `N` in the
+modeline. `i` restores the `emacs` base state. Strategy commands address the invoking View rather
+than changing application-global input policy.
 
 The same module declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
 programming buffers have the `editing` interaction class; special buffers have `interface`.

@@ -186,6 +186,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     append_integer(signature, status->revision);
                     append_text(signature, status->style_origin);
                     append_text(signature, status->key);
+                    append_text(signature, status->input_state);
                 } else if (const Region::EchoContent* echo = region.echo()) {
                     signature.push_back('\x1d');
                     append_text(signature, echo->text);
@@ -301,7 +302,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
             damage.full_repaint = true;
         } else {
             damage.cell_rects = coalesce_cells(dirty, scene);
-            if (!same_point(cursor_, next_cursor)) {
+            if (!same_point(cursor_, next_cursor) || cursor_shape_ != scene.cursor_shape) {
                 append_cursor_cell(damage.cursor_cells, cursor_);
                 append_cursor_cell(damage.cursor_cells, next_cursor);
             }
@@ -314,6 +315,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     initialized_ = true;
     cells_ = std::move(next_cells);
     cursor_ = next_cursor;
+    cursor_shape_ = scene.cursor_shape;
     overlay_rects_ = next_overlay_rects;
     footer_rects_ = next_footer_rects;
     return damage;
@@ -326,6 +328,7 @@ void SceneDamageTracker::reset() {
     initialized_ = false;
     cells_.clear();
     cursor_.reset();
+    cursor_shape_ = CursorShape::Beam;
     overlay_rects_.clear();
     footer_rects_.clear();
 }

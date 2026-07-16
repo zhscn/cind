@@ -2,6 +2,7 @@
 
 #include "editor/ids.hpp"
 #include "editor/keymap.hpp"
+#include "presentation/cursor_shape.hpp"
 
 #include <compare>
 #include <cstdint>
@@ -28,12 +29,6 @@ struct InputStateId {
 enum class TextInputPolicy : std::uint8_t {
     Accept,
     Ignore,
-};
-
-enum class InputCursorShape : std::uint8_t {
-    Beam,
-    Block,
-    Underline,
 };
 
 enum class InputStateChangeKind : std::uint8_t {
@@ -71,7 +66,7 @@ public:
         std::string name;
         std::vector<KeymapId> keymaps;
         TextInputPolicy text_input = TextInputPolicy::Accept;
-        InputCursorShape cursor = InputCursorShape::Beam;
+        CursorShape cursor = CursorShape::Beam;
         std::string indicator;
         InputStateHandler handler;
     };

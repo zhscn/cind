@@ -59,6 +59,8 @@ struct EditorSceneInput {
     RevisionId revision = 0;
     std::string_view style_origin;
     std::string_view last_key;
+    CursorShape cursor_shape = CursorShape::Beam;
+    std::string_view input_state_indicator;
     // In-progress key sequence prefix (e.g. "C-x"). Pixel frontends echo it
     // at the message line's right edge; empty when no sequence is pending.
     std::string_view pending_key;

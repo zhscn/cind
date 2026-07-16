@@ -28,6 +28,7 @@ private:
     bool initialized_ = false;
     std::vector<std::string> cells_;
     std::optional<CellPoint> cursor_;
+    CursorShape cursor_shape_ = CursorShape::Beam;
     std::vector<Rect> overlay_rects_;
     std::vector<Rect> footer_rects_;
 };

@@ -50,6 +50,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .active_window_slot = 0,
         .active_window_generation = 1,
         .input_focus = "interaction",
+        .input_state = "emacs",
+        .input_cursor_shape = "beam",
+        .input_state_indicator = "",
         .text_input_policy = "accept",
         .command_loop =
             {.keymaps = {"interaction.picker", "application.global"},
@@ -64,14 +67,14 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .last_command = "edit.insert"},
         .scripting = {.engine = "guile",
                       .version = "3.0.9",
-                      .modules = {"cind command", "cind core"},
+                      .modules = {"cind command", "cind emacs", "cind toy-modal", "cind core"},
                       .command_revision = 1,
                       .scripted_commands = 29,
                       .provider_revision = 1,
                       .scripted_providers = 4,
                       .binding_revision = 1,
                       .input_state_revision = 3,
-                      .scripted_input_states = 1,
+                      .scripted_input_states = 2,
                       .mode_revision = 2,
                       .scripted_modes = 3,
                       .last_error = std::nullopt},
@@ -153,6 +156,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .revision = 7,
         .style_origin = ".clang-format",
         .key = "C-x",
+        .input_state = {},
     });
     Region popup{RegionRole::Popup,       {0, 5, 2, 5},           {}, SurfaceClass::Status,
                  VerticalAnchor::Overlay, "editor/overlay/popup", 7};
@@ -357,7 +361,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":31") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":32") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -399,18 +403,23 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(command_loop.payload.find("\"override_keymaps\":[\"editor.system\"]") !=
           std::string::npos);
 
+    const InspectionResponse input_state = run_inspection_query(hub, "get editor.input_state");
+    REQUIRE(input_state.ok);
+    CHECK(input_state.payload == "{\"name\":\"emacs\",\"cursor_shape\":\"beam\",\"indicator\":\"\","
+                                 "\"text_input\":\"accept\"}");
+
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);
     CHECK(scripting.payload.find("\"engine\":\"guile\"") != std::string::npos);
-    CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind core\"]") !=
-          std::string::npos);
+    CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind emacs\","
+                                 "\"cind toy-modal\",\"cind core\"]") != std::string::npos);
     CHECK(scripting.payload.find("\"command_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_commands\":29") != std::string::npos);
     CHECK(scripting.payload.find("\"provider_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_providers\":4") != std::string::npos);
     CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"input_state_revision\":3") != std::string::npos);
-    CHECK(scripting.payload.find("\"scripted_input_states\":1") != std::string::npos);
+    CHECK(scripting.payload.find("\"scripted_input_states\":2") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
@@ -467,6 +476,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse panes = run_inspection_query(hub, "get scene.panes");
     REQUIRE(panes.ok);
     CHECK(panes.payload == "[]");
+
+    const InspectionResponse cursor = run_inspection_query(hub, "get scene.cursor");
+    REQUIRE(cursor.ok);
+    CHECK(cursor.payload.find("\"shape\":\"beam\"") != std::string::npos);
 
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);

@@ -461,6 +461,12 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += std::format(",\"active_window\":{{\"slot\":{},\"generation\":{}}},\"input_focus\":",
                           editor.active_window_slot, editor.active_window_generation);
     append_json_string(output, editor.input_focus);
+    output += ",\"input_state\":";
+    append_json_string(output, editor.input_state);
+    output += ",\"input_cursor_shape\":";
+    append_json_string(output, editor.input_cursor_shape);
+    output += ",\"input_state_indicator\":";
+    append_json_string(output, editor.input_state_indicator);
     output += ",\"text_input_policy\":";
     append_json_string(output, editor.text_input_policy);
     output += ",\"command_loop\":";
@@ -616,6 +622,8 @@ void append_region(std::string& output, const ui::Region& region) {
         append_json_string(output, status->style_origin);
         output += ",\"key\":";
         append_json_string(output, status->key);
+        output += ",\"input_state\":";
+        append_json_string(output, status->input_state);
         output.push_back('}');
     } else {
         output += "null";
@@ -688,6 +696,8 @@ void append_scene(std::string& output, const ui::Scene& scene) {
     output += std::format(",\"cursor\":{{\"row\":{},\"col\":{},\"visible\":", scene.cursor_row,
                           scene.cursor_col);
     append_bool(output, scene.cursor_visible);
+    output += ",\"shape\":";
+    append_json_string(output, cursor_shape_name(scene.cursor_shape));
     output += "},\"view_tree\":";
     append_view_tree(output, scene);
     output += ",\"panes\":[";
@@ -1144,6 +1154,12 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                                                 : std::string_view("window");
     if (frame.editor.input_focus != expected_focus) {
         violations.emplace_back("editor input focus does not match interaction state");
+    }
+    const std::string_view expected_cursor_shape =
+        frame.editor.interaction.active ? std::string_view("beam")
+                                        : std::string_view(frame.editor.input_cursor_shape);
+    if (cursor_shape_name(frame.scene.cursor_shape) != expected_cursor_shape) {
+        violations.emplace_back("scene cursor shape does not match active input policy");
     }
     if (frame.editor.interaction.input_cursor > frame.editor.interaction.input.size()) {
         violations.emplace_back("interaction input cursor is past the input end");
@@ -1801,11 +1817,24 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
                         frame.editor.active_window_slot, frame.editor.active_window_generation);
         append_json_string(output, frame.editor.input_focus);
         output.push_back('}');
+    } else if (path == "editor.input_state") {
+        output = "{\"name\":";
+        append_json_string(output, frame.editor.input_state);
+        output += ",\"cursor_shape\":";
+        append_json_string(output, frame.editor.input_cursor_shape);
+        output += ",\"indicator\":";
+        append_json_string(output, frame.editor.input_state_indicator);
+        output += ",\"text_input\":";
+        append_json_string(output, frame.editor.text_input_policy);
+        output.push_back('}');
     } else if (path == "scene") {
         append_scene(output, frame.scene);
     } else if (path == "scene.cursor") {
-        output = std::format("{{\"row\":{},\"col\":{},\"visible\":{}}}", frame.scene.cursor_row,
-                             frame.scene.cursor_col, frame.scene.cursor_visible);
+        output =
+            std::format("{{\"row\":{},\"col\":{},\"visible\":{},\"shape\":", frame.scene.cursor_row,
+                        frame.scene.cursor_col, frame.scene.cursor_visible);
+        append_json_string(output, cursor_shape_name(frame.scene.cursor_shape));
+        output.push_back('}');
     } else if (path == "scene.panes") {
         output.push_back('[');
         for (std::size_t index = 0; index < frame.scene.panes.size(); ++index) {
@@ -2224,6 +2253,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << frame.editor.viewport.top_line_offset
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
     output << "    focus=" << printable(frame.editor.input_focus)
+           << " state=" << printable(frame.editor.input_state)
+           << " cursor=" << printable(frame.editor.input_cursor_shape) << " indicator=\""
+           << printable(frame.editor.input_state_indicator) << '"'
            << " text-input=" << printable(frame.editor.text_input_policy)
            << " window:" << frame.editor.active_window_slot << ':'
            << frame.editor.active_window_generation << '\n';
@@ -2289,7 +2321,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     }
     output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
     if (frame.scene.cursor_visible) {
-        output << frame.scene.cursor_row << ':' << frame.scene.cursor_col;
+        output << frame.scene.cursor_row << ':' << frame.scene.cursor_col << ' '
+               << cursor_shape_name(frame.scene.cursor_shape);
     } else {
         output << "hidden";
     }

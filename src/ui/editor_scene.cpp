@@ -129,6 +129,8 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     scene.rows = input.rows;
     scene.cols = input.cols;
     scene.grid_offset_rows = -viewport.top_line_offset;
+    scene.cursor_shape =
+        input.echo_cursor_column || input.popup_input ? CursorShape::Beam : input.cursor_shape;
     if (caret_position.line >= viewport.top_line) {
         const std::uint32_t row = caret_position.line - viewport.top_line;
         if (row < static_cast<std::uint32_t>(text_rows)) {
@@ -219,7 +221,8 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                        .line_count = input.text.line_count(),
                        .revision = input.revision,
                        .style_origin = std::string(input.style_origin),
-                       .key = std::string(input.last_key)});
+                       .key = std::string(input.last_key),
+                       .input_state = std::string(input.input_state_indicator)});
     echo.set_echo({
         .text = std::string(input.echo),
         .cursor_byte = input.echo_cursor_byte
@@ -345,6 +348,7 @@ Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<Edi
             workspace.cursor_row = pane.rect.row + pane.scene.cursor_row;
             workspace.cursor_col = pane.rect.col + pane.scene.cursor_col;
             workspace.cursor_visible = pane.scene.cursor_visible;
+            workspace.cursor_shape = pane.scene.cursor_shape;
         }
     }
 
@@ -364,6 +368,7 @@ Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<Edi
         workspace.cursor_row = chrome.cursor_row;
         workspace.cursor_col = chrome.cursor_col;
         workspace.cursor_visible = chrome.cursor_visible;
+        workspace.cursor_shape = chrome.cursor_shape;
     }
     return workspace;
 }

@@ -91,7 +91,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
-    CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind core"});
+    CHECK(snapshot.modules ==
+          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -122,17 +123,25 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 1);
-    CHECK(*second == 1);
+    CHECK(*first == 2);
+    CHECK(*second == 2);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
     CHECK(definition.keymaps.empty());
     CHECK(definition.text_input == TextInputPolicy::Accept);
-    CHECK(definition.cursor == InputCursorShape::Beam);
+    CHECK(definition.cursor == CursorShape::Beam);
     CHECK_FALSE(definition.handler);
     CHECK(guile.snapshot().input_state_revision == 2);
-    CHECK(guile.snapshot().scripted_input_states == 1);
+    const InputStateId toy = runtime.input_states().find("toy-normal").value_or(InputStateId{});
+    REQUIRE(toy);
+    const InputStateRegistry::Definition& toy_definition = runtime.input_states().definition(toy);
+    CHECK(toy_definition.text_input == TextInputPolicy::Ignore);
+    CHECK(toy_definition.cursor == CursorShape::Block);
+    CHECK(toy_definition.indicator == "N");
+    REQUIRE(toy_definition.keymaps.size() == 1);
+    CHECK(runtime.keymaps().definition(toy_definition.keymaps.front()).name == "toy-modal.normal");
+    CHECK(guile.snapshot().scripted_input_states == 2);
 }
 
 TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
@@ -378,7 +387,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 37);
+    CHECK(*installed == 39);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -732,7 +741,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 37);
+    CHECK(snapshot.scripted_commands == 39);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

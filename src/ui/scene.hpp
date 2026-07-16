@@ -1,5 +1,6 @@
 #pragma once
 
+#include "presentation/cursor_shape.hpp"
 #include "ui/style.hpp"
 
 #include <cstddef>
@@ -150,6 +151,7 @@ struct Region {
         std::uint64_t revision = 0;
         std::string style_origin;
         std::string key;
+        std::string input_state;
 
         bool operator==(const StatusContent&) const = default;
     };
@@ -254,6 +256,7 @@ struct Scene {
     int cursor_row = 1;
     int cursor_col = 1;
     bool cursor_visible = true;
+    CursorShape cursor_shape = CursorShape::Beam;
 
     const Region* find(RegionRole role) const {
         for (const Region& r : regions) {

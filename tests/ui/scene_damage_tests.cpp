@@ -45,6 +45,13 @@ TEST_CASE("scene damage tracks changed cells and cursor pixels independently") {
     REQUIRE(moved.cursor_cells.size() == 2);
     CHECK(moved.cursor_cells[0].column == 0);
     CHECK(moved.cursor_cells[1].column == 5);
+
+    Scene reshaped = text_scene("abcxef", 6);
+    reshaped.cursor_shape = cind::CursorShape::Block;
+    const SceneDamage shape_changed = tracker.update(reshaped);
+    CHECK_FALSE(shape_changed.full_repaint);
+    REQUIRE(shape_changed.cursor_cells.size() == 1);
+    CHECK(shape_changed.cursor_cells.front().column == 5);
 }
 
 TEST_CASE("scene identity metadata does not invalidate unchanged pixels") {
@@ -220,6 +227,7 @@ TEST_CASE("scene damage tracks structured status content") {
         .revision = 3,
         .style_origin = ".clang-format",
         .key = "C-x",
+        .input_state = {},
     });
 
     SceneDamageTracker tracker;

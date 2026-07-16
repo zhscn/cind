@@ -136,7 +136,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
         {.name = "test-transient",
          .keymaps = {transient_map},
          .text_input = TextInputPolicy::Ignore,
-         .cursor = InputCursorShape::Block,
+         .cursor = CursorShape::Block,
          .indicator = "T",
          .handler = [handled_command](ViewId, KeyStroke key) -> InputStateHandlerResult {
              if (format_key_stroke(key) == "q") {
@@ -182,7 +182,7 @@ TEST_CASE("text input follows the focused input state policy") {
         runtime.input_states().define({.name = "test-normal",
                                        .keymaps = {keymap},
                                        .text_input = TextInputPolicy::Ignore,
-                                       .cursor = InputCursorShape::Block,
+                                       .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {}});
     runtime.views().set_base_input_state(application.view_id(), normal);

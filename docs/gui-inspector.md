@@ -124,6 +124,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、repeat 和 last command |
+| `editor.input_state` | focused View 的 InputState 名称、text-input policy、cursor shape 和 modeline indicator |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/mode 数量、对应 installation revision 和最近一次 host 错误 |
 | `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、thing bindings、location 数量、view ID、modified、saving 和 active 状态 |
@@ -133,7 +134,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.location_navigation` | 当前 location-list buffer、选中项和结果总数；跳到源码后仍保留 |
 | `editor.focus` | active window 和当前输入目标（window 或 interaction） |
 | `scene` | 完整 cell scene |
-| `scene.cursor` | scene cursor |
+| `scene.cursor` | scene cursor 的 cell 坐标、可见性和 beam/block/underline shape |
 | `scene.panes` | pane ID、cell rect 和 active 状态 |
 | `scene.dividers` | 分割线 ID、方向、位置和跨度 |
 | `scene.view_tree` | 按 Grid、Chrome、Overlay 排列的稳定 view 层级 |
@@ -155,6 +156,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 cmk run -p gui cind-ui-inspect -- get scene.region.line-numbers
 cmk run -p gui cind-ui-inspect -- get scene.view_tree
 cmk run -p gui cind-ui-inspect -- get editor.command_loop
+cmk run -p gui cind-ui-inspect -- get editor.input_state
 cmk run -p gui cind-ui-inspect -- get editor.scripting
 cmk run -p gui cind-ui-inspect -- get editor.interaction
 cmk run -p gui cind-ui-inspect -- get editor.buffers
