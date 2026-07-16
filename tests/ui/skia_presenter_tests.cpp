@@ -333,10 +333,11 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     popup.prims.push_back({1, 0, "edit.undo command", StyleClass::Popup, true});
     popup.prims.push_back({2, 0, "edit.redo command", StyleClass::Popup, false});
     popup.prims.push_back({3, 0, "edit.yank command", StyleClass::Popup, false});
+    const std::string popup_input(36, 'm');
     popup.popup = Region::PopupContent{
         .title = "Command: ",
-        .input = "ed",
-        .input_cursor = 2,
+        .input = popup_input,
+        .input_cursor = popup_input.size(),
         .first_item = 0,
         .total_items = 3,
         .selected_item = 0,
@@ -357,13 +358,33 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     const std::optional<SkiaLogicalRect> cursor =
         presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
     REQUIRE(cursor);
-    CHECK(cursor.value().y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+    const SkiaLogicalRect end_cursor = cursor.value_or(SkiaLogicalRect{});
+    CHECK(end_cursor.y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+
+    int rightmost_input_pixel = -1;
+    const int cursor_top = static_cast<int>(std::floor(end_cursor.y));
+    const int cursor_bottom = static_cast<int>(std::ceil(end_cursor.y + end_cursor.height));
+    for (int y = cursor_top; y < cursor_bottom; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t pixel =
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x);
+            if (retained[pixel] == theme.text) {
+                rightmost_input_pixel = std::max(rightmost_input_pixel, x);
+            }
+        }
+    }
+    REQUIRE(rightmost_input_pixel >= 0);
+    CHECK(end_cursor.x >= static_cast<float>(rightmost_input_pixel));
+    CHECK(end_cursor.x - static_cast<float>(rightmost_input_pixel) <=
+          static_cast<float>(presenter.cell_width()));
+
     scene.regions.back().popup->input_cursor = 0;
     const std::optional<SkiaLogicalRect> start_cursor =
         presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
     REQUIRE(start_cursor);
-    CHECK(start_cursor->x < cursor->x);
-    scene.regions.back().popup->input_cursor = 2;
+    CHECK(start_cursor.value_or(SkiaLogicalRect{}).x < end_cursor.x);
+    scene.regions.back().popup->input_cursor = popup_input.size();
     CHECK(std::ranges::find(retained, theme.surface) != retained.end());
     CHECK(std::ranges::find(retained, theme.raised) != retained.end());
 

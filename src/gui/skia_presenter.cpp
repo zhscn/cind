@@ -130,9 +130,29 @@ struct LogicalViewport {
     float height = 0.0F;
 };
 
-struct CellMetrics {
-    int width = 1;
-    int height = 1;
+class TextAdvanceRunHandler final : public SkShaper::RunHandler {
+public:
+    void beginLine() override { line_advance_ = 0.0F; }
+    void runInfo(const RunInfo&) override {}
+    void commitRunInfo() override {}
+
+    Buffer runBuffer(const RunInfo& info) override {
+        glyphs_.resize(info.glyphCount);
+        positions_.resize(info.glyphCount);
+        return {glyphs_.data(), positions_.data(), nullptr, nullptr, {0.0F, 0.0F}};
+    }
+
+    void commitRunBuffer(const RunInfo& info) override { line_advance_ += info.fAdvance.x(); }
+
+    void commitLine() override { advance_ = std::max(advance_, line_advance_); }
+
+    float advance() const { return advance_; }
+
+private:
+    std::vector<SkGlyphID> glyphs_;
+    std::vector<SkPoint> positions_;
+    float line_advance_ = 0.0F;
+    float advance_ = 0.0F;
 };
 
 std::string popup_label(std::string_view title) {
@@ -212,28 +232,9 @@ std::string popup_input_text(const ui::Region::PopupContent& popup, std::string_
     return text;
 }
 
-float popup_text_left(const PopupLayout& layout, std::string_view text, int cell_width) {
-    const float natural_width = static_cast<float>(ui::display_width(text) * cell_width);
+float popup_text_left(const PopupLayout& layout, float natural_width) {
     const float available_width = layout.header.width() - 2.0F * panel_padding_x;
     return layout.header.left() + panel_padding_x + std::min(0.0F, available_width - natural_width);
-}
-
-std::optional<SkRect> popup_cursor_rect(const PopupLayout& layout, CellMetrics cell) {
-    if (!layout.input_active || layout.content == nullptr) {
-        return std::nullopt;
-    }
-    const std::string text = popup_input_text(*layout.content, layout.input);
-    const std::size_t cursor =
-        std::min(layout.content->input_cursor.value_or(layout.input.size()), layout.input.size());
-    const std::string cursor_text =
-        popup_input_text(*layout.content, std::string_view(layout.input).substr(0, cursor));
-    const float left = popup_text_left(layout, text, cell.width);
-    const float x =
-        std::clamp(left + static_cast<float>(ui::display_width(cursor_text) * cell.width),
-                   layout.header.left() + 8.0F, layout.header.right() - 3.0F);
-    const float y =
-        layout.header.top() + (layout.header.height() - static_cast<float>(cell.height)) * 0.5F;
-    return SkRect::MakeXYWH(x, y, 2.0F, static_cast<float>(cell.height));
 }
 
 bool contains(const ui::Rect& rect, int row, int col) {
@@ -499,7 +500,29 @@ struct SkiaPresenter::Impl {
     }
 
     float text_width(std::string_view text) const {
-        return static_cast<float>(ui::display_width(text) * cell_width);
+        if (text.empty()) {
+            return 0.0F;
+        }
+        TextAdvanceRunHandler handler;
+        shaper->shape(text.data(), text.size(), font, true, SK_ScalarMax, &handler);
+        return handler.advance();
+    }
+
+    std::optional<SkRect> popup_cursor_rect(const PopupLayout& layout) const {
+        if (!layout.input_active || layout.content == nullptr) {
+            return std::nullopt;
+        }
+        const std::string full_text = popup_input_text(*layout.content, layout.input);
+        const std::size_t cursor = std::min(
+            layout.content->input_cursor.value_or(layout.input.size()), layout.input.size());
+        const std::string cursor_text =
+            popup_input_text(*layout.content, std::string_view(layout.input).substr(0, cursor));
+        const float left = popup_text_left(layout, text_width(full_text));
+        const float x = std::clamp(left + text_width(cursor_text), layout.header.left() + 8.0F,
+                                   layout.header.right() - 3.0F);
+        const float y =
+            layout.header.top() + (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
+        return SkRect::MakeXYWH(x, y, 2.0F, static_cast<float>(cell_height));
     }
 
     void draw_hairline(SkCanvas& canvas, const SkRect& rect) {
@@ -621,10 +644,10 @@ struct SkiaPresenter::Impl {
                     std::format("{}/{}", popup.selected_item.value_or(0) + 1, popup.total_items);
                 canvas.save();
                 canvas.clipRect(layout.header);
-                float text_x = popup_text_left(layout, full_text, cell_width);
+                float text_x = popup_text_left(layout, text_width(full_text));
                 draw_text(prompt, font, SkPoint::Make(text_x, text_top), theme.accent,
                           shape_bounds);
-                text_x += text_width(prompt) + static_cast<float>(cell_width);
+                text_x += text_width(prompt) + text_width(" ");
                 draw_text(layout.input, font, SkPoint::Make(text_x, text_top), theme.text,
                           shape_bounds);
                 draw_text(count, font,
@@ -1057,8 +1080,7 @@ struct SkiaPresenter::Impl {
                 popup_layout(scene, {.width = viewport_width, .height = viewport_height},
                              vertical_metrics(viewport_height));
             const std::optional<SkRect> popup_cursor =
-                panel ? popup_cursor_rect(*panel, {.width = cell_width, .height = cell_height})
-                      : std::nullopt;
+                panel ? popup_cursor_rect(*panel) : std::nullopt;
             if (popup_cursor) {
                 cursor_in_footer = true;
                 cursor_clip = panel->header;
@@ -1235,8 +1257,7 @@ std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const ui::Scene& scene
     if (const std::optional<PopupLayout> panel =
             popup_layout(scene, {.width = viewport_width, .height = viewport_height},
                          impl_->vertical_metrics(viewport_height))) {
-        if (const std::optional<SkRect> cursor = popup_cursor_rect(
-                *panel, {.width = impl_->cell_width, .height = impl_->cell_height})) {
+        if (const std::optional<SkRect> cursor = impl_->popup_cursor_rect(*panel)) {
             return logical_rect(*cursor);
         }
     }
