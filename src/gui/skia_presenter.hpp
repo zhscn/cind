@@ -131,11 +131,30 @@ struct SkiaEchoLayoutDiagnostics {
     SkiaTextLayoutDiagnostics text;
 };
 
+struct SkiaDocumentLineLayoutDiagnostics {
+    int row = 0;
+    int end_column = 0;
+    float origin_x = 0.0F;
+    float advance = 0.0F;
+    std::size_t run_count = 0;
+};
+
+struct SkiaDocumentLayoutDiagnostics {
+    SkiaLogicalRect bounds;
+    std::optional<int> cursor_row;
+    std::optional<int> cursor_column;
+    float cursor_advance = 0.0F;
+    float grid_cursor_x = 0.0F;
+    std::optional<SkiaLogicalRect> cursor_rect;
+    std::vector<SkiaDocumentLineLayoutDiagnostics> lines;
+};
+
 struct SkiaRenderDiagnostics {
     float ascent = 0.0F;
     float descent = 0.0F;
     float leading = 0.0F;
     float baseline_from_row_top = 0.0F;
+    std::optional<SkiaDocumentLayoutDiagnostics> document_layout;
     std::optional<SkiaPopupLayoutDiagnostics> popup_layout;
     std::optional<SkiaEchoLayoutDiagnostics> echo_layout;
     std::vector<SkiaPrimitiveRenderDiagnostics> primitives;
@@ -165,8 +184,9 @@ private:
 
 // Raster Skia presenter for the backend-independent cell Scene. The caller
 // owns an N32-premultiplied pixel buffer and decides how to put it on screen.
-// Grid text retains monospace cell placement. Pixel-positioned GUI chrome uses
-// Skia shaping and system font fallback through a prepared frame layout.
+// The Scene retains cell semantics for TUI parity; the prepared frame layout
+// converts document lines, carets, hit tests, and GUI chrome to one Skia-shaped
+// logical-pixel coordinate space with system font fallback.
 class SkiaPresenter {
 public:
     explicit SkiaPresenter(std::string font_family = "monospace", float font_size = 16.0F,
@@ -199,6 +219,9 @@ public:
     std::optional<SkiaLogicalRect> cursor_rect(const ui::Scene& scene, float viewport_width,
                                                float viewport_height) const;
     std::optional<SkiaLogicalRect> cursor_rect(const SkiaFrameLayout& layout) const;
+    // Maps a logical pixel point through the prepared text layout. Document
+    // rows use their shaped advances; cell-oriented regions retain grid hits.
+    ui::CellPoint hit_test(const SkiaFrameLayout& layout, SkiaLogicalPoint point) const;
     std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
                                               float viewport_width, float viewport_height) const;
     std::vector<SkiaLogicalRect> damage_rects(const SkiaFrameLayout& layout,

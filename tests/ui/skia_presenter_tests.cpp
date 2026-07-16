@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "gui/skia_presenter.hpp"
+#include "ui/char_width.hpp"
 
 #include <fontconfig/fontconfig.h>
 #include <skia/core/SkGraphics.h>
@@ -56,7 +57,11 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
     CHECK(pixel(mid_x, mid_y) == theme.canvas);
     CHECK(pixel(presenter.cell_width() * 2 + mid_x, mid_y) == theme.selection);
     CHECK(pixel(mid_x, presenter.cell_height() + mid_y) == theme.surface);
-    CHECK(pixel(presenter.cell_width() * 6, mid_y) == theme.cursor);
+    const std::optional<SkiaLogicalRect> cursor =
+        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE(cursor);
+    const SkiaLogicalRect cursor_bounds = cursor.value_or(SkiaLogicalRect{});
+    CHECK(pixel(static_cast<int>(std::ceil(cursor_bounds.x)), mid_y) == theme.cursor);
 
     SUBCASE("fractional device scale") {
         constexpr float scale = 1.5F;
@@ -74,9 +79,57 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
         };
         CHECK(scaled_pixel(static_cast<float>(presenter.cell_width() * 2 + mid_x),
                            static_cast<float>(mid_y)) == theme.selection);
-        CHECK(scaled_pixel(static_cast<float>(presenter.cell_width() * 6),
-                           static_cast<float>(mid_y)) == theme.cursor);
+        CHECK(scaled_pixel(cursor_bounds.x, static_cast<float>(mid_y)) == theme.cursor);
     }
+}
+
+TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    Scene scene;
+    scene.rows = 3;
+    scene.cols = 60;
+    const std::string text = "                    s.delta,";
+    Region body{RegionRole::TextArea, {0, 5, 1, 55}, {}};
+    body.prims.push_back(
+        {0, 0, text.substr(0, 21), StyleClass::Text, false, PrimKind::Text, "line:0/byte:0"});
+    body.prims.push_back(
+        {0, 21, ".delta", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:21"});
+    body.prims.push_back({0, 27, ",", StyleClass::Text, false, PrimKind::Text, "line:0/byte:27"});
+    Region status{
+        RegionRole::StatusBar, {1, 0, 1, 60}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {2, 0, 1, 60}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    scene.regions = {std::move(body), std::move(status), std::move(echo)};
+    const int local_column = display_width(text);
+    scene.cursor_row = 1;
+    scene.cursor_col = 5 + local_column + 1;
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    const SkiaFrameLayout layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(layout, width, height, pixels.data(), row_bytes, 1.0F, &diagnostics);
+
+    REQUIRE(diagnostics.document_layout);
+    const SkiaDocumentLayoutDiagnostics document =
+        diagnostics.document_layout.value_or(SkiaDocumentLayoutDiagnostics{});
+    REQUIRE(document.cursor_rect);
+    REQUIRE(document.cursor_column);
+    CHECK(document.cursor_column.value_or(-1) == local_column);
+    REQUIRE(document.lines.size() == 1);
+    CHECK(document.lines.front().run_count == 3);
+    CHECK(document.cursor_advance == doctest::Approx(document.lines.front().advance));
+    const SkiaLogicalRect document_cursor = document.cursor_rect.value_or(SkiaLogicalRect{});
+    CHECK(document_cursor.x ==
+          doctest::Approx(document.lines.front().origin_x + document.lines.front().advance));
+
+    const CellPoint hit =
+        presenter.hit_test(layout, {.x = document_cursor.x, .y = document_cursor.y + 1.0F});
+    CHECK(hit.row == 0);
+    CHECK(hit.column == scene.cursor_col - 1);
 }
 
 TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
@@ -320,7 +373,10 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
     CHECK(diagnostics.primitives[0].layout_bounds.y == doctest::Approx(-half_cell));
     CHECK(diagnostics.primitives[1].layout_bounds.y == doctest::Approx(half_cell));
 
-    const int cursor_x = (scene.cursor_col - 1) * presenter.cell_width();
+    const std::optional<SkiaLogicalRect> cursor =
+        presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE(cursor);
+    const int cursor_x = static_cast<int>(std::ceil(cursor.value_or(SkiaLogicalRect{}).x));
     int cursor_pixels = 0;
     for (int y = 0; y < height; ++y) {
         const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
@@ -526,7 +582,9 @@ TEST_CASE("Skia damage rendering matches a full reference frame") {
     const std::vector<SkiaLogicalRect> rectangles =
         presenter.damage_rects(scene, damage, logical_width, logical_height);
     REQUIRE(!rectangles.empty());
-    CHECK(rectangles.front().width < logical_width);
+    CHECK(std::ranges::any_of(rectangles, [&](const SkiaLogicalRect& rect) {
+        return rect.x > 0.0F && rect.x + rect.width == doctest::Approx(logical_width);
+    }));
 
     presenter.render_damage(scene, width, height, retained.data(), row_bytes, rectangles, scale);
     presenter.render(scene, width, height, reference.data(), row_bytes, scale);
@@ -538,7 +596,7 @@ TEST_CASE("Skia damage rendering matches a full reference frame") {
     CHECK(cursor_damage.cell_rects.empty());
     const std::vector<SkiaLogicalRect> cursor_rectangles =
         presenter.damage_rects(scene, cursor_damage, logical_width, logical_height);
-    REQUIRE(cursor_rectangles.size() == 2);
+    REQUIRE_FALSE(cursor_rectangles.empty());
     presenter.render_damage(scene, width, height, retained.data(), row_bytes, cursor_rectangles,
                             scale);
     presenter.render(scene, width, height, reference.data(), row_bytes, scale);

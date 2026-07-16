@@ -188,6 +188,21 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                    .full_reference_match = full_reference_match,
                    .rects = {{.logical = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
                               .output = {.x = 0, .y = 0, .width = 45, .height = 30}}}},
+        .document_layout =
+            DocumentLayoutSnapshot{
+                .bounds = {.x = 0.0F, .y = 0.0F, .width = 100.0F, .height = 20.0F},
+                .cursor_row = 0,
+                .cursor_column = 3,
+                .cursor_advance = 30.0F,
+                .grid_cursor_x = 30.0F,
+                .cursor_rect =
+                    LogicalPixelRectSnapshot{.x = 30.0F, .y = 0.0F, .width = 2.0F, .height = 20.0F},
+                .lines = {{.row = 0,
+                           .end_column = 3,
+                           .origin_x = 0.0F,
+                           .advance = 30.0F,
+                           .run_count = 1}},
+            },
         .popup_layout = std::move(popup_layout),
         .echo_layout = std::move(echo_layout),
         .primitives =
@@ -234,7 +249,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":16") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":17") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -251,6 +266,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
+          std::string::npos);
+    CHECK(snapshot.find("\"document_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
           std::string::npos);
     CHECK(snapshot.find("\"first_item\":0,\"total_items\":1,\"selected_item\":0") !=
           std::string::npos);
@@ -277,6 +294,12 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(popup_layout.ok);
     CHECK(popup_layout.payload.find("\"cursor_advance\":0") != std::string::npos);
     CHECK(popup_layout.payload.find("\"role\":\"input\"") != std::string::npos);
+
+    const InspectionResponse document_layout =
+        run_inspection_query(hub, "get render.document_layout");
+    REQUIRE(document_layout.ok);
+    CHECK(document_layout.payload.find("\"cursor_column\":3") != std::string::npos);
+    CHECK(document_layout.payload.find("\"advance\":30") != std::string::npos);
 
     const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
     REQUIRE(buffers.ok);

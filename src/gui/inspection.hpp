@@ -135,6 +135,24 @@ struct EchoLayoutSnapshot {
     TextLayoutSnapshot text;
 };
 
+struct DocumentLineLayoutSnapshot {
+    int row = 0;
+    int end_column = 0;
+    float origin_x = 0.0F;
+    float advance = 0.0F;
+    std::size_t run_count = 0;
+};
+
+struct DocumentLayoutSnapshot {
+    LogicalPixelRectSnapshot bounds;
+    std::optional<int> cursor_row;
+    std::optional<int> cursor_column;
+    float cursor_advance = 0.0F;
+    float grid_cursor_x = 0.0F;
+    std::optional<LogicalPixelRectSnapshot> cursor_rect;
+    std::vector<DocumentLineLayoutSnapshot> lines;
+};
+
 struct RenderStateSnapshot {
     std::string video_driver;
     std::string render_driver;
@@ -155,6 +173,7 @@ struct RenderStateSnapshot {
     std::uint64_t pixel_hash = 0;
     RenderAnimationSnapshot animation;
     RenderDamageSnapshot damage;
+    std::optional<DocumentLayoutSnapshot> document_layout;
     std::optional<PopupLayoutSnapshot> popup_layout;
     std::optional<EchoLayoutSnapshot> echo_layout;
     std::vector<PrimitiveRenderSnapshot> primitives;
@@ -171,7 +190,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 16;
+    static constexpr int schema_version = 17;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

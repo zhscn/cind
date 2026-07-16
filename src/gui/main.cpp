@@ -394,8 +394,7 @@ private:
             return {true, true};
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (event.button.button == SDL_BUTTON_LEFT) {
-                editor_.click({.row = mouse_cell_row(event.button.y),
-                               .column = mouse_cell_column(event.button.x)});
+                editor_.click(mouse_cell_point(event.button.x, event.button.y));
                 return {true, true};
             }
             return {};
@@ -461,11 +460,12 @@ private:
             return std::format("text={}", event.text.text ? event.text.text : "");
         case SDL_EVENT_TEXT_EDITING:
             return std::format("preedit={}", event.edit.text ? event.edit.text : "");
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+            const ui::CellPoint point = mouse_cell_point(event.button.x, event.button.y);
             return std::format("button={} window=({}, {}) cell=({}, {})",
                                static_cast<int>(event.button.button), event.button.x,
-                               event.button.y, mouse_cell_row(event.button.y),
-                               mouse_cell_column(event.button.x));
+                               event.button.y, point.row, point.column);
+        }
         case SDL_EVENT_MOUSE_WHEEL:
             return std::format("delta=({}, {}) direction={}", event.wheel.x, event.wheel.y,
                                static_cast<int>(event.wheel.direction));
@@ -850,6 +850,31 @@ private:
             }
             return snapshot;
         };
+        std::optional<DocumentLayoutSnapshot> document_layout;
+        if (diagnostics.document_layout) {
+            const SkiaDocumentLayoutDiagnostics& document = *diagnostics.document_layout;
+            DocumentLayoutSnapshot snapshot{
+                .bounds = snapshot_rect(document.bounds),
+                .cursor_row = document.cursor_row,
+                .cursor_column = document.cursor_column,
+                .cursor_advance = document.cursor_advance,
+                .grid_cursor_x = document.grid_cursor_x,
+                .cursor_rect = std::nullopt,
+                .lines = {},
+            };
+            if (document.cursor_rect) {
+                snapshot.cursor_rect = snapshot_rect(*document.cursor_rect);
+            }
+            snapshot.lines.reserve(document.lines.size());
+            for (const SkiaDocumentLineLayoutDiagnostics& line : document.lines) {
+                snapshot.lines.push_back({.row = line.row,
+                                          .end_column = line.end_column,
+                                          .origin_x = line.origin_x,
+                                          .advance = line.advance,
+                                          .run_count = line.run_count});
+            }
+            document_layout = std::move(snapshot);
+        }
         std::optional<PopupLayoutSnapshot> popup_layout;
         if (diagnostics.popup_layout) {
             const SkiaPopupLayoutDiagnostics& popup = *diagnostics.popup_layout;
@@ -954,6 +979,7 @@ private:
             .pixel_hash = hash_pixels(),
             .animation = animation,
             .damage = std::move(render_damage),
+            .document_layout = std::move(document_layout),
             .popup_layout = std::move(popup_layout),
             .echo_layout = std::move(echo_layout),
             .primitives = std::move(primitives),
@@ -995,29 +1021,27 @@ private:
         SDL_SetTextInputArea(window_.get(), &area, 0);
     }
 
-    int mouse_cell_column(float window_x) const {
+    ui::CellPoint mouse_cell_point(float window_x, float window_y) const {
         int window_width = 0;
         int window_height = 0;
         SDL_GetWindowSize(window_.get(), &window_width, &window_height);
-        if (window_width <= 0) {
-            return 0;
+        if (window_width <= 0 || window_height <= 0) {
+            return {};
         }
         const float logical_x = window_x / static_cast<float>(window_width) * logical_output_width_;
-        return std::clamp(
-            static_cast<int>(std::floor(logical_x / static_cast<float>(presenter_.cell_width()))),
-            0, columns_ - 1);
-    }
-
-    int mouse_cell_row(float window_y) const {
-        int window_width = 0;
-        int window_height = 0;
-        SDL_GetWindowSize(window_.get(), &window_width, &window_height);
-        if (window_height <= 0) {
-            return 0;
-        }
         const float logical_y =
             window_y / static_cast<float>(window_height) * logical_output_height_;
-        return vertical_layout_ ? vertical_layout_->row_at(logical_y) : 0;
+        if (last_scene_) {
+            const SkiaFrameLayout layout = presenter_.prepare_layout(
+                *last_scene_, logical_output_width_, logical_output_height_);
+            return presenter_.hit_test(layout, {.x = logical_x, .y = logical_y});
+        }
+        return {
+            .row = vertical_layout_ ? vertical_layout_->row_at(logical_y) : 0,
+            .column = std::clamp(static_cast<int>(std::floor(
+                                     logical_x / static_cast<float>(presenter_.cell_width()))),
+                                 0, columns_ - 1),
+        };
     }
 
     EditorModel& editor_;

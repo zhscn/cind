@@ -548,6 +548,47 @@ void append_echo_layout(std::string& output, const std::optional<EchoLayoutSnaps
     output.push_back('}');
 }
 
+void append_document_layout(std::string& output,
+                            const std::optional<DocumentLayoutSnapshot>& document) {
+    if (!document) {
+        output += "null";
+        return;
+    }
+    output += "{\"coordinate_space\":\"logical-pixels\",\"bounds\":";
+    append_logical_rect(output, document->bounds);
+    output += ",\"cursor_row\":";
+    if (document->cursor_row) {
+        output += std::to_string(*document->cursor_row);
+    } else {
+        output += "null";
+    }
+    output += ",\"cursor_column\":";
+    if (document->cursor_column) {
+        output += std::to_string(*document->cursor_column);
+    } else {
+        output += "null";
+    }
+    output += std::format(",\"cursor_advance\":{},\"grid_cursor_x\":{},\"cursor_rect\":",
+                          document->cursor_advance, document->grid_cursor_x);
+    if (document->cursor_rect) {
+        append_logical_rect(output, *document->cursor_rect);
+    } else {
+        output += "null";
+    }
+    output += ",\"lines\":[";
+    for (std::size_t index = 0; index < document->lines.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const DocumentLineLayoutSnapshot& line = document->lines[index];
+        output +=
+            std::format("{{\"row\":{},\"end_column\":{},\"origin_x\":{},"
+                        "\"advance\":{},\"run_count\":{}}}",
+                        line.row, line.end_column, line.origin_x, line.advance, line.run_count);
+    }
+    output += "]}";
+}
+
 void append_render_damage(std::string& output, const RenderDamageSnapshot& damage) {
     output += "{\"full_repaint\":";
     append_bool(output, damage.full_repaint);
@@ -642,6 +683,8 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_render_animation(output, render.animation);
     output += ",\"damage\":";
     append_render_damage(output, render.damage);
+    output += ",\"document_layout\":";
+    append_document_layout(output, render.document_layout);
     output += ",\"popup_layout\":";
     append_popup_layout(output, render.popup_layout);
     output += ",\"echo_layout\":";
@@ -878,6 +921,57 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.render.rows != frame.scene.rows || frame.render.columns != frame.scene.cols) {
         violations.emplace_back("render grid does not match scene geometry");
     }
+    const ui::Region* text_area = frame.scene.find(ui::RegionRole::TextArea);
+    if (text_area != nullptr && !frame.render.document_layout) {
+        violations.emplace_back("scene text area has no render document layout");
+    }
+    if (frame.render.document_layout) {
+        const DocumentLayoutSnapshot& layout = *frame.render.document_layout;
+        if (text_area == nullptr) {
+            violations.emplace_back("render document layout has no scene text area");
+        } else if (layout.lines.size() != static_cast<std::size_t>(text_area->rect.rows)) {
+            violations.emplace_back("render document lines do not match the text area");
+        }
+        const bool cursor_in_document =
+            text_area != nullptr && frame.scene.cursor_visible &&
+            frame.scene.cursor_row - 1 >= text_area->rect.row &&
+            frame.scene.cursor_row - 1 < text_area->rect.row + text_area->rect.rows &&
+            frame.scene.cursor_col - 1 >= text_area->rect.col &&
+            frame.scene.cursor_col - 1 < text_area->rect.col + text_area->rect.cols;
+        if (cursor_in_document) {
+            const int expected_row = frame.scene.cursor_row - 1 - text_area->rect.row;
+            const int expected_column = frame.scene.cursor_col - 1 - text_area->rect.col;
+            if (layout.cursor_row != expected_row || layout.cursor_column != expected_column ||
+                !layout.cursor_rect) {
+                violations.emplace_back("render document cursor does not match the scene cursor");
+            }
+            const float expected_grid_x =
+                static_cast<float>((frame.scene.cursor_col - 1) * frame.render.cell_width);
+            if (std::abs(layout.grid_cursor_x - expected_grid_x) > 0.01F) {
+                violations.emplace_back("render document grid cursor coordinate is inconsistent");
+            }
+        } else if (layout.cursor_row || layout.cursor_column || layout.cursor_rect) {
+            violations.emplace_back("render document exposes a cursor outside the text area");
+        }
+        if (!std::isfinite(layout.bounds.x) || !std::isfinite(layout.bounds.y) ||
+            !std::isfinite(layout.bounds.width) || !std::isfinite(layout.bounds.height) ||
+            !std::isfinite(layout.cursor_advance) || !std::isfinite(layout.grid_cursor_x)) {
+            violations.emplace_back("render document layout is not finite");
+        }
+        if (layout.cursor_rect &&
+            std::abs(layout.cursor_rect->x - (layout.bounds.x + layout.cursor_advance)) > 0.01F) {
+            violations.emplace_back("render document cursor does not match shaped advance");
+        }
+        for (std::size_t index = 0; index < layout.lines.size(); ++index) {
+            const DocumentLineLayoutSnapshot& line = layout.lines[index];
+            if (line.row != static_cast<int>(index) || line.end_column < 0 ||
+                !std::isfinite(line.origin_x) || !std::isfinite(line.advance) ||
+                line.advance < 0.0F) {
+                violations.emplace_back("render document line layout is invalid");
+                break;
+            }
+        }
+    }
     const ui::Region* popup_region = frame.scene.find(ui::RegionRole::Popup);
     const ui::Region::PopupContent* popup =
         popup_region != nullptr && popup_region->popup ? &*popup_region->popup : nullptr;
@@ -1006,7 +1100,6 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             }
         }
     }
-    const ui::Region* text_area = frame.scene.find(ui::RegionRole::TextArea);
     if (!frame.render.animation.scroll && frame.scene.cursor_visible && text_area) {
         const int cursor_row = frame.scene.cursor_row - 1;
         if (cursor_row >= text_area->rect.row &&
@@ -1179,6 +1272,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_render_animation(output, frame.render.animation);
     } else if (path == "render.damage") {
         append_render_damage(output, frame.render.damage);
+    } else if (path == "render.document_layout") {
+        append_document_layout(output, frame.render.document_layout);
     } else if (path == "render.popup_layout") {
         append_popup_layout(output, frame.render.popup_layout);
     } else if (path == "render.echo_layout") {
@@ -1603,6 +1698,16 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    primitives=" << frame.render.primitives.size()
            << " row-overflows=" << row_overflows
            << " draw-bounds-cross-clip=" << draw_bounds_clip_crossings << '\n';
+    if (frame.render.document_layout) {
+        const DocumentLayoutSnapshot& document = *frame.render.document_layout;
+        output << "    document-layout lines=" << document.lines.size();
+        if (document.cursor_row && document.cursor_column) {
+            output << " cursor=" << *document.cursor_row << ':' << *document.cursor_column
+                   << " advance=" << document.cursor_advance
+                   << " grid-x=" << document.grid_cursor_x;
+        }
+        output << '\n';
+    }
     if (frame.render.popup_layout) {
         const PopupLayoutSnapshot& popup = *frame.render.popup_layout;
         output << "    popup-layout panel=(" << popup.panel_bounds.x << ',' << popup.panel_bounds.y
