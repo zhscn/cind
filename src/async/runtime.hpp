@@ -16,6 +16,14 @@ struct AsyncTaskId {
     bool operator==(const AsyncTaskId&) const = default;
 };
 
+// Worker code throws this only after observing a stop request at a point where
+// abandoning the operation preserves its external invariants. A stop request
+// alone does not imply that already-running work was cancelled.
+class AsyncTaskCancelled final : public std::exception {
+public:
+    const char* what() const noexcept override { return "async task cancelled"; }
+};
+
 using AsyncCompletion = std::function<void()>;
 using AsyncWork = std::function<AsyncCompletion(const std::stop_token&)>;
 using AsyncFailure = std::function<void(const std::exception_ptr&)>;

@@ -33,7 +33,9 @@ struct EditorPlatformServices {
 
 struct EditorApplicationSpec {
     std::string path;
-    std::string initial_text;
+    // An omitted value asks the application to load path through its async
+    // runtime. An engaged empty string represents a preloaded empty file.
+    std::optional<std::string> initial_text;
     CppIndentStyle style;
     std::string style_origin;
     std::uint32_t initial_line = 0;
@@ -98,7 +100,7 @@ public:
     void insert_text(std::string_view text);
     void reset_preferred_column();
 
-    std::expected<BufferId, std::string> open_file(std::string_view path);
+    std::expected<void, std::string> open_file(std::string_view path);
     bool switch_buffer(BufferId buffer);
     bool focus_window(WindowId window);
     bool split_window(WindowSplitAxis axis);
@@ -152,6 +154,13 @@ private:
         AsyncTaskId task;
     };
 
+    struct PendingOpen {
+        std::string resource;
+        WindowId target_window;
+        std::uint32_t initial_line = 0;
+        AsyncTaskId task;
+    };
+
     struct BufferState {
         BufferId buffer;
         std::shared_ptr<CppIndentStyle> style;
@@ -198,6 +207,12 @@ private:
     std::optional<std::string> store_kill(std::string text);
     std::optional<std::string> import_clipboard();
     void save();
+    std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
+                                               std::uint32_t initial_line);
+    void finish_open(std::string resource, std::string contents, CppIndentStyle style,
+                     std::string style_origin);
+    void fail_open(std::string_view resource, const std::exception_ptr& failure);
+    void cancel_open(std::string_view resource);
     void finish_save(BufferId buffer, std::error_code error);
     void mark_saved(BufferId buffer, Text content);
     void switch_relative(int delta);
@@ -216,6 +231,8 @@ private:
     EditorRuntime runtime_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
+    std::vector<PendingOpen> pending_opens_;
+    std::optional<BufferId> startup_placeholder_;
     WindowId active_window_;
     WindowLayout window_layout_;
     InteractionController interaction_;

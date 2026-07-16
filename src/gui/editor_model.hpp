@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,7 +18,7 @@ namespace cind::gui {
 
 class EditorModel {
 public:
-    EditorModel(std::string path, std::string initial, CppIndentStyle style,
+    EditorModel(std::string path, std::optional<std::string> initial, CppIndentStyle style,
                 std::string style_origin, std::uint32_t initial_line,
                 EditorPlatformServices platform_services = {});
 

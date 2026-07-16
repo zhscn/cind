@@ -1,5 +1,6 @@
 #pragma once
 
+#include "async/runtime.hpp"
 #include "editor/command.hpp"
 #include "editor/text_input.hpp"
 
@@ -11,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace cind {
@@ -22,15 +24,21 @@ struct InteractionCandidate {
     std::string filter_text;
 };
 
+using InteractionCandidateWork =
+    std::function<std::vector<InteractionCandidate>(const std::stop_token&)>;
+using InteractionProviderResult =
+    std::variant<std::vector<InteractionCandidate>, InteractionCandidateWork>;
+
 class InteractionProviderRegistry {
 public:
-    using Complete =
-        std::function<std::vector<InteractionCandidate>(CommandContext&, std::string_view)>;
+    // Provider preparation runs on the editor thread. It may return immediate
+    // candidates or a worker callback that captures only immutable input.
+    using Complete = std::function<InteractionProviderResult(CommandContext&, std::string_view)>;
 
     void define(std::string name, Complete complete);
     bool contains(std::string_view name) const;
-    std::vector<InteractionCandidate> complete(std::string_view name, CommandContext& context,
-                                               std::string_view query) const;
+    InteractionProviderResult complete(std::string_view name, CommandContext& context,
+                                       std::string_view query) const;
 
     void seal() { sealed_ = true; }
     bool sealed() const { return sealed_; }
@@ -46,6 +54,7 @@ struct InteractionState {
     std::vector<InteractionCandidate> candidates;
     std::size_t selected = 0;
     std::uint64_t generation = 0;
+    bool loading = false;
     std::string error;
 };
 
@@ -62,7 +71,10 @@ public:
     explicit InteractionController(InteractionProviderRegistry& providers)
         : providers_(&providers) {}
 
+    void attach_async_runtime(AsyncRuntime& runtime) { async_runtime_ = &runtime; }
+
     bool active() const { return state_.has_value(); }
+    InteractionState* state() { return state_ ? &*state_ : nullptr; }
     const InteractionState* state() const { return state_ ? &*state_ : nullptr; }
 
     std::expected<void, std::string> start(InteractionRequest request, CommandContext& context);
@@ -82,10 +94,17 @@ public:
 
 private:
     void refresh(CommandContext& context);
+    void cancel_pending() noexcept;
+    void apply_candidates(std::uint64_t generation, std::vector<InteractionCandidate> candidates);
+    void apply_failure(std::uint64_t generation, const std::exception_ptr& failure);
     static std::vector<InteractionCandidate> rank(std::vector<InteractionCandidate> candidates,
-                                                  std::string_view query);
+                                                  std::string_view query,
+                                                  const std::stop_token* cancellation = nullptr);
 
     InteractionProviderRegistry* providers_;
+    AsyncRuntime* async_runtime_ = nullptr;
+    AsyncTaskId pending_task_;
+    std::uint64_t next_generation_ = 0;
     std::optional<InteractionState> state_;
     std::unordered_map<std::string, std::vector<std::string>> histories_;
 };

@@ -1,5 +1,6 @@
 #include "commands/file_io.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -24,10 +25,124 @@ void close_ignoring_errors(int fd) {
     }
 }
 
+class FileDescriptor {
+public:
+    explicit FileDescriptor(int descriptor) : descriptor_(descriptor) {}
+    ~FileDescriptor() { close_ignoring_errors(descriptor_); }
+    FileDescriptor(const FileDescriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    int get() const { return descriptor_; }
+    int close() noexcept {
+        const int descriptor = descriptor_;
+        descriptor_ = -1;
+        return ::close(descriptor);
+    }
+
+private:
+    int descriptor_;
+};
+
 } // namespace
 
-std::error_code save_file_atomically(const std::filesystem::path& path, const Text& content) {
+std::expected<FileReadResult, std::error_code>
+read_file_contents(const std::filesystem::path& path, const std::stop_token& cancellation) {
+    if (cancellation.stop_requested()) {
+        return std::unexpected(std::make_error_code(std::errc::operation_canceled));
+    }
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            return FileReadResult{};
+        }
+        return std::unexpected(system_error());
+    }
+    FileDescriptor file(fd);
+
+    struct stat status{};
+    if (::fstat(file.get(), &status) != 0) {
+        return std::unexpected(system_error());
+    }
+    if (S_ISDIR(status.st_mode)) {
+        return std::unexpected(std::make_error_code(std::errc::is_a_directory));
+    }
+    if (!S_ISREG(status.st_mode)) {
+        return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
+    }
+
+    FileReadResult result{.exists = true, .contents = {}};
+    if (status.st_size > 0 && static_cast<std::uintmax_t>(status.st_size) <=
+                                  static_cast<std::uintmax_t>(result.contents.max_size())) {
+        result.contents.reserve(static_cast<std::size_t>(status.st_size));
+    }
+    char buffer[64 * 1024];
+    while (true) {
+        if (cancellation.stop_requested()) {
+            return std::unexpected(std::make_error_code(std::errc::operation_canceled));
+        }
+        const ssize_t received = ::read(file.get(), buffer, sizeof(buffer));
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
+        if (received < 0) {
+            return std::unexpected(system_error());
+        }
+        if (received == 0) {
+            break;
+        }
+        result.contents.append(buffer, static_cast<std::size_t>(received));
+    }
+    if (file.close() != 0) {
+        return std::unexpected(system_error());
+    }
+    return result;
+}
+
+std::expected<DirectoryListing, std::error_code>
+list_directory(const std::filesystem::path& path, std::size_t maximum_entries,
+               const std::stop_token& cancellation) {
     namespace fs = std::filesystem;
+    if (cancellation.stop_requested()) {
+        return std::unexpected(std::make_error_code(std::errc::operation_canceled));
+    }
+    std::error_code error;
+    fs::path directory = fs::absolute(path, error).lexically_normal();
+    if (error) {
+        return std::unexpected(error);
+    }
+    if (!fs::is_directory(directory, error)) {
+        return std::unexpected(error ? error : std::make_error_code(std::errc::not_a_directory));
+    }
+
+    DirectoryListing result{.directory = std::move(directory), .entries = {}};
+    result.entries.reserve(std::min<std::size_t>(maximum_entries, 256));
+    for (fs::directory_iterator iterator(result.directory, error), end;
+         !error && iterator != end && result.entries.size() < maximum_entries;
+         iterator.increment(error)) {
+        if (cancellation.stop_requested()) {
+            return std::unexpected(std::make_error_code(std::errc::operation_canceled));
+        }
+        const fs::directory_entry& entry = *iterator;
+        const bool directory_entry = entry.is_directory(error);
+        if (error) {
+            break;
+        }
+        result.entries.push_back({.path = entry.path().lexically_normal(),
+                                  .name = entry.path().filename().string(),
+                                  .directory = directory_entry});
+    }
+    if (error) {
+        return std::unexpected(error);
+    }
+    return result;
+}
+
+std::error_code save_file_atomically(const std::filesystem::path& path, const Text& content,
+                                     const std::stop_token& cancellation) {
+    namespace fs = std::filesystem;
+    if (cancellation.stop_requested()) {
+        return std::make_error_code(std::errc::operation_canceled);
+    }
     const fs::path directory = path.has_parent_path() ? path.parent_path() : fs::path(".");
     const fs::path filename = path.filename();
     if (filename.empty()) {
@@ -81,6 +196,12 @@ std::error_code save_file_atomically(const std::filesystem::path& path, const Te
     for (TextCursor cursor(content); !cursor.at_end(); cursor.advance_chunk()) {
         std::string_view chunk = cursor.chunk();
         while (!chunk.empty()) {
+            if (cancellation.stop_requested()) {
+                close_ignoring_errors(fd);
+                ::unlinkat(directory_fd, temporary.c_str(), 0);
+                close_ignoring_errors(directory_fd);
+                return std::make_error_code(std::errc::operation_canceled);
+            }
             const ssize_t written = ::write(fd, chunk.data(), chunk.size());
             if (written < 0 && errno == EINTR) {
                 continue;
@@ -113,6 +234,12 @@ std::error_code save_file_atomically(const std::filesystem::path& path, const Te
         ::unlinkat(directory_fd, temporary.c_str(), 0);
         close_ignoring_errors(directory_fd);
         return system_error(error);
+    }
+
+    if (cancellation.stop_requested()) {
+        ::unlinkat(directory_fd, temporary.c_str(), 0);
+        close_ignoring_errors(directory_fd);
+        return std::make_error_code(std::errc::operation_canceled);
     }
 
     if (::renameat(directory_fd, temporary.c_str(), directory_fd, filename.c_str()) != 0) {

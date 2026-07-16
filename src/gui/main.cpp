@@ -1,4 +1,3 @@
-#include "cli/style_loader.hpp"
 #include "gui/editor_model.hpp"
 #include "gui/frame_controller.hpp"
 #include "gui/inspect_server.hpp"
@@ -23,9 +22,9 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -37,6 +36,28 @@ namespace cind::gui {
 namespace {
 
 constexpr float wheel_lines_per_step = 3.0F;
+
+class HeadlessWakeup {
+public:
+    void notify() {
+        {
+            std::scoped_lock lock(mutex_);
+            notified_ = true;
+        }
+        changed_.notify_one();
+    }
+
+    void wait() {
+        std::unique_lock lock(mutex_);
+        changed_.wait(lock, [this] { return notified_; });
+        notified_ = false;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool notified_ = false;
+};
 
 std::string_view cursor_owner_name(SkiaCursorOwner owner) {
     switch (owner) {
@@ -842,30 +863,6 @@ private:
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 
-std::string read_file(const std::string& path) {
-    std::string initial;
-    if (std::filesystem::exists(path)) {
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            throw std::runtime_error(std::format("cannot open {}", path));
-        }
-        std::stringstream contents;
-        contents << input.rdbuf();
-        initial = contents.str();
-    }
-    return initial;
-}
-
-std::pair<CppIndentStyle, std::string> load_style(const std::string& path) {
-    CppIndentStyle style;
-    std::string style_origin = "llvm (fallback)";
-    if (auto loaded = load_clang_format_style(std::filesystem::absolute(path).parent_path())) {
-        style = loaded->style;
-        style_origin = loaded->config_path.filename().string();
-    }
-    return {style, std::move(style_origin)};
-}
-
 // Renders one frame headless and writes the raw N32 (BGRA) pixels. No SDL, no
 // Wayland: the presenter rasterizes into an owned buffer, the reliable way to
 // capture the real chrome for font-smoothing comparisons. The vendored Skia is
@@ -880,8 +877,15 @@ struct ScreenshotGeometry {
 int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    const std::filesystem::path& output, SkiaFontSmoothing smoothing,
                    std::string font_family, ScreenshotGeometry geometry) {
-    auto [style, style_origin] = load_style(path);
-    EditorModel editor(path, read_file(path), style, std::move(style_origin), initial_line, {});
+    HeadlessWakeup wakeup;
+    EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
+                       {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wakeup] {
+                            wakeup.notify();
+                        }});
+    while (editor.has_background_work()) {
+        wakeup.wait();
+        (void)editor.poll_background_work();
+    }
     SkiaPresenter presenter(std::move(font_family), geometry.font_size, {}, smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
@@ -919,9 +923,6 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
 int run_editor(const std::string& path, std::uint32_t initial_line,
                const std::optional<std::filesystem::path>& inspector_socket,
                SkiaFontSmoothing smoothing, std::string font_family, float font_size) {
-    std::string initial = read_file(path);
-    auto [style, style_origin] = load_style(path);
-
     SdlRuntime runtime;
     const Uint32 background_event = SDL_RegisterEvents(1);
     if (background_event == 0) {
@@ -951,7 +952,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
                 event.type = background_event;
                 (void)SDL_PushEvent(&event);
             }};
-    EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line,
+    EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
                        std::move(platform_services));
     SkiaPresenter presenter(std::move(font_family), font_size, {}, smoothing);
     std::unique_ptr<InspectionHub> inspection;
@@ -1066,3 +1067,4 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+#include <condition_variable>

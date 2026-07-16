@@ -272,8 +272,9 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
     append_json_string(output, interaction.provider);
     output += ",\"allow_custom_input\":";
     append_bool(output, interaction.allow_custom_input);
-    output += std::format(",\"generation\":{},\"selected\":{},\"error\":", interaction.generation,
-                          interaction.selected);
+    output += std::format(",\"generation\":{},\"loading\":", interaction.generation);
+    append_bool(output, interaction.loading);
+    output += std::format(",\"selected\":{},\"error\":", interaction.selected);
     append_json_string(output, interaction.error);
     output += ",\"candidates\":[";
     for (std::size_t index = 0; index < interaction.candidates.size(); ++index) {

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <format>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -59,9 +60,9 @@ bool InteractionProviderRegistry::contains(std::string_view name) const {
     return providers_.contains(std::string(name));
 }
 
-std::vector<InteractionCandidate>
-InteractionProviderRegistry::complete(std::string_view name, CommandContext& context,
-                                      std::string_view query) const {
+InteractionProviderResult InteractionProviderRegistry::complete(std::string_view name,
+                                                                CommandContext& context,
+                                                                std::string_view query) const {
     const auto found = providers_.find(std::string(name));
     if (found == providers_.end()) {
         throw std::out_of_range(std::format("unknown interaction provider '{}'", name));
@@ -78,12 +79,14 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
         (request.provider.empty() || !providers_->contains(request.provider))) {
         return std::unexpected(std::format("unknown interaction provider '{}'", request.provider));
     }
+    cancel_pending();
     std::string input = request.initial_input;
     state_.emplace(InteractionState{.request = std::move(request),
                                     .input = TextInput(std::move(input)),
                                     .candidates = {},
                                     .selected = 0,
                                     .generation = 0,
+                                    .loading = false,
                                     .error = {}});
     refresh(context);
     return {};
@@ -182,6 +185,7 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
             }
         }
     }
+    cancel_pending();
     state_.reset();
     return submission;
 }
@@ -190,6 +194,7 @@ bool InteractionController::cancel() {
     if (!state_) {
         return false;
     }
+    cancel_pending();
     state_.reset();
     return true;
 }
@@ -201,27 +206,121 @@ const std::vector<std::string>& InteractionController::history(std::string_view 
 }
 
 void InteractionController::refresh(CommandContext& context) {
-    if (!state_) {
+    InteractionState* active = state();
+    if (active == nullptr) {
         return;
     }
-    ++state_->generation;
-    state_->selected = 0;
-    state_->error.clear();
-    state_->candidates.clear();
-    if (state_->request.kind != InteractionKind::Picker) {
+    cancel_pending();
+    InteractionState& state = *active;
+    const std::uint64_t generation = ++next_generation_;
+    state.generation = generation;
+    state.selected = 0;
+    state.loading = false;
+    state.error.clear();
+    state.candidates.clear();
+    if (state.request.kind != InteractionKind::Picker) {
         return;
     }
     try {
-        state_->candidates =
-            rank(providers_->complete(state_->request.provider, context, state_->input.text()),
-                 state_->input.text());
+        InteractionProviderResult result =
+            providers_->complete(state.request.provider, context, state.input.text());
+        if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
+            state.candidates = rank(std::move(*candidates), state.input.text());
+            return;
+        }
+        if (async_runtime_ == nullptr) {
+            state.error = "async interaction provider has no runtime";
+            return;
+        }
+        state.loading = true;
+        struct Job {
+            std::uint64_t generation = 0;
+            std::string query;
+            InteractionCandidateWork work;
+            InteractionController* controller = nullptr;
+        };
+        auto job =
+            std::make_shared<Job>(Job{.generation = generation,
+                                      .query = state.input.text(),
+                                      .work = std::move(std::get<InteractionCandidateWork>(result)),
+                                      .controller = this});
+        pending_task_ = async_runtime_->submit({
+            .work = [job](const std::stop_token& cancellation) -> AsyncCompletion {
+                std::vector<InteractionCandidate> candidates = job->work(cancellation);
+                if (cancellation.stop_requested()) {
+                    throw AsyncTaskCancelled();
+                }
+                candidates =
+                    InteractionController::rank(std::move(candidates), job->query, &cancellation);
+                if (cancellation.stop_requested()) {
+                    throw AsyncTaskCancelled();
+                }
+                auto shared_candidates =
+                    std::make_shared<std::vector<InteractionCandidate>>(std::move(candidates));
+                return [job, shared_candidates] {
+                    job->controller->apply_candidates(job->generation,
+                                                      std::move(*shared_candidates));
+                };
+            },
+            .cancelled =
+                [generation, controller = this] {
+                    if (controller->state_ && controller->state_->generation == generation) {
+                        controller->state_->loading = false;
+                        controller->pending_task_ = {};
+                    }
+                },
+            .failed =
+                [generation, controller = this](const std::exception_ptr& failure) {
+                    controller->apply_failure(generation, failure);
+                },
+        });
+    } catch (const std::exception& exception) {
+        state.loading = false;
+        state.error = exception.what();
+    }
+}
+
+void InteractionController::cancel_pending() noexcept {
+    if (async_runtime_ != nullptr && pending_task_.valid()) {
+        (void)async_runtime_->cancel(pending_task_);
+    }
+    pending_task_ = {};
+}
+
+void InteractionController::apply_candidates(std::uint64_t generation,
+                                             std::vector<InteractionCandidate> candidates) {
+    if (!state_ || state_->generation != generation) {
+        return;
+    }
+    state_->candidates = std::move(candidates);
+    state_->selected = 0;
+    state_->loading = false;
+    state_->error.clear();
+    pending_task_ = {};
+}
+
+void InteractionController::apply_failure(std::uint64_t generation,
+                                          const std::exception_ptr& failure) {
+    if (!state_ || state_->generation != generation) {
+        return;
+    }
+    state_->loading = false;
+    pending_task_ = {};
+    try {
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+        state_->error = "interaction provider failed";
     } catch (const std::exception& exception) {
         state_->error = exception.what();
+    } catch (...) {
+        state_->error = "interaction provider failed";
     }
 }
 
 std::vector<InteractionCandidate>
-InteractionController::rank(std::vector<InteractionCandidate> candidates, std::string_view query) {
+InteractionController::rank(std::vector<InteractionCandidate> candidates, std::string_view query,
+                            const std::stop_token* cancellation) {
     const std::vector<std::string> terms = query_terms(query);
     struct RankedCandidate {
         InteractionCandidate candidate;
@@ -230,6 +329,9 @@ InteractionController::rank(std::vector<InteractionCandidate> candidates, std::s
     std::vector<RankedCandidate> ranked;
     ranked.reserve(candidates.size());
     for (InteractionCandidate& candidate : candidates) {
+        if (cancellation != nullptr && cancellation->stop_requested()) {
+            return {};
+        }
         const std::string haystack =
             lowercase(candidate.filter_text.empty() ? std::string_view(candidate.label)
                                                     : std::string_view(candidate.filter_text));

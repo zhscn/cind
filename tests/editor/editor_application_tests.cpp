@@ -31,7 +31,11 @@ public:
 
     bool wait() {
         std::unique_lock lock(mutex_);
-        return changed_.wait_for(lock, std::chrono::seconds(2), [this] { return notified_; });
+        if (!changed_.wait_for(lock, std::chrono::seconds(2), [this] { return notified_; })) {
+            return false;
+        }
+        notified_ = false;
+        return true;
     }
 
 private:
@@ -118,6 +122,42 @@ TEST_CASE("background saving is independent of a graphical event loop") {
     const std::string saved{std::istreambuf_iterator<char>(input),
                             std::istreambuf_iterator<char>()};
     CHECK(saved == "xold");
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("initial files load through the async runtime and replace the startup scratch buffer") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        std::format("cind-application-open-{}.cc", static_cast<long>(::getpid()));
+    {
+        std::ofstream output(path, std::ios::binary);
+        output << "first\nsecond\nthird\n";
+    }
+
+    WakeSignal wake;
+    EditorApplication application({
+        .path = path.string(),
+        .initial_text = std::nullopt,
+        .style = {},
+        .style_origin = "fallback",
+        .initial_line = 2,
+        .platform_services = {.write_clipboard = {},
+                              .read_clipboard = {},
+                              .wake_event_loop = [&wake] { wake.notify(); }},
+    });
+    CHECK(application.session().buffer().kind() == BufferKind::Scratch);
+    CHECK(application.has_background_work());
+
+    REQUIRE(wake.wait());
+    REQUIRE(application.poll_background_work());
+    CHECK_FALSE(application.has_background_work());
+    CHECK(application.buffer_count() == 1);
+    CHECK(application.session().buffer().kind() == BufferKind::File);
+    CHECK(application.session().buffer().resource_uri() == path.string());
+    CHECK(application.session().snapshot().content() == "first\nsecond\nthird\n");
+    CHECK(application.session().caret().value == 6);
+
+    std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
 
@@ -489,14 +529,21 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
         second << "second";
     }
 
-    EditorApplication application = make_application(first_path.string(), "first");
+    WakeSignal wake;
+    EditorApplication application =
+        make_application(first_path.string(), "first",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
     const BufferId first = application.buffer_id();
     application.insert_text("A");
     application.session().view().viewport().top_line_offset = 0.25F;
 
-    const std::expected<BufferId, std::string> opened = application.open_file(second_path.string());
+    const std::expected<void, std::string> opened = application.open_file(second_path.string());
     REQUIRE(opened.has_value());
-    const BufferId second = *opened;
+    REQUIRE(wake.wait());
+    REQUIRE(application.poll_background_work());
+    const BufferId second = application.buffer_id();
     CHECK(second != first);
     application.insert_text("B");
     application.session().view().viewport().left_column = 3;
@@ -509,9 +556,9 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     CHECK(application.session().snapshot().content().to_string() == "Bsecond");
     CHECK(application.session().view().viewport().left_column == 3);
 
-    const std::expected<BufferId, std::string> reused = application.open_file(second_path.string());
+    const std::expected<void, std::string> reused = application.open_file(second_path.string());
     REQUIRE(reused.has_value());
-    CHECK(*reused == second);
+    CHECK(application.buffer_id() == second);
     CHECK(application.buffer_count() == 2);
     CHECK_FALSE(application.kill_buffer(second).has_value());
     CHECK(application.kill_buffer(second, true).has_value());

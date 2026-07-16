@@ -121,13 +121,16 @@ candidate navigation. Submission returns a named command dispatch that the comma
 so the accepted command remains visible as the executed command. An accept command may return
 another request, which supports multi-step interactions without retaining a C++ closure.
 
-Candidate providers return semantic values, labels, details, and filter text. The controller applies
-case-insensitive, whitespace-separated orderless filtering and stable ranking. Command, key-binding,
-open-buffer, and filesystem providers implement the command palette, key help, buffer switching,
-and file opening. GUI and TUI render the same candidate state through frontend-specific layout. The
-TUI places the prompt in the echo area and candidates in a cell popup. The GUI combines an
-interactive picker prompt and its candidates in an elevated logical-pixel overlay; prefix help uses
-the same structured popup content in a bottom-aligned overlay.
+Candidate providers return semantic values, labels, details, and filter text either immediately or
+through a cancellable worker job. Provider preparation runs on the editor thread and captures
+immutable worker input; filesystem traversal and large candidate ranking run through the async
+runtime. Every input change receives a monotonically increasing generation, and only results for
+the active generation can update the interaction. Command, key-binding, open-buffer, and filesystem
+providers implement the command palette, key help, buffer switching, and file opening. GUI and TUI
+render the same candidate and loading state through frontend-specific layout. The TUI places the
+prompt in the echo area and candidates in a cell popup. The GUI combines an interactive picker
+prompt and its candidates in an elevated logical-pixel overlay; prefix help uses the same structured
+popup content in a bottom-aligned overlay.
 
 ## Extension boundary
 

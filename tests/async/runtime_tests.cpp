@@ -87,6 +87,9 @@ TEST_CASE("libuv runtime cancellation is cooperative for running work") {
             started.count_down();
             release.wait();
             observed_cancellation.store(token.stop_requested(), std::memory_order_relaxed);
+            if (token.stop_requested()) {
+                throw AsyncTaskCancelled();
+            }
             return [&] { completed = true; };
         },
         .cancelled = [&] { cancelled = true; },
@@ -102,6 +105,33 @@ TEST_CASE("libuv runtime cancellation is cooperative for running work") {
     CHECK(cancelled);
     CHECK_FALSE(completed);
     CHECK_FALSE(runtime.has_work());
+}
+
+TEST_CASE("a stop request does not discard work committed by the worker") {
+    WakeSignal wake;
+    AsyncRuntime runtime([&wake] { wake.notify(); });
+    std::latch started(1);
+    std::latch release(1);
+    bool completed = false;
+    bool cancelled = false;
+
+    const AsyncTaskId task = runtime.submit({
+        .work = [&](const std::stop_token&) -> AsyncCompletion {
+            started.count_down();
+            release.wait();
+            return [&] { completed = true; };
+        },
+        .cancelled = [&] { cancelled = true; },
+        .failed = {},
+    });
+
+    started.wait();
+    CHECK(runtime.cancel(task));
+    release.count_down();
+    REQUIRE(wake.wait());
+    CHECK(runtime.drain() == 1);
+    CHECK(completed);
+    CHECK_FALSE(cancelled);
 }
 
 TEST_CASE("libuv async submission wakeups may coalesce without losing tasks") {
@@ -168,7 +198,7 @@ TEST_CASE("libuv runtime shutdown requests stop and suppresses delivery") {
                     std::this_thread::yield();
                 }
                 observed_stop.store(true, std::memory_order_relaxed);
-                return [&] { delivered = true; };
+                throw AsyncTaskCancelled();
             },
             .cancelled = [&] { delivered = true; },
             .failed = [&](const std::exception_ptr&) { delivered = true; },

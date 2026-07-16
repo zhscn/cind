@@ -53,6 +53,7 @@ struct AsyncRuntime::Impl {
         AsyncTaskSpec spec;
         AsyncCompletion completion;
         std::exception_ptr exception;
+        bool cancellation_acknowledged = false;
         bool queued = false;
         bool finished = false;
     };
@@ -234,6 +235,8 @@ struct AsyncRuntime::Impl {
         Task& task = *static_cast<Task*>(request->data);
         try {
             task.completion = task.spec.work(task.cancellation.get_token());
+        } catch (const AsyncTaskCancelled&) {
+            task.cancellation_acknowledged = true;
         } catch (...) {
             task.exception = std::current_exception();
         }
@@ -246,7 +249,7 @@ struct AsyncRuntime::Impl {
         --self.active_requests;
         if (self.shutting_down.load(std::memory_order_acquire)) {
             self.finish_without_delivery(self.find_task(task.id));
-        } else if (status == UV_ECANCELED || task.cancellation.stop_requested()) {
+        } else if (status == UV_ECANCELED || task.cancellation_acknowledged) {
             self.publish(self.find_task(task.id), ReadyKind::Cancelled);
         } else if (task.exception) {
             self.publish(self.find_task(task.id), ReadyKind::Failed);

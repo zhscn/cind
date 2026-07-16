@@ -11,9 +11,7 @@
 #include <charconv>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <initializer_list>
-#include <iterator>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -60,6 +58,13 @@ bool internal_command(std::string_view name) {
     return name.ends_with(".accept") || name.starts_with("interaction.");
 }
 
+struct LoadedFileData {
+    std::string resource;
+    std::string contents;
+    CppIndentStyle style;
+    std::string style_origin;
+};
+
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
@@ -78,15 +83,18 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
           }),
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)) {
+    interaction_.attach_async_runtime(async_runtime_);
     register_commands();
     register_interaction_providers();
 
-    BufferSpec initial_buffer{.name = {},
-                              .initial_text = std::move(spec.initial_text),
-                              .kind = spec.path.empty() ? BufferKind::Scratch : BufferKind::File,
-                              .resource_uri = std::nullopt,
-                              .read_only = false};
-    if (!spec.path.empty()) {
+    const bool deferred_initial_load = !spec.initial_text && !spec.path.empty();
+    BufferSpec initial_buffer{
+        .name = {},
+        .initial_text = spec.initial_text ? std::move(*spec.initial_text) : std::string(),
+        .kind = deferred_initial_load || spec.path.empty() ? BufferKind::Scratch : BufferKind::File,
+        .resource_uri = std::nullopt,
+        .read_only = false};
+    if (!spec.path.empty() && !deferred_initial_load) {
         std::expected<std::string, std::string> path = normalized_path(spec.path);
         if (!path) {
             throw std::invalid_argument(path.error());
@@ -99,7 +107,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     active_window_ = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = active_window_;
     window_layout_ = WindowLayout(active_window_);
-    if (spec.initial_line > 0) {
+    if (spec.initial_line > 0 && !deferred_initial_load) {
         const DocumentSnapshot snapshot = session().snapshot();
         const std::uint32_t line =
             std::min(spec.initial_line - 1, snapshot.content().line_count() - 1);
@@ -108,6 +116,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
 
     register_keymaps();
     sync_keymaps();
+    if (deferred_initial_load) {
+        startup_placeholder_ = initial;
+        if (std::expected<void, std::string> opened =
+                open_file(spec.path, active_window_, spec.initial_line);
+            !opened) {
+            message_ = std::format("open failed: {}", opened.error());
+        }
+    }
 }
 
 BufferId EditorApplication::buffer_id() const {
@@ -184,53 +200,154 @@ void EditorApplication::reset_preferred_column() {
     basic_commands_.reset_preferred_column(view_id());
 }
 
-std::expected<BufferId, std::string> EditorApplication::open_file(std::string_view input) {
+std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
+    return open_file(input, active_window_, 0);
+}
+
+std::expected<void, std::string> EditorApplication::open_file(std::string_view input,
+                                                              WindowId target_window,
+                                                              std::uint32_t initial_line) {
     std::expected<std::string, std::string> normalized = normalized_path(input);
     if (!normalized) {
         return std::unexpected(normalized.error());
     }
     if (const std::optional<BufferId> existing = runtime_.buffers().find_by_resource(*normalized)) {
-        (void)switch_buffer(*existing);
-        return *existing;
+        (void)show_buffer(target_window, *existing);
+        return {};
+    }
+    if (auto pending = std::ranges::find_if(
+            pending_opens_, [&](const PendingOpen& open) { return open.resource == *normalized; });
+        pending != pending_opens_.end()) {
+        pending->target_window = target_window;
+        pending->initial_line = initial_line;
+        message_ = std::format("opening {}…", *normalized);
+        return {};
     }
 
-    const fs::path path(*normalized);
-    std::error_code error;
-    if (fs::is_directory(path, error)) {
-        return std::unexpected("path names a directory");
-    }
-    std::string initial;
-    if (fs::exists(path, error)) {
-        std::ifstream input_file(path, std::ios::binary);
-        if (!input_file) {
-            return std::unexpected(std::format("cannot open {}", path.string()));
-        }
-        initial.assign(std::istreambuf_iterator<char>(input_file),
-                       std::istreambuf_iterator<char>());
-    } else if (error) {
-        return std::unexpected(
-            std::format("cannot inspect {}: {}", path.string(), error.message()));
-    }
-
-    CppIndentStyle style;
-    std::string origin = "llvm (fallback)";
-    if (std::optional<LoadedStyle> loaded = load_clang_format_style(path.parent_path())) {
-        style = loaded->style;
-        origin = loaded->config_path.filename().string();
-    }
+    const std::string resource = *normalized;
     try {
-        const BufferId buffer = create_buffer(BufferSpec{.name = {},
-                                                         .initial_text = std::move(initial),
-                                                         .kind = BufferKind::File,
-                                                         .resource_uri = *normalized,
-                                                         .read_only = false},
-                                              style, std::move(origin));
-        (void)switch_buffer(buffer);
-        message_ = std::format("opened {}", path.string());
-        return buffer;
+        pending_opens_.push_back({.resource = resource,
+                                  .target_window = target_window,
+                                  .initial_line = initial_line,
+                                  .task = {}});
+        PendingOpen& pending = pending_opens_.back();
+        auto requested_resource = std::make_shared<const std::string>(resource);
+        pending.task = async_runtime_.submit({
+            .work = [this,
+                     requested_resource](const std::stop_token& cancellation) -> AsyncCompletion {
+                std::expected<FileReadResult, std::error_code> file =
+                    read_file_contents(*requested_resource, cancellation);
+                if (!file) {
+                    if (file.error() == std::make_error_code(std::errc::operation_canceled)) {
+                        throw AsyncTaskCancelled();
+                    }
+                    throw std::system_error(file.error(),
+                                            std::format("cannot open {}", *requested_resource));
+                }
+                auto loaded_data = std::make_shared<LoadedFileData>(LoadedFileData{
+                    .resource = *requested_resource,
+                    .contents = std::move(file->contents),
+                    .style = {},
+                    .style_origin = "llvm (fallback)",
+                });
+                if (std::optional<LoadedStyle> loaded_style =
+                        load_clang_format_style(fs::path(*requested_resource).parent_path())) {
+                    loaded_data->style = loaded_style->style;
+                    loaded_data->style_origin = loaded_style->config_path.filename().string();
+                }
+                return [this, loaded_data] {
+                    finish_open(std::move(loaded_data->resource), std::move(loaded_data->contents),
+                                loaded_data->style, std::move(loaded_data->style_origin));
+                };
+            },
+            .cancelled = [this, requested_resource] { cancel_open(*requested_resource); },
+            .failed =
+                [this, requested_resource](const std::exception_ptr& failure) {
+                    fail_open(*requested_resource, failure);
+                },
+        });
+        message_ = std::format("opening {}…", resource);
+        return {};
     } catch (const std::exception& exception) {
+        std::erase_if(pending_opens_,
+                      [&](const PendingOpen& open) { return open.resource == resource; });
         return std::unexpected(exception.what());
     }
+}
+
+void EditorApplication::finish_open(std::string resource, std::string contents,
+                                    CppIndentStyle style, std::string style_origin) {
+    const auto pending = std::ranges::find_if(
+        pending_opens_, [&](const PendingOpen& open) { return open.resource == resource; });
+    if (pending == pending_opens_.end()) {
+        return;
+    }
+    const WindowId requested_window = pending->target_window;
+    const std::uint32_t initial_line = pending->initial_line;
+    pending_opens_.erase(pending);
+
+    try {
+        BufferId buffer;
+        if (const std::optional<BufferId> existing =
+                runtime_.buffers().find_by_resource(resource)) {
+            buffer = *existing;
+        } else {
+            buffer = create_buffer(BufferSpec{.name = {},
+                                              .initial_text = std::move(contents),
+                                              .kind = BufferKind::File,
+                                              .resource_uri = resource,
+                                              .read_only = false},
+                                   style, std::move(style_origin));
+        }
+        const WindowId target = runtime_.windows().try_get(requested_window) != nullptr
+                                    ? requested_window
+                                    : active_window_;
+        if (runtime_.windows().try_get(target) != nullptr) {
+            (void)show_buffer(target, buffer);
+            if (initial_line > 0) {
+                EditSession& opened = session(target);
+                const DocumentSnapshot snapshot = opened.snapshot();
+                const std::uint32_t line =
+                    std::min(initial_line - 1, snapshot.content().line_count() - 1);
+                opened.set_caret(snapshot.content().line_start(line));
+            }
+        }
+        if (startup_placeholder_ && *startup_placeholder_ != buffer) {
+            const BufferId placeholder = *startup_placeholder_;
+            startup_placeholder_.reset();
+            if (Buffer* startup = runtime_.buffers().try_get(placeholder);
+                startup != nullptr && !startup->modified()) {
+                std::expected<void, std::string> removed = kill_buffer(placeholder, true);
+                if (!removed) {
+                    startup_placeholder_ = placeholder;
+                }
+            }
+        }
+        message_ = std::format("opened {}", resource);
+    } catch (const std::exception& exception) {
+        message_ = std::format("open failed: {}", exception.what());
+    }
+}
+
+void EditorApplication::fail_open(std::string_view resource, const std::exception_ptr& failure) {
+    std::erase_if(pending_opens_,
+                  [&](const PendingOpen& open) { return open.resource == resource; });
+    try {
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+        message_ = "open failed";
+    } catch (const std::exception& exception) {
+        message_ = std::format("open failed: {}", exception.what());
+    } catch (...) {
+        message_ = "open failed";
+    }
+}
+
+void EditorApplication::cancel_open(std::string_view resource) {
+    std::erase_if(pending_opens_,
+                  [&](const PendingOpen& open) { return open.resource == resource; });
+    message_ = std::format("open cancelled: {}", resource);
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
@@ -973,48 +1090,58 @@ void EditorApplication::register_interaction_providers() {
         return candidates;
     });
     runtime_.interaction_providers().define(
-        "files", [this](CommandContext&, std::string_view query) {
-            fs::path typed(query);
-            fs::path directory;
-            if (query.empty()) {
-                const Buffer& buffer = session().buffer();
-                directory = buffer.resource_uri() ? fs::path(*buffer.resource_uri()).parent_path()
-                                                  : fs::current_path();
-            } else if (query.ends_with(fs::path::preferred_separator)) {
-                directory = typed;
-            } else {
-                directory = typed.has_parent_path() ? typed.parent_path() : fs::current_path();
-            }
-            std::error_code error;
-            directory = fs::absolute(directory, error).lexically_normal();
-            if (error || !fs::is_directory(directory, error)) {
-                return std::vector<InteractionCandidate>{};
-            }
-
-            std::vector<InteractionCandidate> candidates;
-            if (directory.has_parent_path()) {
-                const std::string parent = directory_input(directory.parent_path());
-                candidates.push_back({.value = parent,
-                                      .label = "../",
-                                      .detail = directory.parent_path().string(),
-                                      .filter_text = parent});
-            }
-            for (fs::directory_iterator iterator(directory, error), end;
-                 !error && iterator != end && candidates.size() < 1000; iterator.increment(error)) {
-                const fs::directory_entry& entry = *iterator;
-                const bool is_directory = entry.is_directory(error);
-                std::string value = entry.path().lexically_normal().string();
-                std::string label = entry.path().filename().string();
-                if (is_directory) {
-                    value = directory_input(value);
-                    label.push_back(fs::path::preferred_separator);
+        "files",
+        [this](CommandContext&, std::string_view requested_query) -> InteractionProviderResult {
+            const Buffer& buffer = session().buffer();
+            std::optional<std::string> resource = buffer.resource_uri();
+            std::string query(requested_query);
+            return InteractionCandidateWork{[query = std::move(query),
+                                             resource = std::move(resource)](
+                                                const std::stop_token& cancellation) {
+                const fs::path typed(query);
+                fs::path directory;
+                if (query.empty()) {
+                    directory = resource ? fs::path(*resource).parent_path() : fs::path(".");
+                } else if (query.ends_with(fs::path::preferred_separator)) {
+                    directory = typed;
+                } else {
+                    directory = typed.has_parent_path() ? typed.parent_path() : fs::path(".");
                 }
-                candidates.push_back({.value = value,
-                                      .label = std::move(label),
-                                      .detail = directory.string(),
-                                      .filter_text = value});
-            }
-            return candidates;
+                std::expected<DirectoryListing, std::error_code> listing =
+                    list_directory(directory, 1000, cancellation);
+                if (!listing) {
+                    if (listing.error() == std::make_error_code(std::errc::operation_canceled)) {
+                        throw AsyncTaskCancelled();
+                    }
+                    return std::vector<InteractionCandidate>{};
+                }
+
+                std::vector<InteractionCandidate> candidates;
+                candidates.reserve(listing->entries.size() + 1);
+                if (listing->directory.has_parent_path()) {
+                    const std::string parent = directory_input(listing->directory.parent_path());
+                    candidates.push_back({.value = parent,
+                                          .label = "../",
+                                          .detail = listing->directory.parent_path().string(),
+                                          .filter_text = parent});
+                }
+                for (const DirectoryEntry& entry : listing->entries) {
+                    if (cancellation.stop_requested()) {
+                        throw AsyncTaskCancelled();
+                    }
+                    std::string value = entry.path.string();
+                    std::string label = entry.name;
+                    if (entry.directory) {
+                        value = directory_input(value);
+                        label.push_back(fs::path::preferred_separator);
+                    }
+                    candidates.push_back({.value = value,
+                                          .label = std::move(label),
+                                          .detail = listing->directory.string(),
+                                          .filter_text = value});
+                }
+                return candidates;
+            }};
         });
     runtime_.interaction_providers().define("key-bindings", [this](CommandContext&,
                                                                    std::string_view) {
@@ -1222,18 +1349,18 @@ void EditorApplication::save() {
         state.pending_save->task = async_runtime_.submit({
             .work = [this, buffer, path = std::move(target_path), content = std::move(content)](
                         const std::stop_token& cancellation) -> AsyncCompletion {
-                if (cancellation.stop_requested()) {
-                    return {};
-                }
                 std::error_code error;
                 try {
-                    error = save_file_atomically(path, content);
+                    error = save_file_atomically(path, content, cancellation);
                 } catch (const std::system_error& exception) {
                     error = exception.code();
                 } catch (const std::bad_alloc&) {
                     error = std::make_error_code(std::errc::not_enough_memory);
                 } catch (...) {
                     error = std::make_error_code(std::errc::io_error);
+                }
+                if (error == std::make_error_code(std::errc::operation_canceled)) {
+                    throw AsyncTaskCancelled();
                 }
                 return [this, buffer, error] { finish_save(buffer, error); };
             },
@@ -1346,7 +1473,7 @@ CommandResult EditorApplication::accept_command_palette(CommandContext& context,
 CommandResult EditorApplication::begin_open_file(CommandContext&, const CommandInvocation&) const {
     const Buffer& buffer = session().buffer();
     const fs::path directory =
-        buffer.resource_uri() ? fs::path(*buffer.resource_uri()).parent_path() : fs::current_path();
+        buffer.resource_uri() ? fs::path(*buffer.resource_uri()).parent_path() : fs::path(".");
     return InteractionRequest{.kind = InteractionKind::Picker,
                               .prompt = "Open file: ",
                               .initial_input = directory_input(directory),
@@ -1363,8 +1490,7 @@ CommandResult EditorApplication::accept_open_file(CommandContext&,
     if (input == nullptr) {
         return std::unexpected(CommandError{"open file requires a path"});
     }
-    std::error_code error;
-    if (fs::is_directory(*input, error)) {
+    if (input->ends_with(fs::path::preferred_separator)) {
         return InteractionRequest{.kind = InteractionKind::Picker,
                                   .prompt = "Open file: ",
                                   .initial_input = directory_input(*input),
@@ -1374,7 +1500,7 @@ CommandResult EditorApplication::accept_open_file(CommandContext&,
                                   .accept_command = open_file_accept_,
                                   .arguments = {}};
     }
-    std::expected<BufferId, std::string> opened = open_file(*input);
+    std::expected<void, std::string> opened = open_file(*input);
     return opened ? CommandResult{CommandCompleted{}}
                   : CommandResult{std::unexpected(CommandError{opened.error()})};
 }

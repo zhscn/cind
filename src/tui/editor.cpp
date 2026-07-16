@@ -1,6 +1,5 @@
 #include "tui/editor.hpp"
 
-#include "cli/style_loader.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "editor/editor_application.hpp"
 #include "tui/terminal.hpp"
@@ -13,10 +12,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
-#include <filesystem>
 #include <format>
-#include <fstream>
-#include <sstream>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 
@@ -159,7 +156,7 @@ std::optional<KeyStroke> normalize_key(const Key& key) {
 
 class Editor {
 public:
-    Editor(const std::string& path, std::string initial, CppIndentStyle style,
+    Editor(const std::string& path, std::optional<std::string> initial, CppIndentStyle style,
            std::string style_origin, std::uint32_t initial_line)
         : term_(), wakeup_(),
           application_({.path = path,
@@ -673,28 +670,8 @@ private:
 } // namespace
 
 int run_editor(const std::string& path, std::uint32_t initial_line) {
-    std::string initial;
-    if (std::filesystem::exists(path)) {
-        std::ifstream in(path, std::ios::binary);
-        if (!in) {
-            std::fprintf(stderr, "indent-core: cannot open %s\n", path.c_str());
-            return 1;
-        }
-        std::stringstream buffer;
-        buffer << in.rdbuf();
-        initial = buffer.str();
-    }
-
-    CppIndentStyle style;
-    std::string style_origin = "llvm (fallback)";
-    const auto dir = std::filesystem::absolute(path).parent_path();
-    if (auto loaded = load_clang_format_style(dir)) {
-        style = loaded->style;
-        style_origin = loaded->config_path.filename().string();
-    }
-
     try {
-        Editor editor(path, std::move(initial), style, std::move(style_origin), initial_line);
+        Editor editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line);
         return editor.run();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "indent-core: %s\n", e.what());

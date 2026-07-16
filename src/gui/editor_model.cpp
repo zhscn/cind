@@ -11,7 +11,7 @@
 
 namespace cind::gui {
 
-EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle style,
+EditorModel::EditorModel(std::string path, std::optional<std::string> initial, CppIndentStyle style,
                          std::string style_origin, std::uint32_t initial_line,
                          EditorPlatformServices platform_services)
     : application_({.path = std::move(path),
@@ -20,7 +20,10 @@ EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle s
                     .style_origin = std::move(style_origin),
                     .initial_line = initial_line,
                     .platform_services = std::move(platform_services)}) {
-    application_.set_message("SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
+    if (!application_.has_background_work()) {
+        application_.set_message(
+            "SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
+    }
 }
 
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
@@ -364,6 +367,7 @@ EditorStateSnapshot EditorModel::inspect() {
                              .provider = interaction->request.provider,
                              .allow_custom_input = interaction->request.allow_custom_input,
                              .generation = interaction->generation,
+                             .loading = interaction->loading,
                              .selected = interaction->selected,
                              .error = interaction->error,
                              .candidates = {}};

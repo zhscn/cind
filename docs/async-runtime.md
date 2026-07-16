@@ -41,7 +41,9 @@ been drained. `has_work()` includes queued work, running work and undrained resu
 suitable for lifecycle checks without using it as an event-loop polling mechanism.
 
 `cancel()` requests the task's standard stop source and asks the loop thread to cancel work that has
-not started. Work that may already be running checks the token at safe points.
+not started. Work that may already be running checks the token at safe points and throws
+`AsyncTaskCancelled` only when abandoning the operation preserves its external invariants. A stop
+request does not discard a completion that crossed an irreversible commit point.
 Cancellation and failure callbacks follow the same main-thread delivery path as successful
 completion. A true return value means that the task was still known and received a stop request; it
 does not claim that worker execution was preempted.
@@ -53,9 +55,12 @@ this shutdown completes before buffers and registries are destroyed.
 
 ## Editor integration
 
-File save captures an immutable document snapshot and performs the atomic file replacement as one
-worker task. Its completion marks that snapshot as the save point. Edits made while the write is in
-progress stay modified, so asynchronous completion cannot mark newer content as saved.
+File reads, directory enumeration and atomic saves run as worker tasks. Application startup opens
+its requested file asynchronously and replaces the temporary scratch buffer after the read and
+style discovery complete. File save captures an immutable document snapshot and performs the
+atomic file replacement as one worker task. Its completion marks that snapshot as the save point.
+Edits made while the write is in progress stay modified, so asynchronous completion cannot mark
+newer content as saved.
 
 Modes and services can submit additional work through `EditorApplication::async_runtime()`. Their
 completion callbacks must validate any resource identity or revision they captured before applying

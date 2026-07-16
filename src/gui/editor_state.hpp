@@ -27,6 +27,7 @@ struct InteractionStateSnapshot {
     std::string provider;
     bool allow_custom_input = false;
     std::uint64_t generation = 0;
+    bool loading = false;
     std::size_t selected = 0;
     std::string error;
     std::vector<InteractionCandidateSnapshot> candidates;

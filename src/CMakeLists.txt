@@ -66,7 +66,7 @@ add_library(cind_application STATIC
   editor/view.cpp
   editor/window.cpp
 )
-target_link_libraries(cind_application PUBLIC cind_document PRIVATE PkgConfig::Utf8Proc)
+target_link_libraries(cind_application PUBLIC cind_async cind_document PRIVATE PkgConfig::Utf8Proc)
 
 add_library(cind_editor STATIC
   cli/session.cpp

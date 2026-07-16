@@ -6,12 +6,46 @@
 #include "editor/interaction.hpp"
 #include "editor/runtime.hpp"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <latch>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace cind;
+
+namespace {
+
+class WakeSignal {
+public:
+    void notify() {
+        {
+            std::scoped_lock lock(mutex_);
+            notified_ = true;
+        }
+        changed_.notify_one();
+    }
+
+    bool wait() {
+        std::unique_lock lock(mutex_);
+        if (!changed_.wait_for(lock, std::chrono::seconds(2), [this] { return notified_; })) {
+            return false;
+        }
+        notified_ = false;
+        return true;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool notified_ = false;
+};
+
+} // namespace
 
 TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
     EditorRuntime runtime;
@@ -461,4 +495,72 @@ TEST_CASE("interaction controller owns non-blocking command input") {
           CommandLoopStatus::Executed);
     CHECK(submitted == "needle-next");
     CHECK_FALSE(interaction.active());
+}
+
+TEST_CASE("async interaction providers discard cancelled generations") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "prompt",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const CommandId accept = runtime.commands().define(
+        "async.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+
+    std::latch first_started(1);
+    std::latch release_first(1);
+    runtime.interaction_providers().define(
+        "async", [&](CommandContext&, std::string_view query) -> InteractionProviderResult {
+            return InteractionCandidateWork{[query = std::string(query), &first_started,
+                                             &release_first](const std::stop_token& cancellation) {
+                if (query == "a") {
+                    first_started.count_down();
+                    release_first.wait();
+                }
+                if (cancellation.stop_requested()) {
+                    throw AsyncTaskCancelled();
+                }
+                return std::vector<InteractionCandidate>{
+                    {.value = query, .label = query, .detail = "async", .filter_text = query}};
+            }};
+        });
+
+    WakeSignal wake;
+    AsyncRuntime async([&wake] { wake.notify(); });
+    InteractionController interaction(runtime.interaction_providers());
+    interaction.attach_async_runtime(async);
+    REQUIRE(interaction
+                .start({.kind = InteractionKind::Picker,
+                        .prompt = "async: ",
+                        .initial_input = "a",
+                        .history = {},
+                        .provider = "async",
+                        .allow_custom_input = false,
+                        .accept_command = accept,
+                        .arguments = {}},
+                       context)
+                .has_value());
+    REQUIRE(interaction.state() != nullptr);
+    CHECK(interaction.state()->loading);
+    first_started.wait();
+
+    interaction.insert("b", context);
+    REQUIRE(wake.wait());
+    CHECK(async.drain() == 1);
+    REQUIRE(interaction.state() != nullptr);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "ab");
+    CHECK_FALSE(interaction.state()->loading);
+
+    release_first.count_down();
+    REQUIRE(wake.wait());
+    CHECK(async.drain() == 1);
+    REQUIRE(interaction.state() != nullptr);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "ab");
 }
