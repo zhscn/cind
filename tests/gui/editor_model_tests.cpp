@@ -3,6 +3,7 @@
 
 #include "gui/editor_model.hpp"
 #include "gui/motion.hpp"
+#include "gui/scroll_timeline.hpp"
 
 #include <unistd.h>
 
@@ -49,6 +50,45 @@ TEST_CASE("critical spring integration is stable across frame splits") {
         single, {.target = 1.0F, .angular_frequency = frequency, .elapsed_seconds = 0.4F});
     CHECK(spring_at_rest(
         settled, {.target = 1.0F, .position_tolerance = 0.001F, .velocity_tolerance = 0.01F}));
+}
+
+TEST_CASE("scroll timeline brackets a sustained retargeted motion") {
+    ScrollSceneTimeline timeline;
+    const auto scene = [](int marker) {
+        ui::Scene result;
+        result.rows = marker;
+        return result;
+    };
+
+    timeline.insert(scene(0), 0.0F);
+    for (int target = 1; target <= 500; ++target) {
+        timeline.insert(scene(target), static_cast<float>(target));
+        const float visual = std::max(0.0F, static_cast<float>(target) - 3.25F);
+        timeline.retain_motion_range(visual, static_cast<float>(target));
+    }
+
+    const std::vector<ScrollSceneLayer> layers = timeline.layers_at(496.75F);
+    REQUIRE(layers.size() == 2);
+    CHECK(layers[0].scroll_top == doctest::Approx(496.0F));
+    CHECK(layers[0].scene->rows == 496);
+    CHECK(layers[1].scroll_top == doctest::Approx(497.0F));
+    CHECK(layers[1].scene->rows == 497);
+    CHECK(timeline.size() <= 6);
+}
+
+TEST_CASE("scroll timeline brackets the visual position after reversing direction") {
+    ScrollSceneTimeline timeline;
+    for (int target = 0; target <= 8; ++target) {
+        ui::Scene scene;
+        scene.rows = target;
+        timeline.insert(std::move(scene), static_cast<float>(target));
+    }
+    timeline.retain_motion_range(5.4F, 3.0F);
+
+    const std::vector<ScrollSceneLayer> layers = timeline.layers_at(5.4F);
+    REQUIRE(layers.size() == 2);
+    CHECK(layers[0].scroll_top == doctest::Approx(5.0F));
+    CHECK(layers[1].scroll_top == doctest::Approx(6.0F));
 }
 
 TEST_CASE("wheel scrolling moves the viewport without moving the caret") {

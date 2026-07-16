@@ -1458,26 +1458,28 @@ struct SkiaPresenter::Impl {
         }
         canvas.scale(device_scale, device_scale);
 
-        std::optional<DocumentLayout> animation_source_document;
-        if (animation && animation->scroll_source) {
-            animation_source_document = prepare_document_layout(
-                *animation->scroll_source, {.width = viewport_width, .height = viewport_height});
+        std::vector<std::optional<DocumentLayout>> animation_documents;
+        if (animation) {
+            animation_documents.reserve(animation->scroll_layers.size());
+            for (const SkiaScrollLayer& layer : animation->scroll_layers) {
+                if (layer.scene == nullptr) {
+                    throw std::invalid_argument("Skia scroll layer has no Scene");
+                }
+                animation_documents.push_back(prepare_document_layout(
+                    *layer.scene, {.width = viewport_width, .height = viewport_height}));
+            }
         }
 
         const auto paint_layer = [&](const ui::Scene& layer_scene, float grid_offset_y,
                                      bool paint_grid, bool paint_footer,
                                      SkiaRenderDiagnostics* layer_diagnostics,
-                                     const SkRect* damage_bounds) {
+                                     const SkRect* damage_bounds, const DocumentLayout* document) {
             const ui::SceneVerticalLayout vertical_layout(layer_scene,
                                                           vertical_metrics(viewport_height));
             const SkRect grid_clip =
                 SkRect::MakeLTRB(0.0F, 0.0F, viewport_width, vertical_layout.grid_clip_bottom());
             const PopupLayout* panel = &layer_scene == &scene ? prepared_popup : nullptr;
             const EchoLayout* echo = &layer_scene == &scene ? prepared_echo : nullptr;
-            const DocumentLayout* document =
-                &layer_scene == &scene
-                    ? prepared_document
-                    : (animation_source_document ? &*animation_source_document : nullptr);
             SkPaint fill;
             fill.setAntiAlias(false);
             for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
@@ -1754,16 +1756,18 @@ struct SkiaPresenter::Impl {
         };
 
         if (full_repaint) {
-            if (animation && animation->scroll_source) {
-                paint_layer(*animation->scroll_source, animation->source_grid_offset_y, true, false,
-                            nullptr, nullptr);
-                paint_layer(scene, animation->target_grid_offset_y, true, false, diagnostics,
-                            nullptr);
-                paint_layer(scene, 0.0F, false, true, diagnostics, nullptr);
+            if (animation && !animation->scroll_layers.empty()) {
+                for (std::size_t index = 0; index < animation->scroll_layers.size(); ++index) {
+                    const SkiaScrollLayer& layer = animation->scroll_layers[index];
+                    const std::optional<DocumentLayout>& document = animation_documents[index];
+                    paint_layer(*layer.scene, layer.grid_offset_y, true, false, nullptr, nullptr,
+                                document ? &*document : nullptr);
+                }
+                paint_layer(scene, 0.0F, false, true, diagnostics, nullptr, prepared_document);
             } else {
-                paint_layer(scene, 0.0F, true, true, diagnostics, nullptr);
+                paint_layer(scene, 0.0F, true, true, diagnostics, nullptr, prepared_document);
             }
-            paint_cursor(animation ? animation->target_grid_offset_y : 0.0F,
+            paint_cursor(animation ? animation->cursor_grid_offset_y : 0.0F,
                          animation ? animation->cursor_position : std::optional<SkiaLogicalPoint>{},
                          nullptr);
             return;
@@ -1780,7 +1784,7 @@ struct SkiaPresenter::Impl {
             canvas.save();
             canvas.clipRect(bounds);
             canvas.drawRect(bounds, clear);
-            paint_layer(scene, 0.0F, true, true, nullptr, &bounds);
+            paint_layer(scene, 0.0F, true, true, nullptr, &bounds, prepared_document);
             paint_cursor(0.0F, std::nullopt, &bounds);
             canvas.restore();
         }

@@ -21,7 +21,8 @@ namespace {
 
 void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                         bool full_reference_match = true, bool popup_cursor_mismatch = false,
-                        bool echo_frame = false, bool echo_cursor_mismatch = false) {
+                        bool echo_frame = false, bool echo_cursor_mismatch = false,
+                        bool scroll_frame = false) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -180,8 +181,23 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .baseline_from_row_top = 15.0F},
         .theme = {.canvas = 0xFF1E1E1E},
         .pixel_hash = 42,
-        .animation = {},
-        .damage = {.full_repaint = false,
+        .animation =
+            scroll_frame
+                ? RenderAnimationSnapshot{
+                      .active = true,
+                      .scroll = true,
+                      .cursor = false,
+                      .scroll_progress = 0.5F,
+                      .cursor_progress = 1.0F,
+                      .scroll_velocity = 4.0F,
+                      .visual_scroll_top = 0.5F,
+                      .target_scroll_top = 1.0F,
+                      .layers = {{.scroll_top = 0.0F, .grid_offset_y = -10.0F},
+                                 {.scroll_top = 1.0F, .grid_offset_y = 10.0F}},
+                      .cursor_rect = std::nullopt,
+                  }
+                : RenderAnimationSnapshot{},
+        .damage = {.full_repaint = scroll_frame,
                    .damaged_cells = 1,
                    .damaged_output_pixels = 1350,
                    .output_fraction = 0.03,
@@ -249,7 +265,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":17") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":18") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -373,6 +389,21 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(overflow.ok);
     CHECK(overflow.payload.find("\"gap\":true") != std::string::npos);
     CHECK(overflow.payload.find("\"oldest_available\":") != std::string::npos);
+}
+
+TEST_CASE("inspection exposes continuous document scroll layers") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, false, false, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    CHECK(frame->violations.empty());
+    const InspectionResponse response = run_inspection_query(hub, "get render.animation");
+    REQUIRE(response.ok);
+    const std::string& animation = response.payload;
+    CHECK(animation.find("\"visual_scroll_top\":0.5") != std::string::npos);
+    CHECK(animation.find("\"layers\":[{\"scroll_top\":0,\"grid_offset_y\":-10}") !=
+          std::string::npos);
 }
 
 TEST_CASE("inspection reports renderer primitives that cross scene rows") {

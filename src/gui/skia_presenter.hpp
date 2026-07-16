@@ -76,14 +76,19 @@ void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
                                      const std::optional<SkiaLogicalRect>& previous_cursor,
                                      const std::optional<SkiaLogicalRect>& current_cursor);
 
+struct SkiaScrollLayer {
+    const ui::Scene* scene = nullptr;
+    float grid_offset_y = 0.0F;
+};
+
 // Transient presentation state layered over a composed Scene. A scroll frame
-// paints the source and target grid layers at independent pixel offsets while
-// keeping bottom-anchored regions fixed. cursor_position replaces the Scene's
-// cell-aligned cursor for the current frame.
+// paints the viewport snapshots adjacent to the current visual document
+// position at independent pixel offsets while keeping bottom-anchored regions
+// fixed. cursor_position replaces the Scene's cell-aligned cursor for the
+// current frame.
 struct SkiaAnimationFrame {
-    const ui::Scene* scroll_source = nullptr;
-    float source_grid_offset_y = 0.0F;
-    float target_grid_offset_y = 0.0F;
+    std::vector<SkiaScrollLayer> scroll_layers;
+    float cursor_grid_offset_y = 0.0F;
     std::optional<SkiaLogicalPoint> cursor_position;
 };
 

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <format>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -620,9 +621,18 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
     append_bool(output, animation.cursor);
     output +=
         std::format(",\"scroll_progress\":{},\"cursor_progress\":{},\"scroll_velocity\":{},"
-                    "\"source_grid_offset_y\":{},\"target_grid_offset_y\":{},\"cursor_rect\":",
+                    "\"visual_scroll_top\":{},\"target_scroll_top\":{},\"layers\":[",
                     animation.scroll_progress, animation.cursor_progress, animation.scroll_velocity,
-                    animation.source_grid_offset_y, animation.target_grid_offset_y);
+                    animation.visual_scroll_top, animation.target_scroll_top);
+    for (std::size_t index = 0; index < animation.layers.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output +=
+            std::format("{{\"scroll_top\":{},\"grid_offset_y\":{}}}",
+                        animation.layers[index].scroll_top, animation.layers[index].grid_offset_y);
+    }
+    output += "],\"cursor_rect\":";
     if (animation.cursor_rect) {
         append_logical_rect(output, *animation.cursor_rect);
     } else {
@@ -1126,6 +1136,39 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     if (!std::isfinite(animation.scroll_velocity)) {
         violations.emplace_back("render scroll velocity is not finite");
+    }
+    if (animation.scroll) {
+        if (!std::isfinite(animation.visual_scroll_top) ||
+            !std::isfinite(animation.target_scroll_top)) {
+            violations.emplace_back("render scroll positions are not finite");
+        }
+        if (animation.layers.empty() || animation.layers.size() > 2) {
+            violations.emplace_back("render scroll does not have adjacent viewport layers");
+        }
+        float previous_scroll_top = -std::numeric_limits<float>::infinity();
+        for (const RenderScrollLayerSnapshot& layer : animation.layers) {
+            if (!std::isfinite(layer.scroll_top) || !std::isfinite(layer.grid_offset_y)) {
+                violations.emplace_back("render scroll layer is not finite");
+                continue;
+            }
+            if (layer.scroll_top < previous_scroll_top) {
+                violations.emplace_back("render scroll layers are not document-ordered");
+            }
+            const float expected_offset = (layer.scroll_top - animation.visual_scroll_top) *
+                                          static_cast<float>(frame.render.cell_height);
+            if (std::abs(layer.grid_offset_y - expected_offset) > 0.01F) {
+                violations.emplace_back(
+                    "render scroll layer offset does not match document position");
+            }
+            previous_scroll_top = layer.scroll_top;
+        }
+        if (!animation.layers.empty() &&
+            (animation.layers.front().scroll_top > animation.visual_scroll_top + 0.0001F ||
+             animation.layers.back().scroll_top < animation.visual_scroll_top - 0.0001F)) {
+            violations.emplace_back("render scroll layers do not bracket the visual position");
+        }
+    } else if (!animation.layers.empty()) {
+        violations.emplace_back("idle scroll animation retains viewport layers");
     }
     if (animation.active != (animation.scroll || animation.cursor)) {
         violations.emplace_back("render animation activity flags are inconsistent");
@@ -1738,6 +1781,18 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " scroll-progress=" << frame.render.animation.scroll_progress
            << " scroll-velocity=" << frame.render.animation.scroll_velocity
            << " cursor-progress=" << frame.render.animation.cursor_progress << '\n';
+    if (frame.render.animation.scroll) {
+        output << "      scroll-top=" << frame.render.animation.visual_scroll_top
+               << " target=" << frame.render.animation.target_scroll_top << " layers=";
+        for (std::size_t index = 0; index < frame.render.animation.layers.size(); ++index) {
+            if (index != 0) {
+                output << ',';
+            }
+            const RenderScrollLayerSnapshot& layer = frame.render.animation.layers[index];
+            output << layer.scroll_top << '@' << layer.grid_offset_y;
+        }
+        output << '\n';
+    }
     output << "    damage=" << (frame.render.damage.full_repaint ? "full" : "partial")
            << " rects=" << frame.render.damage.rects.size()
            << " cells=" << frame.render.damage.damaged_cells

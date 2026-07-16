@@ -69,6 +69,11 @@ struct RenderDamageSnapshot {
     std::vector<RenderDamageRectSnapshot> rects;
 };
 
+struct RenderScrollLayerSnapshot {
+    float scroll_top = 0.0F;
+    float grid_offset_y = 0.0F;
+};
+
 struct RenderAnimationSnapshot {
     bool active = false;
     bool scroll = false;
@@ -76,8 +81,9 @@ struct RenderAnimationSnapshot {
     float scroll_progress = 1.0F;
     float cursor_progress = 1.0F;
     float scroll_velocity = 0.0F;
-    float source_grid_offset_y = 0.0F;
-    float target_grid_offset_y = 0.0F;
+    float visual_scroll_top = 0.0F;
+    float target_scroll_top = 0.0F;
+    std::vector<RenderScrollLayerSnapshot> layers;
     std::optional<LogicalPixelRectSnapshot> cursor_rect;
 };
 
@@ -190,7 +196,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 17;
+    static constexpr int schema_version = 18;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

@@ -3,6 +3,7 @@
 #include "gui/inspect_server.hpp"
 #include "gui/inspection.hpp"
 #include "gui/motion.hpp"
+#include "gui/scroll_timeline.hpp"
 #include "gui/skia_presenter.hpp"
 #include "ui/scene_layout.hpp"
 
@@ -316,9 +317,20 @@ private:
         bool repaint = false;
     };
 
+    struct AnimationContext {
+        std::uint32_t window_slot = 0;
+        std::uint32_t window_generation = 0;
+        std::uint32_t view_slot = 0;
+        std::uint32_t view_generation = 0;
+        std::uint32_t buffer_slot = 0;
+        std::uint32_t buffer_generation = 0;
+        RevisionId revision = 0;
+
+        bool operator==(const AnimationContext&) const = default;
+    };
+
     struct ScrollAnimation {
-        ui::Scene source;
-        float source_scroll_top = 0.0F;
+        ScrollSceneTimeline timeline;
         SpringState motion;
         float target_scroll_top = 0.0F;
         float initial_distance = 0.0F;
@@ -338,6 +350,24 @@ private:
         SkiaAnimationFrame frame;
         RenderAnimationSnapshot snapshot;
     };
+
+    static AnimationContext animation_context(const EditorStateSnapshot& editor) {
+        for (const OpenWindowStateSnapshot& window : editor.windows) {
+            if (!window.active) {
+                continue;
+            }
+            return {.window_slot = window.window_slot,
+                    .window_generation = window.window_generation,
+                    .view_slot = window.view_slot,
+                    .view_generation = window.view_generation,
+                    .buffer_slot = window.buffer_slot,
+                    .buffer_generation = window.buffer_generation,
+                    .revision = editor.revision};
+        }
+        return {.window_slot = editor.active_window_slot,
+                .window_generation = editor.active_window_generation,
+                .revision = editor.revision};
+    }
 
     EventResult dispatch_event(const SDL_Event& event) {
         const RevisionId revision_before = editor_.revision();
@@ -549,8 +579,8 @@ private:
         std::optional<SkiaLogicalPoint> position = frame.cursor_position;
         if (!position) {
             position = scene_cursor_position(layout);
-            if (position && frame.scroll_source && scene_cursor_uses_grid_offset(scene)) {
-                position->y += frame.target_grid_offset_y;
+            if (position && !frame.scroll_layers.empty() && scene_cursor_uses_grid_offset(scene)) {
+                position->y += frame.cursor_grid_offset_y;
             }
         }
         if (!position) {
@@ -563,10 +593,11 @@ private:
     }
 
     void update_animation_targets(const ui::Scene& scene, const SkiaFrameLayout& layout,
-                                  float scroll_top, bool geometry_changed,
-                                  AnimationClock::time_point now) {
+                                  float scroll_top, const AnimationContext& context,
+                                  bool geometry_changed, AnimationClock::time_point now) {
         const std::optional<SkiaLogicalPoint> target_cursor = scene_cursor_position(layout);
-        if (geometry_changed || !last_scene_ || !last_scroll_top_) {
+        if (geometry_changed || !last_scene_ || !last_scroll_top_ || !last_animation_context_ ||
+            *last_animation_context_ != context) {
             scroll_animation_.reset();
             cursor_animation_.reset();
         } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
@@ -575,15 +606,15 @@ private:
                 const SpringState motion = scroll_animation_
                                                ? scroll_state(*scroll_animation_, now)
                                                : SpringState{.position = *last_scroll_top_};
-                ui::Scene source_scene = *last_scene_;
-                float source_scroll_top = *last_scroll_top_;
+                ScrollSceneTimeline timeline;
                 if (scroll_animation_) {
-                    source_scene = scroll_animation_->source;
-                    source_scroll_top = scroll_animation_->source_scroll_top;
+                    timeline = std::move(scroll_animation_->timeline);
                 }
+                timeline.insert(*last_scene_, *last_scroll_top_);
+                timeline.insert(scene, scroll_top);
+                timeline.retain_motion_range(motion.position, scroll_top);
                 scroll_animation_ = ScrollAnimation{
-                    .source = std::move(source_scene),
-                    .source_scroll_top = source_scroll_top,
+                    .timeline = std::move(timeline),
                     .motion = motion,
                     .target_scroll_top = scroll_top,
                     .initial_distance = std::abs(scroll_top - motion.position),
@@ -593,6 +624,11 @@ private:
                 scroll_animation_.reset();
             }
             cursor_animation_.reset();
+        } else if (scroll_animation_) {
+            const SpringState motion = scroll_state(*scroll_animation_, now);
+            scroll_animation_->timeline.insert(scene, scroll_top);
+            scroll_animation_->timeline.retain_motion_range(motion.position,
+                                                            scroll_animation_->target_scroll_top);
         } else if (!scroll_animation_ && target_cursor && last_cursor_target_ &&
                    !same_point(*last_cursor_target_, *target_cursor)) {
             const SkiaLogicalPoint from =
@@ -612,6 +648,7 @@ private:
 
         last_scene_ = scene;
         last_scroll_top_ = scroll_top;
+        last_animation_context_ = context;
         last_cursor_target_ = target_cursor;
     }
 
@@ -627,13 +664,16 @@ private:
                 at_rest ? scroll_animation_->target_scroll_top : state.position;
             presentation.active = true;
             presentation.scroll_finished = at_rest;
-            presentation.frame.scroll_source = &scroll_animation_->source;
-            presentation.frame.source_grid_offset_y =
-                (scroll_animation_->source_scroll_top - visual_top) *
-                static_cast<float>(presenter_.cell_height());
-            presentation.frame.target_grid_offset_y =
-                (scroll_animation_->target_scroll_top - visual_top) *
-                static_cast<float>(presenter_.cell_height());
+            const float cell_height = static_cast<float>(presenter_.cell_height());
+            const std::vector<ScrollSceneLayer> layers =
+                scroll_animation_->timeline.layers_at(visual_top);
+            for (const ScrollSceneLayer& layer : layers) {
+                presentation.frame.scroll_layers.push_back(
+                    {.scene = layer.scene,
+                     .grid_offset_y = (layer.scroll_top - visual_top) * cell_height});
+            }
+            presentation.frame.cursor_grid_offset_y =
+                (scroll_animation_->target_scroll_top - visual_top) * cell_height;
             if (!presentation.scroll_finished) {
                 presentation.snapshot.active = true;
                 presentation.snapshot.scroll = true;
@@ -643,10 +683,14 @@ private:
                                         scroll_position_tolerance),
                     0.0F, 1.0F);
                 presentation.snapshot.scroll_velocity = state.velocity;
-                presentation.snapshot.source_grid_offset_y =
-                    presentation.frame.source_grid_offset_y;
-                presentation.snapshot.target_grid_offset_y =
-                    presentation.frame.target_grid_offset_y;
+                presentation.snapshot.visual_scroll_top = visual_top;
+                presentation.snapshot.target_scroll_top = scroll_animation_->target_scroll_top;
+                presentation.snapshot.layers.reserve(presentation.frame.scroll_layers.size());
+                for (std::size_t index = 0; index < layers.size(); ++index) {
+                    presentation.snapshot.layers.push_back(
+                        {.scroll_top = layers[index].scroll_top,
+                         .grid_offset_y = presentation.frame.scroll_layers[index].grid_offset_y});
+                }
             }
         }
         if (cursor_animation_) {
@@ -722,7 +766,8 @@ private:
         EditorStateSnapshot editor_snapshot = editor_.inspect();
         const float scroll_top = static_cast<float>(editor_snapshot.viewport.top_line) +
                                  editor_snapshot.viewport.top_line_offset;
-        update_animation_targets(scene, frame_layout, scroll_top, geometry_changed, now);
+        update_animation_targets(scene, frame_layout, scroll_top,
+                                 animation_context(editor_snapshot), geometry_changed, now);
         const AnimationPresentation animation = animation_presentation(now);
         const std::optional<SkiaLogicalRect> current_cursor =
             presented_cursor_rect(frame_layout, scene, animation.frame);
@@ -1058,6 +1103,7 @@ private:
     std::optional<CursorAnimation> cursor_animation_;
     std::optional<ui::Scene> last_scene_;
     std::optional<float> last_scroll_top_;
+    std::optional<AnimationContext> last_animation_context_;
     std::optional<SkiaLogicalPoint> last_cursor_target_;
     std::optional<SkiaLogicalRect> presented_cursor_rect_;
     int texture_width_ = 0;
