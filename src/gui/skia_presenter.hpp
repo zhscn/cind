@@ -36,29 +36,29 @@ enum class SkiaFontSmoothing : std::uint8_t {
 
 SkiaFontSmoothing parse_font_smoothing(std::string_view name);
 
-// One canvas, one surface: the editor body, gutter, and echo strip share the
-// canvas ground; the modeline and floating panels are the only raised
-// surfaces. Every separator is the same translucent hairline.
+// Nano-emacs visual language over configurable colors: flat color-block
+// chrome with no borders, shadows, or rounded shells. The document, gutter,
+// and echo strip share the canvas ground; the modeline and the minibuffer are
+// bands one step up; the status chip and the selected picker row are the only
+// solid accents, always paired with canvas-colored ink. Default values are
+// catppuccin Mocha.
 struct SkiaTheme {
-    std::uint32_t canvas = 0xFF1B1D22;
-    std::uint32_t surface = 0xFF24262C;
-    std::uint32_t inactive_surface = 0xFF202228;
-    std::uint32_t raised = 0xFF2F333B;
-    std::uint32_t hairline = 0x14FFFFFF;
-    std::uint32_t active_line = 0xFF22242A;
-    std::uint32_t selection = 0xFF2C4568;
-    std::uint32_t text = 0xFFD7DAE0;
-    std::uint32_t strong = 0xFFF2F4F8;
-    std::uint32_t inactive_strong = 0xFFB7BBC4;
-    std::uint32_t muted = 0xFF8A919C;
-    std::uint32_t inactive_muted = 0xFF686E78;
-    std::uint32_t faint = 0xFF555B66;
-    std::uint32_t accent = 0xFF7AA8F5;
-    std::uint32_t cursor = 0xFFE8EAEE;
-    std::uint32_t shadow = 0x4D000000;
-    std::uint32_t sign_added = 0xFF6F9A1E;
-    std::uint32_t sign_modified = 0xFF1E93B4;
-    std::uint32_t sign_deleted = 0xFFB03038;
+    std::uint32_t canvas = 0xFF1E1E2E;    // base — document, gutter, echo ground
+    std::uint32_t highlight = 0xFF2A2B3C; // active line; inactive modeline band
+    std::uint32_t band = 0xFF313244;      // surface0 — modeline + minibuffer ground
+    std::uint32_t selection = 0xFF45475A; // surface1 — selection; inactive status chip
+    std::uint32_t divider = 0xFF11111B;   // crust — split pane divider line
+    std::uint32_t text = 0xFFCDD6F4;
+    std::uint32_t strong = 0xFFDEE4F7;   // bold ink: file names, picker input
+    std::uint32_t faded = 0xFF7F849C;    // overlay1 — secondary ink; RW chip / selected row ground
+    std::uint32_t faint = 0xFF6C7086;    // overlay0 — line numbers, counters
+    std::uint32_t salient = 0xFF89B4FA;  // blue — keywords, prompts
+    std::uint32_t popout = 0xFFFAB387;   // peach — strings, numbers
+    std::uint32_t critical = 0xFFF9E2AF; // yellow — dirty-buffer chip
+    std::uint32_t cursor = 0xFFF5E0DC;   // rosewater
+    std::uint32_t sign_added = 0xFFA6E3A1;
+    std::uint32_t sign_modified = 0xFFF9E2AF;
+    std::uint32_t sign_deleted = 0xFFF38BA8;
 };
 
 struct SkiaLogicalRect {

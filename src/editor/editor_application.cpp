@@ -1453,11 +1453,12 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
         } else {
             message_.clear();
         }
-    } else if (result.status == CommandLoopStatus::Prefix ||
-               result.status == CommandLoopStatus::Error ||
+    } else if (result.status == CommandLoopStatus::Error ||
                result.status == CommandLoopStatus::Disabled ||
                result.status == CommandLoopStatus::Cancelled ||
                (result.status == CommandLoopStatus::NotHandled && result.consumed)) {
+        // A prefix does not echo as a message: the pending sequence has its
+        // own display channels (which-key title, echo right edge).
         message_ = result.message;
     }
     return result.consumed;

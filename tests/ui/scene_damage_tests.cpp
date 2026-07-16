@@ -193,17 +193,19 @@ TEST_CASE("scene damage tracks a structured echo byte caret within one cell") {
     Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
     Region echo{
         RegionRole::EchoArea, {1, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
-    echo.set_echo(Region::EchoContent{.text = "search: é", .cursor_byte = 9});
+    echo.set_echo(Region::EchoContent{.text = "search: é", .cursor_byte = 9, .key = {}});
     scene.regions = {std::move(body), std::move(echo)};
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
-    scene.regions.back().set_echo(Region::EchoContent{.text = "search: é", .cursor_byte = 11});
+    scene.regions.back().set_echo(
+        Region::EchoContent{.text = "search: é", .cursor_byte = 11, .key = {}});
     const SceneDamage moved = tracker.update(scene);
     CHECK_FALSE(moved.full_repaint);
     CHECK_FALSE(moved.cell_rects.empty());
 
-    scene.regions.back().set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9});
+    scene.regions.back().set_echo(
+        Region::EchoContent{.text = "search: x", .cursor_byte = 9, .key = {}});
     const SceneDamage edited = tracker.update(scene);
     CHECK_FALSE(edited.full_repaint);
     CHECK_FALSE(edited.cell_rects.empty());

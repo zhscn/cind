@@ -141,7 +141,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     });
     Region echo{RegionRole::EchoArea,   {1, 0, 1, 10}, {}, SurfaceClass::Echo,
                 VerticalAnchor::Bottom, "editor/echo", 7};
-    echo.set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9});
+    echo.set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9, .key = {}});
     std::optional<PopupLayoutSnapshot> popup_layout;
     std::optional<EchoLayoutSnapshot> echo_layout;
     if (echo_frame) {
@@ -331,7 +331,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":25") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":26") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);

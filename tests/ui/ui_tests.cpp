@@ -101,6 +101,7 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .revision = 0,
                                  .style_origin = {},
                                  .last_key = "C-x",
+                                 .pending_key = "C-x",
                                  .echo = "hello",
                                  .echo_cursor_column = std::nullopt,
                                  .echo_cursor_byte = std::nullopt,
@@ -113,7 +114,9 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     const Scene second = compose_editor_scene(input, laid_out);
     CHECK(first.grid_offset_rows == doctest::Approx(second.grid_offset_rows));
     CHECK(laid_out.viewport.top_line == 0);
-    CHECK(laid_out.popup.first_item() == 6);
+    // A 6-row frame reflows to a single-candidate minibuffer, so the
+    // selection scrolls to the top of the window.
+    CHECK(laid_out.popup.first_item() == 8);
     const Region* status = first.find(RegionRole::StatusBar);
     const Region* echo = first.find(RegionRole::EchoArea);
     const Region* popup = first.find(RegionRole::Popup);
@@ -174,6 +177,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .revision = 3,
                                               .style_origin = ".clang-format",
                                               .last_key = {},
+                                              .pending_key = {},
                                               .echo = {},
                                               .echo_cursor_column = std::nullopt,
                                               .echo_cursor_byte = std::nullopt,
@@ -185,8 +189,9 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                              view);
     const ViewTree tree(scene);
     CHECK(tree.layer(ViewLayer::Grid).children.size() == 3);
-    CHECK(tree.layer(ViewLayer::Chrome).children.size() == 2);
-    CHECK(tree.layer(ViewLayer::Overlay).children.size() == 1);
+    // The minibuffer band is bottom-anchored chrome, not an overlay.
+    CHECK(tree.layer(ViewLayer::Chrome).children.size() == 3);
+    CHECK(tree.layer(ViewLayer::Overlay).children.empty());
 
     const ViewNode& document = tree.layer(ViewLayer::Grid).children.back();
     const std::optional<HitTarget> document_target = resolve_hit_target(
@@ -209,7 +214,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     CHECK(gutter_target->kind == HitTargetKind::DocumentGutter);
     CHECK(gutter_target->document_line == 2);
 
-    const ViewNode& popup = tree.layer(ViewLayer::Overlay).children.front();
+    const ViewNode& popup = tree.layer(ViewLayer::Chrome).children.back();
     const std::optional<HitTarget> popup_target =
         resolve_hit_target(scene, {.region_index = popup.region_index,
                                    .scene_cell = std::nullopt,

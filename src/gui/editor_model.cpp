@@ -165,6 +165,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             popup_items.push_back({.label = hint.key, .detail = detail});
         }
     }
+    const std::string pending_key = application_.command_loop().pending_sequence_text();
     const ViewportState& state = session.view().viewport();
     const ui::EditorSceneViewState view{
         .viewport = {.top_line = state.top_line,
@@ -186,6 +187,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .revision = snapshot.revision(),
                                             .style_origin = application_.style_origin(),
                                             .last_key = application_.last_key(),
+                                            .pending_key = pending_key,
                                             .echo = echo,
                                             .echo_cursor_column = echo_cursor,
                                             .echo_cursor_byte = echo_cursor_byte,
@@ -227,6 +229,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
              .revision = pane_snapshot.revision(),
              .style_origin = application_.style_origin(placement.window),
              .last_key = active ? std::string_view(application_.last_key()) : std::string_view(),
+             .pending_key = {},
              .echo = {},
              .echo_cursor_column = std::nullopt,
              .echo_cursor_byte = std::nullopt,

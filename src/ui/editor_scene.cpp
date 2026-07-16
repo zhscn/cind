@@ -34,17 +34,34 @@ std::size_t scene_popup_capacity(SceneGeometry geometry, std::size_t item_count)
     if (item_count == 0 || geometry.cols < 16 || text_rows < 3) {
         return 0;
     }
+    // The minibuffer reflows the frame instead of overlaying it: prompt and
+    // candidates may claim at most half of the text rows.
+    const int budget = std::max(1, text_rows / 2 - 1);
     return std::min<std::size_t>(
-        item_count,
-        std::min<std::size_t>(maximum_popup_items, static_cast<std::size_t>(text_rows - 1)));
+        item_count, std::min<std::size_t>(maximum_popup_items, static_cast<std::size_t>(budget)));
+}
+
+// Scene rows the minibuffer band occupies (prompt row + visible candidates);
+// zero while no picker is active.
+int scene_popup_rows(SceneGeometry geometry, std::size_t item_count) {
+    const std::size_t capacity = scene_popup_capacity(geometry, item_count);
+    return capacity == 0 ? 0 : static_cast<int>(capacity) + 1;
 }
 
 } // namespace
 
 EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
                                          EditorSceneViewState current) {
-    const int text_rows = scene_text_rows(input.rows);
-    const double visible_text_rows = scene_visible_text_rows(text_rows, input.visible_text_rows);
+    // The minibuffer band shrinks the text area, so caret reveal must use the
+    // reduced height while a picker is active.
+    const int popup_rows =
+        scene_popup_rows({.rows = input.rows, .cols = input.cols}, input.popup_item_count);
+    const int text_rows = std::max(1, scene_text_rows(input.rows) - popup_rows);
+    const float visible_rows_input =
+        input.visible_text_rows > 0.0F
+            ? std::max(1.0F, input.visible_text_rows - static_cast<float>(popup_rows))
+            : 0.0F;
+    const double visible_text_rows = scene_visible_text_rows(text_rows, visible_rows_input);
     const int text_column = text_area_column(input.text.line_count());
     const int text_width = std::max(1, input.cols - text_column);
     const LinePosition caret_position = input.text.position(input.caret);
@@ -91,8 +108,16 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
 
 Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewState& view) {
     const EditorViewport& viewport = view.viewport;
-    const int text_rows = scene_text_rows(input.rows);
-    const double visible_text_rows = scene_visible_text_rows(text_rows, input.visible_text_rows);
+    // An active picker reflows the frame: document rows and the modeline move
+    // up to give the minibuffer band its own rows above the echo line.
+    const int popup_rows =
+        scene_popup_rows({.rows = input.rows, .cols = input.cols}, input.popup_items.size());
+    const int text_rows = std::max(1, scene_text_rows(input.rows) - popup_rows);
+    const float visible_rows_input =
+        input.visible_text_rows > 0.0F
+            ? std::max(1.0F, input.visible_text_rows - static_cast<float>(popup_rows))
+            : 0.0F;
+    const double visible_text_rows = scene_visible_text_rows(text_rows, visible_rows_input);
     const int text_column = text_area_column(input.text.line_count());
     const int text_width = std::max(1, input.cols - text_column);
     const LinePosition caret_position = input.text.position(input.caret);
@@ -131,7 +156,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                   SurfaceClass::Status,  VerticalAnchor::Bottom,        "editor/modeline",
                   input.revision};
     Region echo{RegionRole::EchoArea,
-                {text_rows + 1, 0, 1, input.cols},
+                {text_rows + popup_rows + 1, 0, 1, input.cols},
                 {},
                 SurfaceClass::Echo,
                 VerticalAnchor::Bottom,
@@ -200,6 +225,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         .cursor_byte = input.echo_cursor_byte
                            ? std::optional(std::min(*input.echo_cursor_byte, input.echo.size()))
                            : std::nullopt,
+        .key = std::string(input.pending_key),
     });
 
     std::optional<Region> popup;
@@ -207,19 +233,15 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         input.popup_selection && *input.popup_selection < input.popup_items.size()
             ? input.popup_selection
             : std::nullopt;
-    if (!input.popup_items.empty() && input.cols >= 16 && text_rows >= 3) {
-        const std::size_t capacity = scene_popup_capacity({.rows = input.rows, .cols = input.cols},
-                                                          input.popup_items.size());
-        const std::size_t visible_count = std::min(input.popup_items.size(), capacity);
+    if (popup_rows > 0) {
+        const std::size_t visible_count = static_cast<std::size_t>(popup_rows - 1);
         const std::size_t maximum_first = input.popup_items.size() - visible_count;
         const std::size_t first = std::min(view.popup.first_item(), maximum_first);
-        const int popup_width = std::min(input.cols - 4, 88);
-        const int popup_rows = static_cast<int>(visible_count) + 1;
-        const int popup_row = std::max(0, text_rows - popup_rows);
-        const int popup_col = std::max(0, (input.cols - popup_width) / 2);
-        popup.emplace(RegionRole::Popup, Rect{popup_row, popup_col, popup_rows, popup_width},
-                      std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
-                      "editor/overlay/popup", input.revision);
+        // The minibuffer band claims the reflowed rows between the modeline
+        // and the echo line, always full width.
+        popup.emplace(RegionRole::Popup, Rect{text_rows + 1, 0, popup_rows, input.cols},
+                      std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Bottom,
+                      "editor/minibuffer", input.revision);
         popup->set_popup({});
         Region::PopupContent& popup_content = *popup->popup();
         popup_content.title = input.popup_title;

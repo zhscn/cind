@@ -758,21 +758,18 @@ private:
                              .leading = diagnostics.leading,
                              .baseline_from_row_top = diagnostics.baseline_from_row_top},
             .theme = {.canvas = theme.canvas,
-                      .surface = theme.surface,
-                      .inactive_surface = theme.inactive_surface,
-                      .raised = theme.raised,
-                      .hairline = theme.hairline,
-                      .active_line = theme.active_line,
+                      .highlight = theme.highlight,
+                      .band = theme.band,
                       .selection = theme.selection,
+                      .divider = theme.divider,
                       .text = theme.text,
                       .strong = theme.strong,
-                      .inactive_strong = theme.inactive_strong,
-                      .muted = theme.muted,
-                      .inactive_muted = theme.inactive_muted,
+                      .faded = theme.faded,
                       .faint = theme.faint,
-                      .accent = theme.accent,
+                      .salient = theme.salient,
+                      .popout = theme.popout,
+                      .critical = theme.critical,
                       .cursor = theme.cursor,
-                      .shadow = theme.shadow,
                       .sign_added = theme.sign_added,
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
@@ -876,7 +873,8 @@ struct ScreenshotGeometry {
 
 int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    const std::filesystem::path& output, SkiaFontSmoothing smoothing,
-                   std::string font_family, ScreenshotGeometry geometry) {
+                   std::string font_family, ScreenshotGeometry geometry,
+                   std::string_view key_notation) {
     HeadlessWakeup wakeup;
     EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
                        {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wakeup] {
@@ -898,6 +896,44 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
     const float text_height = std::max(0.0F, logical_h - footer);
     const float visible_text_rows =
         std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows - 2));
+    if (!key_notation.empty()) {
+        const std::expected<KeySequence, KeyParseError> keys = parse_key_sequence(key_notation);
+        if (!keys) {
+            throw std::runtime_error(
+                std::format("--screenshot-keys could not parse '{}'", key_notation));
+        }
+        for (const KeyStroke& key : *keys) {
+            // Mirror the interactive routing: a plain character also arrives
+            // as text input unless a pending key sequence consumed it.
+            const bool continued_sequence = editor.has_pending_key_sequence();
+            const bool handled = editor.handle_key(key, rows - 2);
+            if (key.code == KeyCode::Character && key.modifiers.bits == 0 &&
+                !(handled && continued_sequence)) {
+                std::string utf8;
+                const char32_t point = key.character;
+                if (point < 0x80) {
+                    utf8.push_back(static_cast<char>(point));
+                } else if (point < 0x800) {
+                    utf8.push_back(static_cast<char>(0xC0 | (point >> 6)));
+                    utf8.push_back(static_cast<char>(0x80 | (point & 0x3F)));
+                } else if (point < 0x10000) {
+                    utf8.push_back(static_cast<char>(0xE0 | (point >> 12)));
+                    utf8.push_back(static_cast<char>(0x80 | ((point >> 6) & 0x3F)));
+                    utf8.push_back(static_cast<char>(0x80 | (point & 0x3F)));
+                } else {
+                    utf8.push_back(static_cast<char>(0xF0 | (point >> 18)));
+                    utf8.push_back(static_cast<char>(0x80 | ((point >> 12) & 0x3F)));
+                    utf8.push_back(static_cast<char>(0x80 | ((point >> 6) & 0x3F)));
+                    utf8.push_back(static_cast<char>(0x80 | (point & 0x3F)));
+                }
+                editor.insert_text(utf8);
+            }
+            while (editor.has_background_work()) {
+                wakeup.wait();
+                (void)editor.poll_background_work();
+            }
+        }
+    }
     editor.layout_view(rows, columns, visible_text_rows);
     ui::Scene scene = editor.compose(rows, columns, visible_text_rows);
 
@@ -978,6 +1014,7 @@ int main(int argc, char** argv) {
     std::optional<std::filesystem::path> inspector_socket;
     std::optional<std::string> file;
     std::optional<std::filesystem::path> screenshot;
+    std::string screenshot_keys;
     cind::gui::SkiaFontSmoothing smoothing = cind::gui::SkiaFontSmoothing::Smooth;
     std::string_view font_family = "monospace";
     float font_size = 16.0F;
@@ -1016,6 +1053,11 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("--screenshot requires a path");
                 }
                 screenshot = std::filesystem::absolute(argv[index]);
+            } else if (argument == "--screenshot-keys") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--screenshot-keys requires a key sequence");
+                }
+                screenshot_keys = argv[index];
             } else if (argument == "--font-size") {
                 if (++index >= argc) {
                     throw std::runtime_error("--font-size requires a value");
@@ -1054,7 +1096,8 @@ int main(int argc, char** argv) {
                                              {.font_size = font_size,
                                               .logical_width = 900,
                                               .logical_height = 600,
-                                              .scale = 1.5F});
+                                              .scale = 1.5F},
+                                             screenshot_keys);
         }
         if (inspect && !inspector_socket) {
             inspector_socket =

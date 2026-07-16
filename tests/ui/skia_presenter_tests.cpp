@@ -56,7 +56,7 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
 
     CHECK(pixel(mid_x, mid_y) == theme.canvas);
     CHECK(pixel(presenter.cell_width() * 2 + mid_x, mid_y) == theme.selection);
-    CHECK(pixel(mid_x, presenter.cell_height() + mid_y) == theme.surface);
+    CHECK(pixel(mid_x, presenter.cell_height() + mid_y) == theme.band);
     const std::optional<SkiaLogicalRect> cursor =
         presenter.cursor_rect(scene, static_cast<float>(width), static_cast<float>(height));
     REQUIRE(cursor);
@@ -148,7 +148,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
     Region echo{
         RegionRole::EchoArea, {2, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
     const std::string text = "search: sdfasdf";
-    echo.set_echo(Region::EchoContent{.text = text, .cursor_byte = text.size()});
+    echo.set_echo(Region::EchoContent{.text = text, .cursor_byte = text.size(), .key = {}});
     scene.regions = {body, status, echo};
     scene.cursor_row = 3;
     scene.cursor_col = static_cast<int>(text.size()) + 1;
@@ -182,7 +182,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
         echo_diagnostics.cursor_rect.value_or(SkiaLogicalRect{});
     CHECK(cursor_bounds.x == doctest::Approx(diagnostic_cursor.x));
 
-    scene.regions.back().set_echo(Region::EchoContent{.text = text, .cursor_byte = 10});
+    scene.regions.back().set_echo(Region::EchoContent{.text = text, .cursor_byte = 10, .key = {}});
     scene.cursor_col = 11;
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
@@ -315,11 +315,10 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
         return pixels[static_cast<std::size_t>(y * width + width - 1)];
     };
     CHECK(pixel(partial_text_height - 1) == theme.canvas);
-    // The modeline opens with a translucent hairline over its surface.
-    CHECK(pixel(partial_text_height) != theme.surface);
-    CHECK(pixel(partial_text_height) != theme.canvas);
-    CHECK(pixel(partial_text_height + 1) == theme.surface);
-    CHECK(pixel(partial_text_height + status_height - 1) == theme.surface);
+    // The modeline is a flat band with no separator hairline.
+    CHECK(pixel(partial_text_height) == theme.band);
+    CHECK(pixel(partial_text_height + 1) == theme.band);
+    CHECK(pixel(partial_text_height + status_height - 1) == theme.band);
     CHECK(pixel(partial_text_height + status_height) == theme.canvas);
     CHECK(pixel(height - 1) == theme.canvas);
 
@@ -431,7 +430,7 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
     CHECK(retained == reference);
 }
 
-TEST_CASE("Skia presenter gives interactive popup independent elevated layout") {
+TEST_CASE("Skia presenter lays the interactive picker out as a bottom minibuffer") {
     SkiaTheme theme;
     SkiaPresenter presenter("monospace", 16.0F, theme);
     SceneDamageTracker tracker;
@@ -442,15 +441,17 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     scene.cursor_row = 30;
     scene.cursor_col = 13;
     scene.active_text_row = 4;
-    Region body{RegionRole::TextArea, {0, 8, 28, 92}, {}};
+    // Reflowed frame: the minibuffer band owns rows between the modeline and
+    // the echo line, exactly as compose_editor_scene lays it out.
+    Region body{RegionRole::TextArea, {0, 8, 24, 92}, {}};
     body.primitives().push_back({4, 0, "active", StyleClass::Text, false});
     Region status{
-        RegionRole::StatusBar, {28, 0, 1, 100}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+        RegionRole::StatusBar, {24, 0, 1, 100}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region echo{
         RegionRole::EchoArea, {29, 0, 1, 100}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
     echo.primitives().push_back({0, 0, "Command: ed", StyleClass::Message, false});
     Region popup{
-        RegionRole::Popup, {20, 6, 4, 88}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+        RegionRole::Popup, {25, 0, 4, 100}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     const std::string popup_input(36, 'm');
     popup.set_popup(Region::PopupContent{
         .title = "Command: ",
@@ -484,12 +485,19 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     const std::optional<SkiaLogicalRect> cursor = presenter.cursor_rect(frame_layout);
     REQUIRE(cursor);
     const SkiaLogicalRect end_cursor = cursor.value_or(SkiaLogicalRect{});
-    CHECK(end_cursor.y < static_cast<float>(popup.rect.row * presenter.cell_height()));
+    // The prompt heads the bottom minibuffer band, in the lower half of the
+    // window.
+    CHECK(end_cursor.y > static_cast<float>(height) * 0.5F);
     if (!diagnostics.popup_layout) {
         FAIL("popup layout diagnostics are missing");
         return;
     }
     const SkiaPopupLayoutDiagnostics& popup_diagnostics = *diagnostics.popup_layout;
+    // The band spans the full width and sits directly above the echo line.
+    CHECK(popup_diagnostics.panel_bounds.x == doctest::Approx(0.0F));
+    CHECK(popup_diagnostics.panel_bounds.width == doctest::Approx(static_cast<float>(width)));
+    CHECK(popup_diagnostics.panel_bounds.y + popup_diagnostics.panel_bounds.height ==
+          doctest::Approx(static_cast<float>(height) - presenter.echo_area_height()));
     CHECK(popup_diagnostics.input_bytes == popup_input.size());
     CHECK(popup_diagnostics.input_cursor == popup_input.size());
     CHECK(popup_diagnostics.cursor_rect.has_value());
@@ -506,7 +514,7 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
             const std::size_t pixel =
                 static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
                 static_cast<std::size_t>(x);
-            if (retained[pixel] == theme.text) {
+            if (retained[pixel] == theme.strong) {
                 rightmost_input_pixel = std::max(rightmost_input_pixel, x);
             }
         }
@@ -523,8 +531,8 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     REQUIRE(start_cursor);
     CHECK(start_cursor.value_or(SkiaLogicalRect{}).x < end_cursor.x);
     scene.regions.back().popup()->input_cursor = popup_input.size();
-    CHECK(std::ranges::find(retained, theme.surface) != retained.end());
-    CHECK(std::ranges::find(retained, theme.raised) != retained.end());
+    CHECK(std::ranges::find(retained, theme.band) != retained.end());
+    CHECK(std::ranges::find(retained, theme.faded) != retained.end());
 
     scene.regions.back().popup()->input = "edi";
     scene.regions.back().popup()->input_cursor = 3;
@@ -714,7 +722,7 @@ TEST_CASE("Skia animation frames scroll only the grid") {
         return animated_pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
                                static_cast<std::size_t>(x)];
     };
-    CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.surface);
+    CHECK(pixel(width - 1, cell_height * 2 + cell_height / 2) == theme.band);
     CHECK(pixel(width - 1, cell_height * 3 + cell_height / 2) == theme.canvas);
 }
 
@@ -914,8 +922,8 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
         return pixels[static_cast<std::size_t>(sample_y) * static_cast<std::size_t>(width) +
                       static_cast<std::size_t>(sample_x)];
     };
-    CHECK(pixel(before) == theme.active_line);
-    CHECK(pixel(after) == theme.active_line);
+    CHECK(pixel(before) == theme.highlight);
+    CHECK(pixel(after) == theme.highlight);
     std::size_t changed_pixels = 0;
     for (std::size_t index = 0; index < before.size(); ++index) {
         changed_pixels += before[index] != after[index] ? 1 : 0;
@@ -1018,9 +1026,8 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
     REQUIRE(tracker.update(scene).full_repaint);
     presenter.render(scene, width, height, retained.data(), row_bytes);
 
-    // The dirty dot and the key chip only exist in the structured layout.
-    CHECK(std::ranges::find(retained, theme.accent) != retained.end());
-    CHECK(std::ranges::find(retained, theme.raised) != retained.end());
+    // The dirty status chip only exists in the structured layout.
+    CHECK(std::ranges::find(retained, theme.critical) != retained.end());
 
     scene = make_scene("C-x C-s", false);
     const SceneDamage damage = tracker.update(scene);
@@ -1096,7 +1103,7 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
                                 .key = {}});
     Region echo{RegionRole::EchoArea, {3, 0, 1, scene.cols},  {},
                 SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
-    echo.set_echo({.text = "window split right", .cursor_byte = std::nullopt});
+    echo.set_echo({.text = "window split right", .cursor_byte = std::nullopt, .key = {}});
     scene.regions = {std::move(active_body), std::move(inactive_body), std::move(active_status),
                      std::move(inactive_status), std::move(echo)};
 
@@ -1114,8 +1121,8 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
     };
     const int workspace_bottom = height - static_cast<int>(presenter.echo_area_height());
     const int modeline_y = workspace_bottom - 2;
-    CHECK(pixel(presenter.cell_width() * 9, modeline_y) == theme.surface);
-    CHECK(pixel(presenter.cell_width() * 20, modeline_y) == theme.inactive_surface);
+    CHECK(pixel(presenter.cell_width() * 9, modeline_y) == theme.band);
+    CHECK(pixel(presenter.cell_width() * 20, modeline_y) == theme.highlight);
     const int divider_x = presenter.cell_width() * 10 + presenter.cell_width() / 2;
     CHECK(pixel(divider_x, presenter.cell_height() / 2) != theme.canvas);
 
@@ -1180,7 +1187,7 @@ TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
     Region inactive_status = status_region({5, 0, 1, 10}, "inactive/modeline", "window:1:1", false);
     Region echo{RegionRole::EchoArea, {6, 0, 1, scene.cols},  {},
                 SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
-    echo.set_echo({.text = "window split below", .cursor_byte = std::nullopt});
+    echo.set_echo({.text = "window split below", .cursor_byte = std::nullopt, .key = {}});
     scene.regions = {std::move(active_status), std::move(inactive_status), std::move(echo)};
 
     const int width = presenter.cell_width() * scene.cols;
@@ -1197,8 +1204,8 @@ TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
     const int workspace_bottom = height - static_cast<int>(presenter.echo_area_height());
     const int split_y = workspace_bottom / 2;
     const int sample_x = width - 2;
-    CHECK(pixel(sample_x, split_y - 2) == theme.surface);
-    CHECK(pixel(sample_x, workspace_bottom - 2) == theme.inactive_surface);
+    CHECK(pixel(sample_x, split_y - 2) == theme.band);
+    CHECK(pixel(sample_x, workspace_bottom - 2) == theme.highlight);
 
     const SkiaFrameLayout layout =
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));

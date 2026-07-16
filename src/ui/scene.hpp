@@ -159,6 +159,10 @@ struct Region {
         // active input surface; presenters derive their native caret geometry
         // from this offset.
         std::optional<std::size_t> cursor_byte;
+        // Pending key echo (emacs semantics). Pixel presenters place it at
+        // the line's right edge; it is ignored while the echo line is an
+        // active input surface.
+        std::string key;
 
         bool operator==(const EchoContent&) const = default;
     };

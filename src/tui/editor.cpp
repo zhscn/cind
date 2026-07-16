@@ -525,6 +525,7 @@ private:
                      .style_origin = application_.style_origin(placement.window),
                      .last_key =
                          active ? std::string_view(application_.last_key()) : std::string_view(),
+                     .pending_key = {},
                      .echo = {},
                      .echo_cursor_column = std::nullopt,
                      .echo_cursor_byte = std::nullopt,
@@ -587,6 +588,7 @@ private:
                                           .revision = snap.revision(),
                                           .style_origin = application_.style_origin(),
                                           .last_key = application_.last_key(),
+                                          .pending_key = {},
                                           .echo = echo_text,
                                           .echo_cursor_column = echo_cursor,
                                           .echo_cursor_byte = echo_cursor_byte,
@@ -633,6 +635,7 @@ private:
                                                     .revision = snap.revision(),
                                                     .style_origin = application_.style_origin(),
                                                     .last_key = application_.last_key(),
+                                                    .pending_key = {},
                                                     .echo = echo_text,
                                                     .echo_cursor_column = echo_cursor,
                                                     .echo_cursor_byte = echo_cursor_byte,

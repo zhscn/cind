@@ -232,7 +232,7 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     ui::Scene scene = compose_frame(model, 16, 100);
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    CHECK(popup->vertical_anchor == ui::VerticalAnchor::Overlay);
+    CHECK(popup->vertical_anchor == ui::VerticalAnchor::Bottom);
     REQUIRE(popup->popup());
     CHECK_FALSE(popup->popup()->input);
     CHECK(std::ranges::any_of(popup->popup()->items, [](const ui::Region::PopupItem& item) {

@@ -550,6 +550,8 @@ void append_region(std::string& output, const ui::Region& region) {
         } else {
             output += "null";
         }
+        output += ",\"key\":";
+        append_json_string(output, echo->key);
         output.push_back('}');
     } else {
         output += "null";
@@ -893,34 +895,28 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_font_metrics(output, render.font_metrics);
     output += "},\"theme\":{\"canvas\":";
     append_color(output, render.theme.canvas);
-    output += ",\"surface\":";
-    append_color(output, render.theme.surface);
-    output += ",\"inactive_surface\":";
-    append_color(output, render.theme.inactive_surface);
-    output += ",\"raised\":";
-    append_color(output, render.theme.raised);
-    output += ",\"hairline\":";
-    append_color(output, render.theme.hairline);
-    output += ",\"active_line\":";
-    append_color(output, render.theme.active_line);
+    output += ",\"highlight\":";
+    append_color(output, render.theme.highlight);
+    output += ",\"band\":";
+    append_color(output, render.theme.band);
     output += ",\"selection\":";
     append_color(output, render.theme.selection);
+    output += ",\"divider\":";
+    append_color(output, render.theme.divider);
     output += ",\"text\":";
     append_color(output, render.theme.text);
     output += ",\"strong\":";
     append_color(output, render.theme.strong);
-    output += ",\"inactive_strong\":";
-    append_color(output, render.theme.inactive_strong);
-    output += ",\"muted\":";
-    append_color(output, render.theme.muted);
-    output += ",\"inactive_muted\":";
-    append_color(output, render.theme.inactive_muted);
+    output += ",\"faded\":";
+    append_color(output, render.theme.faded);
     output += ",\"faint\":";
     append_color(output, render.theme.faint);
-    output += ",\"accent\":";
-    append_color(output, render.theme.accent);
-    output += ",\"shadow\":";
-    append_color(output, render.theme.shadow);
+    output += ",\"salient\":";
+    append_color(output, render.theme.salient);
+    output += ",\"popout\":";
+    append_color(output, render.theme.popout);
+    output += ",\"critical\":";
+    append_color(output, render.theme.critical);
     output += ",\"cursor\":";
     append_color(output, render.theme.cursor);
     output += ",\"sign_added\":";
