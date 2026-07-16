@@ -65,6 +65,12 @@ struct OpenWindowSnapshot {
     bool active = false;
 };
 
+struct LocationNavigationSnapshot {
+    std::optional<BufferId> buffer;
+    std::optional<std::size_t> selected_index;
+    std::size_t location_count = 0;
+};
+
 struct KeyBindingHint {
     std::string key;
     std::string command;
@@ -118,6 +124,7 @@ public:
     std::expected<void, std::string> kill_buffer(BufferId buffer, bool force = false);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
+    LocationNavigationSnapshot location_navigation() const;
     std::span<const KeymapLayer> active_keymap_layers() const {
         return command_loop_.keymap_layers();
     }
@@ -186,6 +193,11 @@ private:
         AsyncTaskId parse_task;
     };
 
+    struct LocationNavigationState {
+        BufferId buffer;
+        std::optional<std::size_t> selected_index;
+    };
+
     struct ViewState {
         WindowId window;
         BufferId buffer;
@@ -224,6 +236,9 @@ private:
     void apply_position(WindowId window, LinePosition position);
     CommandResult visit_location(CommandContext& context);
     CommandResult move_location(CommandContext& context, int direction);
+    CommandResult navigate_location(CommandContext& context, int direction);
+    CommandResult visit_location_at(BufferId list, std::size_t index, WindowId target_window);
+    bool location_navigation_available(const CommandContext& context) const;
 
     void register_commands();
     void register_interaction_providers();
@@ -268,6 +283,7 @@ private:
     std::vector<PendingOpen> pending_opens_;
     std::optional<BufferId> startup_placeholder_;
     ProjectSearchState project_search_;
+    std::optional<LocationNavigationState> location_navigation_;
     WindowId active_window_;
     WindowLayout window_layout_;
     InteractionController interaction_;

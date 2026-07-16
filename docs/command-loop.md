@@ -80,6 +80,7 @@ The default keymap follows Emacs conventions:
 - `C-x b`, `C-x k`, `C-x Left`, and `C-x Right` manage the active buffer;
 - `M-x` opens the command palette and `C-h b` opens searchable key-binding help;
 - `C-M-f`, `C-M-b`, and `C-M-u` perform structural movement;
+- `M-g n`, `M-g p`, and `` C-x ` `` navigate the current location list across source buffers;
 - `C-c e` and `C-c s` expand and contract the structural selection.
 
 `bind_default_editor_keys` binds only commands registered by the application composition. Optional
@@ -149,11 +150,11 @@ the input and editor-state model.
 ## Inspection
 
 The GUI inspector exposes `editor.command_loop`, `editor.interaction`, `editor.buffers`,
-`editor.windows`, and `editor.focus`. Command-loop state includes keymap names with their scopes and
-parent chains, override maps, pending keys, the highest matching keymap, repeat count, and last
-command. Interaction state includes prompt kind, input caret, provider, selection, generation,
-errors, and candidates. Buffer state includes resource and lifecycle data; Window state identifies
-each Window's bound View and Buffer.
+`editor.windows`, `editor.location_navigation`, and `editor.focus`. Command-loop state includes
+keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
+keymap, repeat count, and last command. Interaction state includes prompt kind, input caret,
+provider, selection, generation, errors, and candidates. Buffer state includes resource and
+lifecycle data; Window state identifies each Window's bound View and Buffer.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible
 item window, global item count and selection alongside its cell geometry, surface, and overlay
 anchor. Each frontend projects this semantic content into its native layout.

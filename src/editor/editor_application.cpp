@@ -504,6 +504,8 @@ void EditorApplication::finish_project_search_document(ProjectId project, Window
                                      .read_only = true},
                           CppIndentStyle{}, "location-list", location_list_mode_);
         runtime_.buffers().set_locations(buffer, std::move(document.locations));
+        location_navigation_ =
+            LocationNavigationState{.buffer = buffer, .selected_index = std::nullopt};
         runtime_.projects().assign(buffer, project);
         const WindowId target =
             runtime_.windows().try_get(target_window) != nullptr ? target_window : active_window_;
@@ -659,6 +661,10 @@ std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer,
         return std::unexpected("buffer has unsaved changes");
     }
 
+    if (location_navigation_ && location_navigation_->buffer == buffer) {
+        location_navigation_.reset();
+    }
+
     if (buffers_.size() == 1) {
         (void)create_scratch_buffer();
         found = std::ranges::find_if(
@@ -737,6 +743,24 @@ std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
                           .active = window == active_window_});
     }
     return result;
+}
+
+LocationNavigationSnapshot EditorApplication::location_navigation() const {
+    if (!location_navigation_) {
+        return {};
+    }
+    const Buffer* buffer = runtime_.buffers().try_get(location_navigation_->buffer);
+    if (buffer == nullptr) {
+        return {};
+    }
+    const std::size_t location_count = buffer->locations().size();
+    std::optional<std::size_t> selected_index = location_navigation_->selected_index;
+    if (selected_index && *selected_index >= location_count) {
+        selected_index.reset();
+    }
+    return {.buffer = location_navigation_->buffer,
+            .selected_index = selected_index,
+            .location_count = location_count};
 }
 
 std::vector<KeyBindingHint> EditorApplication::pending_key_hints() const {
@@ -943,21 +967,41 @@ void EditorApplication::apply_position(WindowId window, LinePosition position) {
 CommandResult EditorApplication::visit_location(CommandContext& context) {
     const Buffer& buffer = context.buffer();
     const TextOffset caret = runtime_.views().caret(context.view_id());
-    const BufferLocation* location = buffer.location_at(caret);
-    if (location == nullptr) {
-        const auto found =
-            std::ranges::find_if(buffer.locations(), [&](const BufferLocation& item) {
-                return item.source_range.start >= caret;
-            });
-        if (found != buffer.locations().end()) {
-            location = &*found;
-        }
+    const std::vector<BufferLocation>& locations = buffer.locations();
+    auto found = locations.end();
+    if (const BufferLocation* location = buffer.location_at(caret)) {
+        found = locations.begin() + (location - locations.data());
+    } else {
+        found = std::ranges::find_if(locations, [&](const BufferLocation& item) {
+            return item.source_range.start >= caret;
+        });
     }
-    if (location == nullptr) {
+    if (found == locations.end()) {
         return std::unexpected(CommandError{"no location at point"});
     }
+    return visit_location_at(buffer.id(), static_cast<std::size_t>(found - locations.begin()),
+                             context.window_id());
+}
+
+CommandResult EditorApplication::visit_location_at(BufferId list, std::size_t index,
+                                                   WindowId target_window) {
+    const Buffer* buffer = runtime_.buffers().try_get(list);
+    if (buffer == nullptr || index >= buffer->locations().size()) {
+        return std::unexpected(CommandError{"location list is no longer available"});
+    }
+    const BufferLocation location = buffer->locations()[index];
+    location_navigation_ = LocationNavigationState{.buffer = list, .selected_index = index};
+    ViewState* list_view = find_view(target_window, list);
+    if (list_view == nullptr) {
+        const ViewId created = create_view(target_window, list, location.source_range.start);
+        list_view = &view_state_for(created);
+    } else {
+        runtime_.views().set_caret(list_view->view, location.source_range.start);
+    }
+    basic_commands_.reset_preferred_column(list_view->view);
+    message_ = std::format("location {}/{}", index + 1, buffer->locations().size());
     std::expected<void, std::string> opened =
-        open_file(location->resource, context.window_id(), location->target);
+        open_file(location.resource, target_window, location.target);
     return opened ? CommandResult{CommandCompleted{}}
                   : CommandResult{std::unexpected(CommandError{opened.error()})};
 }
@@ -993,6 +1037,78 @@ CommandResult EditorApplication::move_location(CommandContext& context, int dire
     reveal_caret_ = true;
     message_ = std::format("location {}/{}", *selected + 1, locations.size());
     return CommandCompleted{};
+}
+
+bool EditorApplication::location_navigation_available(const CommandContext& context) const {
+    if (!context.buffer().locations().empty()) {
+        return true;
+    }
+    if (!location_navigation_) {
+        return false;
+    }
+    const Buffer* buffer = runtime_.buffers().try_get(location_navigation_->buffer);
+    return buffer != nullptr && !buffer->locations().empty();
+}
+
+CommandResult EditorApplication::navigate_location(CommandContext& context, int direction) {
+    BufferId list = context.buffer_id();
+    const bool at_list = !context.buffer().locations().empty();
+    if (!at_list) {
+        if (!location_navigation_) {
+            return std::unexpected(CommandError{"no current location list"});
+        }
+        list = location_navigation_->buffer;
+    }
+    const Buffer* buffer = runtime_.buffers().try_get(list);
+    if (buffer == nullptr || buffer->locations().empty()) {
+        if (location_navigation_ && location_navigation_->buffer == list) {
+            location_navigation_.reset();
+        }
+        return std::unexpected(CommandError{"no current location list"});
+    }
+    const std::vector<BufferLocation>& locations = buffer->locations();
+    std::optional<std::size_t> selected;
+    const std::size_t current_index =
+        location_navigation_ && location_navigation_->buffer == list
+            ? location_navigation_->selected_index.value_or(locations.size())
+            : locations.size();
+    const bool selection_valid = current_index < locations.size();
+    const bool continuing =
+        selection_valid && (!at_list || runtime_.views().caret(context.view_id()) ==
+                                            locations[current_index].source_range.start);
+    if (continuing) {
+        if (direction > 0 && current_index + 1 < locations.size()) {
+            selected = current_index + 1;
+        } else if (direction < 0 && current_index > 0) {
+            selected = current_index - 1;
+        }
+    } else if (at_list) {
+        const TextOffset caret = runtime_.views().caret(context.view_id());
+        if (direction > 0) {
+            const auto found = std::ranges::find_if(locations, [&](const BufferLocation& item) {
+                return item.source_range.end > caret;
+            });
+            if (found != locations.end()) {
+                selected = static_cast<std::size_t>(found - locations.begin());
+            }
+        } else {
+            for (std::size_t index = locations.size(); index > 0; --index) {
+                if (locations[index - 1].source_range.start <= caret) {
+                    selected = index - 1;
+                    break;
+                }
+            }
+        }
+    } else if (direction > 0) {
+        selected = 0;
+    } else {
+        selected = locations.size() - 1;
+    }
+    if (!selected) {
+        return std::unexpected(
+            CommandError{direction > 0 ? "end of location list" : "beginning of location list"});
+    }
+    return visit_location_at(list, *selected, context.window_id());
 }
 
 void EditorApplication::destroy_window(WindowId window) {
@@ -1052,6 +1168,18 @@ void EditorApplication::register_commands() {
             return move_location(context, -1);
         },
         location_list_active);
+    runtime_.commands().define(
+        "location.next-error",
+        [this](CommandContext& context, const CommandInvocation&) {
+            return navigate_location(context, 1);
+        },
+        [this](const CommandContext& context) { return location_navigation_available(context); });
+    runtime_.commands().define(
+        "location.previous-error",
+        [this](CommandContext& context, const CommandInvocation&) {
+            return navigate_location(context, -1);
+        },
+        [this](const CommandContext& context) { return location_navigation_available(context); });
     location_list_mode_ = ensure_location_list_mode(runtime_, {.visit = location_visit,
                                                                .next = location_next,
                                                                .previous = location_previous})

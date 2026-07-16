@@ -103,6 +103,11 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .indexing = false,
                       .index_error = {}}},
         .location_at_caret = {},
+        .location_navigation = {.present = true,
+                                .buffer_slot = 2,
+                                .buffer_generation = 3,
+                                .selected_index = 4,
+                                .location_count = 9},
         .background_work = false,
         .project_search_running = false,
         .quit_armed = false,
@@ -334,7 +339,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":27") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":28") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -410,6 +415,12 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse location = run_inspection_query(hub, "get editor.location");
     REQUIRE(location.ok);
     CHECK(location.payload == "null");
+
+    const InspectionResponse location_navigation =
+        run_inspection_query(hub, "get editor.location_navigation");
+    REQUIRE(location_navigation.ok);
+    CHECK(location_navigation.payload.find("\"selected_index\":4") != std::string::npos);
+    CHECK(location_navigation.payload.find("\"location_count\":9") != std::string::npos);
 
     const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
     REQUIRE(focus.ok);

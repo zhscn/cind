@@ -129,6 +129,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
 | `editor.projects` | project roots、索引 revision、文件数、刷新状态和错误 |
 | `editor.location` | caret 所在 location-list 项的 source range 和目标文件位置 |
+| `editor.location_navigation` | 当前 location-list buffer、选中项和结果总数；跳到源码后仍保留 |
 | `editor.focus` | active window 和当前输入目标（window 或 interaction） |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor |

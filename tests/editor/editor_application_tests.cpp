@@ -250,9 +250,20 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
               "cind.location-list");
         CHECK(application.syntax_tokens().empty());
         REQUIRE(results.locations().size() == 3);
+        const BufferId result_buffer = results.id();
+        const BufferLocation first = results.locations()[0];
         const BufferLocation second = results.locations()[1];
+        const BufferLocation third = results.locations()[2];
+        CHECK(application.location_navigation().buffer == result_buffer);
+        CHECK_FALSE(application.location_navigation().selected_index.has_value());
         send_keys(application, "M-n");
         CHECK(application.session().caret() == second.source_range.start);
+        REQUIRE(application.split_window(WindowSplitAxis::Columns));
+        const std::vector<OpenWindowSnapshot> windows = application.open_windows();
+        const auto secondary = std::ranges::find_if(
+            windows, [](const OpenWindowSnapshot& window) { return !window.active; });
+        REQUIRE(secondary != windows.end());
+        application.session(secondary->window).set_caret(first.source_range.start);
         const std::string result_text = application.session().snapshot().content().to_string();
         application.insert_text("ignored");
         CHECK(application.session().snapshot().content().to_string() == result_text);
@@ -265,6 +276,30 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.session().buffer().resource_uri() == second.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
               second.target);
+        CHECK(application.location_navigation().selected_index == 1);
+        CHECK(application.buffer_id(secondary->window) == result_buffer);
+        CHECK(application.session(secondary->window).caret() == first.source_range.start);
+
+        send_keys(application, "M-g n");
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        CHECK(application.session().buffer().resource_uri() == third.resource);
+        CHECK(application.session().snapshot().content().position(application.session().caret()) ==
+              third.target);
+        CHECK(application.location_navigation().selected_index == 2);
+
+        send_keys(application, "M-g p");
+        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.location_navigation().selected_index == 1);
+        REQUIRE(application.switch_buffer(result_buffer));
+        CHECK(application.session().caret() == second.source_range.start);
+        send_keys(application, "C-x `");
+        CHECK(application.location_navigation().selected_index == 2);
+
+        REQUIRE(application.kill_buffer(result_buffer, true).has_value());
+        CHECK_FALSE(application.location_navigation().buffer.has_value());
     }
     std::filesystem::remove_all(root);
 }

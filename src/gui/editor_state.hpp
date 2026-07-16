@@ -76,6 +76,14 @@ struct LocationStateSnapshot {
     LinePosition target;
 };
 
+struct LocationNavigationStateSnapshot {
+    bool present = false;
+    std::uint32_t buffer_slot = 0;
+    std::uint32_t buffer_generation = 0;
+    std::optional<std::size_t> selected_index;
+    std::size_t location_count = 0;
+};
+
 struct KeymapLayerStateSnapshot {
     std::string name;
     std::string scope;
@@ -117,6 +125,7 @@ struct EditorStateSnapshot {
     std::vector<OpenWindowStateSnapshot> windows;
     std::vector<ProjectStateSnapshot> projects;
     LocationStateSnapshot location_at_caret;
+    LocationNavigationStateSnapshot location_navigation;
     bool background_work = false;
     bool project_search_running = false;
     bool quit_armed = false;

@@ -378,6 +378,22 @@ void append_location(std::string& output, const LocationStateSnapshot& location)
                           location.target.byte_column);
 }
 
+void append_location_navigation(std::string& output,
+                                const LocationNavigationStateSnapshot& navigation) {
+    if (!navigation.present) {
+        output += "null";
+        return;
+    }
+    output += std::format("{{\"buffer\":{{\"slot\":{},\"generation\":{}}},\"selected_index\":",
+                          navigation.buffer_slot, navigation.buffer_generation);
+    if (navigation.selected_index) {
+        output += std::to_string(*navigation.selected_index);
+    } else {
+        output += "null";
+    }
+    output += std::format(",\"location_count\":{}}}", navigation.location_count);
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -416,6 +432,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_projects(output, editor.projects);
     output += ",\"location_at_caret\":";
     append_location(output, editor.location_at_caret);
+    output += ",\"location_navigation\":";
+    append_location_navigation(output, editor.location_navigation);
     output += ",\"background_work\":";
     append_bool(output, editor.background_work);
     output += ",\"project_search_running\":";
@@ -1728,6 +1746,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_projects(output, frame.editor.projects);
     } else if (path == "editor.location") {
         append_location(output, frame.editor.location_at_caret);
+    } else if (path == "editor.location_navigation") {
+        append_location_navigation(output, frame.editor.location_navigation);
     } else if (path == "editor.focus") {
         output =
             std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",

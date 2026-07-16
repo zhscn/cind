@@ -424,6 +424,15 @@ EditorStateSnapshot EditorModel::inspect() {
                              .resource = location->resource,
                              .target = location->target};
     }
+    LocationNavigationStateSnapshot location_navigation;
+    const LocationNavigationSnapshot navigation = application_.location_navigation();
+    if (navigation.buffer) {
+        location_navigation = {.present = true,
+                               .buffer_slot = navigation.buffer->slot,
+                               .buffer_generation = navigation.buffer->generation,
+                               .selected_index = navigation.selected_index,
+                               .location_count = navigation.location_count};
+    }
     const WindowId active_window = application_.window_id();
     return {.path = application_.path(),
             .revision = snapshot.revision(),
@@ -451,6 +460,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .windows = std::move(windows),
             .projects = std::move(projects),
             .location_at_caret = std::move(location_at_caret),
+            .location_navigation = location_navigation,
             .background_work = application_.has_background_work(),
             .project_search_running = application_.project_search_running(),
             .quit_armed = application_.quit_armed(),
