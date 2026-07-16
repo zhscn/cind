@@ -50,6 +50,9 @@ The native module exports:
 (display-buffer! host window-id buffer-id)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
+(ensure-project-index! host project-id)
+(open-file! host window-id path)
+(start-project-search! host project-id window-id query)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -68,6 +71,12 @@ moves a view caret using zero-based logical line and display-column coordinates,
 the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
+
+`ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
+`open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the
+given window. `start-project-search!` runs the native project search pipeline and directs its result
+buffer to the given window. These procedures initiate work and return after the operation has been
+accepted; completion, cancellation and failure are applied later on the editor thread.
 
 ## Scripted commands
 
@@ -91,9 +100,9 @@ foreign registry ID. Scheme conditions and bridge exceptions become `CommandErro
 retained in `editor.scripting.last_error`.
 
 `(cind core)` defines the command palette and its dispatching accept command, buffer switching and
-its accept command, goto-line parsing and movement, the project-search prompt and project-aware
-enabled predicate, and key-help selection and message presentation. Project-search acceptance is a
-native asynchronous adapter that starts filesystem work through the editor runtime.
+its accept command, goto-line parsing and movement, project file selection and project search with
+project-aware enabled predicates, and key-help selection and message presentation. Project commands
+compose native indexing, file-open and search capabilities without owning asynchronous state.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

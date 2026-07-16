@@ -20,6 +20,10 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
     std::function<void(std::string)> set_message;
+    std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
+    std::function<std::expected<void, std::string>(WindowId, std::string)> open_file;
+    std::function<std::expected<void, std::string>(ProjectId, WindowId, std::string)>
+        start_project_search;
 };
 
 struct GuileRuntimeSnapshot {

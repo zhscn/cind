@@ -319,6 +319,89 @@ SCM set_message(SCM host_object, SCM message_value) {
     return SCM_UNSPECIFIED;
 }
 
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM ensure_project_index(SCM host_object, SCM project_value) {
+    HostLease& host = require_host(host_object, "ensure-project-index!");
+    const ProjectId project =
+        entity_id_from_scheme<ProjectTag>(project_value, "ensure-project-index!", 2);
+    if (!host.services.ensure_project_index) {
+        scm_misc_error("ensure-project-index!", "project-index capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> requested =
+            host.services.ensure_project_index(project);
+        if (!requested) {
+            raise_host_error("ensure-project-index!", requested.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("ensure-project-index!", exception.what());
+    } catch (...) {
+        scm_misc_error("ensure-project-index!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM open_file(SCM host_object, SCM window_value, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("open-file!", 3, path_value, "string");
+    }
+    HostLease& host = require_host(host_object, "open-file!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "open-file!", 2);
+    if (!host.services.open_file) {
+        scm_misc_error("open-file!", "file-open capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> opened =
+            host.services.open_file(window, scheme_string(path_value));
+        if (!opened) {
+            raise_host_error("open-file!", opened.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("open-file!", exception.what());
+    } catch (...) {
+        scm_misc_error("open-file!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, SCM query_value) {
+    if (!scm_is_string(query_value)) {
+        scm_wrong_type_arg_msg("start-project-search!", 4, query_value, "string");
+    }
+    HostLease& host = require_host(host_object, "start-project-search!");
+    const ProjectId project =
+        entity_id_from_scheme<ProjectTag>(project_value, "start-project-search!", 2);
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "start-project-search!", 3);
+    if (!host.services.start_project_search) {
+        scm_misc_error("start-project-search!", "project-search capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> started =
+            host.services.start_project_search(project, window, scheme_string(query_value));
+        if (!started) {
+            raise_host_error("start-project-search!", started.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("start-project-search!", exception.what());
+    } catch (...) {
+        scm_misc_error("start-project-search!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -335,8 +418,14 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_caret_to_line));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
+    (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(ensure_project_index));
+    (void)scm_c_define_gsubr("open-file!", 3, 0, 0, reinterpret_cast<scm_t_subr>(open_file));
+    (void)scm_c_define_gsubr("start-project-search!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(start_project_search));
     scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "display-buffer!",
-                 "move-caret-to-line!", "set-message!", nullptr);
+                 "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
+                 "start-project-search!", nullptr);
 }
 
 void initialize_guile() {

@@ -85,7 +85,6 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
-    (void)define_command(runtime, "project.search.accept");
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = {},
@@ -106,6 +105,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::tuple<ViewId, std::uint32_t, std::uint32_t> moved;
     bool caret_moved = false;
     std::string message;
+    ProjectId indexed_project;
+    bool project_index_requested = false;
+    WindowId opened_window;
+    std::string opened_path;
+    bool file_opened = false;
+    ProjectId searched_project;
+    WindowId searched_window;
+    std::string search_query;
+    bool project_search_started = false;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -120,10 +128,29 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              caret_moved = true;
              return {};
          },
-         .set_message = [&](std::string value) { message = std::move(value); }});
+         .set_message = [&](std::string value) { message = std::move(value); },
+         .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
+             indexed_project = target;
+             project_index_requested = true;
+             return {};
+         },
+         .open_file = [&](WindowId target, std::string path) -> std::expected<void, std::string> {
+             opened_window = target;
+             opened_path = std::move(path);
+             file_opened = true;
+             return {};
+         },
+         .start_project_search = [&](ProjectId target_project, WindowId target_window,
+                                     std::string query) -> std::expected<void, std::string> {
+             searched_project = target_project;
+             searched_window = target_window;
+             search_query = std::move(query);
+             project_search_started = true;
+             return {};
+         }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 9);
+    CHECK(*installed == 12);
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -190,8 +217,51 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     runtime.projects().assign(buffer, project);
     CHECK(runtime.commands().enabled(project_search, context));
 
+    const CommandId project_find_file = require_command(runtime, "project.find-file");
+    CHECK(runtime.commands().enabled(project_find_file, context));
+    const CommandResult find_file_result = runtime.commands().invoke(project_find_file, context);
+    REQUIRE(find_file_result.has_value());
+    const auto* find_file_request = std::get_if<InteractionRequest>(&*find_file_result);
+    REQUIRE(find_file_request != nullptr);
+    CHECK(find_file_request->kind == InteractionKind::Picker);
+    CHECK(find_file_request->prompt == "Project file: ");
+    CHECK(find_file_request->provider == "project-files");
+    CHECK(runtime.commands().definition(find_file_request->accept_command).name ==
+          "project.find-file.accept");
+    REQUIRE(project_index_requested);
+    CHECK(indexed_project == project);
+
+    const CommandResult file_accepted = runtime.commands().invoke(
+        find_file_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("/tmp/sample/main.cpp")},
+                          .repeat_count = std::nullopt});
+    REQUIRE(file_accepted.has_value());
+    REQUIRE(file_opened);
+    CHECK(opened_window == window);
+    CHECK(opened_path == "/tmp/sample/main.cpp");
+
+    const CommandResult search_result = runtime.commands().invoke(project_search, context);
+    REQUIRE(search_result.has_value());
+    const auto* search_request = std::get_if<InteractionRequest>(&*search_result);
+    REQUIRE(search_request != nullptr);
+    CHECK(runtime.commands().definition(search_request->accept_command).name ==
+          "project.search.accept");
+    const CommandResult empty_search = runtime.commands().invoke(
+        search_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string()}, .repeat_count = std::nullopt});
+    REQUIRE_FALSE(empty_search.has_value());
+    CHECK(empty_search.error().message == "project search query is empty");
+    const CommandResult search_accepted = runtime.commands().invoke(
+        search_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("needle")}, .repeat_count = std::nullopt});
+    REQUIRE(search_accepted.has_value());
+    REQUIRE(project_search_started);
+    CHECK(searched_project == project);
+    CHECK(searched_window == window);
+    CHECK(search_query == "needle");
+
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 9);
+    CHECK(snapshot.scripted_commands == 12);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

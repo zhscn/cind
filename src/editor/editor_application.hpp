@@ -269,9 +269,6 @@ private:
     CommandResult accept_open_file(CommandContext&, const CommandInvocation&);
     CommandResult begin_save_as(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_save_as(CommandContext&, const CommandInvocation&);
-    CommandResult begin_project_find_file(CommandContext&, const CommandInvocation&);
-    CommandResult accept_project_find_file(CommandContext&, const CommandInvocation&);
-    CommandResult accept_project_search(CommandContext&, const CommandInvocation&);
 
     EditorRuntime runtime_;
     GuileRuntime guile_;
@@ -295,8 +292,6 @@ private:
     KeymapId interaction_picker_keymap_;
     CommandId open_file_accept_;
     CommandId save_as_accept_;
-    CommandId project_find_file_accept_;
-    CommandId project_search_accept_;
     ModeId cpp_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;

@@ -69,23 +69,43 @@ struct LoadedFileData {
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
-    : guile_(runtime_,
-             {.display_buffer = [this](WindowId window,
-                                       BufferId buffer) -> std::expected<void, std::string> {
-                  try {
-                      if (!show_buffer(window, buffer)) {
-                          return std::unexpected("buffer cannot be displayed");
-                      }
-                      return {};
-                  } catch (const std::exception& exception) {
-                      return std::unexpected(exception.what());
-                  }
-              },
-              .move_caret_to_line =
-                  [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
-                      return move_caret_to_line(view, line, display_column);
-                  },
-              .set_message = [this](std::string message) { message_ = std::move(message); }}),
+    : guile_(
+          runtime_,
+          {.display_buffer = [this](WindowId window,
+                                    BufferId buffer) -> std::expected<void, std::string> {
+               try {
+                   if (!show_buffer(window, buffer)) {
+                       return std::unexpected("buffer cannot be displayed");
+                   }
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .move_caret_to_line =
+               [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
+                   return move_caret_to_line(view, line, display_column);
+               },
+           .set_message = [this](std::string message) { message_ = std::move(message); },
+           .ensure_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
+               try {
+                   const Project& definition = runtime_.projects().get(project);
+                   if (definition.index_revision() == 0 && !definition.indexing()) {
+                       project_service_->request_index(project);
+                   }
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .open_file =
+               [this](WindowId window, const std::string& path) {
+                   return open_file(path, window, std::nullopt);
+               },
+           .start_project_search =
+               [this](ProjectId project, WindowId window, std::string query) {
+                   return start_project_search(project, std::move(query), window);
+               }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1481,23 +1501,6 @@ void EditorApplication::register_commands() {
                           : CommandResult{std::unexpected(CommandError{result.error()})};
         });
 
-    project_find_file_accept_ = runtime_.commands().define(
-        "project.find-file.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_project_find_file(context, invocation);
-        });
-    runtime_.commands().define(
-        "project.find-file",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_project_find_file(context, invocation);
-        },
-        [](const CommandContext& context) { return context.project_id().has_value(); });
-
-    project_search_accept_ = runtime_.commands().define(
-        "project.search.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_project_search(context, invocation);
-        });
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
         throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));
@@ -1985,53 +1988,6 @@ CommandResult EditorApplication::accept_save_as(CommandContext& context,
     }
     save();
     return CommandCompleted{};
-}
-
-CommandResult EditorApplication::begin_project_find_file(CommandContext& context,
-                                                         const CommandInvocation&) {
-    const std::optional<ProjectId> project = context.project_id();
-    if (!project) {
-        return std::unexpected(CommandError{"current buffer has no project"});
-    }
-    const Project& definition = runtime_.projects().get(*project);
-    if (definition.index_revision() == 0 && !definition.indexing()) {
-        project_service_->request_index(*project);
-    }
-    return InteractionRequest{.kind = InteractionKind::Picker,
-                              .prompt = "Project file: ",
-                              .initial_input = {},
-                              .history = "project-files",
-                              .provider = "project-files",
-                              .allow_custom_input = false,
-                              .accept_command = project_find_file_accept_,
-                              .arguments = {}};
-}
-
-CommandResult EditorApplication::accept_project_find_file(CommandContext& context,
-                                                          const CommandInvocation& invocation) {
-    const std::string* path = submitted_string(invocation);
-    if (path == nullptr) {
-        return std::unexpected(CommandError{"project file picker requires a path"});
-    }
-    std::expected<void, std::string> opened = open_file(*path, context.window_id(), std::nullopt);
-    return opened ? CommandResult{CommandCompleted{}}
-                  : CommandResult{std::unexpected(CommandError{opened.error()})};
-}
-
-CommandResult EditorApplication::accept_project_search(CommandContext& context,
-                                                       const CommandInvocation& invocation) {
-    const std::string* query = submitted_string(invocation);
-    const std::optional<ProjectId> project = context.project_id();
-    if (query == nullptr || query->empty()) {
-        return std::unexpected(CommandError{"project search query is empty"});
-    }
-    if (!project) {
-        return std::unexpected(CommandError{"current buffer has no project"});
-    }
-    std::expected<void, std::string> started =
-        start_project_search(*project, *query, context.window_id());
-    return started ? CommandResult{CommandCompleted{}}
-                   : CommandResult{std::unexpected(CommandError{started.error()})};
 }
 
 } // namespace cind

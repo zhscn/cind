@@ -88,6 +88,36 @@
   (interaction 'text "Project search: " "" "project-search" "" #t
                "project.search.accept"))
 
+(define (project-search-accept host context invocation)
+  (let ((query (last-string-argument invocation))
+        (project (context-project context)))
+    (cond ((or (not query) (= (string-length query) 0))
+           (command-error "project search query is empty"))
+          ((not project)
+           (command-error "current buffer has no project"))
+          (else
+           (start-project-search! host project (context-window context) query)
+           (command-completed)))))
+
+(define (project-find-file host context invocation)
+  (let ((project (context-project context)))
+    (if (not project)
+        (command-error "current buffer has no project")
+        (begin
+          (ensure-project-index! host project)
+          (interaction 'picker "Project file: " "" "project-files"
+                       "project-files" #f "project.find-file.accept")))))
+
+(define (project-find-file-accept host context invocation)
+  (let ((path (last-string-argument invocation)))
+    (cond ((not path)
+           (command-error "project file picker requires a path"))
+          ((= (string-length path) 0)
+           (command-error "file path is empty"))
+          (else
+           (open-file! host (context-window context) path)
+           (command-completed)))))
+
 (define (help-keys context invocation)
   (interaction 'picker "Key bindings: " "" "key-bindings" "key-bindings" #f
                "help.keys.accept"))
@@ -114,6 +144,18 @@
                 (goto-line-accept host context invocation))
               #f)
         (list "cursor.goto-line" goto-line #f)
+        (list "project.find-file.accept"
+              (lambda (context invocation)
+                (project-find-file-accept host context invocation))
+              #f)
+        (list "project.find-file"
+              (lambda (context invocation)
+                (project-find-file host context invocation))
+              context-has-project?)
+        (list "project.search.accept"
+              (lambda (context invocation)
+                (project-search-accept host context invocation))
+              #f)
         (list "project.search" project-search context-has-project?)
         (list "help.keys.accept"
               (lambda (context invocation)
