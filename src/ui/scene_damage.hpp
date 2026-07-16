@@ -29,6 +29,7 @@ private:
     std::vector<std::string> cells_;
     std::optional<CellPoint> cursor_;
     std::vector<Rect> overlay_rects_;
+    std::vector<Rect> footer_rects_;
 };
 
 } // namespace cind::ui

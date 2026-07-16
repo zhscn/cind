@@ -128,6 +128,52 @@ TEST_CASE("scene damage tracks active line and overlay geometry") {
     CHECK(tracker.update(scene).full_repaint);
 }
 
+TEST_CASE("scene damage requests full repaint when the footer stack changes") {
+    // Footer rows carry pixel heights that differ from the cell grid, so a
+    // moved footer edge (the minibuffer band opening or closing) cannot be
+    // expressed as cell damage: the strip between the old and new grid clip
+    // bottom would keep stale footer pixels on the row it halves.
+    const auto make_scene = [](bool with_band) {
+        Scene scene;
+        scene.rows = 8;
+        scene.cols = 20;
+        scene.cursor_visible = false;
+        const int text_rows = with_band ? 3 : 6;
+        Region body{RegionRole::TextArea, {0, 0, text_rows, 20}, {}};
+        body.primitives().push_back({0, 0, "line", StyleClass::Text, false});
+        Region status{RegionRole::StatusBar, {text_rows, 0, 1, 20},  {},
+                      SurfaceClass::Status,  VerticalAnchor::Bottom, "editor/modeline"};
+        Region echo{RegionRole::EchoArea, {7, 0, 1, 20},          {},
+                    SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
+        scene.regions = {std::move(body), std::move(status), std::move(echo)};
+        if (with_band) {
+            Region band{RegionRole::Popup,    {4, 0, 3, 20},          {},
+                        SurfaceClass::Status, VerticalAnchor::Bottom, "editor/minibuffer"};
+            band.set_popup(Region::PopupContent{
+                .title = "Command",
+                .input = std::nullopt,
+                .input_cursor = std::nullopt,
+                .first_item = 0,
+                .total_items = 2,
+                .selected_item = std::nullopt,
+                .items = {{.label = "first", .detail = "command"},
+                          {.label = "second", .detail = "command"}},
+            });
+            scene.regions.push_back(std::move(band));
+        }
+        return scene;
+    };
+
+    SceneDamageTracker tracker;
+    CHECK(tracker.update(make_scene(false)).full_repaint);
+    CHECK_FALSE(tracker.update(make_scene(false)).full_repaint);
+    // The minibuffer band reflows the frame: the modeline moves up and the
+    // band claims the freed rows.
+    CHECK(tracker.update(make_scene(true)).full_repaint);
+    CHECK_FALSE(tracker.update(make_scene(true)).full_repaint);
+    CHECK(tracker.update(make_scene(false)).full_repaint);
+}
+
 TEST_CASE("scene damage tracks structured popup list metadata") {
     Scene scene = text_scene("line");
     scene.rows = 4;
@@ -209,6 +255,13 @@ TEST_CASE("scene damage tracks a structured echo byte caret within one cell") {
     const SceneDamage edited = tracker.update(scene);
     CHECK_FALSE(edited.full_repaint);
     CHECK_FALSE(edited.cell_rects.empty());
+
+    // The pending-key echo at the right edge is part of the painted output.
+    scene.regions.back().set_echo(
+        Region::EchoContent{.text = "search: x", .cursor_byte = std::nullopt, .key = "C-x"});
+    const SceneDamage keyed = tracker.update(scene);
+    CHECK_FALSE(keyed.full_repaint);
+    CHECK_FALSE(keyed.cell_rects.empty());
 }
 
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {

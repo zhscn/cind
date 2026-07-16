@@ -48,6 +48,20 @@ std::vector<Rect> overlay_rects(const Scene& scene) {
     return result;
 }
 
+// Bottom-anchored chrome rectangles. Footer rows carry pixel heights that
+// differ from the cell grid, so cell-space damage cannot express a moved
+// footer edge; any change in the footer stack forces a full repaint (the
+// minibuffer band opening or closing reflows the whole frame anyway).
+std::vector<Rect> footer_rects(const Scene& scene) {
+    std::vector<Rect> result;
+    for (const Region& region : scene.regions) {
+        if (region.vertical_anchor == VerticalAnchor::Bottom) {
+            result.push_back(region.rect);
+        }
+    }
+    return result;
+}
+
 std::size_t cell_index(int row, int col, int cols) {
     return static_cast<std::size_t>(row) * static_cast<std::size_t>(cols) +
            static_cast<std::size_t>(col);
@@ -178,6 +192,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     append_integer(signature,
                                    static_cast<std::uint32_t>(echo->cursor_byte.has_value()));
                     append_integer(signature, echo->cursor_byte.value_or(0));
+                    append_text(signature, echo->key);
                 }
             }
         }
@@ -263,10 +278,12 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     std::vector<std::string> next_cells = visual_cells(scene);
     const std::optional<CellPoint> next_cursor = visible_cursor(scene);
     const std::vector<Rect> next_overlay_rects = overlay_rects(scene);
+    const std::vector<Rect> next_footer_rects = footer_rects(scene);
     const std::size_t total_cells = next_cells.size();
     const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols ||
                                   std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F ||
-                                  !same_rects(overlay_rects_, next_overlay_rects);
+                                  !same_rects(overlay_rects_, next_overlay_rects) ||
+                                  !same_rects(footer_rects_, next_footer_rects);
 
     SceneDamage damage;
     if (force_full_repaint || !initialized_ || geometry_changed) {
@@ -298,6 +315,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     cells_ = std::move(next_cells);
     cursor_ = next_cursor;
     overlay_rects_ = next_overlay_rects;
+    footer_rects_ = next_footer_rects;
     return damage;
 }
 
@@ -309,6 +327,7 @@ void SceneDamageTracker::reset() {
     cells_.clear();
     cursor_.reset();
     overlay_rects_.clear();
+    footer_rects_.clear();
 }
 
 } // namespace cind::ui
