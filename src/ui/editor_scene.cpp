@@ -113,43 +113,54 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
 
     const int digits = gutter_digits(input.text.line_count());
     Region numbers{
-        RegionRole::LineNumbers, {0, 0, text_rows, digits + 1}, {}, SurfaceClass::Gutter};
-    Region marks{RegionRole::ChangeSigns, {0, digits + 1, text_rows, 1}, {}, SurfaceClass::Gutter};
-    Region body{
-        RegionRole::TextArea, {0, digits + 2, text_rows, text_width}, {}, SurfaceClass::Editor};
-    Region status{RegionRole::StatusBar,
-                  {text_rows, 0, 1, input.cols},
-                  {},
-                  SurfaceClass::Status,
-                  VerticalAnchor::Bottom};
+        RegionRole::LineNumbers, {0, 0, text_rows, digits + 1}, {},
+        SurfaceClass::Gutter,    VerticalAnchor::Grid,          "editor/gutter/line-numbers",
+        input.revision};
+    Region marks{
+        RegionRole::ChangeSigns, {0, digits + 1, text_rows, 1}, {},
+        SurfaceClass::Gutter,    VerticalAnchor::Grid,          "editor/gutter/change-signs",
+        input.revision};
+    Region body{RegionRole::TextArea,
+                {0, digits + 2, text_rows, text_width},
+                {},
+                SurfaceClass::Editor,
+                VerticalAnchor::Grid,
+                "editor/document",
+                input.revision};
+    Region status{RegionRole::StatusBar, {text_rows, 0, 1, input.cols}, {},
+                  SurfaceClass::Status,  VerticalAnchor::Bottom,        "editor/modeline",
+                  input.revision};
     Region echo{RegionRole::EchoArea,
                 {text_rows + 1, 0, 1, input.cols},
                 {},
                 SurfaceClass::Echo,
-                VerticalAnchor::Bottom};
+                VerticalAnchor::Bottom,
+                "editor/echo",
+                input.revision};
 
     for (int row = 0; row < text_rows; ++row) {
         const std::uint32_t line = viewport.top_line + static_cast<std::uint32_t>(row);
         if (line >= input.text.line_count()) {
-            body.prims.push_back({row, 0, "~", StyleClass::Gutter, false, PrimKind::Text,
-                                  std::format("line:{}/empty", line)});
+            body.primitives().push_back({row, 0, "~", StyleClass::Gutter, false, PrimKind::Text,
+                                         std::format("line:{}/empty", line)});
             continue;
         }
-        numbers.prims.push_back({row, 0, std::format("{:>{}} ", line + 1, digits),
-                                 StyleClass::Gutter, false, PrimKind::Text,
-                                 std::format("line:{}/number", line)});
+        numbers.primitives().push_back({row, 0, std::format("{:>{}} ", line + 1, digits),
+                                        StyleClass::Gutter, false, PrimKind::Text,
+                                        std::format("line:{}/number", line)});
         switch (input.signs.at(line)) {
         case SignKind::Added:
-            marks.prims.push_back({row, 0, "▎", StyleClass::SignAdded, false, PrimKind::ChangeBar,
-                                   std::format("line:{}/sign", line)});
+            marks.primitives().push_back({row, 0, "▎", StyleClass::SignAdded, false,
+                                          PrimKind::ChangeBar, std::format("line:{}/sign", line)});
             break;
         case SignKind::Modified:
-            marks.prims.push_back({row, 0, "▎", StyleClass::SignModified, false,
-                                   PrimKind::ChangeBar, std::format("line:{}/sign", line)});
+            marks.primitives().push_back({row, 0, "▎", StyleClass::SignModified, false,
+                                          PrimKind::ChangeBar, std::format("line:{}/sign", line)});
             break;
         case SignKind::DeletedAbove:
-            marks.prims.push_back({row, 0, "▔", StyleClass::SignDeleted, false,
-                                   PrimKind::ChangeDeletion, std::format("line:{}/sign", line)});
+            marks.primitives().push_back({row, 0, "▔", StyleClass::SignDeleted, false,
+                                          PrimKind::ChangeDeletion,
+                                          std::format("line:{}/sign", line)});
             break;
         case SignKind::None:
             break;
@@ -165,44 +176,25 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                                          .selection = input.selection},
                                         input.tokens)) {
             const std::string id = std::format("line:{}/byte:{}", line, run.source_offset);
-            body.prims.push_back(
+            body.primitives().push_back(
                 {row, run.col, std::move(run.text), run.style, run.selected, PrimKind::Text, id});
         }
     }
 
-    status.status.emplace();
-    status.status->path = std::string(input.path);
-    status.status->dirty = input.dirty;
-    status.status->line = caret_position.line + 1;
-    status.status->column = static_cast<std::uint32_t>(caret_column + 1);
-    status.status->line_count = input.text.line_count();
-    status.status->revision = input.revision;
-    status.status->style_origin = std::string(input.style_origin);
-    status.status->key = std::string(input.last_key);
-
-    std::string left =
-        std::format(" {}{}  {}:{}  rev {}  style {} ", input.path, input.dirty ? " [+]" : "",
-                    caret_position.line + 1, caret_column + 1, input.revision, input.style_origin);
-    std::string key =
-        input.last_key.empty() ? std::string() : std::format("key: {} ", input.last_key);
-    key = std::string(clip_to_display_width(key, input.cols));
-    const int key_width = display_width(key);
-    left = std::string(clip_to_display_width(left, input.cols - key_width));
-    const int fill = input.cols - display_width(left) - key_width;
-    status.prims.push_back({0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
-                            StyleClass::StatusBar, false, PrimKind::Text, "status:main"});
-    if (!key.empty()) {
-        status.prims.push_back({0, input.cols - key_width, key, StyleClass::StatusKey, false,
-                                PrimKind::Text, "status:key"});
-    }
-    echo.prims.push_back(
-        {0, 0, std::string(input.echo), StyleClass::Message, false, PrimKind::Text, "echo:main"});
-    echo.echo = Region::EchoContent{
+    status.set_status({.path = std::string(input.path),
+                       .dirty = input.dirty,
+                       .line = caret_position.line + 1,
+                       .column = static_cast<std::uint32_t>(caret_column + 1),
+                       .line_count = input.text.line_count(),
+                       .revision = input.revision,
+                       .style_origin = std::string(input.style_origin),
+                       .key = std::string(input.last_key)});
+    echo.set_echo({
         .text = std::string(input.echo),
         .cursor_byte = input.echo_cursor_byte
                            ? std::optional(std::min(*input.echo_cursor_byte, input.echo.size()))
                            : std::nullopt,
-    };
+    });
 
     std::optional<Region> popup;
     const std::optional<std::size_t> popup_selection =
@@ -220,37 +212,27 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         const int popup_row = std::max(0, text_rows - popup_rows);
         const int popup_col = std::max(0, (input.cols - popup_width) / 2);
         popup.emplace(RegionRole::Popup, Rect{popup_row, popup_col, popup_rows, popup_width},
-                      std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay);
-        popup->popup.emplace();
-        popup->popup->title = input.popup_title;
+                      std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
+                      "editor/overlay/popup", input.revision);
+        popup->set_popup({});
+        Region::PopupContent& popup_content = *popup->popup();
+        popup_content.title = input.popup_title;
         if (input.popup_input) {
-            popup->popup->input = std::string(*input.popup_input);
-            popup->popup->input_cursor =
+            popup_content.input = std::string(*input.popup_input);
+            popup_content.input_cursor =
                 std::min(input.popup_input_cursor.value_or(input.popup_input->size()),
                          input.popup_input->size());
         }
-        popup->popup->first_item = first;
-        popup->popup->total_items = input.popup_items.size();
-        popup->popup->selected_item = popup_selection;
-        popup->popup->items.reserve(visible_count);
+        popup_content.first_item = first;
+        popup_content.total_items = input.popup_items.size();
+        popup_content.selected_item = popup_selection;
+        popup_content.items.reserve(visible_count);
 
-        std::string title = std::string(clip_to_display_width(input.popup_title, popup_width));
-        title.append(static_cast<std::size_t>(popup_width - display_width(title)), ' ');
-        popup->prims.push_back(
-            {0, 0, std::move(title), StyleClass::StatusKey, false, PrimKind::Text, "popup:title"});
         for (std::size_t offset = 0; offset < visible_count; ++offset) {
             const std::size_t index = first + offset;
             const EditorPopupItem& item = input.popup_items[index];
-            popup->popup->items.push_back(
+            popup_content.items.push_back(
                 {.label = std::string(item.label), .detail = std::string(item.detail)});
-            std::string row = item.detail.empty()
-                                  ? std::string(item.label)
-                                  : std::format("{:<10} {}", item.label, item.detail);
-            row = std::string(clip_to_display_width(row, popup_width));
-            row.append(static_cast<std::size_t>(popup_width - display_width(row)), ' ');
-            popup->prims.push_back({static_cast<int>(offset) + 1, 0, std::move(row),
-                                    StyleClass::Popup, popup_selection == index, PrimKind::Text,
-                                    std::format("popup:item:{}", index)});
         }
     }
 

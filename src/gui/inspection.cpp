@@ -98,12 +98,84 @@ std::string_view prim_kind_name(ui::PrimKind kind) {
     return "unknown";
 }
 
+std::string region_id(const ui::Region& region) {
+    if (!region.id.empty()) {
+        return region.id;
+    }
+    return std::format("region:{}", region_role_name(region.role));
+}
+
+std::string_view region_content_name(const ui::Region& region) {
+    if (region.popup() != nullptr) {
+        return "popup";
+    }
+    if (region.status() != nullptr) {
+        return "status";
+    }
+    if (region.echo() != nullptr) {
+        return "echo";
+    }
+    return "primitives";
+}
+
 std::string primitive_id(const ui::Region& region, const ui::Prim& prim) {
     if (!prim.id.empty()) {
         return prim.id;
     }
-    return std::format("region:{}/cell:{}:{}/{}", region_role_name(region.role), prim.row, prim.col,
+    return std::format("{}/cell:{}:{}/{}", region_id(region), prim.row, prim.col,
                        prim_kind_name(prim.kind));
+}
+
+std::optional<ui::Prim> inspection_primitive(const ui::Region& region, std::size_t index) {
+    if (!region.primitives().empty()) {
+        if (index < region.primitives().size()) {
+            return region.primitives()[index];
+        }
+        return std::nullopt;
+    }
+    if (const ui::Region::PopupContent* popup = region.popup()) {
+        if (index == 0) {
+            return ui::Prim{0,
+                            0,
+                            popup->title,
+                            ui::StyleClass::StatusKey,
+                            false,
+                            ui::PrimKind::Text,
+                            std::format("{}/title", region_id(region))};
+        }
+        const std::size_t item_index = index - 1;
+        if (item_index >= popup->items.size()) {
+            return std::nullopt;
+        }
+        return ui::Prim{
+            static_cast<int>(index),
+            0,
+            popup->items[item_index].label,
+            ui::StyleClass::Popup,
+            popup->selected_item == popup->first_item + item_index,
+            ui::PrimKind::Text,
+            std::format("{}/item:{}", region_id(region), popup->first_item + item_index)};
+    }
+    if (const ui::Region::StatusContent* status = region.status();
+        status != nullptr && index == 0) {
+        return ui::Prim{0,
+                        0,
+                        status->path,
+                        ui::StyleClass::StatusBar,
+                        false,
+                        ui::PrimKind::Text,
+                        std::format("{}/main", region_id(region))};
+    }
+    if (const ui::Region::EchoContent* echo = region.echo(); echo != nullptr && index == 0) {
+        return ui::Prim{0,
+                        0,
+                        echo->text,
+                        ui::StyleClass::Message,
+                        false,
+                        ui::PrimKind::Text,
+                        std::format("{}/main", region_id(region))};
+    }
+    return std::nullopt;
 }
 
 void append_rect(std::string& output, const ui::Rect& rect) {
@@ -311,48 +383,51 @@ void append_prim(std::string& output, const ui::Region& region, const ui::Prim& 
 
 void append_region(std::string& output, const ui::Region& region) {
     output += "{\"id\":";
-    append_json_string(output, std::format("region:{}", region_role_name(region.role)));
+    append_json_string(output, region_id(region));
     output += ",\"role\":";
     append_json_string(output, region_role_name(region.role));
     output += ",\"surface\":";
     append_json_string(output, surface_class_name(region.surface));
     output += ",\"vertical_anchor\":";
     append_json_string(output, vertical_anchor_name(region.vertical_anchor));
+    output += std::format(",\"revision\":{}", region.revision);
+    output += ",\"content_type\":";
+    append_json_string(output, region_content_name(region));
     output += ",\"rect\":";
     append_rect(output, region.rect);
     output += ",\"popup\":";
-    if (region.popup) {
+    if (const ui::Region::PopupContent* popup = region.popup()) {
         output += "{\"title\":";
-        append_json_string(output, region.popup->title);
+        append_json_string(output, popup->title);
         output += ",\"input\":";
-        if (region.popup->input) {
-            append_json_string(output, *region.popup->input);
+        if (popup->input) {
+            append_json_string(output, *popup->input);
         } else {
             output += "null";
         }
         output += ",\"input_cursor\":";
-        if (region.popup->input_cursor) {
-            output += std::to_string(*region.popup->input_cursor);
+        if (popup->input_cursor) {
+            output += std::to_string(*popup->input_cursor);
         } else {
             output += "null";
         }
-        output += std::format(",\"first_item\":{},\"total_items\":{}", region.popup->first_item,
-                              region.popup->total_items);
+        output += std::format(",\"first_item\":{},\"total_items\":{}", popup->first_item,
+                              popup->total_items);
         output += ",\"selected_item\":";
-        if (region.popup->selected_item) {
-            output += std::to_string(*region.popup->selected_item);
+        if (popup->selected_item) {
+            output += std::to_string(*popup->selected_item);
         } else {
             output += "null";
         }
         output += ",\"items\":[";
-        for (std::size_t index = 0; index < region.popup->items.size(); ++index) {
+        for (std::size_t index = 0; index < popup->items.size(); ++index) {
             if (index != 0) {
                 output.push_back(',');
             }
             output += "{\"label\":";
-            append_json_string(output, region.popup->items[index].label);
+            append_json_string(output, popup->items[index].label);
             output += ",\"detail\":";
-            append_json_string(output, region.popup->items[index].detail);
+            append_json_string(output, popup->items[index].detail);
             output.push_back('}');
         }
         output += "]}";
@@ -360,29 +435,28 @@ void append_region(std::string& output, const ui::Region& region) {
         output += "null";
     }
     output += ",\"status\":";
-    if (region.status) {
+    if (const ui::Region::StatusContent* status = region.status()) {
         output += "{\"path\":";
-        append_json_string(output, region.status->path);
+        append_json_string(output, status->path);
         output += ",\"dirty\":";
-        append_bool(output, region.status->dirty);
+        append_bool(output, status->dirty);
         output += std::format(",\"line\":{},\"column\":{},\"line_count\":{},\"revision\":{}",
-                              region.status->line, region.status->column, region.status->line_count,
-                              region.status->revision);
+                              status->line, status->column, status->line_count, status->revision);
         output += ",\"style_origin\":";
-        append_json_string(output, region.status->style_origin);
+        append_json_string(output, status->style_origin);
         output += ",\"key\":";
-        append_json_string(output, region.status->key);
+        append_json_string(output, status->key);
         output.push_back('}');
     } else {
         output += "null";
     }
     output += ",\"echo\":";
-    if (region.echo) {
+    if (const ui::Region::EchoContent* echo = region.echo()) {
         output += "{\"text\":";
-        append_json_string(output, region.echo->text);
+        append_json_string(output, echo->text);
         output += ",\"cursor_byte\":";
-        if (region.echo->cursor_byte) {
-            output += std::to_string(*region.echo->cursor_byte);
+        if (echo->cursor_byte) {
+            output += std::to_string(*echo->cursor_byte);
         } else {
             output += "null";
         }
@@ -391,11 +465,11 @@ void append_region(std::string& output, const ui::Region& region) {
         output += "null";
     }
     output += ",\"prims\":[";
-    for (std::size_t index = 0; index < region.prims.size(); ++index) {
+    for (std::size_t index = 0; index < region.primitives().size(); ++index) {
         if (index != 0) {
             output.push_back(',');
         }
-        append_prim(output, region, region.prims[index]);
+        append_prim(output, region, region.primitives()[index]);
     }
     output += "]}";
 }
@@ -773,13 +847,14 @@ void identify_render_primitives(const ui::Scene& scene, RenderStateSnapshot& ren
             continue;
         }
         const ui::Region& region = scene.regions[primitive.region_index];
-        primitive.region = std::format("region:{}", region_role_name(region.role));
-        if (primitive.primitive_index >= region.prims.size()) {
+        primitive.region = region_id(region);
+        const std::optional<ui::Prim> scene_primitive =
+            inspection_primitive(region, primitive.primitive_index);
+        if (!scene_primitive) {
             continue;
         }
-        const ui::Prim& scene_primitive = region.prims[primitive.primitive_index];
-        primitive.id = primitive_id(region, scene_primitive);
-        primitive.kind = std::string(prim_kind_name(scene_primitive.kind));
+        primitive.id = primitive_id(region, *scene_primitive);
+        primitive.kind = std::string(prim_kind_name(scene_primitive->kind));
     }
 }
 
@@ -878,54 +953,48 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             violations.push_back(
                 std::format("region:{} is outside the scene", region_role_name(region.role)));
         }
-        for (std::size_t index = 0; index < region.prims.size(); ++index) {
-            const ui::Prim& prim = region.prims[index];
+        for (std::size_t index = 0; index < region.primitives().size(); ++index) {
+            const ui::Prim& prim = region.primitives()[index];
             if (prim.row < 0 || prim.row >= region.rect.rows || prim.col < 0 ||
                 prim.col >= region.rect.cols) {
                 violations.push_back(std::format("region:{}/prim:{} starts outside its region",
                                                  region_role_name(region.role), index));
             }
         }
-        (void)region.popup.transform([&](const ui::Region::PopupContent& popup) {
-            if (popup.input_cursor && (!popup.input || *popup.input_cursor > popup.input->size())) {
+        if (const ui::Region::PopupContent* popup = region.popup()) {
+            if (region.role != ui::RegionRole::Popup) {
+                violations.emplace_back("structured popup content is outside the popup region");
+            }
+            if (popup->input_cursor &&
+                (!popup->input || *popup->input_cursor > popup->input->size())) {
                 violations.emplace_back("popup input cursor is past the input end");
             }
-            if (popup.first_item > popup.total_items ||
-                popup.items.size() > popup.total_items - popup.first_item) {
+            if (popup->first_item > popup->total_items ||
+                popup->items.size() > popup->total_items - popup->first_item) {
                 violations.emplace_back("popup viewport is outside the item range");
             }
-            if (popup.selected_item && *popup.selected_item >= popup.total_items) {
+            if (popup->selected_item && *popup->selected_item >= popup->total_items) {
                 violations.emplace_back("popup selection is outside the item range");
-            } else if (popup.selected_item &&
-                       (*popup.selected_item < popup.first_item ||
-                        *popup.selected_item >= popup.first_item + popup.items.size())) {
+            } else if (popup->selected_item &&
+                       (*popup->selected_item < popup->first_item ||
+                        *popup->selected_item >= popup->first_item + popup->items.size())) {
                 violations.emplace_back("popup selection is outside the visible viewport");
             }
-            if (region.prims.size() != popup.items.size() + 1) {
-                violations.emplace_back("popup items do not match scene primitives");
-            } else {
-                for (std::size_t index = 0; index < popup.items.size(); ++index) {
-                    const bool selected = popup.selected_item == popup.first_item + index;
-                    if (region.prims[index + 1].selected != selected) {
-                        violations.emplace_back("popup selection does not match scene primitives");
-                        break;
-                    }
-                }
+        }
+        if (const ui::Region::StatusContent* status = region.status()) {
+            (void)status;
+            if (region.role != ui::RegionRole::StatusBar) {
+                violations.emplace_back("structured status content is outside the status region");
             }
-            return true;
-        });
-        (void)region.echo.transform([&](const ui::Region::EchoContent& echo) {
+        }
+        if (const ui::Region::EchoContent* echo = region.echo()) {
             if (region.role != ui::RegionRole::EchoArea) {
                 violations.emplace_back("structured echo content is outside the echo region");
             }
-            if (echo.cursor_byte && *echo.cursor_byte > echo.text.size()) {
+            if (echo->cursor_byte && *echo->cursor_byte > echo->text.size()) {
                 violations.emplace_back("echo cursor byte is past the text end");
             }
-            if (region.prims.empty() || region.prims.front().text != echo.text) {
-                violations.emplace_back("echo content does not match scene primitives");
-            }
-            return true;
-        });
+        }
     }
     if (frame.render.display_scale <= 0.0F) {
         violations.emplace_back("render display scale must be positive");
@@ -993,7 +1062,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     const ui::Region* popup_region = frame.scene.find(ui::RegionRole::Popup);
     const ui::Region::PopupContent* popup =
-        popup_region != nullptr && popup_region->popup ? &*popup_region->popup : nullptr;
+        popup_region != nullptr ? popup_region->popup() : nullptr;
     if (popup != nullptr && !frame.render.popup_layout) {
         violations.emplace_back("scene popup has no render popup layout");
     }
@@ -1063,8 +1132,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         }
     }
     const ui::Region* echo_region = frame.scene.find(ui::RegionRole::EchoArea);
-    const ui::Region::EchoContent* echo =
-        echo_region != nullptr && echo_region->echo ? &*echo_region->echo : nullptr;
+    const ui::Region::EchoContent* echo = echo_region != nullptr ? echo_region->echo() : nullptr;
     const bool popup_owns_input = popup != nullptr && popup->input.has_value();
     if (echo != nullptr && !popup_owns_input && !frame.render.echo_layout) {
         violations.emplace_back("scene echo has no render echo layout");
@@ -1307,7 +1375,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
         if (primitive.region_index >= frame.scene.regions.size() ||
-            primitive.primitive_index >= frame.scene.regions[primitive.region_index].prims.size()) {
+            primitive.primitive_index >= frame.scene.regions[primitive.region_index].item_count()) {
             violations.emplace_back("render primitive refers to a missing scene primitive");
             continue;
         }
@@ -1525,7 +1593,7 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         if (logical_x >= bounds.x && logical_x < bounds.x + bounds.width && logical_y >= bounds.y &&
             logical_y < bounds.y + bounds.height &&
             iterator->region_index < frame.scene.regions.size() &&
-            iterator->primitive_index < frame.scene.regions[iterator->region_index].prims.size()) {
+            iterator->primitive_index < frame.scene.regions[iterator->region_index].item_count()) {
             hit_render = &*iterator;
             hit_region_index = iterator->region_index;
             hit_region = &frame.scene.regions[hit_region_index];
@@ -1551,7 +1619,7 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     }
 
     output += ",\"region\":";
-    append_json_string(output, std::format("region:{}", region_role_name(hit_region->role)));
+    append_json_string(output, region_id(*hit_region));
     const int local_row = cell_row - hit_region->rect.row;
     const int local_col = cell_col - hit_region->rect.col;
     if (hit_render && hit_region->vertical_anchor == ui::VerticalAnchor::Overlay) {
@@ -1567,29 +1635,38 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
                                   static_cast<std::uint32_t>(std::max(0, local_row)));
     }
 
-    const ui::Prim* hit_prim = nullptr;
-    std::size_t hit_primitive_index = hit_region->prims.size();
+    std::optional<ui::Prim> hit_primitive;
+    std::size_t hit_primitive_index = hit_region->item_count();
     if (hit_render) {
         hit_primitive_index = hit_render->primitive_index;
-        hit_prim = &hit_region->prims[hit_primitive_index];
+        hit_primitive = inspection_primitive(*hit_region, hit_primitive_index);
     } else {
-        for (std::size_t index = 0; index < hit_region->prims.size(); ++index) {
-            const ui::Prim& prim = hit_region->prims[index];
+        for (std::size_t index = 0; index < hit_region->primitives().size(); ++index) {
+            const ui::Prim& prim = hit_region->primitives()[index];
             const int width = std::max(1, ui::display_width(prim.text));
             if (prim.row == local_row && local_col >= prim.col && local_col < prim.col + width) {
-                hit_prim = &prim;
+                hit_primitive = prim;
                 hit_primitive_index = index;
+            }
+        }
+        if (!hit_primitive && hit_region->primitives().empty()) {
+            const std::size_t semantic_index =
+                hit_region->popup() != nullptr ? static_cast<std::size_t>(std::max(0, local_row))
+                                               : 0;
+            hit_primitive = inspection_primitive(*hit_region, semantic_index);
+            if (hit_primitive) {
+                hit_primitive_index = semantic_index;
             }
         }
     }
     output += ",\"prim\":";
-    if (hit_prim) {
-        append_prim(output, *hit_region, *hit_prim);
+    if (hit_primitive) {
+        append_prim(output, *hit_region, *hit_primitive);
     } else {
         output += "null";
     }
     output += ",\"render\":";
-    if (hit_prim) {
+    if (hit_primitive) {
         if (const PrimitiveRenderSnapshot* rendered =
                 hit_render
                     ? hit_render
@@ -1809,32 +1886,32 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     }
     output << '\n';
     for (const ui::Region& region : frame.scene.regions) {
-        output << "    region:" << region_role_name(region.role) << " rect=(" << region.rect.row
-               << ',' << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
+        output << "    " << region_id(region) << " role=" << region_role_name(region.role)
+               << " rev=" << region.revision << " rect=(" << region.rect.row << ','
+               << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
                << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
-               << " prims=" << region.prims.size() << '\n';
-        if (region.popup) {
-            output << "      list first=" << region.popup->first_item
-                   << " visible=" << region.popup->items.size()
-                   << " total=" << region.popup->total_items << " selected=";
-            if (region.popup->selected_item) {
-                output << *region.popup->selected_item;
+               << " items=" << region.item_count() << '\n';
+        if (const ui::Region::PopupContent* popup = region.popup()) {
+            output << "      list first=" << popup->first_item << " visible=" << popup->items.size()
+                   << " total=" << popup->total_items << " selected=";
+            if (popup->selected_item) {
+                output << *popup->selected_item;
             } else {
                 output << "none";
             }
             output << '\n';
         }
-        if (region.echo) {
-            output << "      echo bytes=" << region.echo->text.size() << " cursor=";
-            if (region.echo->cursor_byte) {
-                output << *region.echo->cursor_byte;
+        if (const ui::Region::EchoContent* echo = region.echo()) {
+            output << "      echo bytes=" << echo->text.size() << " cursor=";
+            if (echo->cursor_byte) {
+                output << *echo->cursor_byte;
             } else {
                 output << "none";
             }
             output << '\n';
         }
-        for (std::size_t index = 0; index < region.prims.size(); ++index) {
-            const ui::Prim& prim = region.prims[index];
+        for (std::size_t index = 0; index < region.primitives().size(); ++index) {
+            const ui::Prim& prim = region.primitives()[index];
             output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
                    << " cell=(" << prim.row << ',' << prim.col
                    << ") kind=" << prim_kind_name(prim.kind)

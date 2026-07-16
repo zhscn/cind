@@ -272,10 +272,10 @@ std::string popup_label(std::string_view title) {
 std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport viewport,
                                         const ui::SceneVerticalMetrics& metrics) {
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
-    if (!popup || !popup->popup) {
+    if (popup == nullptr || popup->popup() == nullptr) {
         return std::nullopt;
     }
-    const ui::Region::PopupContent& content = popup->popup.value();
+    const ui::Region::PopupContent& content = *popup->popup();
     const float cell_height = metrics.cell_height;
 
     const ui::SceneVerticalLayout vertical_layout(scene, metrics);
@@ -735,9 +735,9 @@ struct SkiaPresenter::Impl {
                                     .runs = {}});
         }
 
-        for (std::size_t primitive_index = 0; primitive_index < region->prims.size();
+        for (std::size_t primitive_index = 0; primitive_index < region->primitives().size();
              ++primitive_index) {
-            const ui::Prim& primitive = region->prims[primitive_index];
+            const ui::Prim& primitive = region->primitives()[primitive_index];
             if (primitive.kind != ui::PrimKind::Text || primitive.row < 0 ||
                 primitive.row >= static_cast<int>(layout.lines.size())) {
                 continue;
@@ -880,12 +880,12 @@ struct SkiaPresenter::Impl {
             return std::nullopt;
         }
         const ui::Region* region = scene.find(ui::RegionRole::EchoArea);
-        if (region == nullptr || !region->echo) {
+        if (region == nullptr || region->echo() == nullptr) {
             return std::nullopt;
         }
         const ui::SceneVerticalLayout vertical_layout(scene, vertical_metrics(viewport.height));
         const SkRect bounds = region_pixel_rect(*region, cell_width, cell_height, vertical_layout);
-        const ui::Region::EchoContent& content = *region->echo;
+        const ui::Region::EchoContent& content = *region->echo();
         ShapedText shaped = shape_text(content.text);
         const float text_top =
             bounds.top() + (bounds.height() - static_cast<float>(cell_height)) * 0.5F;
@@ -1034,7 +1034,6 @@ struct SkiaPresenter::Impl {
     void paint_popup(SkCanvas& canvas, const PopupLayout& layout, std::size_t region_index,
                      const RasterView& raster, SkiaRenderDiagnostics* diagnostics,
                      const SkRect* damage_bounds) {
-        const ui::Region& region = *layout.region;
         const ui::Region::PopupContent& popup = *layout.content;
         if (damage_bounds && !SkRect::Intersects(layout.shadow, *damage_bounds)) {
             return;
@@ -1099,7 +1098,7 @@ struct SkiaPresenter::Impl {
         canvas.save();
         canvas.clipRRect(panel_rrect, true);
 
-        if (!region.prims.empty()) {
+        {
             std::optional<PixelProbe> probe;
             if (diagnostics) {
                 probe = capture_probe(layout.header, raster);
@@ -1128,13 +1127,13 @@ struct SkiaPresenter::Impl {
         for (std::size_t visible_index = 0; visible_index < layout.items.size(); ++visible_index) {
             const std::size_t item_index = visible_index;
             const std::size_t primitive_index = item_index + 1;
-            if (item_index >= popup.items.size() || primitive_index >= region.prims.size()) {
+            if (item_index >= popup.items.size()) {
                 break;
             }
             const PopupItemLayout& item = layout.items[visible_index];
-            const ui::Prim& primitive = region.prims[primitive_index];
             const SkRect& row = item.row;
-            if (primitive.selected) {
+            const bool selected = popup.selected_item == popup.first_item + item_index;
+            if (selected) {
                 SkPaint fill;
                 fill.setAntiAlias(false);
                 fill.setColor(color(theme.raised));
@@ -1148,7 +1147,7 @@ struct SkiaPresenter::Impl {
             std::optional<SkRect> shape_bounds;
             canvas.save();
             canvas.clipRect(row);
-            draw_text(item.label, primitive.selected ? theme.strong : theme.text, shape_bounds);
+            draw_text(item.label, selected ? theme.strong : theme.text, shape_bounds);
             if (item.detail) {
                 draw_text(*item.detail, theme.muted, shape_bounds);
             }
@@ -1185,7 +1184,7 @@ struct SkiaPresenter::Impl {
         }
         canvas.restore();
 
-        if (diagnostics && !layout.region->prims.empty()) {
+        if (diagnostics) {
             const std::optional<SkRect> shape_bounds =
                 layout.text.shaped.blob ? std::optional(positioned_shape_bounds(layout.text))
                                         : std::nullopt;
@@ -1225,7 +1224,7 @@ struct SkiaPresenter::Impl {
         if (damage_bounds && !SkRect::Intersects(bounds, *damage_bounds)) {
             return;
         }
-        const ui::Region::StatusContent& status = region.status.value();
+        const ui::Region::StatusContent& status = *region.status();
 
         canvas.save();
         canvas.clipRect(bounds);
@@ -1468,7 +1467,7 @@ struct SkiaPresenter::Impl {
             diagnostics->primitives.clear();
             std::size_t primitive_count = 0;
             for (const ui::Region& region : scene.regions) {
-                primitive_count += region.prims.size();
+                primitive_count += region.item_count();
             }
             diagnostics->primitives.reserve(primitive_count);
         }
@@ -1538,7 +1537,7 @@ struct SkiaPresenter::Impl {
                     !SkRect::Intersects(bounds, *effective_damage_bounds)) {
                     continue;
                 }
-                if (region.role == ui::RegionRole::StatusBar && region.status) {
+                if (region.role == ui::RegionRole::StatusBar && region.status() != nullptr) {
                     paint_status(canvas, region, bounds, region_index, raster, layer_diagnostics,
                                  damage_bounds);
                     continue;
@@ -1582,12 +1581,12 @@ struct SkiaPresenter::Impl {
                 const bool footer_region = region.vertical_anchor == ui::VerticalAnchor::Bottom;
                 const bool suppress_echo_text = panel != nullptr && panel->input_active &&
                                                 region.role == ui::RegionRole::EchoArea;
-                for (std::size_t primitive_index = 0; primitive_index < region.prims.size();
+                for (std::size_t primitive_index = 0; primitive_index < region.primitives().size();
                      ++primitive_index) {
                     if (suppress_echo_text) {
                         continue;
                     }
-                    const ui::Prim& prim = region.prims[primitive_index];
+                    const ui::Prim& prim = region.primitives()[primitive_index];
                     SkScalar x = bounds.left() + static_cast<SkScalar>(prim.col * cell_width);
                     SkScalar top = bounds.top() + static_cast<SkScalar>(prim.row * cell_height);
                     if (footer_region) {
@@ -2207,7 +2206,7 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const SkiaFrameLayout& 
     // The modeline lays segments out independently of the cell grid, so any
     // damaged status cell repaints the whole bar.
     if (const ui::Region* status_region = scene.find(ui::RegionRole::StatusBar);
-        status_region && status_region->status) {
+        status_region && status_region->status() != nullptr) {
         const int first = status_region->rect.row;
         const int last = first + status_region->rect.rows;
         const bool touched = std::ranges::any_of(damage.cell_rects, [&](const ui::Rect& cells) {

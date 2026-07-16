@@ -34,7 +34,7 @@ Scene frame_scene(int cursor_row, int marker) {
     scene.active_text_row = cursor_row - 1;
     Region body{RegionRole::TextArea, {0, 0, 3, 20}, {}};
     for (int row = 0; row < body.rect.rows; ++row) {
-        body.prims.push_back(
+        body.primitives().push_back(
             {row, 0, std::format("{} row {}", marker, row), StyleClass::Text, false});
     }
     Region status{

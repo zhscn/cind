@@ -94,12 +94,12 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .cols = 40,
                                  .visible_text_rows = 3.5F,
                                  .tab_width = 4,
-                                 .path = {},
+                                 .path = "sample.cc",
                                  .dirty = false,
                                  .revision = 0,
                                  .style_origin = {},
-                                 .last_key = {},
-                                 .echo = {},
+                                 .last_key = "C-x",
+                                 .echo = "hello",
                                  .echo_cursor_column = std::nullopt,
                                  .echo_cursor_byte = std::nullopt,
                                  .popup_title = "Command",
@@ -112,6 +112,21 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     CHECK(first.grid_offset_rows == doctest::Approx(second.grid_offset_rows));
     CHECK(laid_out.viewport.top_line == 0);
     CHECK(laid_out.popup.first_item() == 6);
+    const Region* status = first.find(RegionRole::StatusBar);
+    const Region* echo = first.find(RegionRole::EchoArea);
+    const Region* popup = first.find(RegionRole::Popup);
+    REQUIRE(status != nullptr);
+    REQUIRE(echo != nullptr);
+    REQUIRE(popup != nullptr);
+    CHECK(status->primitives().empty());
+    CHECK(echo->primitives().empty());
+    CHECK(popup->primitives().empty());
+    REQUIRE(status->status() != nullptr);
+    REQUIRE(echo->echo() != nullptr);
+    REQUIRE(popup->popup() != nullptr);
+    CHECK(render_ansi(first).find("sample.cc") != std::string::npos);
+    CHECK(render_ansi(first).find("hello") != std::string::npos);
+    CHECK(render_ansi(first).find("command") != std::string::npos);
 }
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
@@ -279,24 +294,24 @@ TEST_CASE("line signs: content entered into an empty file is added") {
 }
 
 TEST_CASE("ansi renderer: regions paint at absolute positions") {
-    // The scene is layout + display lists: regions with rects, primitives in
-    // region-local coordinates. The renderer only positions and styles.
+    // Primitive content uses region-local coordinates. Semantic chrome is
+    // projected by the renderer.
     Scene scene;
     scene.rows = 5; // 3 text rows + status + echo
     scene.cols = 20;
 
     Region numbers{RegionRole::LineNumbers, {0, 0, 3, 3}, {}};
-    numbers.prims.push_back({0, 0, " 1 ", StyleClass::Gutter, false});
+    numbers.primitives().push_back({0, 0, " 1 ", StyleClass::Gutter, false});
     Region marks{RegionRole::ChangeSigns, {0, 3, 3, 1}, {}};
-    marks.prims.push_back({0, 0, "▎", StyleClass::SignModified, false});
+    marks.primitives().push_back({0, 0, "▎", StyleClass::SignModified, false});
     Region body{RegionRole::TextArea, {0, 4, 3, 16}, {}};
-    body.prims.push_back({0, 0, "int", StyleClass::Keyword, false});
-    body.prims.push_back({0, 3, " x;", StyleClass::Text, false});
-    body.prims.push_back({1, 0, "~", StyleClass::Gutter, false});
+    body.primitives().push_back({0, 0, "int", StyleClass::Keyword, false});
+    body.primitives().push_back({0, 3, " x;", StyleClass::Text, false});
+    body.primitives().push_back({1, 0, "~", StyleClass::Gutter, false});
     Region status{RegionRole::StatusBar, {3, 0, 1, 20}, {}};
-    status.prims.push_back({0, 0, " f.cc ", StyleClass::StatusBar, false});
+    status.primitives().push_back({0, 0, " f.cc ", StyleClass::StatusBar, false});
     Region echo{RegionRole::EchoArea, {4, 0, 1, 20}, {}};
-    echo.prims.push_back({0, 0, "hello", StyleClass::Message, false});
+    echo.primitives().push_back({0, 0, "hello", StyleClass::Message, false});
     scene.regions = {numbers, marks, body, status, echo};
     scene.cursor_row = 1;
     scene.cursor_col = 5;
@@ -315,7 +330,7 @@ TEST_CASE("ansi renderer: regions paint at absolute positions") {
 
     // Selected primitives add reverse video.
     Scene sel = scene;
-    sel.regions[2].prims[1].selected = true;
+    sel.regions[2].primitives()[1].selected = true;
     CHECK(render_ansi(sel).find("\x1b[1;34m") != std::string::npos);
     CHECK(render_ansi(sel).find("\x1b[7m x;") != std::string::npos);
 

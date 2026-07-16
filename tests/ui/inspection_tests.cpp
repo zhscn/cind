@@ -99,26 +99,33 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     scene.active_text_row =
         scroll_frame || document_cursor_animation ? std::optional(0) : std::nullopt;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
-    body.prims.push_back(
+    body.primitives().push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
     Region status{
         RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    status.set_status(Region::StatusContent{
+        .path = "sample.cc",
+        .line = 1,
+        .column = 4,
+        .line_count = 1,
+        .revision = 7,
+        .style_origin = ".clang-format",
+        .key = "C-x",
+    });
     Region popup{
         RegionRole::Popup, {0, 5, 2, 5}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back({0, 0, "help ", StyleClass::Popup, false, PrimKind::Text, "popup:title"});
-    popup.prims.push_back({1, 0, "save ", StyleClass::Popup, true, PrimKind::Text, "popup:item:0"});
-    popup.popup = Region::PopupContent{.title = "Help",
-                                       .input = "",
-                                       .input_cursor = 0,
-                                       .first_item = 0,
-                                       .total_items = 1,
-                                       .selected_item = 0,
-                                       .items = {{.label = "file.save", .detail = "command"}}};
+    popup.set_popup(Region::PopupContent{
+        .title = "Help",
+        .input = "",
+        .input_cursor = 0,
+        .first_item = 0,
+        .total_items = 1,
+        .selected_item = 0,
+        .items = {{.label = "file.save", .detail = "command"}},
+    });
     Region echo{
         RegionRole::EchoArea, {1, 0, 1, 10}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
-    echo.prims.push_back(
-        {0, 0, "search: x", StyleClass::Message, false, PrimKind::Text, "echo:main"});
-    echo.echo = Region::EchoContent{.text = "search: x", .cursor_byte = 9};
+    echo.set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9});
     std::optional<PopupLayoutSnapshot> popup_layout;
     std::optional<EchoLayoutSnapshot> echo_layout;
     if (echo_frame) {
@@ -305,9 +312,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":20") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":21") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
+    CHECK(snapshot.find("\"content_type\":\"popup\"") != std::string::npos);
+    CHECK(snapshot.find("\"content_type\":\"status\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
     CHECK(snapshot.find("\"display_scale\":1.5") != std::string::npos);
     CHECK(snapshot.find("\"grid_offset_rows\":0") != std::string::npos);

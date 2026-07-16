@@ -5,16 +5,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace cind::ui {
 
 // Backend-independent frame model. Layout partitions the screen into regions;
-// each region carries a surface class, a vertical anchoring policy, and a
-// display list in local coordinates. Region roles remain semantic inspection
-// and input-routing metadata.
+// each region carries a stable identity, a surface class, a vertical anchoring
+// policy, and exactly one content representation. Document regions expose a
+// display list in local coordinates; chrome regions expose semantic content
+// that each presenter lays out for its native coordinate system.
 
 // Cell-unit rectangle in scene coordinates (0-based row/col). A GUI
 // presenter maps cells to pixels with its font metrics.
@@ -78,6 +81,9 @@ enum class VerticalAnchor : std::uint8_t {
 };
 
 struct Region {
+    struct PrimitiveContent {
+        std::vector<Prim> items;
+    };
     struct PopupItem {
         std::string label;
         std::string detail;
@@ -108,36 +114,57 @@ struct Region {
         // from this offset.
         std::optional<std::size_t> cursor_byte;
     };
+    using Content = std::variant<PrimitiveContent, PopupContent, StatusContent, EchoContent>;
 
     Region() = default;
     Region(RegionRole role, Rect rect, std::vector<Prim> prims,
            SurfaceClass surface = SurfaceClass::Editor,
-           VerticalAnchor vertical_anchor = VerticalAnchor::Grid,
-           std::optional<PopupContent> popup = std::nullopt)
-        : role(role), rect(rect), prims(std::move(prims)), surface(surface),
-          vertical_anchor(vertical_anchor), popup(std::move(popup)) {}
+           VerticalAnchor vertical_anchor = VerticalAnchor::Grid, std::string id = {},
+           std::uint64_t revision = 0)
+        : role(role), rect(rect), surface(surface), vertical_anchor(vertical_anchor),
+          id(std::move(id)), revision(revision), content(PrimitiveContent{std::move(prims)}) {}
 
     RegionRole role = RegionRole::TextArea;
     Rect rect;
-    std::vector<Prim> prims;
     SurfaceClass surface = SurfaceClass::Editor;
     VerticalAnchor vertical_anchor = VerticalAnchor::Grid;
+    std::string id;
+    std::uint64_t revision = 0;
+    Content content = PrimitiveContent{};
 
-    // Structured popup content lets graphical presenters use independent
-    // spacing and typography while terminal presenters keep consuming the
-    // cell primitives above. `items` is the visible window beginning at
-    // `first_item`; the corresponding primitives are 1..N and primitive zero
-    // is the popup title. Selection and total size use global item indices.
-    std::optional<PopupContent> popup;
+    std::vector<Prim>& primitives() {
+        PrimitiveContent* primitives = std::get_if<PrimitiveContent>(&content);
+        if (primitives == nullptr) {
+            throw std::logic_error("semantic region has no primitive content");
+        }
+        return primitives->items;
+    }
+    const std::vector<Prim>& primitives() const {
+        static const std::vector<Prim> empty;
+        const PrimitiveContent* primitives = std::get_if<PrimitiveContent>(&content);
+        return primitives != nullptr ? primitives->items : empty;
+    }
 
-    // Structured status-bar content for graphical presenters, mirroring the
-    // popup arrangement: terminal presenters keep consuming the primitives.
-    std::optional<StatusContent> status;
+    PopupContent* popup() { return std::get_if<PopupContent>(&content); }
+    const PopupContent* popup() const { return std::get_if<PopupContent>(&content); }
+    StatusContent* status() { return std::get_if<StatusContent>(&content); }
+    const StatusContent* status() const { return std::get_if<StatusContent>(&content); }
+    EchoContent* echo() { return std::get_if<EchoContent>(&content); }
+    const EchoContent* echo() const { return std::get_if<EchoContent>(&content); }
 
-    // Structured echo content preserves the text/caret relationship across
-    // cell and pixel frontends. Terminal presenters keep consuming the
-    // primitive and Scene cursor.
-    std::optional<EchoContent> echo;
+    void set_popup(PopupContent popup) { content = std::move(popup); }
+    void set_status(StatusContent status) { content = std::move(status); }
+    void set_echo(EchoContent echo) { content = std::move(echo); }
+
+    std::size_t item_count() const {
+        if (const PopupContent* popup_content = popup()) {
+            return popup_content->items.size() + 1;
+        }
+        if (status() != nullptr || echo() != nullptr) {
+            return 1;
+        }
+        return primitives().size();
+    }
 };
 
 struct Scene {

@@ -193,8 +193,8 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     ui::Scene scene = compose_frame(model, 8, 80);
     const ui::Region* echo = scene.find(ui::RegionRole::EchoArea);
     REQUIRE(echo != nullptr);
-    REQUIRE(echo->echo);
-    const ui::Region::EchoContent initial_echo = echo->echo.value_or(ui::Region::EchoContent{});
+    REQUIRE(echo->echo());
+    const ui::Region::EchoContent initial_echo = *echo->echo();
     CHECK(initial_echo.text == "search: ");
     CHECK(initial_echo.cursor_byte == 8);
 
@@ -202,8 +202,8 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     scene = compose_frame(model, 8, 80);
     echo = scene.find(ui::RegionRole::EchoArea);
     REQUIRE(echo != nullptr);
-    REQUIRE(echo->echo);
-    const ui::Region::EchoContent edited_echo = echo->echo.value_or(ui::Region::EchoContent{});
+    REQUIRE(echo->echo());
+    const ui::Region::EchoContent edited_echo = *echo->echo();
     CHECK(edited_echo.text == "search: two");
     CHECK(edited_echo.cursor_byte == 11);
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Enter), 10));
@@ -221,11 +221,11 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     CHECK(popup->vertical_anchor == ui::VerticalAnchor::Overlay);
-    REQUIRE(popup->popup);
-    CHECK_FALSE(popup->popup.value().input);
-    CHECK(std::ranges::any_of(popup->prims, [](const ui::Prim& primitive) {
-        return primitive.text.find("C-s") != std::string::npos &&
-               primitive.text.find("file.save") != std::string::npos;
+    REQUIRE(popup->popup());
+    CHECK_FALSE(popup->popup()->input);
+    CHECK(std::ranges::any_of(popup->popup()->items, [](const ui::Region::PopupItem& item) {
+        return item.label.find("C-s") != std::string::npos &&
+               item.detail.find("file.save") != std::string::npos;
     }));
 
     CHECK(model.handle_key(KeyStroke::character_key(U'g', KeyModifier::Control), 10));
@@ -233,20 +233,19 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     scene = compose_frame(model, 16, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    REQUIRE(popup->popup);
-    REQUIRE(popup->popup.value().input);
-    CHECK(popup->popup.value().title == "Command: ");
-    CHECK(std::ranges::any_of(popup->prims,
-                              [](const ui::Prim& primitive) { return primitive.selected; }));
+    REQUIRE(popup->popup());
+    REQUIRE(popup->popup()->input);
+    CHECK(popup->popup()->title == "Command: ");
+    CHECK(popup->popup()->selected_item.has_value());
 
     model.insert_text("edit");
     REQUIRE(model.handle_key(KeyStroke::character_key(U'b', KeyModifier::Control), 10));
     scene = compose_frame(model, 16, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    REQUIRE(popup->popup);
-    CHECK(popup->popup->input == "edit");
-    CHECK(popup->popup->input_cursor == 3);
+    REQUIRE(popup->popup());
+    CHECK(popup->popup()->input == "edit");
+    CHECK(popup->popup()->input_cursor == 3);
 }
 
 TEST_CASE("command palette retains a global selection and stable list viewport") {
@@ -256,12 +255,12 @@ TEST_CASE("command palette retains a global selection and stable list viewport")
     ui::Scene scene = compose_frame(model, 20, 100);
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    REQUIRE(popup->popup);
-    const std::size_t capacity = popup->popup->items.size();
+    REQUIRE(popup->popup());
+    const std::size_t capacity = popup->popup()->items.size();
     REQUIRE(capacity > 1);
     const std::size_t downward_steps = capacity + 4;
-    REQUIRE(popup->popup->total_items > downward_steps);
-    CHECK(popup->popup->selected_item == 0);
+    REQUIRE(popup->popup()->total_items > downward_steps);
+    CHECK(popup->popup()->selected_item == 0);
 
     for (std::size_t step = 0; step < downward_steps; ++step) {
         REQUIRE(model.handle_key(KeyStroke::character_key(U'n', KeyModifier::Control), 10));
@@ -269,20 +268,19 @@ TEST_CASE("command palette retains a global selection and stable list viewport")
     }
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    REQUIRE(popup->popup);
-    CHECK(popup->popup->selected_item == downward_steps);
-    CHECK(popup->popup->first_item == downward_steps - capacity + 1);
-    CHECK(popup->prims.back().selected);
+    REQUIRE(popup->popup());
+    CHECK(popup->popup()->selected_item == downward_steps);
+    CHECK(popup->popup()->first_item == downward_steps - capacity + 1);
+    CHECK(popup->popup()->selected_item == popup->popup()->first_item + capacity - 1);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'p', KeyModifier::Control), 10));
     scene = compose_frame(model, 20, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
-    REQUIRE(popup->popup);
-    CHECK(popup->popup->selected_item == downward_steps - 1);
-    CHECK(popup->popup->first_item == downward_steps - capacity + 1);
-    CHECK_FALSE(popup->prims.back().selected);
-    CHECK(popup->prims[capacity - 1].selected);
+    REQUIRE(popup->popup());
+    CHECK(popup->popup()->selected_item == downward_steps - 1);
+    CHECK(popup->popup()->first_item == downward_steps - capacity + 1);
+    CHECK(popup->popup()->selected_item == popup->popup()->first_item + capacity - 2);
 }
 
 TEST_CASE("background save captures one revision without blocking newer edits") {

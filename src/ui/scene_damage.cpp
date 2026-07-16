@@ -59,6 +59,11 @@ void append_fragment(std::string& signature, std::string_view text, StyleClass s
     signature.append(text);
 }
 
+void append_text(std::string& signature, std::string_view text) {
+    append_integer(signature, static_cast<std::uint32_t>(text.size()));
+    signature.append(text);
+}
+
 std::vector<std::string> visual_cells(const Scene& scene) {
     const std::size_t size = static_cast<std::size_t>(std::max(0, scene.rows)) *
                              static_cast<std::size_t>(std::max(0, scene.cols));
@@ -76,7 +81,8 @@ std::vector<std::string> visual_cells(const Scene& scene) {
         for (int row = first_row; row < last_row; ++row) {
             for (int col = first_col; col < last_col; ++col) {
                 cells[cell_index(row, col, scene.cols)] = {
-                    static_cast<char>(region.surface), static_cast<char>(region.vertical_anchor)};
+                    static_cast<char>(region.surface), static_cast<char>(region.vertical_anchor),
+                    static_cast<char>(region.role)};
                 if (scene.active_text_row == row && (region.role == RegionRole::TextArea ||
                                                      region.role == RegionRole::LineNumbers ||
                                                      region.role == RegionRole::ChangeSigns)) {
@@ -85,7 +91,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
             }
         }
 
-        for (const Prim& prim : region.prims) {
+        for (const Prim& prim : region.primitives()) {
             const int row = region.rect.row + prim.row;
             int col = region.rect.col + prim.col;
             if (row < 0 || row >= scene.rows) {
@@ -121,33 +127,45 @@ std::vector<std::string> visual_cells(const Scene& scene) {
         }
         if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&
             region.rect.col < scene.cols) {
-            (void)region.popup.transform([&](const Region::PopupContent& popup) {
-                std::string& signature =
-                    cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+            std::string& signature =
+                cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+            if (const Region::PopupContent* popup = region.popup()) {
                 signature.push_back('\x1e');
-                append_integer(signature, static_cast<std::uint32_t>(popup.input.has_value()));
-                if (popup.input) {
-                    append_integer(signature, static_cast<std::uint32_t>(popup.input->size()));
-                    signature.append(*popup.input);
+                append_text(signature, popup->title);
+                append_integer(signature, static_cast<std::uint32_t>(popup->input.has_value()));
+                if (popup->input) {
+                    append_text(signature, *popup->input);
                 }
                 append_integer(signature,
-                               static_cast<std::uint32_t>(popup.input_cursor.has_value()));
-                append_integer(signature, popup.input_cursor.value_or(0));
-                append_integer(signature, popup.first_item);
-                append_integer(signature, popup.total_items);
+                               static_cast<std::uint32_t>(popup->input_cursor.has_value()));
+                append_integer(signature, popup->input_cursor.value_or(0));
+                append_integer(signature, popup->first_item);
+                append_integer(signature, popup->total_items);
                 append_integer(signature,
-                               static_cast<std::uint32_t>(popup.selected_item.has_value()));
-                append_integer(signature, popup.selected_item.value_or(0));
-                return true;
-            });
-            (void)region.echo.transform([&](const Region::EchoContent& echo) {
-                std::string& signature =
-                    cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+                               static_cast<std::uint32_t>(popup->selected_item.has_value()));
+                append_integer(signature, popup->selected_item.value_or(0));
+                append_integer(signature, popup->items.size());
+                for (const Region::PopupItem& item : popup->items) {
+                    append_text(signature, item.label);
+                    append_text(signature, item.detail);
+                }
+            } else if (const Region::StatusContent* status = region.status()) {
+                signature.push_back('\x1c');
+                append_text(signature, status->path);
+                append_integer(signature, static_cast<std::uint32_t>(status->dirty));
+                append_integer(signature, status->line);
+                append_integer(signature, status->column);
+                append_integer(signature, status->line_count);
+                append_integer(signature, status->revision);
+                append_text(signature, status->style_origin);
+                append_text(signature, status->key);
+            } else if (const Region::EchoContent* echo = region.echo()) {
                 signature.push_back('\x1d');
-                append_integer(signature, static_cast<std::uint32_t>(echo.cursor_byte.has_value()));
-                append_integer(signature, echo.cursor_byte.value_or(0));
-                return true;
-            });
+                append_text(signature, echo->text);
+                append_integer(signature,
+                               static_cast<std::uint32_t>(echo->cursor_byte.has_value()));
+                append_integer(signature, echo->cursor_byte.value_or(0));
+            }
         }
     }
     return cells;

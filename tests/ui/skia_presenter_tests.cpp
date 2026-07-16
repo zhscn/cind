@@ -35,7 +35,7 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
     scene.rows = 3;
     scene.cols = 10;
     Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
-    body.prims.push_back({0, 2, " ", StyleClass::Text, true});
+    body.primitives().push_back({0, 2, " ", StyleClass::Text, true});
     Region status{RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status};
     Region echo{RegionRole::EchoArea, {2, 0, 1, 10}, {}, SurfaceClass::Echo};
     scene.regions = {body, status, echo};
@@ -90,11 +90,12 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
     scene.cols = 60;
     const std::string text = "                    s.delta,";
     Region body{RegionRole::TextArea, {0, 5, 1, 55}, {}};
-    body.prims.push_back(
+    body.primitives().push_back(
         {0, 0, text.substr(0, 21), StyleClass::Text, false, PrimKind::Text, "line:0/byte:0"});
-    body.prims.push_back(
+    body.primitives().push_back(
         {0, 21, ".delta", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:21"});
-    body.prims.push_back({0, 27, ",", StyleClass::Text, false, PrimKind::Text, "line:0/byte:27"});
+    body.primitives().push_back(
+        {0, 27, ",", StyleClass::Text, false, PrimKind::Text, "line:0/byte:27"});
     Region status{
         RegionRole::StatusBar, {1, 0, 1, 60}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region echo{
@@ -147,8 +148,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
     Region echo{
         RegionRole::EchoArea, {2, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
     const std::string text = "search: sdfasdf";
-    echo.prims.push_back({0, 0, text, StyleClass::Message, false});
-    echo.echo = Region::EchoContent{.text = text, .cursor_byte = text.size()};
+    echo.set_echo(Region::EchoContent{.text = text, .cursor_byte = text.size()});
     scene.regions = {body, status, echo};
     scene.cursor_row = 3;
     scene.cursor_col = static_cast<int>(text.size()) + 1;
@@ -182,7 +182,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
         echo_diagnostics.cursor_rect.value_or(SkiaLogicalRect{});
     CHECK(cursor_bounds.x == doctest::Approx(diagnostic_cursor.x));
 
-    scene.regions.back().echo = Region::EchoContent{.text = text, .cursor_byte = 10};
+    scene.regions.back().set_echo(Region::EchoContent{.text = text, .cursor_byte = 10});
     scene.cursor_col = 11;
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
@@ -205,9 +205,10 @@ TEST_CASE("Skia presenter paints semantic change-sign colors") {
     scene.rows = 3;
     scene.cols = 2;
     Region signs{RegionRole::ChangeSigns, {0, 0, 3, 1}, {}, SurfaceClass::Gutter};
-    signs.prims.push_back({0, 0, " ", StyleClass::SignAdded, false, PrimKind::ChangeBar});
-    signs.prims.push_back({1, 0, " ", StyleClass::SignModified, false, PrimKind::ChangeBar});
-    signs.prims.push_back({2, 0, " ", StyleClass::SignDeleted, false, PrimKind::ChangeDeletion});
+    signs.primitives().push_back({0, 0, " ", StyleClass::SignAdded, false, PrimKind::ChangeBar});
+    signs.primitives().push_back({1, 0, " ", StyleClass::SignModified, false, PrimKind::ChangeBar});
+    signs.primitives().push_back(
+        {2, 0, " ", StyleClass::SignDeleted, false, PrimKind::ChangeDeletion});
     scene.regions = {signs};
     scene.cursor_row = 1;
     scene.cursor_col = 2;
@@ -236,7 +237,7 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
     scene.cols = 2;
     scene.cursor_visible = false;
     Region numbers{RegionRole::LineNumbers, {0, 0, 2, 2}, {}, SurfaceClass::Gutter};
-    numbers.prims.push_back({0, 0, "1", StyleClass::Gutter, false});
+    numbers.primitives().push_back({0, 0, "1", StyleClass::Gutter, false});
     scene.regions = {numbers};
 
     const int width = presenter.cell_width() * scene.cols;
@@ -298,7 +299,7 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
         RegionRole::StatusBar, {1, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region echo{
         RegionRole::EchoArea, {2, 0, 1, 12}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
-    status.prims.push_back({0, 0, "ok", StyleClass::StatusBar, false});
+    status.primitives().push_back({0, 0, "ok", StyleClass::StatusBar, false});
     scene.regions = {body, status, echo};
 
     const int width = presenter.cell_width() * scene.cols;
@@ -324,7 +325,7 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
-    scene.regions[1].prims.front().text = "ox";
+    scene.regions[1].primitives().front().text = "ox";
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
     const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
@@ -351,8 +352,8 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
     scene.cursor_row = 2;
     scene.cursor_col = 12;
     Region body{RegionRole::TextArea, {0, 0, 2, 12}, {}};
-    body.prims.push_back({0, 0, "top", StyleClass::Text, false});
-    body.prims.push_back({1, 0, "bottom", StyleClass::Text, false});
+    body.primitives().push_back({0, 0, "top", StyleClass::Text, false});
+    body.primitives().push_back({1, 0, "bottom", StyleClass::Text, false});
     Region status{
         RegionRole::StatusBar, {2, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region echo{
@@ -404,7 +405,7 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
         RegionRole::EchoArea, {4, 0, 1, 16}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
     Region popup{
         RegionRole::Popup, {1, 2, 2, 12}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back({0, 0, "first", StyleClass::Popup, false});
+    popup.primitives().push_back({0, 0, "first", StyleClass::Popup, false});
     scene.regions = {body, status, echo, popup};
 
     const int width = presenter.cell_width() * scene.cols;
@@ -419,7 +420,7 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
     CHECK(diagnostics.primitives.front().layout_bounds.y ==
           doctest::Approx(static_cast<float>(presenter.cell_height())));
 
-    scene.regions.back().prims.front().text = "second";
+    scene.regions.back().primitives().front().text = "second";
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
     const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
@@ -442,20 +443,16 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     scene.cursor_col = 13;
     scene.active_text_row = 4;
     Region body{RegionRole::TextArea, {0, 8, 28, 92}, {}};
-    body.prims.push_back({4, 0, "active", StyleClass::Text, false});
+    body.primitives().push_back({4, 0, "active", StyleClass::Text, false});
     Region status{
         RegionRole::StatusBar, {28, 0, 1, 100}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region echo{
         RegionRole::EchoArea, {29, 0, 1, 100}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
-    echo.prims.push_back({0, 0, "Command: ed", StyleClass::Message, false});
+    echo.primitives().push_back({0, 0, "Command: ed", StyleClass::Message, false});
     Region popup{
         RegionRole::Popup, {20, 6, 4, 88}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back({0, 0, "Command: ", StyleClass::StatusKey, false});
-    popup.prims.push_back({1, 0, "edit.undo command", StyleClass::Popup, true});
-    popup.prims.push_back({2, 0, "edit.redo command", StyleClass::Popup, false});
-    popup.prims.push_back({3, 0, "edit.yank command", StyleClass::Popup, false});
     const std::string popup_input(36, 'm');
-    popup.popup = Region::PopupContent{
+    popup.set_popup(Region::PopupContent{
         .title = "Command: ",
         .input = popup_input,
         .input_cursor = popup_input.size(),
@@ -465,7 +462,7 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
         .items = {{.label = "edit.undo", .detail = "command"},
                   {.label = "edit.redo", .detail = "command"},
                   {.label = "edit.yank", .detail = "command"}},
-    };
+    });
     scene.regions = {body, status, echo, popup};
 
     const int width = presenter.cell_width() * scene.cols;
@@ -519,18 +516,18 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     CHECK(end_cursor.x - static_cast<float>(rightmost_input_pixel) <=
           static_cast<float>(presenter.cell_width()));
 
-    scene.regions.back().popup->input_cursor = 0;
+    scene.regions.back().popup()->input_cursor = 0;
     const SkiaFrameLayout start_layout =
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
     const std::optional<SkiaLogicalRect> start_cursor = presenter.cursor_rect(start_layout);
     REQUIRE(start_cursor);
     CHECK(start_cursor.value_or(SkiaLogicalRect{}).x < end_cursor.x);
-    scene.regions.back().popup->input_cursor = popup_input.size();
+    scene.regions.back().popup()->input_cursor = popup_input.size();
     CHECK(std::ranges::find(retained, theme.surface) != retained.end());
     CHECK(std::ranges::find(retained, theme.raised) != retained.end());
 
-    scene.regions.back().popup.value().input = "edi";
-    scene.regions.back().popup.value().input_cursor = 3;
+    scene.regions.back().popup()->input = "edi";
+    scene.regions.back().popup()->input_cursor = 3;
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
     REQUIRE_FALSE(damage.cell_rects.empty());
@@ -557,7 +554,7 @@ TEST_CASE("Skia damage rendering matches a full reference frame") {
         scene.cursor_row = 1;
         scene.cursor_col = cursor_col;
         Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
-        body.prims.push_back({0, 0, std::move(text), StyleClass::Text, false});
+        body.primitives().push_back({0, 0, std::move(text), StyleClass::Text, false});
         Region status{
             RegionRole::StatusBar, {1, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
         Region echo{
@@ -644,8 +641,8 @@ TEST_CASE("Skia animation frames scroll only the grid") {
         scene.cols = 12;
         scene.cursor_visible = false;
         Region body{RegionRole::TextArea, {0, 0, 2, 12}, {}};
-        body.prims.push_back({0, 0, std::move(first), StyleClass::Text, false});
-        body.prims.push_back({1, 0, std::move(second), StyleClass::Text, false});
+        body.primitives().push_back({0, 0, std::move(first), StyleClass::Text, false});
+        body.primitives().push_back({1, 0, std::move(second), StyleClass::Text, false});
         Region status{
             RegionRole::StatusBar, {2, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
         Region echo{
@@ -724,7 +721,8 @@ TEST_CASE("Skia scroll keeps the current cursor at both viewport edges") {
         scene.cursor_col = 5;
         Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
         for (int row = 0; row < body.rect.rows; ++row) {
-            body.prims.push_back({row, 0, std::format("row {}", row), StyleClass::Text, false});
+            body.primitives().push_back(
+                {row, 0, std::format("row {}", row), StyleClass::Text, false});
         }
         Region status{
             RegionRole::StatusBar, {6, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
@@ -789,7 +787,7 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
         scene.cursor_visible = false;
         Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
         for (int row = 0; row < body.rect.rows; ++row) {
-            body.prims.push_back(
+            body.primitives().push_back(
                 {row, 0, std::format("line {:03}", first_line + row), StyleClass::Text, true});
         }
         Region status{
@@ -848,7 +846,7 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
         scene.active_text_row = active_row;
         Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
         for (int row = 0; row < body.rect.rows; ++row) {
-            body.prims.push_back(
+            body.primitives().push_back(
                 {row, 0, std::format("line {:03}", first_line + row), StyleClass::Text, false});
         }
         Region status{
@@ -926,9 +924,9 @@ TEST_CASE("Skia line-number emphasis follows the animated document caret midpoin
     scene.cursor_visible = false;
     scene.active_text_row = 1;
     Region numbers{RegionRole::LineNumbers, {0, 0, 3, 2}, {}, SurfaceClass::Gutter};
-    numbers.prims.push_back({0, 0, "1", StyleClass::Gutter, false});
-    numbers.prims.push_back({1, 0, "2", StyleClass::Gutter, false});
-    numbers.prims.push_back({2, 0, "3", StyleClass::Gutter, false});
+    numbers.primitives().push_back({0, 0, "1", StyleClass::Gutter, false});
+    numbers.primitives().push_back({1, 0, "2", StyleClass::Gutter, false});
+    numbers.primitives().push_back({2, 0, "3", StyleClass::Gutter, false});
     Region body{RegionRole::TextArea, {0, 2, 3, 10}, {}};
     Region status{
         RegionRole::StatusBar, {3, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
@@ -985,11 +983,7 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
         Region body{RegionRole::TextArea, {0, 0, 2, 40}, {}};
         Region status{
             RegionRole::StatusBar, {2, 0, 1, 40}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
-        // Cell primitives mirror what the TUI draws; the GUI paints from the
-        // structured content instead.
-        status.prims.push_back({0, 0, std::format("src/ui/editor_scene.cpp 12:5 {}", key),
-                                StyleClass::StatusBar, false});
-        status.status = Region::StatusContent{
+        status.set_status(Region::StatusContent{
             .path = "src/ui/editor_scene.cpp",
             .dirty = dirty,
             .line = 12,
@@ -998,7 +992,7 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
             .revision = 7,
             .style_origin = ".clang-format",
             .key = std::move(key),
-        };
+        });
         Region echo{
             RegionRole::EchoArea, {3, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
         scene.regions = {std::move(body), std::move(status), std::move(echo)};
@@ -1046,7 +1040,7 @@ TEST_CASE("Skia partial rendering clears a cancelled cursor animation position")
         scene.cursor_row = cursor_row;
         scene.cursor_col = cursor_col;
         Region body{RegionRole::TextArea, {0, 0, 6, 20}, {}};
-        body.prims.push_back({0, 0, "text", StyleClass::Text, false});
+        body.primitives().push_back({0, 0, "text", StyleClass::Text, false});
         Region status{
             RegionRole::StatusBar, {6, 0, 1, 20}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
         Region echo{

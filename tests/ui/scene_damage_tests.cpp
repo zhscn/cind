@@ -15,7 +15,7 @@ Scene text_scene(std::string text, int cursor_col = 1) {
     scene.cursor_row = 1;
     scene.cursor_col = cursor_col;
     Region body{RegionRole::TextArea, {0, 0, 1, 12}, {}};
-    body.prims.push_back({0, 0, std::move(text), StyleClass::Text, false});
+    body.primitives().push_back({0, 0, std::move(text), StyleClass::Text, false});
     Region status{RegionRole::StatusBar, {1, 0, 1, 12}, {}, SurfaceClass::Status};
     scene.regions = {std::move(body), std::move(status)};
     return scene;
@@ -47,6 +47,19 @@ TEST_CASE("scene damage tracks changed cells and cursor pixels independently") {
     CHECK(moved.cursor_cells[1].column == 5);
 }
 
+TEST_CASE("scene identity metadata does not invalidate unchanged pixels") {
+    SceneDamageTracker tracker;
+    Scene scene = text_scene("abcdef");
+    scene.regions.front().id = "editor/document";
+    scene.regions.front().revision = 1;
+    REQUIRE(tracker.update(scene).full_repaint);
+
+    scene.regions.front().revision = 2;
+    const SceneDamage unchanged = tracker.update(scene);
+    CHECK_FALSE(unchanged.full_repaint);
+    CHECK(unchanged.cell_rects.empty());
+}
+
 TEST_CASE("scene damage follows grapheme width and visual style") {
     SceneDamageTracker tracker;
     CHECK(tracker.update(text_scene("a中b")).full_repaint);
@@ -57,7 +70,7 @@ TEST_CASE("scene damage follows grapheme width and visual style") {
     CHECK(wide.cell_rects.front().col == 1);
     CHECK(wide.cell_rects.front().cols == 2);
 
-    changed.regions.front().prims.front().style = StyleClass::Keyword;
+    changed.regions.front().primitives().front().style = StyleClass::Keyword;
     const SceneDamage styled = tracker.update(changed);
     REQUIRE(styled.cell_rects.size() == 1);
     CHECK(styled.cell_rects.front().col == 0);
@@ -68,7 +81,8 @@ TEST_CASE("scene damage requests full repaint for geometry and broad changes") {
     SceneDamageTracker tracker;
     CHECK(tracker.update(text_scene("a")).full_repaint);
     Scene broad = text_scene("abcdefghijkl");
-    broad.regions.back().prims.push_back({0, 0, "status line!", StyleClass::StatusBar, false});
+    broad.regions.back().primitives().push_back(
+        {0, 0, "status line!", StyleClass::StatusBar, false});
     CHECK(tracker.update(broad).full_repaint);
 
     Scene resized = text_scene("abcdefghijkl");
@@ -105,7 +119,7 @@ TEST_CASE("scene damage tracks active line and overlay geometry") {
 
     Region popup{
         RegionRole::Popup, {0, 2, 1, 8}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back({0, 0, "popup", StyleClass::Popup, false});
+    popup.primitives().push_back({0, 0, "popup", StyleClass::Popup, false});
     scene.regions.push_back(popup);
     CHECK(tracker.update(scene).full_repaint);
     scene.regions.back().rect.col = 3;
@@ -121,28 +135,53 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
     scene.regions.back().rect.row = 3;
     Region popup{
         RegionRole::Popup, {0, 2, 2, 8}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back({0, 0, "Command", StyleClass::Popup, false});
-    popup.prims.push_back({1, 0, "first", StyleClass::Popup, true});
-    popup.popup = Region::PopupContent{.title = "Command",
-                                       .input = "ab",
-                                       .input_cursor = 2,
-                                       .first_item = 0,
-                                       .total_items = 20,
-                                       .selected_item = 0,
-                                       .items = {{.label = "first", .detail = "command"}}};
+    popup.set_popup(Region::PopupContent{
+        .title = "Command",
+        .input = "ab",
+        .input_cursor = 2,
+        .first_item = 0,
+        .total_items = 20,
+        .selected_item = 0,
+        .items = {{.label = "first", .detail = "command"}},
+    });
     scene.regions.push_back(std::move(popup));
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
-    scene.regions.back().popup->total_items = 21;
+    scene.regions.back().popup()->total_items = 21;
     const SceneDamage changed = tracker.update(scene);
     CHECK_FALSE(changed.full_repaint);
     CHECK_FALSE(changed.cell_rects.empty());
 
-    scene.regions.back().popup->input_cursor = 1;
+    scene.regions.back().popup()->input_cursor = 1;
     const SceneDamage moved = tracker.update(scene);
     CHECK_FALSE(moved.full_repaint);
     CHECK_FALSE(moved.cell_rects.empty());
+
+    scene.regions.back().popup()->items.front().label = "second";
+    const SceneDamage relabeled = tracker.update(scene);
+    CHECK_FALSE(relabeled.full_repaint);
+    CHECK_FALSE(relabeled.cell_rects.empty());
+}
+
+TEST_CASE("scene damage tracks structured status content") {
+    Scene scene = text_scene("line");
+    scene.regions.back().set_status(Region::StatusContent{
+        .path = "sample.cc",
+        .line = 1,
+        .column = 1,
+        .line_count = 1,
+        .revision = 3,
+        .style_origin = ".clang-format",
+        .key = "C-x",
+    });
+
+    SceneDamageTracker tracker;
+    REQUIRE(tracker.update(scene).full_repaint);
+    scene.regions.back().status()->key = "C-x C-s";
+    const SceneDamage changed = tracker.update(scene);
+    CHECK_FALSE(changed.full_repaint);
+    CHECK_FALSE(changed.cell_rects.empty());
 }
 
 TEST_CASE("scene damage tracks a structured echo byte caret within one cell") {
@@ -154,16 +193,20 @@ TEST_CASE("scene damage tracks a structured echo byte caret within one cell") {
     Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
     Region echo{
         RegionRole::EchoArea, {1, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
-    echo.prims.push_back({0, 0, "search: é", StyleClass::Message, false});
-    echo.echo = Region::EchoContent{.text = "search: é", .cursor_byte = 9};
+    echo.set_echo(Region::EchoContent{.text = "search: é", .cursor_byte = 9});
     scene.regions = {std::move(body), std::move(echo)};
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
-    scene.regions.back().echo = Region::EchoContent{.text = "search: é", .cursor_byte = 11};
+    scene.regions.back().set_echo(Region::EchoContent{.text = "search: é", .cursor_byte = 11});
     const SceneDamage moved = tracker.update(scene);
     CHECK_FALSE(moved.full_repaint);
     CHECK_FALSE(moved.cell_rects.empty());
+
+    scene.regions.back().set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9});
+    const SceneDamage edited = tracker.update(scene);
+    CHECK_FALSE(edited.full_repaint);
+    CHECK_FALSE(edited.cell_rects.empty());
 }
 
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {
@@ -180,7 +223,7 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
     const SceneVerticalLayout layout(
         scene, {.cell_height = 10.0F, .viewport_height = 35.0F, .footer_heights = {}});
     REQUIRE(layout.bottom_anchor_row());
-    CHECK(layout.bottom_anchor_row().value() == 2);
+    CHECK(layout.bottom_anchor_row().value_or(-1) == 2);
     CHECK(layout.grid_clip_bottom() == doctest::Approx(15.0F));
     CHECK(layout.row_top(0) == doctest::Approx(-5.0F));
     CHECK(layout.row_top(1) == doctest::Approx(5.0F));
