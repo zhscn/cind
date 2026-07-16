@@ -39,6 +39,15 @@ CommandId require_command(const EditorRuntime& runtime, std::string_view name) {
     return *command;
 }
 
+KeymapId require_keymap(const EditorRuntime& runtime, std::string_view name) {
+    const std::optional<KeymapId> keymap = runtime.keymaps().find(name);
+    if (!keymap) {
+        FAIL("missing keymap: ", name);
+        return {};
+    }
+    return *keymap;
+}
+
 std::vector<InteractionCandidate> complete_provider(EditorRuntime& runtime, std::string_view name,
                                                     CommandContext& context,
                                                     std::string_view query = {}) {
@@ -56,8 +65,6 @@ std::vector<InteractionCandidate> complete_provider(EditorRuntime& runtime, std:
 
 TEST_CASE("bundled Guile policy installs available default key bindings") {
     EditorRuntime runtime;
-    const KeymapId editor = runtime.keymaps().define("editor.default");
-    const KeymapId application = runtime.keymaps().define("application.global");
     const CommandId save = define_command(runtime, "file.save");
     const CommandId replace = define_command(runtime, "search.replace");
     const CommandId quit = define_command(runtime, "application.quit");
@@ -66,10 +73,20 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const std::expected<std::size_t, std::string> installed = guile.install_default_keymaps();
 
     REQUIRE(installed.has_value());
-    CHECK(*installed == 3);
+    CHECK(*installed == 4);
+    const KeymapId editor = require_keymap(runtime, "editor.default");
+    const KeymapId application = require_keymap(runtime, "application.global");
+    const KeymapId control_x = require_keymap(runtime, "editor.control-x");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(resolve_command(runtime, editor, "M-%") == replace);
     CHECK(resolve_command(runtime, application, "C-x C-c") == quit);
+    const std::vector<KeymapCompletion> root = runtime.keymaps().completions(editor, {});
+    const auto prefix = std::ranges::find_if(root, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "C-x";
+    });
+    REQUIRE(prefix != root.end());
+    CHECK(prefix->prefix_keymap == control_x);
+    CHECK(prefix->label == "C-x");
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
@@ -81,8 +98,6 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
 
 TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
     EditorRuntime runtime;
-    const KeymapId editor = runtime.keymaps().define("editor.default");
-    runtime.keymaps().define("application.global");
     const CommandId save = define_command(runtime, "file.save");
 
     GuileRuntime guile(runtime);
@@ -91,8 +106,9 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 1);
-    CHECK(*second == 1);
+    CHECK(*first == 2);
+    CHECK(*second == 2);
+    const KeymapId editor = require_keymap(runtime, "editor.default");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(guile.snapshot().binding_revision == 2);
 }

@@ -61,6 +61,21 @@ std::string scheme_string(SCM value) {
     return result;
 }
 
+std::string scheme_name(SCM value, const char* caller, int position) {
+    if (scm_is_string(value)) {
+        return scheme_string(value);
+    }
+    if (scm_to_bool(scm_symbol_p(value)) != 0) {
+        return scheme_string(scm_symbol_to_string(value));
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "symbol or string");
+    return {};
+}
+
+SCM name_symbol(std::string_view name) {
+    return scm_from_utf8_symbol(std::string(name).c_str());
+}
+
 bool scheme_false(SCM value) {
     return scm_to_bool(scm_eq_p(value, SCM_BOOL_F)) != 0;
 }
@@ -117,6 +132,24 @@ HostLease& require_host(SCM object, const char* caller) {
         scm_misc_error(caller, "editor host capability has expired", SCM_EOL);
     }
     return *host;
+}
+
+KeymapId require_keymap(HostLease& host, SCM value, const char* caller, int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<KeymapId> keymap = host.runtime->keymaps().find(name);
+    if (!keymap) {
+        scm_misc_error(caller, "unknown keymap: ~S", scm_list_1(value));
+    }
+    return *keymap;
+}
+
+CommandId require_command(HostLease& host, SCM value, const char* caller, int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<CommandId> command = host.runtime->commands().find(name);
+    if (!command) {
+        scm_misc_error(caller, "unknown command: ~S", scm_list_1(value));
+    }
+    return *command;
 }
 
 SCM context_entry(SCM context, const char* key, const char* caller) {
@@ -272,35 +305,223 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
 // names and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM command_value) {
-    if (!scm_is_string(keymap_value)) {
-        scm_wrong_type_arg_msg("bind-key-if-command!", 2, keymap_value, "string");
-    }
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("bind-key-if-command!", 3, keys_value, "string");
     }
-    if (!scm_is_string(command_value)) {
-        scm_wrong_type_arg_msg("bind-key-if-command!", 4, command_value, "string");
-    }
     try {
         HostLease& host = require_host(host_object, "bind-key-if-command!");
-        const std::string keymap_name = scheme_string(keymap_value);
+        const KeymapId keymap = require_keymap(host, keymap_value, "bind-key-if-command!", 2);
         const std::string keys = scheme_string(keys_value);
-        const std::string command_name = scheme_string(command_value);
-        const std::optional<KeymapId> keymap = host.runtime->keymaps().find(keymap_name);
-        if (!keymap) {
-            scm_misc_error("bind-key-if-command!", "unknown keymap: ~S", scm_list_1(keymap_value));
-        }
+        const std::string command_name = scheme_name(command_value, "bind-key-if-command!", 4);
         const std::optional<CommandId> command = host.runtime->commands().find(command_name);
         if (!command) {
             return SCM_BOOL_F;
         }
-        host.runtime->keymaps().bind(*keymap, keys, *command);
+        host.runtime->keymaps().bind(keymap, keys, *command);
         ++host.bindings_installed;
         return SCM_BOOL_T;
     } catch (const std::exception& exception) {
         scm_misc_error("bind-key-if-command!", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("bind-key-if-command!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_keymap(SCM host_object, SCM name_value, SCM parent_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-keymap!");
+        const std::string name = scheme_name(name_value, "define-keymap!", 2);
+        std::optional<KeymapId> parent;
+        if (!scheme_false(parent_value)) {
+            parent = require_keymap(host, parent_value, "define-keymap!", 3);
+        }
+        const std::optional<KeymapId> existing = host.runtime->keymaps().find(name);
+        const KeymapId keymap = existing ? *existing : host.runtime->keymaps().define(name);
+        host.runtime->keymaps().set_parent(keymap, parent);
+        return scm_from_uint32(keymap.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-keymap!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-keymap!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM bind_key(SCM host_object, SCM keymap_value, SCM keys_value, SCM binding_value) {
+    if (!scm_is_string(keys_value)) {
+        scm_wrong_type_arg_msg("bind-key!", 3, keys_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "bind-key!");
+        const KeymapId keymap = require_keymap(host, keymap_value, "bind-key!", 2);
+        const std::string keys = scheme_string(keys_value);
+        const long binding_size = scm_ilength(binding_value);
+        if (binding_size == 2 || binding_size == 3) {
+            const SCM tag = scm_car(binding_value);
+            if (!symbol_is(tag, "prefix")) {
+                scm_misc_error("bind-key!", "binding list must begin with prefix", SCM_EOL);
+            }
+            const SCM prefix_value = scm_cadr(binding_value);
+            const KeymapId prefix = require_keymap(host, prefix_value, "bind-key!", 4);
+            std::string label;
+            if (binding_size == 3) {
+                const SCM label_value = scm_caddr(binding_value);
+                if (!scm_is_string(label_value)) {
+                    scm_wrong_type_arg_msg("bind-key!", 4, binding_value,
+                                           "(prefix keymap [label])");
+                }
+                label = scheme_string(label_value);
+            }
+            host.runtime->keymaps().bind_prefix(keymap, keys, prefix, std::move(label));
+        } else {
+            const CommandId command = require_command(host, binding_value, "bind-key!", 4);
+            host.runtime->keymaps().bind(keymap, keys, command);
+        }
+        ++host.bindings_installed;
+        return SCM_BOOL_T;
+    } catch (const std::exception& exception) {
+        scm_misc_error("bind-key!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("bind-key!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM bind_remap(SCM host_object, SCM keymap_value, SCM command_value, SCM replacement_value) {
+    try {
+        HostLease& host = require_host(host_object, "bind-remap!");
+        const KeymapId keymap = require_keymap(host, keymap_value, "bind-remap!", 2);
+        const CommandId command = require_command(host, command_value, "bind-remap!", 3);
+        const CommandId replacement = require_command(host, replacement_value, "bind-remap!", 4);
+        host.runtime->keymaps().bind_remap(keymap, command, replacement);
+        ++host.bindings_installed;
+        return SCM_BOOL_T;
+    } catch (const std::exception& exception) {
+        scm_misc_error("bind-remap!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("bind-remap!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM keymap_bindings(SCM host_object, SCM keymap_value) {
+    try {
+        HostLease& host = require_host(host_object, "keymap-bindings");
+        const KeymapId keymap = require_keymap(host, keymap_value, "keymap-bindings", 2);
+        const std::vector<KeymapEntry> entries = host.runtime->keymaps().entries(keymap);
+        const std::vector<KeymapRemap> remaps = host.runtime->keymaps().remaps(keymap);
+        SCM result = scm_c_make_vector(entries.size() + remaps.size(), SCM_UNSPECIFIED);
+        std::size_t index = 0;
+        for (const KeymapEntry& entry : entries) {
+            SCM value = scm_c_make_vector(4, SCM_BOOL_F);
+            scm_c_vector_set_x(value, 0,
+                               scm_from_utf8_symbol(
+                                   entry.kind == KeymapEntryKind::Command ? "command" : "prefix"));
+            scm_c_vector_set_x(value, 1,
+                               scm_from_utf8_string(format_key_sequence(entry.sequence).c_str()));
+            if (entry.command) {
+                scm_c_vector_set_x(
+                    value, 2,
+                    name_symbol(host.runtime->commands().definition(*entry.command).name));
+            } else if (entry.prefix_keymap) {
+                scm_c_vector_set_x(
+                    value, 2,
+                    name_symbol(host.runtime->keymaps().definition(*entry.prefix_keymap).name));
+            }
+            if (!entry.label.empty()) {
+                scm_c_vector_set_x(value, 3, scm_from_utf8_string(entry.label.c_str()));
+            }
+            scm_c_vector_set_x(result, index++, value);
+        }
+        for (const KeymapRemap& remap : remaps) {
+            SCM value = scm_c_make_vector(4, SCM_BOOL_F);
+            scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("remap"));
+            scm_c_vector_set_x(
+                value, 1, name_symbol(host.runtime->commands().definition(remap.command).name));
+            scm_c_vector_set_x(
+                value, 2, name_symbol(host.runtime->commands().definition(remap.replacement).name));
+            scm_c_vector_set_x(result, index++, value);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("keymap-bindings", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("keymap-bindings", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+std::vector<KeymapId> keymap_layers_from_scheme(HostLease& host, SCM layers_value,
+                                                const char* caller) {
+    std::vector<KeymapId> layers;
+    if (scm_is_vector(layers_value)) {
+        const std::size_t size = scm_c_vector_length(layers_value);
+        layers.reserve(size);
+        for (std::size_t index = 0; index < size; ++index) {
+            layers.push_back(
+                require_keymap(host, scm_c_vector_ref(layers_value, index), caller, 2));
+        }
+        return layers;
+    }
+    const long size = scm_ilength(layers_value);
+    if (size < 0) {
+        scm_wrong_type_arg_msg(caller, 2, layers_value, "proper list or vector of keymap names");
+    }
+    layers.reserve(static_cast<std::size_t>(size));
+    for (SCM rest = layers_value; !scheme_true(scm_null_p(rest)); rest = scm_cdr(rest)) {
+        layers.push_back(require_keymap(host, scm_car(rest), caller, 2));
+    }
+    return layers;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
+    if (!scm_is_string(keys_value)) {
+        scm_wrong_type_arg_msg("resolve-key-sequence", 3, keys_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "resolve-key-sequence");
+        const std::vector<KeymapId> layers =
+            keymap_layers_from_scheme(host, layers_value, "resolve-key-sequence");
+        const std::expected<KeySequence, KeyParseError> sequence =
+            parse_key_sequence(scheme_string(keys_value));
+        if (!sequence) {
+            scm_misc_error("resolve-key-sequence", sequence.error().message.c_str(), SCM_EOL);
+        }
+        const KeymapMatch match = host.runtime->keymaps().resolve(layers, *sequence);
+        if (match.kind == KeymapMatchKind::None) {
+            SCM result = scm_c_make_vector(1, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("none"));
+            return result;
+        }
+        SCM result =
+            scm_c_make_vector(match.kind == KeymapMatchKind::Command ? 3 : 2, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(
+            result, 0,
+            scm_from_utf8_symbol(match.kind == KeymapMatchKind::Command ? "command" : "prefix"));
+        std::size_t source_index = 1;
+        if (match.kind == KeymapMatchKind::Command) {
+            scm_c_vector_set_x(
+                result, 1, name_symbol(host.runtime->commands().definition(match.command).name));
+            source_index = 2;
+        }
+        if (!match.source) {
+            scm_misc_error("resolve-key-sequence", "resolved keymap source is missing", SCM_EOL);
+        }
+        scm_c_vector_set_x(result, source_index,
+                           name_symbol(host.runtime->keymaps().definition(*match.source).name));
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("resolve-key-sequence", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("resolve-key-sequence", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1284,6 +1505,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(define_interaction_provider));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
+    (void)scm_c_define_gsubr("define-keymap!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_keymap));
+    (void)scm_c_define_gsubr("bind-key!", 4, 0, 0, reinterpret_cast<scm_t_subr>(bind_key));
+    (void)scm_c_define_gsubr("bind-remap!", 4, 0, 0, reinterpret_cast<scm_t_subr>(bind_remap));
+    (void)scm_c_define_gsubr("keymap-bindings", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(keymap_bindings));
+    (void)scm_c_define_gsubr("resolve-key-sequence", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(resolve_key_sequence));
     (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
@@ -1353,7 +1582,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export("define-command!", "define-interaction-provider!", "bind-key-if-command!",
+    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
                  "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
                  "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
                  "buffer-resource", "path-parent", "directory-path?", "path-as-directory",

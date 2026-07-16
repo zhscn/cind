@@ -46,7 +46,12 @@ The native module exports:
 ```scheme
 (define-command! host command-name execute enabled)
 (define-interaction-provider! host provider-name complete)
+(define-keymap! host keymap-name parent-or-#f)
+(bind-key! host keymap-name key-sequence command-or-prefix)
 (bind-key-if-command! host keymap-name key-sequence command-name)
+(bind-remap! host keymap-name command-name replacement-name)
+(keymap-bindings host keymap-name)
+(resolve-key-sequence host keymap-names key-sequence)
 (enabled-command-names host context)
 (open-buffer-summaries host)
 (project-root host project-id)
@@ -96,10 +101,23 @@ immutable command context and invocation value. `enabled` receives the same cont
 predicate or `#f`. The runtime protects registered procedures from collection and invalidates them
 with their owning application.
 
-`bind-key-if-command!` resolves named keymaps and commands through `EditorRuntime`. An absent
-command returns `#f`, which lets a policy describe bindings for optional application capabilities.
-An absent keymap or an invalid key sequence raises a Scheme condition. A successful binding returns
-`#t`.
+`define-keymap!` creates or reconfigures a named keymap with an explicit parent. Names may be
+symbols or strings. Repeating the definition is idempotent, which lets policy installation refresh
+bindings after optional commands become available.
+
+`bind-key!` accepts a command name or `(prefix keymap-name [label])`. A later write replaces the
+command or prefix stored at that sequence. `bind-remap!` substitutes a resolved command in that
+keymap without changing its key sequences. Parent and named-prefix cycles raise a Scheme
+condition. `bind-key-if-command!` is the optional-capability variant: an absent command returns
+`#f`; all other invalid references and key sequences raise a condition.
+
+`keymap-bindings` returns effective command, prefix and remap entries as tagged vectors. Command
+entries have the form `#(command keys command #f)`, prefix entries are
+`#(prefix keys keymap-or-#f label-or-#f)`, and remaps are
+`#(remap command replacement #f)`. `resolve-key-sequence` accepts an ordered list or vector of
+keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
+`#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
+remap using the same high-to-low layer order as command dispatch.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
@@ -192,10 +210,11 @@ with the platform clipboard; yank imports the clipboard when that ring is empty.
 commands compose native storage, indexing and search capabilities without owning asynchronous
 state.
 
-The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
-creates the registries and focus hierarchy, then asks the Scheme policy to populate them.
-Interaction-local editing and the always-active system escape map are bootstrap mechanisms with
-their own lifecycle and precedence contracts.
+The `(cind core)` module owns the default Emacs-style editor and application keymaps. It defines the
+named maps and populates them after built-in commands exist. The `C-x` family is a named prefix map,
+so its identity and label are available to completion and inspection UI. Interaction-local editing
+and the always-active system escape map are bootstrap mechanisms with their own lifecycle and
+precedence contracts.
 
 ## Scripted interaction providers
 

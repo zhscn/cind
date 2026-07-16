@@ -1576,13 +1576,19 @@ void EditorApplication::register_interaction_providers() {
 }
 
 void EditorApplication::register_keymaps() {
-    keymap_ = runtime_.keymaps().define("editor.default");
-    application_keymap_ = runtime_.keymaps().define("application.global");
     system_keymap_ = runtime_.keymaps().define("editor.system");
     interaction_text_keymap_ = runtime_.keymaps().define("interaction.text");
     interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
     runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     refresh_default_keymap();
+    const std::optional<KeymapId> editor_keymap = runtime_.keymaps().find("editor.default");
+    const std::optional<KeymapId> application_keymap =
+        runtime_.keymaps().find("application.global");
+    if (!editor_keymap || !application_keymap) {
+        throw std::logic_error("Guile keymap policy did not define its root keymaps");
+    }
+    keymap_ = *editor_keymap;
+    application_keymap_ = *application_keymap;
 
     const auto command = [this](std::string_view name) {
         const std::optional<CommandId> id = runtime_.commands().find(name);
