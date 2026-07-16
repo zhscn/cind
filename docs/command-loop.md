@@ -38,11 +38,10 @@ use the same language-editing policy.
 modifiers. Keymap notation uses forms such as `C-x C-s`, `C-M-f`, `M-v`, `RET`, `TAB`, `PgDn`, and
 `Backspace`. The parser and formatter provide the configuration and inspection representation.
 
-Printable text is a separate input channel. SDL text and IME events and terminal UTF-8 input go to
-the active text target directly. Modified keys and keys that continue a pending sequence go through
-the command loop. A platform adapter consumes the text event corresponding to a successfully
-handled printable sequence continuation, so a key such as the `b` in `C-x b` is not inserted after
-the command executes.
+Printable text has a separate commit channel, but its keydown always enters the command loop first.
+SDL text and IME commits are discarded when the corresponding keydown was consumed. Otherwise the
+UTF-8 commit enters `EditorApplication::insert_text`, which applies the focused InputState's text
+policy. TUI characters follow the same ordering within their single decoded input event.
 
 ## Keymaps and default bindings
 
@@ -66,6 +65,19 @@ of the durable state's maps, followed by Window, View, Buffer, enabled minor mod
 activation order, major mode, `editor.default`, and `application.global`. Duplicate map identities
 are kept only at their highest-priority occurrence. Views displaying the same Buffer have
 independent state stacks.
+
+Major and minor modes form explicit same-kind parent hierarchies. A child mode inherits settings,
+interaction properties, thing bindings, and the nearest ancestor keymap. When both child and parent
+have keymaps, the child's primary keymap receives the parent's primary map as its default keymap
+parent. Active minor modes are evaluated in reverse activation order before the major mode.
+
+Each mode may declare an `editing` or `interface` interaction class, an initial InputState override,
+and named thing bindings. A mode-specific initial state takes precedence over the strategy's
+class-to-state mapping; otherwise the effective interaction class selects the durable state. Mode
+policy changes publish the Buffer identity and before/after policies, then update the base state of
+every View displaying that Buffer while preserving each View's transient state stack. This makes a
+minor mode that changes an interface into editable text sufficient to change modal behavior without
+package-specific key-routing code.
 
 Push, pop and base replacement publish typed state-change events containing the View and the
 previous and next state identities. Resetting a stack emits one pop event per transient state and
@@ -167,11 +179,12 @@ popup content in a bottom-aligned overlay.
 
 ## Extension boundary
 
-Command names, keymap names, IDs, `SettingValue` arguments, `CommandContext`, interaction requests,
-and named providers form the Guile host boundary. `CommandContext` explicitly identifies the
-Window, View, Buffer, Project, and Runtime involved in an invocation. Scheme receives explicit host
-capabilities instead of frontend objects or a process-global current editor. Definitions are sealed
-after configuration; window, buffer, view, project, and application values remain mutable through
+Command, keymap, mode, InputState, and provider names, generational editor IDs, `SettingValue`
+arguments, `CommandContext`, and interaction requests form the Guile host boundary.
+`CommandContext` explicitly identifies the Window, View, Buffer, Project, and Runtime involved in an
+invocation. Scheme receives explicit host capabilities instead of frontend objects or a
+process-global current editor. Definitions are sealed after configuration; window, buffer, view,
+project, and application values remain mutable through
 explicit runtime APIs. [Guile scripting architecture](scripting.md) defines interpreter ownership,
 module loading, error containment, and the development-service boundary.
 

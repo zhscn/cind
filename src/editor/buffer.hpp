@@ -81,7 +81,8 @@ private:
     friend class ProjectRegistry;
     friend class ViewRegistry;
 
-    Buffer(BufferId id, DocumentId document_id, BufferSpec spec, const SettingRegistry& settings);
+    Buffer(BufferId id, DocumentId document_id, BufferSpec spec, const SettingRegistry& settings,
+           ModeRegistry& modes);
     void require_writable() const;
 
     BufferId id_;
@@ -102,7 +103,8 @@ private:
 
 class BufferRegistry {
 public:
-    explicit BufferRegistry(const SettingRegistry& settings) : settings_(&settings) {}
+    BufferRegistry(const SettingRegistry& settings, ModeRegistry& modes)
+        : settings_(&settings), modes_(&modes) {}
 
     BufferId create(BufferSpec spec);
     bool erase(BufferId id);
@@ -131,6 +133,7 @@ private:
     static std::string fallback_name(const BufferSpec& spec);
 
     const SettingRegistry* settings_;
+    ModeRegistry* modes_;
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_slots_;
     std::unordered_map<std::string, BufferId> by_name_;

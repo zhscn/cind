@@ -62,8 +62,7 @@ private:
 class ViewRegistry {
 public:
     ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings,
-                 InputStateRegistry& input_states)
-        : buffers_(&buffers), settings_(&settings), input_states_(&input_states) {}
+                 InputStateRegistry& input_states, ModeRegistry& modes);
     ~ViewRegistry();
 
     ViewRegistry(const ViewRegistry&) = delete;
@@ -87,6 +86,7 @@ public:
     void push_input_state(ViewId view, InputStateId state);
     std::optional<InputStateId> pop_input_state(ViewId view);
     void reset_input_states(ViewId view);
+    void refresh_mode_input_states(std::optional<BufferId> buffer = std::nullopt);
 
 private:
     struct Slot {
@@ -100,6 +100,8 @@ private:
     BufferRegistry* buffers_;
     const SettingRegistry* settings_;
     InputStateRegistry* input_states_;
+    ModeRegistry* modes_;
+    ModeRegistry::ListenerId mode_listener_ = 0;
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_slots_;
 };

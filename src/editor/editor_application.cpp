@@ -253,9 +253,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                 interaction_.refresh_candidates(context);
             }
         });
-    register_commands();
     register_input_states();
+    register_modes();
     cpp_mode_ = ensure_cpp_mode(runtime_).mode;
+    register_commands();
     register_interaction_providers();
 
     const bool deferred_initial_load = !spec.initial_text && !spec.path.empty();
@@ -947,6 +948,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
         const Buffer& buffer = runtime_.buffers().get(state.buffer);
         const ViewState* view = find_view(active_window_, state.buffer);
         const std::optional<ModeId> major = buffer.modes().major();
+        const EffectiveModePolicy mode_policy = runtime_.modes().effective_policy(buffer.modes());
         result.push_back(
             {.buffer = state.buffer,
              .view = view != nullptr ? std::optional(view->view) : std::nullopt,
@@ -956,6 +958,14 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
              .active = state.buffer == buffer_id(),
              .saving = state.pending_save.has_value(),
              .major_mode = major ? runtime_.modes().definition(*major).name : std::string(),
+             .interaction_class = mode_policy.interaction_class == InteractionClass::Editing
+                                      ? "editing"
+                                      : "interface",
+             .initial_input_state =
+                 mode_policy.initial_state
+                     ? runtime_.input_states().definition(*mode_policy.initial_state).name
+                     : std::string(),
+             .things = mode_policy.things,
              .location_count = buffer.locations().size()});
     }
     return result;
@@ -1146,7 +1156,9 @@ ViewId EditorApplication::create_view(WindowId window, BufferId buffer, TextOffs
     BufferState& buffer_state = state_for(buffer);
     const ViewId view = runtime_.views().create(buffer, caret);
     try {
-        runtime_.views().set_base_input_state(view, default_input_state_);
+        if (runtime_.views().get(view).input_states().empty()) {
+            throw std::logic_error("mode policy did not derive an input state for the view");
+        }
         auto state = std::make_unique<ViewState>();
         state->window = window;
         state->buffer = buffer;
@@ -1170,7 +1182,17 @@ void EditorApplication::register_input_states() {
     if (!state) {
         throw std::logic_error("Guile input state policy did not define emacs");
     }
-    default_input_state_ = *state;
+    if (runtime_.modes().interaction_class_state(InteractionClass::Editing) != state ||
+        runtime_.modes().interaction_class_state(InteractionClass::Interface) != state) {
+        throw std::logic_error("Guile input state policy did not map the core interaction classes");
+    }
+}
+
+void EditorApplication::register_modes() {
+    const std::expected<std::size_t, std::string> installed = guile_.install_core_modes();
+    if (!installed) {
+        throw std::runtime_error(std::format("Guile mode policy failed: {}", installed.error()));
+    }
 }
 
 bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
@@ -1714,12 +1736,14 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
     for (auto mode = buffer.modes().minors().rbegin(); mode != buffer.modes().minors().rend();
          ++mode) {
         const ModeRegistry::Definition& definition = runtime_.modes().definition(*mode);
-        append(definition.keymaps, std::format("minor-mode:{}", definition.name));
+        append(runtime_.modes().effective_keymaps(*mode),
+               std::format("minor-mode:{}", definition.name));
     }
     if (buffer.modes().major()) {
         const ModeRegistry::Definition& definition =
             runtime_.modes().definition(*buffer.modes().major());
-        append(definition.keymaps, std::format("major-mode:{}", definition.name));
+        append(runtime_.modes().effective_keymaps(*buffer.modes().major()),
+               std::format("major-mode:{}", definition.name));
     }
     append(std::span(&keymap_, 1), "editor");
     append(std::span(&application_keymap_, 1), "global");

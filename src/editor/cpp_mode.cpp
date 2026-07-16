@@ -40,6 +40,13 @@ CppModeRegistration ensure_cpp_mode(EditorRuntime& runtime) {
     runtime.languages().profile_for_configuration(language).defaults.set(dialect,
                                                                          std::string("c++"));
     const ModeId mode = runtime.modes().define("cind.cpp", ModeKind::Major, language);
+    if (const std::optional<ModeId> parent = runtime.modes().find("prog-mode")) {
+        runtime.modes().set_parent(mode, parent);
+    } else {
+        runtime.modes().set_interaction_class(mode, InteractionClass::Editing);
+    }
+    runtime.modes().set_things(
+        mode, {{.name = "defun", .kind = "cst"}, {.name = "string", .kind = "cst"}});
     return {dialect, language, mode};
 }
 

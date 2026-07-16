@@ -135,6 +135,37 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(guile.snapshot().scripted_input_states == 1);
 }
 
+TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    REQUIRE(guile.install_input_states().has_value());
+
+    const std::expected<std::size_t, std::string> first = guile.install_core_modes();
+    const std::expected<std::size_t, std::string> second = guile.install_core_modes();
+
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    CHECK(*first == 3);
+    CHECK(*second == 3);
+    const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
+    const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
+    const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
+    REQUIRE(fundamental);
+    REQUIRE(prog);
+    REQUIRE(special);
+    CHECK(runtime.modes().definition(prog).parent == fundamental);
+    CHECK(runtime.modes().definition(prog).things ==
+          std::vector<ModeThingBinding>{{.name = "defun", .kind = "cst"}});
+    CHECK(runtime.modes().definition(special).parent == fundamental);
+    CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
+    CHECK(runtime.modes().interaction_class_state(InteractionClass::Editing) ==
+          runtime.input_states().find("emacs"));
+    CHECK(runtime.modes().interaction_class_state(InteractionClass::Interface) ==
+          runtime.input_states().find("emacs"));
+    CHECK(guile.snapshot().mode_revision == 2);
+    CHECK(guile.snapshot().scripted_modes == 3);
+}
+
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
 

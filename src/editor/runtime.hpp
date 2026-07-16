@@ -53,6 +53,8 @@ public:
     bool extensions_sealed() const { return extensions_sealed_; }
 
     SettingsResolver settings_for(BufferId buffer, ViewId view) const;
+    void set_interaction_class_state(InteractionClass interaction_class,
+                                     std::optional<InputStateId> state);
 
 private:
     void append_mode_layers(std::vector<const SettingsLayer*>& layers, ModeId mode) const;
@@ -60,10 +62,10 @@ private:
     SettingRegistry setting_definitions_;
     SettingsLayer application_settings_;
     LanguageRegistry languages_;
-    ModeRegistry modes_;
     CommandRegistry commands_;
     KeymapRegistry keymaps_;
     InputStateRegistry input_states_;
+    ModeRegistry modes_;
     BufferRegistry buffers_;
     ProjectRegistry projects_;
     ViewRegistry views_;

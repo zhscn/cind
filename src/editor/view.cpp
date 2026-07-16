@@ -5,7 +5,17 @@
 
 namespace cind {
 
+ViewRegistry::ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings,
+                           InputStateRegistry& input_states, ModeRegistry& modes)
+    : buffers_(&buffers), settings_(&settings), input_states_(&input_states), modes_(&modes) {
+    mode_listener_ = modes_->subscribe(
+        [this](const BufferModePolicyChange& change) { refresh_mode_input_states(change.buffer); });
+}
+
 ViewRegistry::~ViewRegistry() {
+    if (mode_listener_ != 0) {
+        (void)modes_->unsubscribe(mode_listener_);
+    }
     for (Slot& slot : slots_) {
         if (slot.value) {
             remove_anchors(*slot.value);
@@ -43,11 +53,27 @@ ViewId ViewRegistry::create(BufferId buffer_id, TextOffset caret_offset) {
         const ViewId id{slot_index, slot.generation};
         slot.value = std::unique_ptr<View>(new View(id, buffer_id, caret, *settings_));
         ++buffer.attached_views_;
+        if (const std::optional<InputStateId> state =
+                modes_->effective_policy(buffer.modes()).initial_state) {
+            slot.value->input_states_.set_base(*input_states_, id, *state);
+        }
         return id;
     } catch (...) {
-        buffer.document_.remove_anchor(caret);
         if (reserved_slot) {
+            Slot& slot = slots_[*reserved_slot];
+            if (slot.value) {
+                remove_anchors(*slot.value);
+                slot.value.reset();
+                ++slot.generation;
+                if (slot.generation == 0) {
+                    ++slot.generation;
+                }
+            } else {
+                buffer.document_.remove_anchor(caret);
+            }
             free_slots_.push_back(*reserved_slot);
+        } else {
+            buffer.document_.remove_anchor(caret);
         }
         throw;
     }
@@ -184,6 +210,19 @@ std::optional<InputStateId> ViewRegistry::pop_input_state(ViewId view) {
 
 void ViewRegistry::reset_input_states(ViewId view) {
     get(view).input_states_.reset(*input_states_, view);
+}
+
+void ViewRegistry::refresh_mode_input_states(std::optional<BufferId> buffer) {
+    for (Slot& slot : slots_) {
+        if (!slot.value || (buffer && slot.value->buffer_id() != *buffer)) {
+            continue;
+        }
+        const std::optional<InputStateId> state =
+            modes_->effective_policy(buffers_->get(slot.value->buffer_id()).modes()).initial_state;
+        if (state) {
+            slot.value->input_states_.set_base(*input_states_, slot.value->id(), *state);
+        }
+    }
 }
 
 } // namespace cind

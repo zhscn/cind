@@ -17,7 +17,8 @@ while locations are revision-bound document data owned by a particular generated
 
 ## Major mode
 
-`cind.location-list` is a language-less major mode with a sparse local keymap:
+`cind.location-list` is a language-less major mode derived from `special-mode`, with an
+`interface` interaction class and a sparse local keymap:
 
 - `M-n` moves to the next location.
 - `M-p` moves to the previous location.

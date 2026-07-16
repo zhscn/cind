@@ -74,6 +74,8 @@ struct GuileRuntimeSnapshot {
     std::uint64_t binding_revision = 0;
     std::uint64_t input_state_revision = 0;
     std::size_t scripted_input_states = 0;
+    std::uint64_t mode_revision = 0;
+    std::size_t scripted_modes = 0;
     std::optional<std::string> last_error;
 };
 
@@ -92,6 +94,7 @@ public:
     std::expected<std::size_t, std::string> install_core_providers();
     std::expected<std::size_t, std::string> install_default_keymaps();
     std::expected<std::size_t, std::string> install_input_states();
+    std::expected<std::size_t, std::string> install_core_modes();
     GuileRuntimeSnapshot snapshot() const;
 
 private:

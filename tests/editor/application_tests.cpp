@@ -207,7 +207,101 @@ TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
     CHECK(profile.provider(LanguageFacet::Indentation).has_value());
     CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
     CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
+    CHECK(runtime.modes().definition(cpp.mode).things ==
+          std::vector<ModeThingBinding>{{.name = "defun", .kind = "cst"},
+                                        {.name = "string", .kind = "cst"}});
     CHECK(ensure_cpp_mode(runtime).mode == cpp.mode);
+}
+
+TEST_CASE("mode policy inheritance rederives every view input state") {
+    EditorRuntime runtime;
+    const auto input_state = [&](std::string name) {
+        return runtime.input_states().define({.name = std::move(name),
+                                              .keymaps = {},
+                                              .text_input = TextInputPolicy::Ignore,
+                                              .cursor = InputCursorShape::Block,
+                                              .indicator = {},
+                                              .handler = {}});
+    };
+    const InputStateId normal = input_state("normal");
+    const InputStateId motion = input_state("motion");
+    const InputStateId transient = input_state("transient");
+    runtime.set_interaction_class_state(InteractionClass::Editing, normal);
+    runtime.set_interaction_class_state(InteractionClass::Interface, motion);
+
+    const CommandId parent_command = runtime.commands().define(
+        "test.parent", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    const KeymapId parent_map = runtime.keymaps().define("test.parent.map");
+    runtime.keymaps().bind(parent_map, "p", parent_command);
+    const ModeId fundamental = runtime.modes().define("fundamental", ModeKind::Major);
+    runtime.modes().set_interaction_class(fundamental, InteractionClass::Editing);
+    runtime.modes().set_things(fundamental, {{.name = "word", .kind = "character"}});
+    runtime.modes().add_keymap(fundamental, parent_map);
+
+    const KeymapId child_map = runtime.keymaps().define("test.child.map");
+    const ModeId special = runtime.modes().define("special", ModeKind::Major);
+    runtime.modes().set_parent(special, fundamental);
+    runtime.modes().set_interaction_class(special, InteractionClass::Interface);
+    runtime.modes().set_things(
+        special, {{.name = "word", .kind = "interface"}, {.name = "item", .kind = "line"}});
+    runtime.modes().add_keymap(special, child_map);
+    CHECK(runtime.keymaps().parent(child_map) == parent_map);
+    CHECK(runtime.modes().effective_keymaps(special) == std::vector<KeymapId>{child_map});
+    CHECK(runtime.keymaps().resolve(child_map, *parse_key_sequence("p")).command == parent_command);
+
+    const ModeId editable = runtime.modes().define("editable", ModeKind::Minor);
+    runtime.modes().set_interaction_class(editable, InteractionClass::Editing);
+    const ModeId forced = runtime.modes().define("forced", ModeKind::Minor);
+    runtime.modes().set_initial_state(forced, transient);
+    CHECK_THROWS_AS(runtime.modes().set_parent(editable, special), std::invalid_argument);
+    CHECK_THROWS_AS(runtime.modes().set_parent(fundamental, special), std::invalid_argument);
+
+    const BufferId buffer = runtime.buffers().create({.name = "interface",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Generated,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = true});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), special);
+    const EffectiveModePolicy initial =
+        runtime.modes().effective_policy(runtime.buffers().get(buffer).modes());
+    CHECK(initial.interaction_class == InteractionClass::Interface);
+    CHECK(initial.initial_state == motion);
+    CHECK(initial.things == std::vector<ModeThingBinding>{{.name = "word", .kind = "interface"},
+                                                          {.name = "item", .kind = "line"}});
+
+    const ViewId first = runtime.views().create(buffer);
+    const ViewId second = runtime.views().create(buffer);
+    CHECK(runtime.views().get(first).input_states().base() == motion);
+    CHECK(runtime.views().get(second).input_states().base() == motion);
+
+    std::vector<BufferModePolicyChange> changes;
+    const ModeRegistry::ListenerId listener = runtime.modes().subscribe(
+        [&](const BufferModePolicyChange& change) { changes.push_back(change); });
+    REQUIRE(runtime.buffers().get(buffer).modes().enable_minor(runtime.modes(), editable));
+    REQUIRE(changes.size() == 1);
+    CHECK(changes.back().before.interaction_class == InteractionClass::Interface);
+    CHECK(changes.back().after.interaction_class == InteractionClass::Editing);
+    CHECK(runtime.views().get(first).input_states().base() == normal);
+    CHECK(runtime.views().get(second).input_states().base() == normal);
+
+    runtime.views().push_input_state(first, transient);
+    REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(editable));
+    CHECK(runtime.views().get(first).input_states().base() == motion);
+    CHECK(runtime.views().get(first).input_states().top() == transient);
+    CHECK(runtime.views().get(second).input_states().base() == motion);
+    runtime.views().reset_input_states(first);
+
+    REQUIRE(runtime.buffers().get(buffer).modes().enable_minor(runtime.modes(), forced));
+    CHECK(runtime.views().get(first).input_states().base() == transient);
+    CHECK(runtime.views().get(second).input_states().base() == transient);
+    REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(forced));
+    CHECK(runtime.views().get(first).input_states().base() == motion);
+    runtime.set_interaction_class_state(InteractionClass::Interface, transient);
+    CHECK(runtime.views().get(first).input_states().base() == transient);
+    CHECK(runtime.views().get(second).input_states().base() == transient);
+    CHECK(runtime.modes().unsubscribe(listener));
 }
 
 TEST_CASE("buffers have stable identities and outlive their views") {

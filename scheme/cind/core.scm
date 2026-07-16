@@ -1,9 +1,14 @@
 (define-module (cind core)
+  #:use-module (ice-9 optargs)
   #:use-module (cind command)
   #:use-module (cind host)
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
+            install-core-modes!
+            define-major-mode!
+            define-minor-mode!
+            set-interaction-class-states!
             install-default-keymaps!))
 
 (define (last-string-argument invocation)
@@ -575,7 +580,45 @@
 
 (define (install-input-states! host)
   (define-input-state! host 'emacs '#() 'accept 'beam "" #f)
+  (set-interaction-class-states!
+   host '((editing . emacs)
+          (interface . emacs)))
   1)
+
+(define* (define-major-mode! host name
+                            #:key
+                            (parent #f)
+                            (keymap #f)
+                            (interaction-class #f)
+                            (initial-state #f)
+                            (things '()))
+  (%define-mode! host name 'major parent keymap interaction-class initial-state things))
+
+(define* (define-minor-mode! host name
+                            #:key
+                            (parent #f)
+                            (keymap #f)
+                            (interaction-class #f)
+                            (initial-state #f)
+                            (things '()))
+  (%define-mode! host name 'minor parent keymap interaction-class initial-state things))
+
+(define (set-interaction-class-states! host mappings)
+  (for-each (lambda (mapping)
+              (%set-interaction-class-state! host (car mapping) (cdr mapping)))
+            mappings))
+
+(define (install-core-modes! host)
+  (define-major-mode! host 'fundamental-mode
+    #:interaction-class 'editing)
+  (define-major-mode! host 'prog-mode
+    #:parent 'fundamental-mode
+    #:interaction-class 'editing
+    #:things '((defun . cst)))
+  (define-major-mode! host 'special-mode
+    #:parent 'fundamental-mode
+    #:interaction-class 'interface)
+  3)
 
 (define control-x-bindings
   '(("C-s" . "file.save")

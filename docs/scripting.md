@@ -31,9 +31,9 @@ condition boundary; a Scheme condition becomes a C++ error value and is retained
 inspection snapshot. C++ exceptions raised by a host primitive are translated into Scheme
 conditions.
 
-`editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command and
-provider and input-state counts, command/provider/keymap/input-state installation revisions, and
-the most recent error. This state is diagnostic and is not a plugin ABI.
+`editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
+provider, input-state, and mode counts, command/provider/keymap/input-state/mode installation
+revisions, and the most recent error. This state is diagnostic and is not a plugin ABI.
 
 ## Host capabilities
 
@@ -59,6 +59,13 @@ The native module exports:
 (reset-input-states! host view-id)
 (view-input-states host view-id)
 (observe-input-state-changes! host procedure)
+(%define-mode! host name kind parent keymap interaction-class initial-state things)
+(mode-properties host mode-name)
+(%set-interaction-class-state! host interaction-class state-name-or-#f)
+(set-buffer-major-mode! host buffer-id mode-name-or-#f)
+(set-buffer-minor-mode! host buffer-id mode-name enabled?)
+(buffer-mode-policy host buffer-id)
+(observe-mode-policy-changes! host procedure)
 (enabled-command-names host context)
 (open-buffer-summaries host)
 (project-root host project-id)
@@ -143,6 +150,23 @@ defined by `(cind core)`; its empty state keymap list preserves the default Emac
 transition. It receives `#(kind view-id from-state-or-#f to-state-or-#f)`. Observer conditions are
 retained as scripting diagnostics and do not roll back the completed state transition or interrupt
 other observers.
+
+`(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
+`define-minor-mode!`. A definition accepts `#:parent`, `#:keymap`, `#:interaction-class`,
+`#:initial-state`, and `#:things`; thing bindings are an association list of semantic names to
+mechanism kinds. Parent modes have the same major/minor kind. When a child keymap has no explicit
+parent, mode inheritance assigns the nearest parent mode keymap. `mode-properties` returns the
+declared metadata together with the effective keymap names.
+
+`set-interaction-class-states!` configures a strategy's `editing` and `interface` durable states.
+The native `%set-interaction-class-state!` primitive applies each mapping and immediately rederives
+all existing Views. `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode
+state. `buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy
+changes update every View of the Buffer and notify procedures registered through
+`observe-mode-policy-changes!` with
+`#(kind buffer-id mode-name-or-#f before-policy after-policy)`. A mode's explicit initial state
+precedes the class mapping, and the most recently enabled minor-mode declaration precedes the major
+mode.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
@@ -240,6 +264,11 @@ named maps and populates them after built-in commands exist. The `C-x` family is
 so its identity and label are available to completion and inspection UI. Interaction-local editing
 and the always-active system escape map are bootstrap mechanisms with their own lifecycle and
 precedence contracts.
+
+The same module declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
+programming buffers have the `editing` interaction class; special buffers have `interface`.
+The built-in C++ mode derives from `prog-mode`, and generated location-list buffers derive from
+`special-mode`. The default Emacs strategy maps both classes to the `emacs` InputState.
 
 ## Scripted interaction providers
 

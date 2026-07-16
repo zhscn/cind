@@ -11,6 +11,11 @@
 
 namespace cind::gui {
 
+struct ModeThingStateSnapshot {
+    std::string name;
+    std::string kind;
+};
+
 struct InteractionCandidateSnapshot {
     std::string value;
     std::string label;
@@ -45,6 +50,9 @@ struct OpenBufferStateSnapshot {
     bool active = false;
     bool saving = false;
     std::string major_mode;
+    std::string interaction_class;
+    std::string initial_input_state;
+    std::vector<ModeThingStateSnapshot> things;
     std::size_t location_count = 0;
 };
 
@@ -112,6 +120,8 @@ struct ScriptingStateSnapshot {
     std::uint64_t binding_revision = 0;
     std::uint64_t input_state_revision = 0;
     std::size_t scripted_input_states = 0;
+    std::uint64_t mode_revision = 0;
+    std::size_t scripted_modes = 0;
     std::optional<std::string> last_error;
 };
 

@@ -371,6 +371,8 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .binding_revision = guile.binding_revision,
                                            .input_state_revision = guile.input_state_revision,
                                            .scripted_input_states = guile.scripted_input_states,
+                                           .mode_revision = guile.mode_revision,
+                                           .scripted_modes = guile.scripted_modes,
                                            .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
@@ -396,17 +398,26 @@ EditorStateSnapshot EditorModel::inspect() {
     }
     std::vector<OpenBufferStateSnapshot> buffers;
     for (const OpenBufferSnapshot& buffer : application_.open_buffers()) {
+        const ViewId buffer_view = buffer.view.value_or(ViewId{});
+        std::vector<ModeThingStateSnapshot> things;
+        things.reserve(buffer.things.size());
+        for (const ModeThingBinding& thing : buffer.things) {
+            things.push_back({.name = thing.name, .kind = thing.kind});
+        }
         buffers.push_back({.buffer_slot = buffer.buffer.slot,
                            .buffer_generation = buffer.buffer.generation,
                            .view_present = buffer.view.has_value(),
-                           .view_slot = buffer.view ? buffer.view->slot : 0,
-                           .view_generation = buffer.view ? buffer.view->generation : 0,
+                           .view_slot = buffer_view.slot,
+                           .view_generation = buffer_view.generation,
                            .name = buffer.name,
                            .resource = buffer.resource.value_or(std::string()),
                            .modified = buffer.modified,
                            .active = buffer.active,
                            .saving = buffer.saving,
                            .major_mode = buffer.major_mode,
+                           .interaction_class = buffer.interaction_class,
+                           .initial_input_state = buffer.initial_input_state,
+                           .things = std::move(things),
                            .location_count = buffer.location_count});
     }
     std::vector<OpenWindowStateSnapshot> windows;

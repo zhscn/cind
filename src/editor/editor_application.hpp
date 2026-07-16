@@ -56,6 +56,9 @@ struct OpenBufferSnapshot {
     bool active = false;
     bool saving = false;
     std::string major_mode;
+    std::string interaction_class;
+    std::string initial_input_state;
+    std::vector<ModeThingBinding> things;
     std::size_t location_count = 0;
 };
 
@@ -251,6 +254,7 @@ private:
 
     void register_commands();
     void register_input_states();
+    void register_modes();
     void register_interaction_providers();
     void register_keymaps();
     void sync_keymaps();
@@ -289,7 +293,6 @@ private:
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
-    InputStateId default_input_state_;
     ModeId cpp_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;

@@ -10,11 +10,12 @@
 namespace cind {
 
 Buffer::Buffer(BufferId id, DocumentId document_id, BufferSpec spec,
-               const SettingRegistry& settings)
+               const SettingRegistry& settings, ModeRegistry& modes)
     : id_(id), name_(std::move(spec.name)), kind_(spec.kind),
       resource_uri_(std::move(spec.resource_uri)), read_only_(spec.read_only),
       document_(std::move(spec.initial_text), document_id),
-      save_point_(document_.snapshot().content()), settings_(settings, SettingScope::Buffer) {}
+      save_point_(document_.snapshot().content()), settings_(settings, SettingScope::Buffer),
+      modes_(id, modes) {}
 
 bool Buffer::modified() const {
     return diff_edit(save_point_, document_.snapshot().content()).has_value();
@@ -131,7 +132,8 @@ BufferId BufferRegistry::create(BufferSpec spec) {
     Slot& entry = slots_[slot];
     const BufferId id{slot, entry.generation};
     const DocumentId document_id = next_document_id_++;
-    entry.value = std::unique_ptr<Buffer>(new Buffer(id, document_id, std::move(spec), *settings_));
+    entry.value =
+        std::unique_ptr<Buffer>(new Buffer(id, document_id, std::move(spec), *settings_, *modes_));
     by_name_.emplace(entry.value->name(), id);
     if (entry.value->resource_uri()) {
         by_resource_.emplace(*entry.value->resource_uri(), id);

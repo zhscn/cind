@@ -7,10 +7,10 @@ namespace cind {
 
 EditorRuntime::EditorRuntime()
     : application_settings_(setting_definitions_, SettingScope::Application),
-      languages_(setting_definitions_), modes_(setting_definitions_, languages_),
-      input_states_(keymaps_), buffers_(setting_definitions_),
-      projects_(buffers_, setting_definitions_),
-      views_(buffers_, setting_definitions_, input_states_), windows_(views_) {}
+      languages_(setting_definitions_), input_states_(keymaps_),
+      modes_(setting_definitions_, languages_, keymaps_, input_states_),
+      buffers_(setting_definitions_, modes_), projects_(buffers_, setting_definitions_),
+      views_(buffers_, setting_definitions_, input_states_, modes_), windows_(views_) {}
 
 void EditorRuntime::seal_extensions() {
     if (extensions_sealed_) {
@@ -32,6 +32,9 @@ void EditorRuntime::append_mode_layers(std::vector<const SettingsLayer*>& layers
     layers.push_back(&definition.defaults);
     if (definition.language) {
         layers.push_back(&languages_.profile(*definition.language).defaults);
+    }
+    if (definition.parent) {
+        append_mode_layers(layers, *definition.parent);
     }
 }
 
@@ -61,6 +64,12 @@ SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id)
         append_mode_layers(layers, *buffer.modes().major());
     }
     return SettingsResolver(setting_definitions_, std::move(layers));
+}
+
+void EditorRuntime::set_interaction_class_state(InteractionClass interaction_class,
+                                                std::optional<InputStateId> state) {
+    modes_.set_interaction_class_state(interaction_class, state);
+    views_.refresh_mode_input_states();
 }
 
 } // namespace cind

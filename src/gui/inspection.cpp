@@ -320,6 +320,22 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
         append_bool(output, buffer.saving);
         output += ",\"major_mode\":";
         append_json_string(output, buffer.major_mode);
+        output += ",\"interaction_class\":";
+        append_json_string(output, buffer.interaction_class);
+        output += ",\"initial_input_state\":";
+        append_json_string(output, buffer.initial_input_state);
+        output += ",\"things\":[";
+        for (std::size_t thing_index = 0; thing_index < buffer.things.size(); ++thing_index) {
+            if (thing_index != 0) {
+                output.push_back(',');
+            }
+            output += "{\"name\":";
+            append_json_string(output, buffer.things[thing_index].name);
+            output += ",\"kind\":";
+            append_json_string(output, buffer.things[thing_index].kind);
+            output.push_back('}');
+        }
+        output.push_back(']');
         output += std::format(",\"location_count\":{}", buffer.location_count);
         output.push_back('}');
     }
@@ -406,11 +422,11 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
     output += std::format(
         ",\"command_revision\":{},\"scripted_commands\":{},\"provider_revision\":{},"
         "\"scripted_providers\":{},\"binding_revision\":{},\"input_state_revision\":{},"
-        "\"scripted_input_states\":{},"
+        "\"scripted_input_states\":{},\"mode_revision\":{},\"scripted_modes\":{},"
         "\"last_error\":",
         scripting.command_revision, scripting.scripted_commands, scripting.provider_revision,
         scripting.scripted_providers, scripting.binding_revision, scripting.input_state_revision,
-        scripting.scripted_input_states);
+        scripting.scripted_input_states, scripting.mode_revision, scripting.scripted_modes);
     if (scripting.last_error) {
         append_json_string(output, *scripting.last_error);
     } else {
@@ -2223,7 +2239,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " provider-revision=" << frame.editor.scripting.provider_revision
            << " binding-revision=" << frame.editor.scripting.binding_revision
            << " input-states=" << frame.editor.scripting.scripted_input_states
-           << " input-state-revision=" << frame.editor.scripting.input_state_revision;
+           << " input-state-revision=" << frame.editor.scripting.input_state_revision
+           << " modes=" << frame.editor.scripting.scripted_modes
+           << " mode-revision=" << frame.editor.scripting.mode_revision;
     if (frame.editor.scripting.last_error) {
         output << " error=\"" << printable(*frame.editor.scripting.last_error) << '"';
     }
@@ -2252,7 +2270,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << "      buffer:" << buffer.buffer_slot << ':' << buffer.buffer_generation
                << (buffer.active ? " active" : "") << (buffer.modified ? " modified" : "")
                << " name=\"" << printable(buffer.name) << "\" resource=\""
-               << printable(buffer.resource) << "\"\n";
+               << printable(buffer.resource) << "\" class=" << printable(buffer.interaction_class)
+               << " initial-state=" << printable(buffer.initial_input_state) << "\n";
     }
     output << "    windows=" << frame.editor.windows.size() << '\n';
     for (const OpenWindowStateSnapshot& window : frame.editor.windows) {

@@ -94,6 +94,23 @@ TEST_CASE("frontend commands join the shared default keymap") {
     CHECK(application.last_command() == "search.replace");
 }
 
+TEST_CASE("application modes join the scripted core hierarchy") {
+    EditorApplication application = make_application("sample.cc", "text");
+    const ModeRegistry& modes = application.runtime().modes();
+    const ModeId cpp = modes.find("cind.cpp").value_or(ModeId{});
+    const ModeId prog = modes.find("prog-mode").value_or(ModeId{});
+    const ModeId locations = modes.find("cind.location-list").value_or(ModeId{});
+    const ModeId special = modes.find("special-mode").value_or(ModeId{});
+    REQUIRE(cpp);
+    REQUIRE(prog);
+    REQUIRE(locations);
+    REQUIRE(special);
+    CHECK(modes.definition(cpp).parent == prog);
+    CHECK(modes.definition(locations).parent == special);
+    CHECK(modes.effective_policy(application.session().buffer().modes()).interaction_class ==
+          InteractionClass::Editing);
+}
+
 TEST_CASE("per-view input states precede window layers and may handle keys") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();
@@ -658,7 +675,7 @@ TEST_CASE("active window assembles explicit window view buffer mode and global k
     runtime.keymaps().bind(application.default_keymap(), "C-z", global.command);
     const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
     REQUIRE(major);
-    runtime.modes().definition_for_configuration(major).keymaps.push_back(mode.keymap);
+    runtime.modes().add_keymap(major, mode.keymap);
     application.session().buffer().keymaps().push_back(buffer.keymap);
     application.session().view().keymaps().push_back(view.keymap);
     runtime.windows().get(application.window_id()).keymaps().push_back(window.keymap);
@@ -674,7 +691,7 @@ TEST_CASE("active window assembles explicit window view buffer mode and global k
     application.session().buffer().keymaps().clear();
     send_keys(application, "C-z");
     CHECK(selected_layer == 2);
-    runtime.modes().definition_for_configuration(major).keymaps.clear();
+    runtime.modes().clear_keymaps(major);
     send_keys(application, "C-z");
     CHECK(selected_layer == 1);
 }
@@ -694,7 +711,7 @@ TEST_CASE("minor mode keymaps use reverse activation precedence and sparse fallb
         runtime.keymaps().bind(keymap, "C-z", command);
         runtime.keymaps().bind(keymap, value == 1 ? "C-c a" : "C-c b", command);
         const ModeId mode = runtime.modes().define(name, ModeKind::Minor);
-        runtime.modes().definition_for_configuration(mode).keymaps.push_back(keymap);
+        runtime.modes().add_keymap(mode, keymap);
         return mode;
     };
     const ModeId first = define_minor("test.minor.first", 1);

@@ -38,6 +38,11 @@ struct ScriptInputStateObserver {
     InputStateRegistry::ListenerId listener = 0;
 };
 
+struct ScriptModePolicyObserver {
+    SCM procedure = SCM_UNDEFINED;
+    ModeRegistry::ListenerId listener = 0;
+};
+
 struct GuileState {
     std::thread::id owner;
     bool active = true;
@@ -45,10 +50,13 @@ struct GuileState {
     std::vector<ScriptProvider> providers;
     std::vector<ScriptInputState> input_states;
     std::vector<ScriptInputStateObserver> input_state_observers;
+    std::vector<ScriptModePolicyObserver> mode_policy_observers;
     std::uint64_t command_revision = 0;
     std::uint64_t provider_revision = 0;
     std::uint64_t input_state_revision = 0;
     std::size_t input_state_definitions = 0;
+    std::uint64_t mode_revision = 0;
+    std::size_t mode_definitions = 0;
     std::optional<std::string> last_error;
 };
 
@@ -60,6 +68,7 @@ struct HostLease {
     std::size_t providers_installed = 0;
     std::size_t bindings_installed = 0;
     std::size_t input_states_installed = 0;
+    std::size_t modes_installed = 0;
 };
 
 SCM host_type = SCM_UNDEFINED;
@@ -199,6 +208,9 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const InputStateChange& change);
+void invoke_script_mode_policy_observer(const std::shared_ptr<GuileState>& state,
+                                        std::size_t observer_index, EditorRuntime& runtime,
+                                        const BufferModePolicyChange& change);
 
 // The Guile ABI fixes four adjacent SCM arguments; Scheme-level names and
 // validation preserve their semantic order.
@@ -644,6 +656,292 @@ InputStateId require_input_state(HostLease& host, SCM value, const char* caller,
         scm_misc_error(caller, "unknown input state: ~S", scm_list_1(value));
     }
     return *state;
+}
+
+ModeId require_mode(HostLease& host, SCM value, const char* caller, int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<ModeId> mode = host.runtime->modes().find(name);
+    if (!mode) {
+        scm_misc_error(caller, "unknown mode: ~S", scm_list_1(value));
+    }
+    return *mode;
+}
+
+InteractionClass interaction_class_from_scheme(SCM value, const char* caller, int position) {
+    if (symbol_is(value, "editing")) {
+        return InteractionClass::Editing;
+    }
+    if (symbol_is(value, "interface")) {
+        return InteractionClass::Interface;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "'editing or 'interface");
+    return InteractionClass::Editing;
+}
+
+SCM interaction_class_symbol(InteractionClass interaction_class) {
+    return scm_from_utf8_symbol(interaction_class == InteractionClass::Editing ? "editing"
+                                                                               : "interface");
+}
+
+std::vector<ModeThingBinding> mode_things_from_scheme(SCM value, const char* caller, int position) {
+    const long length = scm_ilength(value);
+    if (length < 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "proper alist of thing bindings");
+    }
+    std::vector<ModeThingBinding> things;
+    things.reserve(static_cast<std::size_t>(length));
+    for (SCM rest = value; !scheme_true(scm_null_p(rest)); rest = scm_cdr(rest)) {
+        const SCM entry = scm_car(rest);
+        if (!scheme_true(scm_pair_p(entry))) {
+            scm_wrong_type_arg_msg(caller, position, value, "proper alist of thing bindings");
+        }
+        things.push_back({.name = scheme_name(scm_car(entry), caller, position),
+                          .kind = scheme_name(scm_cdr(entry), caller, position)});
+    }
+    return things;
+}
+
+SCM mode_things_value(const std::vector<ModeThingBinding>& things) {
+    SCM result = SCM_EOL;
+    for (auto thing = things.rbegin(); thing != things.rend(); ++thing) {
+        result = scm_cons(scm_cons(name_symbol(thing->name), name_symbol(thing->kind)), result);
+    }
+    return result;
+}
+
+SCM mode_policy_value(const EffectiveModePolicy& policy, const EditorRuntime& runtime) {
+    SCM result = scm_c_make_vector(3, SCM_BOOL_F);
+    scm_c_vector_set_x(result, 0, interaction_class_symbol(policy.interaction_class));
+    if (policy.initial_state) {
+        scm_c_vector_set_x(
+            result, 1, name_symbol(runtime.input_states().definition(*policy.initial_state).name));
+    }
+    scm_c_vector_set_x(result, 2, mode_things_value(policy.things));
+    return result;
+}
+
+// The Guile ABI fixes eight adjacent SCM arguments; the public Scheme wrappers
+// provide keyword arguments and preserve this normalized host boundary.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value, SCM keymap_value,
+                SCM interaction_class_value, SCM initial_state_value, SCM things_value) {
+    try {
+        HostLease& host = require_host(host_object, "%define-mode!");
+        const std::string name = scheme_name(name_value, "%define-mode!", 2);
+        const ModeKind kind =
+            symbol_is(kind_value, "major") ? ModeKind::Major
+            : symbol_is(kind_value, "minor")
+                ? ModeKind::Minor
+                : throw std::invalid_argument("mode kind must be 'major or 'minor");
+        std::optional<ModeId> parent;
+        if (!scheme_false(parent_value)) {
+            parent = require_mode(host, parent_value, "%define-mode!", 4);
+        }
+        std::optional<KeymapId> keymap;
+        if (!scheme_false(keymap_value)) {
+            keymap = require_keymap(host, keymap_value, "%define-mode!", 5);
+        }
+        std::optional<InteractionClass> interaction_class;
+        if (!scheme_false(interaction_class_value)) {
+            interaction_class =
+                interaction_class_from_scheme(interaction_class_value, "%define-mode!", 6);
+        }
+        std::optional<InputStateId> initial_state;
+        if (!scheme_false(initial_state_value)) {
+            initial_state = require_input_state(host, initial_state_value, "%define-mode!", 7);
+        }
+        std::vector<ModeThingBinding> things =
+            mode_things_from_scheme(things_value, "%define-mode!", 8);
+
+        const std::optional<ModeId> existing = host.runtime->modes().find(name);
+        const ModeId mode = existing ? *existing : host.runtime->modes().define(name, kind);
+        if (host.runtime->modes().definition(mode).kind != kind) {
+            throw std::invalid_argument("mode definition cannot change its kind");
+        }
+        host.runtime->modes().set_parent(mode, parent);
+        host.runtime->modes().set_interaction_class(mode, interaction_class);
+        host.runtime->modes().set_initial_state(mode, initial_state);
+        host.runtime->modes().set_things(mode, std::move(things));
+        host.runtime->modes().clear_keymaps(mode);
+        if (keymap) {
+            host.runtime->modes().add_keymap(mode, *keymap);
+        }
+        if (!existing) {
+            ++host.state->mode_definitions;
+        }
+        ++host.modes_installed;
+        return scm_from_uint32(mode.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("%define-mode!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("%define-mode!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM mode_properties(SCM host_object, SCM mode_value) {
+    try {
+        HostLease& host = require_host(host_object, "mode-properties");
+        const ModeId mode = require_mode(host, mode_value, "mode-properties", 2);
+        const ModeRegistry::Definition& definition = host.runtime->modes().definition(mode);
+        SCM result = scm_c_make_vector(7, SCM_BOOL_F);
+        scm_c_vector_set_x(result, 0, name_symbol(definition.name));
+        scm_c_vector_set_x(
+            result, 1,
+            scm_from_utf8_symbol(definition.kind == ModeKind::Major ? "major" : "minor"));
+        if (definition.parent) {
+            scm_c_vector_set_x(
+                result, 2, name_symbol(host.runtime->modes().definition(*definition.parent).name));
+        }
+        if (definition.interaction_class) {
+            scm_c_vector_set_x(result, 3, interaction_class_symbol(*definition.interaction_class));
+        }
+        if (definition.initial_state) {
+            scm_c_vector_set_x(
+                result, 4,
+                name_symbol(
+                    host.runtime->input_states().definition(*definition.initial_state).name));
+        }
+        scm_c_vector_set_x(result, 5, mode_things_value(definition.things));
+        const std::vector<KeymapId> keymaps = host.runtime->modes().effective_keymaps(mode);
+        SCM keymap_names = scm_c_make_vector(keymaps.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < keymaps.size(); ++index) {
+            scm_c_vector_set_x(
+                keymap_names, index,
+                name_symbol(host.runtime->keymaps().definition(keymaps[index]).name));
+        }
+        scm_c_vector_set_x(result, 6, keymap_names);
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("mode-properties", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("mode-properties", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_interaction_class_state(SCM host_object, SCM class_value, SCM state_value) {
+    try {
+        HostLease& host = require_host(host_object, "%set-interaction-class-state!");
+        const InteractionClass interaction_class =
+            interaction_class_from_scheme(class_value, "%set-interaction-class-state!", 2);
+        std::optional<InputStateId> state;
+        if (!scheme_false(state_value)) {
+            state = require_input_state(host, state_value, "%set-interaction-class-state!", 3);
+        }
+        host.runtime->set_interaction_class_state(interaction_class, state);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("%set-interaction-class-state!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("%set-interaction-class-state!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-buffer-major-mode!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-major-mode!", 2);
+        std::optional<ModeId> mode;
+        if (!scheme_false(mode_value)) {
+            mode = require_mode(host, mode_value, "set-buffer-major-mode!", 3);
+        }
+        host.runtime->buffers().get(buffer).modes().set_major(host.runtime->modes(), mode);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-buffer-major-mode!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-buffer-major-mode!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_buffer_minor_mode(SCM host_object, SCM buffer_value, SCM mode_value, SCM enabled_value) {
+    if (!scheme_boolean(enabled_value)) {
+        scm_wrong_type_arg_msg("set-buffer-minor-mode!", 4, enabled_value, "boolean");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-buffer-minor-mode!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-minor-mode!", 2);
+        const ModeId mode = require_mode(host, mode_value, "set-buffer-minor-mode!", 3);
+        BufferModes& modes = host.runtime->buffers().get(buffer).modes();
+        const bool changed = scheme_true(enabled_value)
+                                 ? modes.enable_minor(host.runtime->modes(), mode)
+                                 : modes.disable_minor(mode);
+        return scm_from_bool(changed);
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-buffer-minor-mode!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-buffer-minor-mode!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_mode_policy(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-mode-policy");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-mode-policy", 2);
+        return mode_policy_value(
+            host.runtime->modes().effective_policy(host.runtime->buffers().get(buffer).modes()),
+            *host.runtime);
+    } catch (const std::exception& exception) {
+        scm_misc_error("buffer-mode-policy", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("buffer-mode-policy", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
+    if (!scheme_true(scm_procedure_p(procedure_value))) {
+        scm_wrong_type_arg_msg("observe-mode-policy-changes!", 2, procedure_value, "procedure");
+    }
+    try {
+        HostLease& host = require_host(host_object, "observe-mode-policy-changes!");
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("observe-mode-policy-changes!", "Guile runtime has expired", SCM_EOL);
+        }
+        const std::size_t observer_index = state->mode_policy_observers.size();
+        (void)scm_gc_protect_object(procedure_value);
+        ModeRegistry::ListenerId listener = 0;
+        try {
+            const std::weak_ptr<GuileState> weak = state;
+            EditorRuntime* runtime = host.runtime;
+            listener = host.runtime->modes().subscribe([weak, observer_index, runtime](
+                                                           const BufferModePolicyChange& change) {
+                const std::shared_ptr<GuileState> locked = weak.lock();
+                if (locked && locked->active) {
+                    invoke_script_mode_policy_observer(locked, observer_index, *runtime, change);
+                }
+            });
+            state->mode_policy_observers.push_back(
+                {.procedure = procedure_value, .listener = listener});
+            return scm_from_size_t(observer_index);
+        } catch (...) {
+            if (listener != 0) {
+                (void)host.runtime->modes().unsubscribe(listener);
+            }
+            (void)scm_gc_unprotect_object(procedure_value);
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("observe-mode-policy-changes!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("observe-mode-policy-changes!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1772,6 +2070,19 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(view_input_states));
     (void)scm_c_define_gsubr("observe-input-state-changes!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(observe_input_state_changes));
+    (void)scm_c_define_gsubr("%define-mode!", 8, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
+    (void)scm_c_define_gsubr("mode-properties", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(mode_properties));
+    (void)scm_c_define_gsubr("%set-interaction-class-state!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_interaction_class_state));
+    (void)scm_c_define_gsubr("set-buffer-major-mode!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_major_mode));
+    (void)scm_c_define_gsubr("set-buffer-minor-mode!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_minor_mode));
+    (void)scm_c_define_gsubr("buffer-mode-policy", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_mode_policy));
+    (void)scm_c_define_gsubr("observe-mode-policy-changes!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(observe_mode_policy_changes));
     (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
@@ -1845,7 +2156,9 @@ void initialize_host_module(void*) {
         "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
         "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
         "define-input-state!", "set-base-input-state!", "push-input-state!", "pop-input-state!",
-        "reset-input-states!", "view-input-states", "observe-input-state-changes!",
+        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "%define-mode!",
+        "mode-properties", "%set-interaction-class-state!", "set-buffer-major-mode!",
+        "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
         "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
         "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
         "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
@@ -1870,10 +2183,12 @@ struct GuileCall {
         InstallProviders,
         InstallKeymaps,
         InstallInputStates,
+        InstallModes,
         InvokeCommand,
         InvokeProvider,
         InvokeInputHandler,
         InvokeInputStateObserver,
+        InvokeModePolicyObserver,
         CheckEnabled,
     };
 
@@ -1889,6 +2204,7 @@ struct GuileCall {
     ViewId view;
     KeyStroke key;
     const InputStateChange* input_state_change = nullptr;
+    const BufferModePolicyChange* mode_policy_change = nullptr;
     EditorRuntime* runtime = nullptr;
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
@@ -2116,6 +2432,11 @@ SCM call_body(void* data) {
                 scm_call_1(scm_c_public_ref("cind core", "install-input-states!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallModes:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "install-core-modes!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InvokeCommand:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      command_invocation_value(*call.invocation));
@@ -2145,6 +2466,24 @@ SCM call_body(void* data) {
             scm_c_vector_set_x(event, 1, entity_id(change.view.slot, change.view.generation));
             scm_c_vector_set_x(event, 2, state_name(change.from));
             scm_c_vector_set_x(event, 3, state_name(change.to));
+            call.result = scm_call_1(call.procedure, event);
+            break;
+        }
+        case GuileCall::Operation::InvokeModePolicyObserver: {
+            const BufferModePolicyChange& change = *call.mode_policy_change;
+            SCM event = scm_c_make_vector(5, SCM_BOOL_F);
+            const char* kind = change.kind == BufferModeChangeKind::Major ? "major"
+                               : change.kind == BufferModeChangeKind::MinorEnabled
+                                   ? "minor-enabled"
+                                   : "minor-disabled";
+            scm_c_vector_set_x(event, 0, scm_from_utf8_symbol(kind));
+            scm_c_vector_set_x(event, 1, entity_id(change.buffer.slot, change.buffer.generation));
+            if (change.mode) {
+                scm_c_vector_set_x(
+                    event, 2, name_symbol(call.runtime->modes().definition(*change.mode).name));
+            }
+            scm_c_vector_set_x(event, 3, mode_policy_value(change.before, *call.runtime));
+            scm_c_vector_set_x(event, 4, mode_policy_value(change.after, *call.runtime));
             call.result = scm_call_1(call.procedure, event);
             break;
         }
@@ -2301,6 +2640,25 @@ void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state
     }
 }
 
+void invoke_script_mode_policy_observer(const std::shared_ptr<GuileState>& state,
+                                        std::size_t observer_index, EditorRuntime& runtime,
+                                        const BufferModePolicyChange& change) {
+    if (std::this_thread::get_id() != state->owner || !state->active ||
+        observer_index >= state->mode_policy_observers.size()) {
+        state->last_error = "Guile mode policy observer used outside its runtime";
+        return;
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeModePolicyObserver;
+    call.procedure = state->mode_policy_observers[observer_index].procedure;
+    call.mode_policy_change = &change;
+    call.runtime = &runtime;
+    const std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = std::format("Guile mode policy observer failed: {}", result.error());
+    }
+}
+
 bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_t command_index,
                             const CommandContext& context) {
     if (std::this_thread::get_id() != state->owner || !state->active ||
@@ -2347,6 +2705,11 @@ public:
     }
 
     ~Impl() {
+        for (const ScriptModePolicyObserver& observer : state_->mode_policy_observers) {
+            (void)lease_->runtime->modes().unsubscribe(observer.listener);
+            (void)scm_gc_unprotect_object(observer.procedure);
+        }
+        state_->mode_policy_observers.clear();
         for (const ScriptInputStateObserver& observer : state_->input_state_observers) {
             (void)lease_->runtime->input_states().unsubscribe(observer.listener);
             (void)scm_gc_unprotect_object(observer.procedure);
@@ -2459,6 +2822,26 @@ public:
         return call.count;
     }
 
+    std::expected<std::size_t, std::string> install_core_modes() {
+        require_owner_thread();
+        lease_->modes_installed = 0;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallModes;
+        call.host = host_;
+        std::expected<SCM, std::string> result = run_guile_call(call);
+        if (!result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != lease_->modes_installed) {
+            state_->last_error = "Guile mode policy returned an inconsistent definition count";
+            return std::unexpected(*state_->last_error);
+        }
+        ++state_->mode_revision;
+        state_->last_error.reset();
+        return call.count;
+    }
+
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
@@ -2470,6 +2853,8 @@ public:
                 .binding_revision = binding_revision_,
                 .input_state_revision = state_->input_state_revision,
                 .scripted_input_states = state_->input_state_definitions,
+                .mode_revision = state_->mode_revision,
+                .scripted_modes = state_->mode_definitions,
                 .last_error = state_->last_error};
     }
 
@@ -2506,6 +2891,10 @@ std::expected<std::size_t, std::string> GuileRuntime::install_default_keymaps() 
 
 std::expected<std::size_t, std::string> GuileRuntime::install_input_states() {
     return impl_->install_input_states();
+}
+
+std::expected<std::size_t, std::string> GuileRuntime::install_core_modes() {
+    return impl_->install_core_modes();
 }
 
 GuileRuntimeSnapshot GuileRuntime::snapshot() const {

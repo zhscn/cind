@@ -26,7 +26,12 @@ LocationListModeRegistration ensure_location_list_mode(EditorRuntime& runtime,
     runtime.keymaps().bind(keymap, "M-n", commands.next);
     runtime.keymaps().bind(keymap, "M-p", commands.previous);
     const ModeId mode = runtime.modes().define(std::string(mode_name), ModeKind::Major);
-    runtime.modes().definition_for_configuration(mode).keymaps.push_back(keymap);
+    if (const std::optional<ModeId> parent = runtime.modes().find("special-mode")) {
+        runtime.modes().set_parent(mode, parent);
+    } else {
+        runtime.modes().set_interaction_class(mode, InteractionClass::Interface);
+    }
+    runtime.modes().add_keymap(mode, keymap);
     return {.mode = mode, .keymap = keymap};
 }
 
