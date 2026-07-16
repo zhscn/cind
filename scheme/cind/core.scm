@@ -310,8 +310,118 @@
 (define (context-has-project? context)
   (and (context-project context) #t))
 
+(define kill-ring-limit 60)
+
+(define (take-at-most values count)
+  (if (or (= count 0) (null? values))
+      '()
+      (cons (car values) (take-at-most (cdr values) (- count 1)))))
+
+(define (range-start range)
+  (vector-ref range 0))
+
+(define (range-end range)
+  (vector-ref range 1))
+
+(define (make-region-commands host)
+  (let ((kill-ring '()))
+    (define (remember-kill! text)
+      (set! kill-ring
+            (cons text (take-at-most kill-ring (- kill-ring-limit 1))))
+      (write-clipboard! host text))
+
+    (define (latest-kill)
+      (if (pair? kill-ring)
+          (vector (car kill-ring) #f)
+          (let* ((result (read-clipboard host))
+                 (text (vector-ref result 0))
+                 (error (vector-ref result 1)))
+            (if (and text (> (string-length text) 0))
+                (begin
+                  (set! kill-ring (list text))
+                  (vector text #f))
+                (vector #f error)))))
+
+    (define (toggle-mark context invocation)
+      (let* ((view (context-view context))
+             (caret (view-caret host view))
+             (mark (view-mark host view)))
+        (if (and mark (= mark caret))
+            (begin
+              (clear-selection! host view)
+              (set-message! host "mark cleared"))
+            (begin
+              (set-selection! host view caret caret)
+              (set-message! host "mark set")))
+        (command-completed)))
+
+    (define (kill-range! context range)
+      (let* ((buffer (context-buffer context))
+             (view (context-view context))
+             (text (buffer-substring host buffer
+                                     (range-start range) (range-end range)))
+             (clipboard-error (remember-kill! text)))
+        (erase-range! host view (range-start range) (range-end range))
+        (if clipboard-error
+            (set-message! host
+                          (string-append "killed internally; clipboard: "
+                                         clipboard-error)))
+        (command-completed)))
+
+    (define (kill-region context invocation)
+      (let ((range (view-selection host (context-view context))))
+        (if range
+            (kill-range! context range)
+            (begin
+              (set-message! host "no active region")
+              (command-completed)))))
+
+    (define (kill-line context invocation)
+      (let ((range (soft-kill-range host (context-view context))))
+        (if range
+            (kill-range! context range)
+            (command-completed))))
+
+    (define (copy-region context invocation)
+      (let ((range (view-selection host (context-view context))))
+        (if (not range)
+            (begin
+              (set-message! host "no active region")
+              (command-completed))
+            (let* ((text (buffer-substring host (context-buffer context)
+                                           (range-start range) (range-end range)))
+                   (clipboard-error (remember-kill! text)))
+              (clear-selection! host (context-view context))
+              (set-message! host
+                            (if clipboard-error
+                                (string-append "copied internally; clipboard: "
+                                               clipboard-error)
+                                "copied"))
+              (command-completed)))))
+
+    (define (yank context invocation)
+      (let* ((result (latest-kill))
+             (text (vector-ref result 0))
+             (clipboard-error (vector-ref result 1)))
+        (cond (text
+               (insert-text! host (context-view context) text))
+              (clipboard-error
+               (set-message! host
+                             (string-append "kill ring is empty; clipboard: "
+                                            clipboard-error)))
+              (else
+               (set-message! host "kill ring and clipboard are empty")))
+        (command-completed)))
+
+    (list (list "selection.toggle-mark" toggle-mark #f)
+          (list "edit.kill-region" kill-region #f)
+          (list "edit.kill-line" kill-line #f)
+          (list "edit.copy-region" copy-region #f)
+          (list "edit.yank" yank #f))))
+
 (define (core-commands host)
-  (list (list "command.palette.accept" command-palette-accept #f)
+  (append
+   (list (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
         (list "file.open.accept"
               (lambda (context invocation)
@@ -408,7 +518,8 @@
               (lambda (context invocation)
                 (help-keys-accept host context invocation))
               #f)
-        (list "help.keys" help-keys #f)))
+        (list "help.keys" help-keys #f))
+   (make-region-commands host)))
 
 (define (install-core-commands! host)
   (let ((commands (core-commands host)))

@@ -101,7 +101,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
-                                                      .initial_text = {},
+                                                      .initial_text = "abc\n",
                                                       .kind = BufferKind::Scratch,
                                                       .resource_uri = std::nullopt,
                                                       .read_only = false});
@@ -151,6 +151,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool other_window_selected = false;
     bool redraw_requested = false;
     std::string window_error;
+    std::string clipboard;
+    std::string clipboard_error;
+    std::optional<GuileTextRange> requested_soft_kill_range;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -251,10 +254,53 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              [] {
                  return std::vector<GuileKeyBindingSummary>{
                      {.keys = "C-x C-s", .command = "file.save"}};
-             }});
+             },
+         .set_selection =
+             [&](ViewId target, std::uint32_t anchor, std::uint32_t head) {
+                 runtime.views().set_selection(
+                     target, {.anchor = TextOffset{anchor}, .head = TextOffset{head}});
+             },
+         .clear_selection = [&](ViewId target) { runtime.views().clear_selection(target); },
+         .erase_range = [&](ViewId target,
+                            GuileTextRange range) -> std::expected<void, std::string> {
+             Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
+             EditTransaction transaction = target_buffer.begin_transaction();
+             transaction.erase(TextRange{TextOffset{range.start}, TextOffset{range.end}});
+             (void)transaction.commit();
+             runtime.views().set_caret(target, TextOffset{range.start});
+             runtime.views().clear_selection(target);
+             return {};
+         },
+         .insert_text = [&](ViewId target,
+                            std::string_view text) -> std::expected<void, std::string> {
+             Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
+             const TextOffset caret = runtime.views().caret(target);
+             EditTransaction transaction = target_buffer.begin_transaction();
+             transaction.insert(caret, text);
+             (void)transaction.commit();
+             runtime.views().set_caret(
+                 target, TextOffset{caret.value + static_cast<std::uint32_t>(text.size())});
+             runtime.views().clear_selection(target);
+             return {};
+         },
+         .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
+         .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
+             if (!clipboard_error.empty()) {
+                 return std::unexpected(clipboard_error);
+             }
+             clipboard = text;
+             return {};
+         },
+         .read_clipboard = [&]() -> std::expected<std::optional<std::string>, std::string> {
+             if (!clipboard_error.empty()) {
+                 return std::unexpected(clipboard_error);
+             }
+             return clipboard.empty() ? std::optional<std::string>{}
+                                      : std::optional<std::string>{clipboard};
+         }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 29);
+    CHECK(*installed == 34);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -545,9 +591,47 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(searched_window == window);
     CHECK(search_query == "needle");
 
+    const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");
+    const CommandResult mark_set = runtime.commands().invoke(toggle_mark, context);
+    REQUIRE(mark_set.has_value());
+    CHECK(runtime.views().mark(view) == std::optional<TextOffset>{TextOffset{0}});
+    CHECK(message == "mark set");
+    const CommandResult mark_cleared = runtime.commands().invoke(toggle_mark, context);
+    REQUIRE(mark_cleared.has_value());
+    CHECK_FALSE(runtime.views().mark(view).has_value());
+    CHECK(message == "mark cleared");
+
+    runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
+    const CommandResult copied =
+        runtime.commands().invoke(require_command(runtime, "edit.copy-region"), context);
+    REQUIRE(copied.has_value());
+    CHECK(clipboard == "a");
+    CHECK(message == "copied");
+    CHECK_FALSE(runtime.views().mark(view).has_value());
+
+    const CommandResult yanked =
+        runtime.commands().invoke(require_command(runtime, "edit.yank"), context);
+    REQUIRE(yanked.has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "aabc\n");
+
+    runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
+    const CommandResult region_killed =
+        runtime.commands().invoke(require_command(runtime, "edit.kill-region"), context);
+    REQUIRE(region_killed.has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "abc\n");
+    CHECK(clipboard == "a");
+
+    runtime.views().set_caret(view, TextOffset{0});
+    requested_soft_kill_range = GuileTextRange{0, 3};
+    const CommandResult line_killed =
+        runtime.commands().invoke(require_command(runtime, "edit.kill-line"), context);
+    REQUIRE(line_killed.has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "\n");
+    CHECK(clipboard == "abc");
+
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 29);
+    CHECK(snapshot.scripted_commands == 34);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

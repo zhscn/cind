@@ -151,7 +151,66 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        }
                    }
                    return result;
-               }}),
+               },
+           .set_selection =
+               [this](ViewId view, std::uint32_t anchor, std::uint32_t head) {
+                   session_for(view).set_selection(
+                       {.anchor = TextOffset{anchor}, .head = TextOffset{head}});
+                   view_state_for(view).selection_history.clear();
+                   reveal_caret_ = true;
+               },
+           .clear_selection =
+               [this](ViewId view) {
+                   session_for(view).clear_selection();
+                   view_state_for(view).selection_history.clear();
+               },
+           .erase_range = [this](ViewId view,
+                                 GuileTextRange range) -> std::expected<void, std::string> {
+               try {
+                   session_for(view).erase(
+                       TextRange{TextOffset{range.start}, TextOffset{range.end}});
+                   after_edit(view);
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .insert_text = [this](ViewId view,
+                                 std::string_view text) -> std::expected<void, std::string> {
+               try {
+                   session_for(view).insert_text(text);
+                   after_edit(view);
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .soft_kill_range = [this](ViewId view) -> std::optional<GuileTextRange> {
+               EditSession& active = session_for(view);
+               const DocumentSnapshot snapshot = active.snapshot();
+               const TextRange range =
+                   soft_kill_end(active.analysis().tree, snapshot.content(), active.caret());
+               if (range.empty()) {
+                   return std::nullopt;
+               }
+               return GuileTextRange{range.start.value, range.end.value};
+           },
+           .write_clipboard = [this](std::string_view text) -> std::expected<void, std::string> {
+               if (!platform_services_.write_clipboard) {
+                   return {};
+               }
+               return platform_services_.write_clipboard(text);
+           },
+           .read_clipboard = [this]() -> std::expected<std::optional<std::string>, std::string> {
+               if (!platform_services_.read_clipboard) {
+                   return std::optional<std::string>{};
+               }
+               std::expected<std::string, std::string> read = platform_services_.read_clipboard();
+               if (!read) {
+                   return std::unexpected(std::move(read.error()));
+               }
+               return std::optional<std::string>{std::move(*read)};
+           }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1409,74 +1468,6 @@ void EditorApplication::register_commands() {
             ui::display_column(text, session().caret(), session().style().tab_width) + 1,
             session().caret().value, text.size_bytes());
     });
-    define("selection.toggle-mark", [this](const CommandInvocation&) {
-        if (session().mark() && *session().mark() == session().caret()) {
-            session().clear_selection();
-            message_ = "mark cleared";
-        } else {
-            session().set_selection({.anchor = session().caret(), .head = session().caret()});
-            active_view().selection_history.clear();
-            message_ = "mark set";
-        }
-    });
-    define("edit.kill-region", [this](const CommandInvocation&) {
-        const std::optional<TextRange> selection = session().selection();
-        if (!selection) {
-            message_ = "no active region";
-            return;
-        }
-        const std::optional<std::string> clipboard_error =
-            store_kill(session().snapshot().substring(*selection));
-        session().erase(*selection);
-        active_view().selection_history.clear();
-        after_edit();
-        if (clipboard_error) {
-            message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
-        }
-    });
-    define("edit.kill-line", [this](const CommandInvocation&) {
-        const DocumentSnapshot snapshot = session().snapshot();
-        const TextRange range =
-            soft_kill_end(session().analysis().tree, snapshot.content(), session().caret());
-        if (range.empty()) {
-            return;
-        }
-        const std::optional<std::string> clipboard_error = store_kill(snapshot.substring(range));
-        session().erase(range);
-        active_view().selection_history.clear();
-        after_edit();
-        if (clipboard_error) {
-            message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
-        }
-    });
-    define("edit.copy-region", [this](const CommandInvocation&) {
-        const std::optional<TextRange> selection = session().selection();
-        if (!selection) {
-            message_ = "no active region";
-            return;
-        }
-        const std::optional<std::string> clipboard_error =
-            store_kill(session().snapshot().substring(*selection));
-        session().clear_selection();
-        message_ = clipboard_error
-                       ? std::format("copied internally; clipboard: {}", *clipboard_error)
-                       : "copied";
-    });
-    define("edit.yank", [this](const CommandInvocation&) {
-        if (kill_slot_.empty()) {
-            if (const std::optional<std::string> clipboard_error = import_clipboard()) {
-                message_ = std::format("kill ring is empty; clipboard: {}", *clipboard_error);
-                return;
-            }
-            if (kill_slot_.empty()) {
-                message_ = "kill ring and clipboard are empty";
-                return;
-            }
-        }
-        session().insert_text(kill_slot_);
-        after_edit();
-    });
-
     auto define_structural_move = [this](std::string name, auto target) {
         runtime_.commands().define(
             std::move(name),
@@ -1727,35 +1718,15 @@ CommandContext EditorApplication::command_context() {
 }
 
 void EditorApplication::after_edit() {
-    session().clear_selection();
-    active_view().selection_history.clear();
+    after_edit(view_id());
+}
+
+void EditorApplication::after_edit(ViewId view) {
+    session_for(view).clear_selection();
+    view_state_for(view).selection_history.clear();
     quit_armed_ = false;
     message_.clear();
     reveal_caret_ = true;
-}
-
-std::optional<std::string> EditorApplication::store_kill(std::string text) {
-    kill_slot_ = std::move(text);
-    if (!platform_services_.write_clipboard) {
-        return std::nullopt;
-    }
-    std::expected<void, std::string> result = platform_services_.write_clipboard(kill_slot_);
-    if (!result) {
-        return std::move(result.error());
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> EditorApplication::import_clipboard() {
-    if (!platform_services_.read_clipboard) {
-        return std::nullopt;
-    }
-    std::expected<std::string, std::string> result = platform_services_.read_clipboard();
-    if (!result) {
-        return std::move(result.error());
-    }
-    kill_slot_ = std::move(*result);
-    return std::nullopt;
 }
 
 void EditorApplication::save(BufferId buffer) {

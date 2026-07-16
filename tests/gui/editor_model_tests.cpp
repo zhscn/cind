@@ -129,7 +129,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.engine == "guile");
     CHECK(state.scripting.modules == std::vector<std::string>{"cind command", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 29);
+    CHECK(state.scripting.scripted_commands == 34);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);

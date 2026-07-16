@@ -256,8 +256,7 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();
-    std::optional<std::string> store_kill(std::string text);
-    std::optional<std::string> import_clipboard();
+    void after_edit(ViewId view);
     void save(BufferId buffer);
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
                                                std::optional<LinePosition> position);
@@ -294,7 +293,6 @@ private:
     std::string message_;
     std::string last_key_;
     std::string last_command_;
-    std::string kill_slot_;
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_armed_ = false;

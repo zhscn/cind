@@ -472,6 +472,247 @@ SCM active_key_bindings(SCM host_object) {
     return SCM_BOOL_F;
 }
 
+TextOffset text_offset_from_scheme(SCM value, const char* caller, int position) {
+    if (scm_is_unsigned_integer(value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "unsigned 32-bit text offset");
+    }
+    return TextOffset{scm_to_uint32(value)};
+}
+
+SCM text_range_value(TextRange range) {
+    SCM result = scm_c_make_vector(2, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_uint32(range.start.value));
+    scm_c_vector_set_x(result, 1, scm_from_uint32(range.end.value));
+    return result;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_caret(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "view-caret");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-caret", 2);
+        return scm_from_uint32(host.runtime->views().caret(view).value);
+    } catch (const std::exception& exception) {
+        raise_host_error("view-caret", exception.what());
+    } catch (...) {
+        scm_misc_error("view-caret", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_mark(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "view-mark");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-mark", 2);
+        const std::optional<TextOffset> mark = host.runtime->views().mark(view);
+        return mark ? scm_from_uint32(mark->value) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("view-mark", exception.what());
+    } catch (...) {
+        scm_misc_error("view-mark", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_selection(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "view-selection");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-selection", 2);
+        const std::optional<TextRange> selection = host.runtime->views().selection(view);
+        return selection ? text_range_value(*selection) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("view-selection", exception.what());
+    } catch (...) {
+        scm_misc_error("view-selection", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_selection(SCM host_object, SCM view_value, SCM anchor_value, SCM head_value) {
+    HostLease& host = require_host(host_object, "set-selection!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-selection!", 2);
+    const TextOffset anchor = text_offset_from_scheme(anchor_value, "set-selection!", 3);
+    const TextOffset head = text_offset_from_scheme(head_value, "set-selection!", 4);
+    if (!host.services.set_selection) {
+        scm_misc_error("set-selection!", "selection mutation capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.set_selection(view, anchor.value, head.value);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-selection!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-selection!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM clear_selection(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "clear-selection!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "clear-selection!", 2);
+    if (!host.services.clear_selection) {
+        scm_misc_error("clear-selection!", "selection mutation capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.clear_selection(view);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("clear-selection!", exception.what());
+    } catch (...) {
+        scm_misc_error("clear-selection!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-substring");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-substring", 2);
+        const TextOffset start = text_offset_from_scheme(start_value, "buffer-substring", 3);
+        const TextOffset end = text_offset_from_scheme(end_value, "buffer-substring", 4);
+        if (end < start) {
+            scm_misc_error("buffer-substring", "range end precedes range start", SCM_EOL);
+        }
+        const std::string text =
+            host.runtime->buffers().get(buffer).snapshot().substring(TextRange{start, end});
+        return scm_from_utf8_stringn(text.data(), text.size());
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-substring", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-substring", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM erase_range(SCM host_object, SCM view_value, SCM start_value, SCM end_value) {
+    HostLease& host = require_host(host_object, "erase-range!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "erase-range!", 2);
+    const TextOffset start = text_offset_from_scheme(start_value, "erase-range!", 3);
+    const TextOffset end = text_offset_from_scheme(end_value, "erase-range!", 4);
+    if (end < start) {
+        scm_misc_error("erase-range!", "range end precedes range start", SCM_EOL);
+    }
+    if (!host.services.erase_range) {
+        scm_misc_error("erase-range!", "text mutation capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> erased =
+            host.services.erase_range(view, GuileTextRange{start.value, end.value});
+        if (!erased) {
+            raise_host_error("erase-range!", erased.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("erase-range!", exception.what());
+    } catch (...) {
+        scm_misc_error("erase-range!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
+    if (!scm_is_string(text_value)) {
+        scm_wrong_type_arg_msg("insert-text!", 3, text_value, "string");
+    }
+    HostLease& host = require_host(host_object, "insert-text!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "insert-text!", 2);
+    if (!host.services.insert_text) {
+        scm_misc_error("insert-text!", "text mutation capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> inserted =
+            host.services.insert_text(view, scheme_string(text_value));
+        if (!inserted) {
+            raise_host_error("insert-text!", inserted.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("insert-text!", exception.what());
+    } catch (...) {
+        scm_misc_error("insert-text!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM soft_kill_range(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "soft-kill-range");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "soft-kill-range", 2);
+    if (!host.services.soft_kill_range) {
+        scm_misc_error("soft-kill-range", "structural range capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::optional<GuileTextRange> range = host.services.soft_kill_range(view);
+        return range ? text_range_value(TextRange{TextOffset{range->start}, TextOffset{range->end}})
+                     : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("soft-kill-range", exception.what());
+    } catch (...) {
+        scm_misc_error("soft-kill-range", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM write_clipboard(SCM host_object, SCM text_value) {
+    if (!scm_is_string(text_value)) {
+        scm_wrong_type_arg_msg("write-clipboard!", 2, text_value, "string");
+    }
+    HostLease& host = require_host(host_object, "write-clipboard!");
+    if (!host.services.write_clipboard) {
+        return SCM_BOOL_F;
+    }
+    try {
+        const std::expected<void, std::string> written =
+            host.services.write_clipboard(scheme_string(text_value));
+        return written ? SCM_BOOL_F : scm_from_utf8_string(written.error().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("write-clipboard!", exception.what());
+    } catch (...) {
+        scm_misc_error("write-clipboard!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM read_clipboard(SCM host_object) {
+    HostLease& host = require_host(host_object, "read-clipboard");
+    SCM result = scm_c_make_vector(2, SCM_BOOL_F);
+    if (!host.services.read_clipboard) {
+        return result;
+    }
+    try {
+        const std::expected<std::optional<std::string>, std::string> read =
+            host.services.read_clipboard();
+        if (!read) {
+            scm_c_vector_set_x(result, 1, scm_from_utf8_string(read.error().c_str()));
+        } else if (*read) {
+            scm_c_vector_set_x(result, 0, scm_from_utf8_stringn((*read)->data(), (*read)->size()));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("read-clipboard", exception.what());
+    } catch (...) {
+        scm_misc_error("read-clipboard", "unknown C++ host failure", SCM_EOL);
+    }
+    return result;
+}
+
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -986,6 +1227,24 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("path-filename", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_filename));
     (void)scm_c_define_gsubr("active-key-bindings", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(active_key_bindings));
+    (void)scm_c_define_gsubr("view-caret", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_caret));
+    (void)scm_c_define_gsubr("view-mark", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_mark));
+    (void)scm_c_define_gsubr("view-selection", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_selection));
+    (void)scm_c_define_gsubr("set-selection!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_selection));
+    (void)scm_c_define_gsubr("clear-selection!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(clear_selection));
+    (void)scm_c_define_gsubr("buffer-substring", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_substring));
+    (void)scm_c_define_gsubr("erase-range!", 4, 0, 0, reinterpret_cast<scm_t_subr>(erase_range));
+    (void)scm_c_define_gsubr("insert-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(insert_text));
+    (void)scm_c_define_gsubr("soft-kill-range", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(soft_kill_range));
+    (void)scm_c_define_gsubr("write-clipboard!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(write_clipboard));
+    (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(read_clipboard));
     (void)scm_c_define_gsubr("buffer-id-by-name", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_id_by_name));
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
@@ -1025,11 +1284,13 @@ void initialize_host_module(void*) {
                  "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
                  "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
                  "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
-                 "display-buffer!", "move-caret-to-line!", "set-message!", "ensure-project-index!",
-                 "open-file!", "start-project-search!", "set-buffer-resource!", "save-buffer!",
-                 "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
-                 "delete-window!", "delete-other-windows!", "select-other-window!",
-                 "request-redraw!", nullptr);
+                 "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
+                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+                 "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
+                 "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
+                 "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",
+                 "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+                 "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {

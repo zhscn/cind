@@ -59,6 +59,17 @@ The native module exports:
 (path-filename host path)
 (directory-path? host path)
 (path-as-directory host path)
+(view-caret host view-id)
+(view-mark host view-id)
+(view-selection host view-id)
+(set-selection! host view-id anchor head)
+(clear-selection! host view-id)
+(buffer-substring host buffer-id start end)
+(erase-range! host view-id start end)
+(insert-text! host view-id text)
+(soft-kill-range host view-id)
+(write-clipboard! host text)
+(read-clipboard host)
 (display-buffer! host window-id buffer-id)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
@@ -105,6 +116,19 @@ moves a view caret using zero-based logical line and display-column coordinates,
 the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
+
+View and text capabilities expose byte offsets as unsigned integers and ranges as two-element
+start/end vectors. `view-caret`, `view-mark` and `view-selection` are immutable queries;
+`set-selection!` preserves anchor/head direction while `clear-selection!` releases the mark.
+`buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
+native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
+caret reveal coherent. `soft-kill-range` is a syntax-aware range query and does not mutate text.
+
+`write-clipboard!` returns `#f` on success or an error string. `read-clipboard` returns a
+two-element vector containing an optional string and optional error. The absence of a platform
+clipboard produces two `#f` values. The Scheme policy retains editor-local data independently of
+clipboard success. This result domain lets Scheme own kill-ring policy without making terminal OSC
+52 or GUI clipboard objects part of the scripting ABI.
 
 `buffer-resource` returns a buffer's resource path or `#f`. `path-parent`, `directory-path?` and
 `path-as-directory` expose platform filesystem syntax without embedding separator rules in Scheme.
@@ -154,9 +178,11 @@ retained in `editor.scripting.last_error`.
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and
 movement, window layout and application quit policy, project file selection and project search with
-project-aware enabled predicates, and key-help selection and message presentation. File and project
-commands compose native storage, indexing and search capabilities without owning asynchronous
-state.
+project-aware enabled predicates, key-help selection and message presentation, mark/region
+commands, and kill/yank behavior. Each installed core policy owns a bounded kill ring in its Scheme
+closure. Copy and kill commands synchronize the newest entry with the platform clipboard; yank
+imports the clipboard when that ring is empty. File and project commands compose native storage,
+indexing and search capabilities without owning asynchronous state.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cind {
@@ -19,6 +20,11 @@ class EditorRuntime;
 struct GuileKeyBindingSummary {
     std::string keys;
     std::string command;
+};
+
+struct GuileTextRange {
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
 };
 
 struct GuileHostServices {
@@ -41,6 +47,13 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, int)> select_other_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
+    std::function<void(ViewId, std::uint32_t, std::uint32_t)> set_selection;
+    std::function<void(ViewId)> clear_selection;
+    std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
+    std::function<std::expected<void, std::string>(ViewId, std::string_view)> insert_text;
+    std::function<std::optional<GuileTextRange>(ViewId)> soft_kill_range;
+    std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
+    std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;
 };
 
 struct GuileRuntimeSnapshot {
