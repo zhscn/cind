@@ -45,10 +45,18 @@ the command executes.
 
 ## Keymaps and default bindings
 
-A keymap is a named trie from key sequences to command IDs and may inherit one parent keymap. A trie
-node is either a complete command or a prefix; binding a command where a prefix exists, or extending
-an existing command binding, fails during configuration. Child bindings override exact parent
-bindings while unbound branches inherit parent behavior. Parent cycles are rejected.
+A keymap is a named trie from key sequences to command IDs and may inherit one explicitly assigned
+parent keymap. A trie entry is either a complete command, an inline prefix, or a reference to
+another named keymap used as a prefix map. Writing an entry replaces the previous command or prefix
+at that sequence; extending a command replaces it with an inline prefix. Child bindings override
+exact parent bindings while unbound branches inherit parent behavior. Parent and prefix-map
+relationship cycles are rejected.
+
+A keymap may remap one command ID to another without rebinding its key sequences. Layered lookup
+first resolves a command or prefix, then scans the same active layers once for a remap. The
+replacement is not remapped recursively. This keeps minor-mode command substitution separate from
+key placement and makes the complete layered resolver a side-effect-free query shared by dispatch
+and scripting.
 
 The focused target supplies an ordered keymap stack from most specific to least specific. A document
 window uses Window, View, Buffer, enabled minor modes in reverse activation order, major mode,

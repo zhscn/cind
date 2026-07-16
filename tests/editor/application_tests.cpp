@@ -7,6 +7,7 @@
 #include "editor/location_list_mode.hpp"
 #include "editor/runtime.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -449,8 +450,14 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     CHECK(local_calls == 2);
     CHECK(base_calls == 2);
 
-    CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-x", local), std::invalid_argument);
-    CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-a C-b", local), std::invalid_argument);
+    runtime.keymaps().bind(base_map, "C-x", local);
+    CHECK(runtime.keymaps().resolve(base_map, *parse_key_sequence("C-x")).command == local);
+    CHECK(runtime.keymaps().resolve(base_map, chord).kind == KeymapMatchKind::None);
+
+    runtime.keymaps().bind(base_map, "C-a C-b", local);
+    CHECK(runtime.keymaps().resolve(base_map, *parse_key_sequence("C-a")).kind ==
+          KeymapMatchKind::Prefix);
+    CHECK(runtime.keymaps().resolve(base_map, *parse_key_sequence("C-a C-b")).command == local);
 }
 
 TEST_CASE("command loop contains command exceptions") {
@@ -511,6 +518,83 @@ TEST_CASE("keymap parents compose sparse local bindings") {
         return format_key_sequence(binding.sequence) == "C-a" && binding.command == inherited;
     }));
     CHECK_THROWS_AS(runtime.keymaps().set_parent(parent, child), std::invalid_argument);
+}
+
+TEST_CASE("keymaps compose explicit prefix maps and one-pass command remaps") {
+    EditorRuntime runtime;
+    const auto command = [&](std::string name) {
+        return runtime.commands().define(
+            std::move(name), [](CommandContext&, const CommandInvocation&) -> CommandResult {
+                return CommandCompleted{};
+            });
+    };
+    const CommandId original = command("motion.original");
+    const CommandId replacement = command("motion.replacement");
+    const CommandId recursive_replacement = command("motion.recursive-replacement");
+    const CommandId direct = command("motion.direct");
+
+    const KeymapId base = runtime.keymaps().define("base");
+    const KeymapId goto_map = runtime.keymaps().define("goto");
+    const KeymapId minor = runtime.keymaps().define("minor");
+    runtime.keymaps().bind(goto_map, "x", original);
+    runtime.keymaps().bind_prefix(base, "g", goto_map, "Goto");
+    runtime.keymaps().bind_remap(minor, original, replacement);
+    runtime.keymaps().bind_remap(base, replacement, recursive_replacement);
+
+    const std::vector<KeymapId> layers{minor, base};
+    const KeymapMatch resolved = runtime.keymaps().resolve(layers, *parse_key_sequence("g x"));
+    CHECK(resolved.kind == KeymapMatchKind::Command);
+    CHECK(resolved.command == replacement);
+    CHECK(resolved.source == base);
+
+    const BufferId buffer = runtime.buffers().create({.name = "keymap-test",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    CommandLoop loop(runtime);
+    loop.set_keymap_layers(
+        {{.keymap = minor, .scope = "minor"}, {.keymap = base, .scope = "base"}});
+    const KeySequence prefixed = *parse_key_sequence("g x");
+    CHECK(loop.dispatch(prefixed.front(), context).status == CommandLoopStatus::Prefix);
+    const CommandLoopResult dispatched = loop.dispatch(prefixed.back(), context);
+    CHECK(dispatched.status == CommandLoopStatus::Executed);
+    CHECK(dispatched.command == replacement);
+
+    const std::vector<KeymapCompletion> root = runtime.keymaps().completions(base, {});
+    const auto goto_prefix = std::ranges::find_if(root, [](const KeymapCompletion& completion) {
+        return format_key_stroke(completion.key) == "g";
+    });
+    REQUIRE(goto_prefix != root.end());
+    CHECK(goto_prefix->prefix);
+    CHECK(goto_prefix->prefix_keymap == goto_map);
+    CHECK(goto_prefix->label == "Goto");
+    const std::vector<KeymapCompletion> nested =
+        runtime.keymaps().completions(base, *parse_key_sequence("g"));
+    REQUIRE(nested.size() == 1);
+    CHECK(nested.front().command == original);
+
+    const std::vector<KeymapEntry> entries = runtime.keymaps().entries(base);
+    CHECK(std::ranges::any_of(entries, [goto_map](const KeymapEntry& entry) {
+        return format_key_sequence(entry.sequence) == "g" &&
+               entry.kind == KeymapEntryKind::Prefix && entry.prefix_keymap == goto_map &&
+               entry.label == "Goto";
+    }));
+    CHECK(std::ranges::any_of(entries, [original](const KeymapEntry& entry) {
+        return format_key_sequence(entry.sequence) == "g x" && entry.command == original;
+    }));
+    CHECK(runtime.keymaps().remaps(minor) ==
+          std::vector<KeymapRemap>{{.command = original, .replacement = replacement}});
+
+    runtime.keymaps().bind(base, "g", direct);
+    CHECK(runtime.keymaps().resolve(base, *parse_key_sequence("g")).command == direct);
+    CHECK(runtime.keymaps().resolve(base, *parse_key_sequence("g x")).kind ==
+          KeymapMatchKind::None);
+    runtime.keymaps().bind_prefix(base, "g", goto_map, "Goto");
+    CHECK_THROWS_AS(runtime.keymaps().bind_prefix(goto_map, "z", base), std::invalid_argument);
 }
 
 TEST_CASE("focused text input moves and deletes by grapheme cluster") {

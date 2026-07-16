@@ -23,8 +23,8 @@ void CommandLoop::set_keymap_layers(std::vector<KeymapLayer> layers) {
 void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
     for (const KeymapId keymap : keymaps) {
         (void)runtime_->keymaps().definition(keymap);
-        for (const KeymapBinding& binding : runtime_->keymaps().bindings(keymap)) {
-            if (binding.sequence.size() != 1) {
+        for (const KeymapEntry& entry : runtime_->keymaps().entries(keymap)) {
+            if (entry.kind != KeymapEntryKind::Command || entry.sequence.size() != 1) {
                 throw std::invalid_argument("override keymaps require single-key bindings");
             }
         }
@@ -35,9 +35,21 @@ void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
 
 CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) {
     const KeySequence single{key};
+    std::vector<KeymapId> active_keymaps = override_keymaps_;
+    active_keymaps.reserve(override_keymaps_.size() + keymap_layers_.size());
+    for (const KeymapLayer& layer : keymap_layers_) {
+        active_keymaps.push_back(layer.keymap);
+    }
     for (const KeymapId keymap : override_keymaps_) {
-        const KeymapMatch override = runtime_->keymaps().resolve(keymap, single);
+        KeymapMatch override = runtime_->keymaps().resolve(keymap, single);
         if (override.kind == KeymapMatchKind::Command) {
+            for (const KeymapId active : active_keymaps) {
+                if (const std::optional<CommandId> replacement =
+                        runtime_->keymaps().remap(active, override.command)) {
+                    override.command = *replacement;
+                    break;
+                }
+            }
             const std::string sequence_text = format_key_stroke(key);
             cancel_pending();
             return invoke(override.command, context, {}, sequence_text);
@@ -47,18 +59,15 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
     const bool continued_sequence = !pending_.empty();
     pending_.push_back(key);
     const std::string sequence_text = format_key_sequence(pending_);
-    KeymapMatch match;
-    std::optional<KeymapId> matched_keymap;
+    std::vector<KeymapId> layers;
+    layers.reserve(keymap_layers_.size());
     for (const KeymapLayer& layer : keymap_layers_) {
-        match = runtime_->keymaps().resolve(layer.keymap, pending_);
-        if (match.kind != KeymapMatchKind::None) {
-            matched_keymap = layer.keymap;
-            break;
-        }
+        layers.push_back(layer.keymap);
     }
+    const KeymapMatch match = runtime_->keymaps().resolve(layers, pending_);
 
     if (match.kind == KeymapMatchKind::Prefix) {
-        pending_keymap_ = matched_keymap;
+        pending_keymap_ = match.source;
         return {.status = CommandLoopStatus::Prefix,
                 .consumed = true,
                 .command = std::nullopt,
