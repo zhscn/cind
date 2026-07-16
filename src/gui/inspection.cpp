@@ -322,6 +322,14 @@ void append_region(std::string& output, const ui::Region& region) {
         } else {
             output += "null";
         }
+        output += std::format(",\"first_item\":{},\"total_items\":{}", region.popup->first_item,
+                              region.popup->total_items);
+        output += ",\"selected_item\":";
+        if (region.popup->selected_item) {
+            output += std::to_string(*region.popup->selected_item);
+        } else {
+            output += "null";
+        }
         output += ",\"items\":[";
         for (std::size_t index = 0; index < region.popup->items.size(); ++index) {
             if (index != 0) {
@@ -698,6 +706,31 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                                                  region_role_name(region.role), index));
             }
         }
+        (void)region.popup.transform([&](const ui::Region::PopupContent& popup) {
+            if (popup.first_item > popup.total_items ||
+                popup.items.size() > popup.total_items - popup.first_item) {
+                violations.emplace_back("popup viewport is outside the item range");
+            }
+            if (popup.selected_item && *popup.selected_item >= popup.total_items) {
+                violations.emplace_back("popup selection is outside the item range");
+            } else if (popup.selected_item &&
+                       (*popup.selected_item < popup.first_item ||
+                        *popup.selected_item >= popup.first_item + popup.items.size())) {
+                violations.emplace_back("popup selection is outside the visible viewport");
+            }
+            if (region.prims.size() != popup.items.size() + 1) {
+                violations.emplace_back("popup items do not match scene primitives");
+            } else {
+                for (std::size_t index = 0; index < popup.items.size(); ++index) {
+                    const bool selected = popup.selected_item == popup.first_item + index;
+                    if (region.prims[index + 1].selected != selected) {
+                        violations.emplace_back("popup selection does not match scene primitives");
+                        break;
+                    }
+                }
+            }
+            return true;
+        });
     }
     if (frame.render.display_scale <= 0.0F) {
         violations.emplace_back("render display scale must be positive");
@@ -1244,6 +1277,17 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                << ',' << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
                << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
                << " prims=" << region.prims.size() << '\n';
+        if (region.popup) {
+            output << "      list first=" << region.popup->first_item
+                   << " visible=" << region.popup->items.size()
+                   << " total=" << region.popup->total_items << " selected=";
+            if (region.popup->selected_item) {
+                output << *region.popup->selected_item;
+            } else {
+                output << "none";
+            }
+            output << '\n';
+        }
         for (std::size_t index = 0; index < region.prims.size(); ++index) {
             const ui::Prim& prim = region.prims[index];
             output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)

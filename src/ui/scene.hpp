@@ -2,6 +2,7 @@
 
 #include "ui/style.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -84,6 +85,9 @@ struct Region {
     struct PopupContent {
         std::string title;
         std::optional<std::string> input;
+        std::size_t first_item = 0;
+        std::size_t total_items = 0;
+        std::optional<std::size_t> selected_item;
         std::vector<PopupItem> items;
     };
     struct StatusContent {
@@ -113,8 +117,9 @@ struct Region {
 
     // Structured popup content lets graphical presenters use independent
     // spacing and typography while terminal presenters keep consuming the
-    // cell primitives above. Items correspond to primitives 1..N; primitive
-    // zero is the popup title.
+    // cell primitives above. `items` is the visible window beginning at
+    // `first_item`; the corresponding primitives are 1..N and primitive zero
+    // is the popup title. Selection and total size use global item indices.
     std::optional<PopupContent> popup;
 
     // Structured status-bar content for graphical presenters, mirroring the

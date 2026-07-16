@@ -93,9 +93,15 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     Region status{
         RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
     Region popup{
-        RegionRole::Popup, {0, 5, 1, 5}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
-    popup.prims.push_back(
-        {0, 0, "help ", StyleClass::Popup, false, PrimKind::Text, "popup:item:0"});
+        RegionRole::Popup, {0, 5, 2, 5}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back({0, 0, "help ", StyleClass::Popup, false, PrimKind::Text, "popup:title"});
+    popup.prims.push_back({1, 0, "save ", StyleClass::Popup, true, PrimKind::Text, "popup:item:0"});
+    popup.popup = Region::PopupContent{.title = "Help",
+                                       .input = "",
+                                       .first_item = 0,
+                                       .total_items = 1,
+                                       .selected_item = 0,
+                                       .items = {{.label = "file.save", .detail = "command"}}};
     scene.regions = {body, status, popup};
     RenderStateSnapshot render{
         .video_driver = "wayland",
@@ -170,7 +176,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":12") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":13") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -185,6 +191,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"editor.default\"") != std::string::npos);
+    CHECK(snapshot.find("\"first_item\":0,\"total_items\":1,\"selected_item\":0") !=
+          std::string::npos);
     CHECK(snapshot.find("\"violations\":[]") != std::string::npos);
 
     const InspectionResponse caret = run_inspection_query(hub, "get editor.caret");

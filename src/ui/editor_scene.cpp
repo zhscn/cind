@@ -11,7 +11,8 @@
 
 namespace cind::ui {
 
-Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport) {
+Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport,
+                           ListViewport& popup_viewport) {
     const int text_rows = std::max(1, input.rows - 2);
     const double visible_text_rows =
         std::clamp(input.visible_text_rows > 0.0F ? static_cast<double>(input.visible_text_rows)
@@ -154,13 +155,17 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         {0, 0, std::string(input.echo), StyleClass::Message, false, PrimKind::Text, "echo:main"});
 
     std::optional<Region> popup;
+    constexpr std::size_t maximum_popup_items = 12;
+    const std::optional<std::size_t> popup_selection =
+        input.popup_selection && *input.popup_selection < input.popup_items.size()
+            ? input.popup_selection
+            : std::nullopt;
     if (!input.popup_items.empty() && input.cols >= 16 && text_rows >= 3) {
-        const std::size_t visible_count = std::min<std::size_t>(
-            input.popup_items.size(), static_cast<std::size_t>(std::min(14, text_rows - 1)));
-        std::size_t first = 0;
-        if (input.popup_selection && *input.popup_selection >= visible_count) {
-            first = *input.popup_selection - visible_count + 1;
-        }
+        const std::size_t capacity = static_cast<std::size_t>(
+            std::min<int>(static_cast<int>(maximum_popup_items), text_rows - 1));
+        const std::size_t visible_count = std::min(input.popup_items.size(), capacity);
+        popup_viewport.reveal(popup_selection, input.popup_items.size(), capacity);
+        const std::size_t first = popup_viewport.first_item();
         const int popup_width = std::min(input.cols - 4, 88);
         const int popup_rows = static_cast<int>(visible_count) + 1;
         const int popup_row = std::max(0, text_rows - popup_rows);
@@ -172,6 +177,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         if (input.popup_input) {
             popup->popup->input = std::string(*input.popup_input);
         }
+        popup->popup->first_item = first;
+        popup->popup->total_items = input.popup_items.size();
+        popup->popup->selected_item = popup_selection;
         popup->popup->items.reserve(visible_count);
 
         std::string title = std::string(clip_to_display_width(input.popup_title, popup_width));
@@ -189,9 +197,11 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
             row = std::string(clip_to_display_width(row, popup_width));
             row.append(static_cast<std::size_t>(popup_width - display_width(row)), ' ');
             popup->prims.push_back({static_cast<int>(offset) + 1, 0, std::move(row),
-                                    StyleClass::Popup, input.popup_selection == index,
-                                    PrimKind::Text, std::format("popup:item:{}", index)});
+                                    StyleClass::Popup, popup_selection == index, PrimKind::Text,
+                                    std::format("popup:item:{}", index)});
         }
+    } else {
+        popup_viewport.reveal(std::nullopt, 0, 0);
     }
 
     if (input.echo_cursor_column) {

@@ -119,21 +119,24 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                 text.remove_prefix(static_cast<std::size_t>(grapheme.bytes));
             }
         }
-        if (!region.popup) {
-            continue;
-        }
         if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&
             region.rect.col < scene.cols) {
-            const std::optional<std::string> popup_input = region.popup.and_then(
-                [](const Region::PopupContent& popup) { return popup.input; });
-            std::string& signature =
-                cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
-            signature.push_back('\x1e');
-            append_integer(signature, static_cast<std::uint32_t>(popup_input.has_value()));
-            if (popup_input) {
-                append_integer(signature, static_cast<std::uint32_t>(popup_input.value().size()));
-                signature.append(popup_input.value());
-            }
+            (void)region.popup.transform([&](const Region::PopupContent& popup) {
+                std::string& signature =
+                    cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+                signature.push_back('\x1e');
+                append_integer(signature, static_cast<std::uint32_t>(popup.input.has_value()));
+                if (popup.input) {
+                    append_integer(signature, static_cast<std::uint32_t>(popup.input->size()));
+                    signature.append(*popup.input);
+                }
+                append_integer(signature, popup.first_item);
+                append_integer(signature, popup.total_items);
+                append_integer(signature,
+                               static_cast<std::uint32_t>(popup.selected_item.has_value()));
+                append_integer(signature, popup.selected_item.value_or(0));
+                return true;
+            });
         }
     }
     return cells;

@@ -120,9 +120,7 @@ struct PopupLayout {
     SkRect header;
     float row_height = 0.0F;
     float rows_top = 0.0F;
-    std::size_t first_item = 0;
     std::size_t item_count = 0;
-    std::optional<std::size_t> selected;
     bool input_active = false;
     std::string input;
 };
@@ -181,17 +179,6 @@ std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport 
         return std::nullopt;
     }
 
-    std::optional<std::size_t> selected;
-    for (std::size_t index = 0; index < content.items.size(); ++index) {
-        const std::size_t primitive_index = index + 1;
-        if (primitive_index < popup->prims.size() && popup->prims[primitive_index].selected) {
-            selected = index;
-            break;
-        }
-    }
-    const std::size_t anchor = selected.value_or(0);
-    const std::size_t first_item =
-        anchor < item_count ? 0 : std::min(anchor - item_count + 1, available_items - item_count);
     const float panel_height = fixed_height + static_cast<float>(item_count) * row_height;
     const float panel_x = (viewport.width - panel_width) * 0.5F;
     const float panel_y = input_active ? picker_top : grid_bottom - margin - panel_height;
@@ -209,9 +196,7 @@ std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport 
                        .header = header,
                        .row_height = row_height,
                        .rows_top = header.bottom() + panel_header_gap,
-                       .first_item = first_item,
                        .item_count = item_count,
-                       .selected = selected,
                        .input_active = input_active,
                        .input = content.input.value_or(std::string{})};
 }
@@ -628,7 +613,7 @@ struct SkiaPresenter::Impl {
                 const std::string prompt = popup_prompt(popup);
                 const std::string full_text = popup_input_text(popup, layout.input);
                 const std::string count =
-                    std::format("{}/{}", layout.selected.value_or(0) + 1, popup.items.size());
+                    std::format("{}/{}", popup.selected_item.value_or(0) + 1, popup.total_items);
                 canvas.save();
                 canvas.clipRect(layout.header);
                 float text_x = popup_text_left(layout, full_text, cell_width);
@@ -660,7 +645,7 @@ struct SkiaPresenter::Impl {
         }
 
         for (std::size_t visible_index = 0; visible_index < layout.item_count; ++visible_index) {
-            const std::size_t item_index = layout.first_item + visible_index;
+            const std::size_t item_index = visible_index;
             const std::size_t primitive_index = item_index + 1;
             if (item_index >= popup.items.size() || primitive_index >= region.prims.size()) {
                 break;

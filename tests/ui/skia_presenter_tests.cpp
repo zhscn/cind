@@ -336,6 +336,9 @@ TEST_CASE("Skia presenter gives interactive popup independent elevated layout") 
     popup.popup = Region::PopupContent{
         .title = "Command: ",
         .input = "ed",
+        .first_item = 0,
+        .total_items = 3,
+        .selected_item = 0,
         .items = {{.label = "edit.undo", .detail = "command"},
                   {.label = "edit.redo", .detail = "command"},
                   {.label = "edit.yank", .detail = "command"}},

@@ -403,7 +403,7 @@ private:
                                                     .popup_items = popup_items,
                                                     .popup_selection = popup_selection,
                                                     .popup_input = popup_input},
-                                                   viewport);
+                                                   viewport, popup_viewport_);
         state.top_line = viewport.top_line;
         state.top_line_offset = viewport.top_line_offset;
         state.left_column = viewport.left_column;
@@ -424,6 +424,7 @@ private:
     BufferId signs_buffer_;
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
+    ui::ListViewport popup_viewport_;
     bool command_keep_message_ = false;
     bool prompt_active_ = false;
     std::string prompt_label_;

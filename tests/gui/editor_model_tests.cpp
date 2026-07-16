@@ -158,6 +158,42 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
                               [](const ui::Prim& primitive) { return primitive.selected; }));
 }
 
+TEST_CASE("command palette retains a global selection and stable list viewport") {
+    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
+    ui::Scene scene = model.compose(20, 100);
+    const ui::Region* popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup);
+    const std::size_t capacity = popup->popup->items.size();
+    REQUIRE(capacity > 1);
+    const std::size_t downward_steps = capacity + 4;
+    REQUIRE(popup->popup->total_items > downward_steps);
+    CHECK(popup->popup->selected_item == 0);
+
+    for (std::size_t step = 0; step < downward_steps; ++step) {
+        REQUIRE(model.handle_key(KeyStroke::character_key(U'n', KeyModifier::Control), 10));
+        scene = model.compose(20, 100);
+    }
+    popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup);
+    CHECK(popup->popup->selected_item == downward_steps);
+    CHECK(popup->popup->first_item == downward_steps - capacity + 1);
+    CHECK(popup->prims.back().selected);
+
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'p', KeyModifier::Control), 10));
+    scene = model.compose(20, 100);
+    popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup);
+    CHECK(popup->popup->selected_item == downward_steps - 1);
+    CHECK(popup->popup->first_item == downward_steps - capacity + 1);
+    CHECK_FALSE(popup->prims.back().selected);
+    CHECK(popup->prims[capacity - 1].selected);
+}
+
 TEST_CASE("background save captures one revision without blocking newer edits") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /

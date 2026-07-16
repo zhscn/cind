@@ -44,6 +44,7 @@ private:
     BufferId sign_buffer_;
     RevisionId sign_revision_ = static_cast<RevisionId>(-1);
     std::uint32_t sign_generation_ = static_cast<std::uint32_t>(-1);
+    ui::ListViewport popup_viewport_;
     int last_rows_ = 24;
     std::string preedit_;
 };

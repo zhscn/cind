@@ -6,6 +6,7 @@
 #include "ui/char_width.hpp"
 #include "ui/compose_line.hpp"
 #include "ui/line_signs.hpp"
+#include "ui/list_view.hpp"
 #include "ui/text_position.hpp"
 
 #include <string>
@@ -38,6 +39,22 @@ std::string flat_text(const std::vector<Run>& runs) {
 }
 
 } // namespace
+
+TEST_CASE("list viewport retains its origin while selection remains visible") {
+    ListViewport viewport;
+    constexpr std::size_t capacity = 12;
+
+    for (std::size_t selection = 0; selection <= capacity; ++selection) {
+        viewport.reveal(selection, 30, capacity);
+    }
+    CHECK(viewport.first_item() == 1);
+
+    viewport.reveal(capacity - 1, 30, capacity);
+    CHECK(viewport.first_item() == 1);
+
+    viewport.reveal(0, 30, capacity);
+    CHECK(viewport.first_item() == 0);
+}
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
     CHECK(code_point_width(U'a') == 1);

@@ -114,6 +114,31 @@ TEST_CASE("scene damage tracks active line and overlay geometry") {
     CHECK(tracker.update(scene).full_repaint);
 }
 
+TEST_CASE("scene damage tracks structured popup list metadata") {
+    Scene scene = text_scene("line");
+    scene.rows = 4;
+    scene.regions.front().rect.rows = 2;
+    scene.regions.back().rect.row = 3;
+    Region popup{
+        RegionRole::Popup, {0, 2, 2, 8}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    popup.prims.push_back({0, 0, "Command", StyleClass::Popup, false});
+    popup.prims.push_back({1, 0, "first", StyleClass::Popup, true});
+    popup.popup = Region::PopupContent{.title = "Command",
+                                       .input = "",
+                                       .first_item = 0,
+                                       .total_items = 20,
+                                       .selected_item = 0,
+                                       .items = {{.label = "first", .detail = "command"}}};
+    scene.regions.push_back(std::move(popup));
+
+    SceneDamageTracker tracker;
+    REQUIRE(tracker.update(scene).full_repaint);
+    scene.regions.back().popup->total_items = 21;
+    const SceneDamage changed = tracker.update(scene);
+    CHECK_FALSE(changed.full_repaint);
+    CHECK_FALSE(changed.cell_rects.empty());
+}
+
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {
     Scene scene;
     scene.rows = 4;

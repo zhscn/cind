@@ -3,6 +3,7 @@
 #include "cpp_lexer/token_buffer.hpp"
 #include "document/text.hpp"
 #include "ui/line_signs.hpp"
+#include "ui/list_view.hpp"
 #include "ui/scene.hpp"
 
 #include <optional>
@@ -59,6 +60,7 @@ struct EditorSceneInput {
 // enough to reveal the complete caret line. A fractional viewport position is
 // represented as a negative grid offset, allowing either edge to contain a
 // partial row. All geometry is in monospace line and cell units.
-Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport);
+Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport,
+                           ListViewport& popup_viewport);
 
 } // namespace cind::ui

@@ -88,7 +88,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                                 .popup_items = popup_items,
                                                 .popup_selection = popup_selection,
                                                 .popup_input = popup_input},
-                                               viewport);
+                                               viewport, popup_viewport_);
     state.top_line = viewport.top_line;
     state.top_line_offset = viewport.top_line_offset;
     state.left_column = viewport.left_column;

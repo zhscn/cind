@@ -136,6 +136,6 @@ The GUI inspector exposes `editor.command_loop`, `editor.interaction`, `editor.b
 override maps, pending keys, the owning keymap, repeat count, and last command. Interaction state
 includes prompt kind, input, provider, selection, generation, errors, and candidates. Buffer state
 includes resource and lifecycle data; Window state identifies each Window's bound View and Buffer.
-The popup is also represented as `scene.region.popup`, including structured title, input and item
-metadata alongside its terminal-compatible primitives, selection, cell geometry, surface, and
-overlay anchor.
+The popup is also represented as `scene.region.popup`, including structured title, input, visible
+item window, global item count and selection alongside its terminal-compatible primitives, cell
+geometry, surface, and overlay anchor.
