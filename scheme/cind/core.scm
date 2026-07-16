@@ -75,6 +75,31 @@
                 (command-completed))
               (command-error (string-append "unknown buffer '" name "'")))))))
 
+(define (vector-index-of values target)
+  (let loop ((index 0))
+    (cond ((= index (vector-length values)) #f)
+          ((equal? (vector-ref values index) target) index)
+          (else (loop (+ index 1))))))
+
+(define (buffer-switch-relative host context delta)
+  (let* ((buffers (open-buffer-ids host))
+         (count (vector-length buffers)))
+    (if (< count 2)
+        (command-completed)
+        (let ((current (vector-index-of buffers (context-buffer context))))
+          (if (not current)
+              (command-error "current buffer is not open")
+              (begin
+                (display-buffer! host (context-window context)
+                                 (vector-ref buffers (modulo (+ current delta) count)))
+                (command-completed)))))))
+
+(define (buffer-kill host context force?)
+  (let ((error (kill-buffer! host (context-buffer context) force?)))
+    (if error
+        (command-error error)
+        (command-completed))))
+
 (define (goto-line context invocation)
   (interaction 'text "Go to line: " "" "line-numbers" "" #t
                "cursor.goto-line.accept"))
@@ -199,6 +224,22 @@
                 (buffer-switch-accept host context invocation))
               #f)
         (list "buffer.switch" buffer-switch #f)
+        (list "buffer.next"
+              (lambda (context invocation)
+                (buffer-switch-relative host context 1))
+              #f)
+        (list "buffer.previous"
+              (lambda (context invocation)
+                (buffer-switch-relative host context -1))
+              #f)
+        (list "buffer.kill"
+              (lambda (context invocation)
+                (buffer-kill host context #f))
+              #f)
+        (list "buffer.force-kill"
+              (lambda (context invocation)
+                (buffer-kill host context #t))
+              #f)
         (list "cursor.goto-line.accept"
               (lambda (context invocation)
                 (goto-line-accept host context invocation))

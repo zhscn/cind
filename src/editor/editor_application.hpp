@@ -263,7 +263,6 @@ private:
     void cancel_open(std::string_view resource);
     void finish_save(BufferId buffer, std::error_code error);
     void mark_saved(BufferId buffer, Text content);
-    void switch_relative(int delta);
 
     EditorRuntime runtime_;
     GuileRuntime guile_;

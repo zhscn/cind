@@ -114,7 +114,18 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .save_buffer = [this](BufferId buffer) { save(buffer); }}),
+           .save_buffer = [this](BufferId buffer) { save(buffer); },
+           .open_buffers =
+               [this] {
+                   std::vector<BufferId> result;
+                   result.reserve(buffers_.size());
+                   for (const std::unique_ptr<BufferState>& state : buffers_) {
+                       result.push_back(state->buffer);
+                   }
+                   return result;
+               },
+           .kill_buffer = [this](BufferId buffer,
+                                 bool force) { return kill_buffer(buffer, force); }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1476,21 +1487,6 @@ void EditorApplication::register_commands() {
         session().set_selection({.anchor = previous.start, .head = previous.end});
     });
 
-    define("buffer.next", [this](const CommandInvocation&) { switch_relative(1); });
-    define("buffer.previous", [this](const CommandInvocation&) { switch_relative(-1); });
-    runtime_.commands().define(
-        "buffer.kill", [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            std::expected<void, std::string> result = kill_buffer(buffer_id());
-            return result ? CommandResult{CommandCompleted{}}
-                          : CommandResult{std::unexpected(CommandError{result.error()})};
-        });
-    runtime_.commands().define(
-        "buffer.force-kill", [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            std::expected<void, std::string> result = kill_buffer(buffer_id(), true);
-            return result ? CommandResult{CommandCompleted{}}
-                          : CommandResult{std::unexpected(CommandError{result.error()})};
-        });
-
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
         throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));
@@ -1887,27 +1883,6 @@ void EditorApplication::mark_saved(BufferId buffer, Text content) {
     runtime_.buffers().get(buffer).mark_saved(std::move(content));
     ++state.save_generation;
     quit_armed_ = false;
-}
-
-void EditorApplication::switch_relative(int delta) {
-    if (buffers_.size() < 2 || delta == 0) {
-        return;
-    }
-    const auto active =
-        std::ranges::find_if(buffers_, [this](const std::unique_ptr<BufferState>& state) {
-            return state->buffer == buffer_id();
-        });
-    if (active == buffers_.end()) {
-        throw std::logic_error("active window displays an untracked buffer");
-    }
-    const std::int64_t size = static_cast<std::int64_t>(buffers_.size());
-    std::int64_t next =
-        (static_cast<std::int64_t>(active - buffers_.begin()) + static_cast<std::int64_t>(delta)) %
-        size;
-    if (next < 0) {
-        next += size;
-    }
-    (void)switch_buffer(buffers_[static_cast<std::size_t>(next)]->buffer);
 }
 
 } // namespace cind

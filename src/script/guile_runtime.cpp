@@ -533,6 +533,55 @@ SCM save_buffer(SCM host_object, SCM buffer_value) {
     return SCM_UNSPECIFIED;
 }
 
+SCM open_buffers(SCM host_object) {
+    HostLease& host = require_host(host_object, "open-buffer-ids");
+    if (!host.services.open_buffers) {
+        scm_misc_error("open-buffer-ids", "open-buffer snapshot capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::vector<BufferId> buffers = host.services.open_buffers();
+        SCM result = scm_c_make_vector(buffers.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < buffers.size(); ++index) {
+            scm_c_vector_set_x(result, index,
+                               entity_id(buffers[index].slot, buffers[index].generation));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("open-buffer-ids", exception.what());
+    } catch (...) {
+        scm_misc_error("open-buffer-ids", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM kill_buffer(SCM host_object, SCM buffer_value, SCM force_value) {
+    if (!scheme_boolean(force_value)) {
+        scm_wrong_type_arg_msg("kill-buffer!", 3, force_value, "boolean");
+    }
+    HostLease& host = require_host(host_object, "kill-buffer!");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "kill-buffer!", 2);
+    if (!host.services.kill_buffer) {
+        scm_misc_error("kill-buffer!", "buffer-kill capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> removed =
+            host.services.kill_buffer(buffer, scheme_true(force_value));
+        if (!removed) {
+            return scm_from_utf8_string(removed.error().c_str());
+        }
+        return SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("kill-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("kill-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -564,10 +613,14 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_resource));
     (void)scm_c_define_gsubr("save-buffer!", 2, 0, 0, reinterpret_cast<scm_t_subr>(save_buffer));
+    (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(open_buffers));
+    (void)scm_c_define_gsubr("kill-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(kill_buffer));
     scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "buffer-resource",
                  "path-parent", "directory-path?", "path-as-directory", "display-buffer!",
                  "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-                 "start-project-search!", "set-buffer-resource!", "save-buffer!", nullptr);
+                 "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+                 "kill-buffer!", nullptr);
 }
 
 void initialize_guile() {

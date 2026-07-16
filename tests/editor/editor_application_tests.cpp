@@ -765,16 +765,28 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     CHECK(application.session().snapshot().content().to_string() == "Afirst");
     CHECK(application.session().caret().value == 1);
     CHECK(application.session().view().viewport().top_line_offset == doctest::Approx(0.25F));
-    REQUIRE(application.switch_buffer(second));
+    send_keys(application, "C-x Right");
     CHECK(application.session().snapshot().content().to_string() == "Bsecond");
     CHECK(application.session().view().viewport().left_column == 3);
+    send_keys(application, "C-x Left");
+    CHECK(application.buffer_id() == first);
+    send_keys(application, "C-x Right");
+    CHECK(application.buffer_id() == second);
 
     const std::expected<void, std::string> reused = application.open_file(second_path.string());
     REQUIRE(reused.has_value());
     CHECK(application.buffer_id() == second);
     CHECK(application.buffer_count() == 2);
-    CHECK_FALSE(application.kill_buffer(second).has_value());
-    CHECK(application.kill_buffer(second, true).has_value());
+    send_keys(application, "C-x k");
+    CHECK(application.message() == "buffer has unsaved changes");
+    CHECK(application.buffer_id() == second);
+    const CommandId force_kill =
+        application.runtime().commands().find("buffer.force-kill").value_or(CommandId{});
+    REQUIRE(force_kill);
+    CommandContext kill_context(application.runtime(), application.window_id(),
+                                application.buffer_id(), application.view_id());
+    const CommandResult killed = application.runtime().commands().invoke(force_kill, kill_context);
+    REQUIRE(killed.has_value());
     CHECK(application.buffer_count() == 1);
     CHECK(application.buffer_id() == first);
 

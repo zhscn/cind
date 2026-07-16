@@ -26,6 +26,8 @@ struct GuileHostServices {
         start_project_search;
     std::function<std::expected<void, std::string>(BufferId, std::string)> set_buffer_resource;
     std::function<void(BufferId)> save_buffer;
+    std::function<std::vector<BufferId>()> open_buffers;
+    std::function<std::expected<void, std::string>(BufferId, bool)> kill_buffer;
 };
 
 struct GuileRuntimeSnapshot {

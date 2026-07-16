@@ -59,6 +59,8 @@ The native module exports:
 (start-project-search! host project-id window-id query)
 (set-buffer-resource! host buffer-id path)
 (save-buffer! host buffer-id)
+(open-buffer-ids host)
+(kill-buffer! host buffer-id force?)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -84,6 +86,11 @@ raise a Scheme condition when the ID or requested transition is invalid.
 display name and attaches the matching project. File commands use these primitives to keep prompt
 and save-as policy in Scheme. `save-buffer!` snapshots the identified buffer and schedules the
 native atomic-write pipeline without consulting frontend focus.
+
+`open-buffer-ids` returns the application-owned buffers in lifecycle order. `kill-buffer!` applies
+the native buffer/view/window teardown contract and returns `#f` on success or an expected error
+string. Scheme uses the snapshot to implement wrap-around next/previous policy and turns kill
+refusals into ordinary command errors.
 
 `ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
 `open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the
@@ -113,10 +120,10 @@ foreign registry ID. Scheme conditions and bridge exceptions become `CommandErro
 retained in `editor.scripting.last_error`.
 
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
-interactions, buffer switching and its accept command, goto-line parsing and movement, project file
-selection and project search with project-aware enabled predicates, and key-help selection and
-message presentation. File and project commands compose native storage, indexing and search
-capabilities without owning asynchronous state.
+interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and
+movement, project file selection and project search with project-aware enabled predicates, and
+key-help selection and message presentation. File and project commands compose native storage,
+indexing and search capabilities without owning asynchronous state.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

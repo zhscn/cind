@@ -119,6 +119,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool buffer_resource_set = false;
     BufferId saved_buffer;
     bool buffer_saved = false;
+    BufferId killed_buffer;
+    bool kill_forced = false;
+    bool buffer_killed = false;
+    std::string kill_error;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -164,10 +168,21 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              [&](BufferId target_buffer) {
                  saved_buffer = target_buffer;
                  buffer_saved = true;
-             }});
+             },
+         .open_buffers = [&] { return std::vector<BufferId>{buffer, other}; },
+         .kill_buffer = [&](BufferId target_buffer,
+                            bool force) -> std::expected<void, std::string> {
+             if (!kill_error.empty()) {
+                 return std::unexpected(kill_error);
+             }
+             killed_buffer = target_buffer;
+             kill_forced = force;
+             buffer_killed = true;
+             return {};
+         }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 17);
+    CHECK(*installed == 21);
     const CommandId save = require_command(runtime, "file.save");
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -258,6 +273,36 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(displayed.first == window);
     CHECK(displayed.second == other);
 
+    buffer_displayed = false;
+    const CommandResult next_buffer =
+        runtime.commands().invoke(require_command(runtime, "buffer.next"), context);
+    REQUIRE(next_buffer.has_value());
+    REQUIRE(buffer_displayed);
+    CHECK(displayed.first == window);
+    CHECK(displayed.second == other);
+
+    const CommandResult killed =
+        runtime.commands().invoke(require_command(runtime, "buffer.kill"), context);
+    REQUIRE(killed.has_value());
+    REQUIRE(buffer_killed);
+    CHECK(killed_buffer == buffer);
+    CHECK_FALSE(kill_forced);
+
+    buffer_killed = false;
+    const CommandResult force_killed =
+        runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
+    REQUIRE(force_killed.has_value());
+    REQUIRE(buffer_killed);
+    CHECK(killed_buffer == buffer);
+    CHECK(kill_forced);
+
+    kill_error = "buffer has unsaved changes";
+    const CommandResult refused_kill =
+        runtime.commands().invoke(require_command(runtime, "buffer.kill"), context);
+    REQUIRE_FALSE(refused_kill.has_value());
+    CHECK(refused_kill.error().message == "buffer has unsaved changes");
+    kill_error.clear();
+
     const CommandResult unknown_buffer = runtime.commands().invoke(
         require_command(runtime, "buffer.switch.accept"), context,
         CommandInvocation{.arguments = {std::string("missing")}, .repeat_count = std::nullopt});
@@ -340,6 +385,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 17);
+    CHECK(snapshot.scripted_commands == 21);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
