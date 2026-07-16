@@ -18,22 +18,23 @@ bool same_scroll_top(float left, float right) {
 } // namespace
 
 void ScrollSceneTimeline::insert(ui::Scene scene, float scroll_top) {
+    auto owned_scene = std::make_shared<const ui::Scene>(std::move(scene));
     const auto position = std::ranges::lower_bound(
         keyframes_, scroll_top, {}, [](const Keyframe& keyframe) { return keyframe.scroll_top; });
     if (position != keyframes_.end() && same_scroll_top(position->scroll_top, scroll_top)) {
-        position->scene = std::move(scene);
+        position->scene = std::move(owned_scene);
         position->scroll_top = scroll_top;
         return;
     }
     if (position != keyframes_.begin()) {
         const auto previous = std::prev(position);
         if (same_scroll_top(previous->scroll_top, scroll_top)) {
-            previous->scene = std::move(scene);
+            previous->scene = std::move(owned_scene);
             previous->scroll_top = scroll_top;
             return;
         }
     }
-    keyframes_.insert(position, {.scene = std::move(scene), .scroll_top = scroll_top});
+    keyframes_.insert(position, {.scene = std::move(owned_scene), .scroll_top = scroll_top});
 }
 
 void ScrollSceneTimeline::retain_motion_range(float visual_scroll_top, float target_scroll_top) {
@@ -68,8 +69,7 @@ void ScrollSceneTimeline::retain_motion_range(float visual_scroll_top, float tar
     keyframes_ = std::move(retained);
 }
 
-std::vector<ScrollSceneLayer>
-ScrollSceneTimeline::layers_at(float visual_scroll_top) const {
+std::vector<ScrollSceneLayer> ScrollSceneTimeline::layers_at(float visual_scroll_top) const {
     if (keyframes_.empty()) {
         return {};
     }
@@ -93,9 +93,9 @@ ScrollSceneTimeline::layers_at(float visual_scroll_top) const {
     }
 
     std::vector<ScrollSceneLayer> result;
-    result.push_back({.scene = &lower->scene, .scroll_top = lower->scroll_top});
+    result.push_back({.scene = lower->scene, .scroll_top = lower->scroll_top});
     if (upper != lower) {
-        result.push_back({.scene = &upper->scene, .scroll_top = upper->scroll_top});
+        result.push_back({.scene = upper->scene, .scroll_top = upper->scroll_top});
     }
     return result;
 }

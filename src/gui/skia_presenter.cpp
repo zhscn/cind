@@ -1487,7 +1487,7 @@ struct SkiaPresenter::Impl {
         if (animation) {
             animation_documents.reserve(animation->scroll_layers.size());
             for (const SkiaScrollLayer& layer : animation->scroll_layers) {
-                if (layer.scene == nullptr) {
+                if (!layer.scene) {
                     throw std::invalid_argument("Skia scroll layer has no Scene");
                 }
                 animation_documents.push_back(prepare_document_layout(

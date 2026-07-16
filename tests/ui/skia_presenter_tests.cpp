@@ -670,11 +670,11 @@ TEST_CASE("Skia animation frames scroll only the grid") {
     presenter.render(target, width, height, target_pixels.data(), row_bytes);
 
     SkiaAnimationFrame start{
-        .scroll_layers = {{.scene = &source,
+        .scroll_layers = {{.scene = std::make_shared<Scene>(source),
                            .grid_offset_y = 0.0F,
                            .clip_top = 0.0F,
                            .clip_bottom = static_cast<float>(cell_height)},
-                          {.scene = &target,
+                          {.scene = std::make_shared<Scene>(target),
                            .grid_offset_y = static_cast<float>(cell_height),
                            .clip_top = static_cast<float>(cell_height),
                            .clip_bottom = grid_bottom}},
@@ -684,7 +684,7 @@ TEST_CASE("Skia animation frames scroll only the grid") {
     CHECK(animated_pixels == source_pixels);
 
     SkiaAnimationFrame finish{
-        .scroll_layers = {{.scene = &target,
+        .scroll_layers = {{.scene = std::make_shared<Scene>(target),
                            .grid_offset_y = 0.0F,
                            .clip_top = 0.0F,
                            .clip_bottom = grid_bottom}},
@@ -694,11 +694,11 @@ TEST_CASE("Skia animation frames scroll only the grid") {
     CHECK(animated_pixels == target_pixels);
 
     SkiaAnimationFrame middle{
-        .scroll_layers = {{.scene = &source,
+        .scroll_layers = {{.scene = std::make_shared<Scene>(source),
                            .grid_offset_y = -static_cast<float>(cell_height) / 2.0F,
                            .clip_top = 0.0F,
                            .clip_bottom = static_cast<float>(cell_height) / 2.0F},
-                          {.scene = &target,
+                          {.scene = std::make_shared<Scene>(target),
                            .grid_offset_y = static_cast<float>(cell_height) / 2.0F,
                            .clip_top = static_cast<float>(cell_height) / 2.0F,
                            .clip_bottom = grid_bottom}},
@@ -756,7 +756,7 @@ TEST_CASE("Skia scroll keeps the current cursor at both viewport edges") {
 
         presenter.render_animated(
             scene,
-            {.scroll_layers = {{.scene = &scene,
+            {.scroll_layers = {{.scene = std::make_shared<Scene>(scene),
                                 .grid_offset_y =
                                     content_offset_rows * static_cast<float>(cell_height),
                                 .clip_top = 0.0F,
@@ -814,11 +814,11 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
 
     presenter.render_animated(
         target,
-        {.scroll_layers = {{.scene = &lower,
+        {.scroll_layers = {{.scene = std::make_shared<Scene>(lower),
                             .grid_offset_y = -0.75F * static_cast<float>(cell_height),
                             .clip_top = 0.0F,
                             .clip_bottom = 0.25F * static_cast<float>(cell_height)},
-                           {.scene = &upper,
+                           {.scene = std::make_shared<Scene>(upper),
                             .grid_offset_y = 0.25F * static_cast<float>(cell_height),
                             .clip_top = 0.25F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},
@@ -875,11 +875,11 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
 
     presenter.render_animated(
         target,
-        {.scroll_layers = {{.scene = &lower,
+        {.scroll_layers = {{.scene = std::make_shared<Scene>(lower),
                             .grid_offset_y = -0.999F * static_cast<float>(cell_height),
                             .clip_top = 0.0F,
                             .clip_bottom = 0.001F * static_cast<float>(cell_height)},
-                           {.scene = &middle,
+                           {.scene = std::make_shared<Scene>(middle),
                             .grid_offset_y = 0.001F * static_cast<float>(cell_height),
                             .clip_top = 0.001F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},
@@ -889,11 +889,11 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
         width, height, before.data(), row_bytes);
     presenter.render_animated(
         target,
-        {.scroll_layers = {{.scene = &middle,
+        {.scroll_layers = {{.scene = std::make_shared<Scene>(middle),
                             .grid_offset_y = -0.001F * static_cast<float>(cell_height),
                             .clip_top = 0.0F,
                             .clip_bottom = 0.999F * static_cast<float>(cell_height)},
-                           {.scene = &target,
+                           {.scene = std::make_shared<Scene>(target),
                             .grid_offset_y = 0.999F * static_cast<float>(cell_height),
                             .clip_top = 0.999F * static_cast<float>(cell_height),
                             .clip_bottom = grid_bottom}},

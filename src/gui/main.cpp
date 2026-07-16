@@ -1,11 +1,9 @@
 #include "cli/style_loader.hpp"
 #include "gui/editor_model.hpp"
+#include "gui/frame_controller.hpp"
 #include "gui/inspect_server.hpp"
 #include "gui/inspection.hpp"
-#include "gui/motion.hpp"
-#include "gui/scroll_timeline.hpp"
 #include "gui/skia_presenter.hpp"
-#include "ui/scene_layout.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -38,42 +36,7 @@ namespace cind::gui {
 
 namespace {
 
-struct PresentationDamageRect {
-    SkiaLogicalRect logical;
-    OutputPixelRectSnapshot output;
-};
-
-struct OutputSize {
-    int width = 0;
-    int height = 0;
-};
-
-using AnimationClock = std::chrono::steady_clock;
-
-constexpr std::chrono::milliseconds view_animation_duration{70};
-constexpr float scroll_spring_frequency = 32.0F;
-constexpr float scroll_position_tolerance = 0.001F;
-constexpr float scroll_velocity_tolerance = 0.01F;
 constexpr float wheel_lines_per_step = 3.0F;
-
-float animation_progress(AnimationClock::time_point started, std::chrono::milliseconds duration,
-                         AnimationClock::time_point now) {
-    const auto elapsed = std::chrono::duration<float>(now - started);
-    const auto total = std::chrono::duration<float>(duration);
-    return std::clamp(elapsed.count() / total.count(), 0.0F, 1.0F);
-}
-
-float ease_out_cubic(float progress) {
-    const float remaining = 1.0F - progress;
-    return 1.0F - remaining * remaining * remaining;
-}
-
-bool same_rect(const SkiaLogicalRect& left, const SkiaLogicalRect& right) {
-    constexpr float tolerance = 0.01F;
-    return std::abs(left.x - right.x) < tolerance && std::abs(left.y - right.y) < tolerance &&
-           std::abs(left.width - right.width) < tolerance &&
-           std::abs(left.height - right.height) < tolerance;
-}
 
 std::string_view cursor_owner_name(SkiaCursorOwner owner) {
     switch (owner) {
@@ -89,68 +52,6 @@ std::string_view cursor_owner_name(SkiaCursorOwner owner) {
         return "other";
     }
     return "none";
-}
-
-bool touches_or_intersects(const OutputPixelRectSnapshot& left,
-                           const OutputPixelRectSnapshot& right) {
-    return left.x <= right.x + right.width && right.x <= left.x + left.width &&
-           left.y <= right.y + right.height && right.y <= left.y + left.height;
-}
-
-OutputPixelRectSnapshot joined(const OutputPixelRectSnapshot& left,
-                               const OutputPixelRectSnapshot& right) {
-    const int first_x = std::min(left.x, right.x);
-    const int first_y = std::min(left.y, right.y);
-    const int last_x = std::max(left.x + left.width, right.x + right.width);
-    const int last_y = std::max(left.y + left.height, right.y + right.height);
-    return {.x = first_x, .y = first_y, .width = last_x - first_x, .height = last_y - first_y};
-}
-
-SkiaLogicalRect joined(const SkiaLogicalRect& left, const SkiaLogicalRect& right) {
-    const float first_x = std::min(left.x, right.x);
-    const float first_y = std::min(left.y, right.y);
-    const float last_x = std::max(left.x + left.width, right.x + right.width);
-    const float last_y = std::max(left.y + left.height, right.y + right.height);
-    return {.x = first_x, .y = first_y, .width = last_x - first_x, .height = last_y - first_y};
-}
-
-std::vector<PresentationDamageRect>
-presentation_damage(std::span<const SkiaLogicalRect> logical_rects, int pixel_width,
-                    int pixel_height, float scale) {
-    std::vector<PresentationDamageRect> result;
-    for (const SkiaLogicalRect& logical : logical_rects) {
-        const int first_x =
-            std::clamp(static_cast<int>(std::floor(logical.x * scale)), 0, pixel_width);
-        const int first_y =
-            std::clamp(static_cast<int>(std::floor(logical.y * scale)), 0, pixel_height);
-        const int last_x = std::clamp(
-            static_cast<int>(std::ceil((logical.x + logical.width) * scale)), 0, pixel_width);
-        const int last_y = std::clamp(
-            static_cast<int>(std::ceil((logical.y + logical.height) * scale)), 0, pixel_height);
-        if (last_x <= first_x || last_y <= first_y) {
-            continue;
-        }
-
-        PresentationDamageRect next{
-            .logical = logical,
-            .output = {.x = first_x,
-                       .y = first_y,
-                       .width = last_x - first_x,
-                       .height = last_y - first_y},
-        };
-        for (std::size_t index = 0; index < result.size();) {
-            if (!touches_or_intersects(result[index].output, next.output)) {
-                ++index;
-                continue;
-            }
-            next.logical = joined(result[index].logical, next.logical);
-            next.output = joined(result[index].output, next.output);
-            result.erase(result.begin() + static_cast<std::ptrdiff_t>(index));
-            index = 0;
-        }
-        result.push_back(next);
-    }
-    return result;
 }
 
 KeyModifiers key_modifiers(SDL_Keymod modifiers) {
@@ -277,7 +178,8 @@ struct TextureDeleter {
 class SdlWindow {
 public:
     SdlWindow(EditorModel& editor, SkiaPresenter& presenter, InspectionHub* inspection)
-        : editor_(editor), presenter_(presenter), inspection_(inspection) {
+        : editor_(editor), presenter_(presenter), frame_controller_(presenter),
+          inspection_(inspection) {
         constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
         window_.reset(SDL_CreateWindow("cind · Skia · Wayland", 1100, 760, flags));
         if (!window_) {
@@ -300,7 +202,7 @@ public:
         paint();
         while (!editor_.should_quit()) {
             SDL_Event event{};
-            const bool animating = animations_active();
+            const bool animating = frame_controller_.animations_active();
             const bool asynchronous = editor_.has_background_work() || animating;
             bool received = false;
             if (animating && vsync_enabled_) {
@@ -321,7 +223,7 @@ public:
                 }
             }
             repaint = editor_.poll_background_work() || repaint;
-            repaint = animations_active() || repaint;
+            repaint = frame_controller_.animations_active() || repaint;
             if (repaint && !editor_.should_quit()) {
                 paint();
             }
@@ -334,41 +236,7 @@ private:
         bool repaint = false;
     };
 
-    struct AnimationContext {
-        std::uint32_t window_slot = 0;
-        std::uint32_t window_generation = 0;
-        std::uint32_t view_slot = 0;
-        std::uint32_t view_generation = 0;
-        std::uint32_t buffer_slot = 0;
-        std::uint32_t buffer_generation = 0;
-        RevisionId revision = 0;
-
-        bool operator==(const AnimationContext&) const = default;
-    };
-
-    struct ScrollAnimation {
-        ScrollSceneTimeline timeline;
-        SpringState motion;
-        float target_scroll_top = 0.0F;
-        float initial_distance = 0.0F;
-        AnimationClock::time_point sampled_at;
-    };
-
-    struct ViewAnimation {
-        SkiaViewPresentation from;
-        SkiaViewPresentation target;
-        AnimationClock::time_point started;
-    };
-
-    struct AnimationPresentation {
-        bool active = false;
-        bool scroll_finished = false;
-        bool view_finished = false;
-        SkiaAnimationFrame frame;
-        RenderAnimationSnapshot snapshot;
-    };
-
-    static AnimationContext animation_context(const EditorStateSnapshot& editor) {
+    static FrameIdentity frame_identity(const EditorStateSnapshot& editor) {
         for (const OpenWindowStateSnapshot& window : editor.windows) {
             if (!window.active) {
                 continue;
@@ -543,189 +411,6 @@ private:
         return scale > 0.0F ? scale : 1.0F;
     }
 
-    bool animations_active() const {
-        return scroll_animation_.has_value() || view_animation_.has_value();
-    }
-
-    SpringState scroll_state(const ScrollAnimation& animation,
-                             AnimationClock::time_point now) const {
-        const float elapsed = std::chrono::duration<float>(now - animation.sampled_at).count();
-        return advance_critical_spring(animation.motion,
-                                       {.target = animation.target_scroll_top,
-                                        .angular_frequency = scroll_spring_frequency,
-                                        .elapsed_seconds = elapsed});
-    }
-
-    SkiaViewPresentation view_presentation(const ViewAnimation& animation,
-                                           AnimationClock::time_point now) const {
-        const float progress =
-            ease_out_cubic(animation_progress(animation.started, view_animation_duration, now));
-        return interpolate_view_presentation(animation.from, animation.target, progress);
-    }
-
-    void update_animation_targets(const ui::Scene& scene, const SkiaViewPresentation& target_view,
-                                  float scroll_top, const AnimationContext& context,
-                                  bool geometry_changed, AnimationClock::time_point now) {
-        if (geometry_changed || !last_scene_ || !last_scroll_top_ || !last_animation_context_ ||
-            *last_animation_context_ != context) {
-            scroll_animation_.reset();
-            view_animation_.reset();
-        } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
-            const float line_delta = scroll_top - *last_scroll_top_;
-            if (std::abs(line_delta) <= 4) {
-                const SpringState motion = scroll_animation_
-                                               ? scroll_state(*scroll_animation_, now)
-                                               : SpringState{.position = *last_scroll_top_};
-                ScrollSceneTimeline timeline;
-                if (scroll_animation_) {
-                    timeline = std::move(scroll_animation_->timeline);
-                }
-                timeline.insert(*last_scene_, *last_scroll_top_);
-                timeline.insert(scene, scroll_top);
-                timeline.retain_motion_range(motion.position, scroll_top);
-                scroll_animation_ = ScrollAnimation{
-                    .timeline = std::move(timeline),
-                    .motion = motion,
-                    .target_scroll_top = scroll_top,
-                    .initial_distance = std::abs(scroll_top - motion.position),
-                    .sampled_at = now,
-                };
-            } else {
-                scroll_animation_.reset();
-            }
-            view_animation_.reset();
-        } else if (scroll_animation_) {
-            const SpringState motion = scroll_state(*scroll_animation_, now);
-            scroll_animation_->timeline.insert(scene, scroll_top);
-            scroll_animation_->timeline.retain_motion_range(motion.position,
-                                                            scroll_animation_->target_scroll_top);
-        } else if (!scroll_animation_ && target_view.cursor_rect && last_view_target_ &&
-                   last_view_target_->cursor_rect &&
-                   (target_view.cursor_owner != last_view_target_->cursor_owner ||
-                    !same_rect(*last_view_target_->cursor_rect, *target_view.cursor_rect))) {
-            const SkiaViewPresentation from =
-                view_animation_ ? view_presentation(*view_animation_, now) : *last_view_target_;
-            const float maximum_x_distance = static_cast<float>(presenter_.cell_width() * 4);
-            const float maximum_y_distance = static_cast<float>(presenter_.cell_height() * 2);
-            if (from.cursor_rect && from.cursor_owner == target_view.cursor_owner &&
-                std::abs(target_view.cursor_rect->x - from.cursor_rect->x) <= maximum_x_distance &&
-                std::abs(target_view.cursor_rect->y - from.cursor_rect->y) <= maximum_y_distance) {
-                view_animation_ =
-                    ViewAnimation{.from = from, .target = target_view, .started = now};
-            } else {
-                view_animation_.reset();
-            }
-        } else if (!target_view.cursor_rect) {
-            view_animation_.reset();
-        }
-
-        last_scene_ = scene;
-        last_scroll_top_ = scroll_top;
-        last_animation_context_ = context;
-        last_view_target_ = target_view;
-    }
-
-    AnimationPresentation animation_presentation(const SkiaViewPresentation& target_view,
-                                                 AnimationClock::time_point now) const {
-        AnimationPresentation presentation;
-        presentation.frame.view = target_view;
-        if (scroll_animation_) {
-            const SpringState state = scroll_state(*scroll_animation_, now);
-            const bool at_rest =
-                spring_at_rest(state, {.target = scroll_animation_->target_scroll_top,
-                                       .position_tolerance = scroll_position_tolerance,
-                                       .velocity_tolerance = scroll_velocity_tolerance});
-            const float visual_top =
-                at_rest ? scroll_animation_->target_scroll_top : state.position;
-            presentation.active = true;
-            presentation.scroll_finished = at_rest;
-            const float cell_height = static_cast<float>(presenter_.cell_height());
-            const std::vector<ScrollSceneLayer> layers =
-                scroll_animation_->timeline.layers_at(visual_top);
-            for (const ScrollSceneLayer& layer : layers) {
-                presentation.frame.scroll_layers.push_back(
-                    {.scene = layer.scene,
-                     .grid_offset_y = (layer.scroll_top - visual_top) * cell_height,
-                     .clip_top = 0.0F,
-                     .clip_bottom = 0.0F});
-            }
-            if (vertical_layout_) {
-                const float grid_bottom = vertical_layout_->grid_clip_bottom();
-                const auto layer_origin = [&](std::size_t index) {
-                    const SkiaScrollLayer& positioned = presentation.frame.scroll_layers[index];
-                    return positioned.scene->grid_offset_rows * cell_height +
-                           positioned.grid_offset_y;
-                };
-                for (std::size_t index = 0; index < presentation.frame.scroll_layers.size();
-                     ++index) {
-                    SkiaScrollLayer& positioned = presentation.frame.scroll_layers[index];
-                    positioned.clip_top =
-                        index == 0 ? 0.0F : std::clamp(layer_origin(index), 0.0F, grid_bottom);
-                    positioned.clip_bottom =
-                        index + 1 == presentation.frame.scroll_layers.size()
-                            ? grid_bottom
-                            : std::clamp(layer_origin(index + 1), 0.0F, grid_bottom);
-                }
-            }
-            if (!presentation.scroll_finished) {
-                presentation.snapshot.active = true;
-                presentation.snapshot.scroll = true;
-                presentation.snapshot.scroll_progress = std::clamp(
-                    1.0F - std::abs(state.position - scroll_animation_->target_scroll_top) /
-                               std::max(scroll_animation_->initial_distance,
-                                        scroll_position_tolerance),
-                    0.0F, 1.0F);
-                presentation.snapshot.scroll_velocity = state.velocity;
-                presentation.snapshot.visual_scroll_top = visual_top;
-                presentation.snapshot.target_scroll_top = scroll_animation_->target_scroll_top;
-                presentation.snapshot.layers.reserve(presentation.frame.scroll_layers.size());
-                for (std::size_t index = 0; index < layers.size(); ++index) {
-                    presentation.snapshot.layers.push_back(
-                        {.scroll_top = layers[index].scroll_top,
-                         .grid_offset_y = presentation.frame.scroll_layers[index].grid_offset_y,
-                         .clip_top = presentation.frame.scroll_layers[index].clip_top,
-                         .clip_bottom = presentation.frame.scroll_layers[index].clip_bottom});
-                }
-            }
-        }
-        if (view_animation_) {
-            const float linear_progress =
-                animation_progress(view_animation_->started, view_animation_duration, now);
-            presentation.frame.view = view_presentation(*view_animation_, now);
-            presentation.active = true;
-            presentation.view_finished = linear_progress >= 1.0F;
-            if (!presentation.view_finished) {
-                presentation.snapshot.active = true;
-                presentation.snapshot.cursor = true;
-                presentation.snapshot.cursor_progress = ease_out_cubic(linear_progress);
-            }
-        }
-        if (presentation.snapshot.active) {
-            presentation.snapshot.cursor_owner =
-                cursor_owner_name(presentation.frame.view.cursor_owner);
-            presentation.snapshot.active_line_y = presentation.frame.view.active_line_y;
-            if (presentation.frame.view.cursor_rect) {
-                const SkiaLogicalRect& cursor = *presentation.frame.view.cursor_rect;
-                presentation.snapshot.cursor_rect = LogicalPixelRectSnapshot{
-                    .x = cursor.x,
-                    .y = cursor.y,
-                    .width = cursor.width,
-                    .height = cursor.height,
-                };
-            }
-        }
-        return presentation;
-    }
-
-    void finish_animation_frame(const AnimationPresentation& presentation) {
-        if (presentation.scroll_finished) {
-            scroll_animation_.reset();
-        }
-        if (presentation.view_finished) {
-            view_animation_.reset();
-        }
-    }
-
     void paint() {
         int pixel_width = 0;
         int pixel_height = 0;
@@ -749,9 +434,6 @@ private:
                                 1, rows_ - 2);
         editor_.set_frame_rows(rows_);
         ui::Scene scene = editor_.compose(rows_, columns_, visible_text_rows);
-        vertical_layout_.emplace(scene, presenter_.vertical_metrics(logical_output_height_));
-        const SkiaFrameLayout frame_layout =
-            presenter_.prepare_layout(scene, logical_output_width_, logical_output_height_);
 
         const std::size_t pixel_count =
             static_cast<std::size_t>(pixel_width) * static_cast<std::size_t>(pixel_height);
@@ -764,63 +446,49 @@ private:
             throw std::runtime_error("SDL texture pitch exceeds the supported range");
         }
 
-        const AnimationClock::time_point now = AnimationClock::now();
         EditorStateSnapshot editor_snapshot = editor_.inspect();
         const float scroll_top = static_cast<float>(editor_snapshot.viewport.top_line) +
                                  editor_snapshot.viewport.top_line_offset;
-        const SkiaViewPresentation target_view = presenter_.view_presentation(frame_layout);
-        update_animation_targets(scene, target_view, scroll_top, animation_context(editor_snapshot),
-                                 geometry_changed, now);
-        const AnimationPresentation animation = animation_presentation(target_view, now);
-        const std::optional<SkiaLogicalRect>& current_cursor = animation.frame.view.cursor_rect;
-        const ui::SceneDamage scene_damage = damage_tracker_.update(scene, geometry_changed);
-        std::vector<SkiaLogicalRect> logical_damage;
-        if (animation.active) {
-            logical_damage.push_back({.x = 0.0F,
-                                      .y = 0.0F,
-                                      .width = logical_output_width_,
-                                      .height = logical_output_height_});
-        } else {
-            logical_damage = presenter_.damage_rects(frame_layout, scene_damage);
-            append_cursor_transition_damage(logical_damage, presented_cursor_rect_, current_cursor);
-        }
-        const std::vector<PresentationDamageRect> damage =
-            presentation_damage(logical_damage, pixel_width, pixel_height, scale);
-        logical_damage.clear();
-        logical_damage.reserve(damage.size());
-        for (const PresentationDamageRect& rect : damage) {
-            logical_damage.push_back(rect.logical);
-        }
+        PresentedFrame frame = frame_controller_.build({.scene = std::move(scene),
+                                                        .identity = frame_identity(editor_snapshot),
+                                                        .scroll_top = scroll_top,
+                                                        .logical_width = logical_output_width_,
+                                                        .logical_height = logical_output_height_,
+                                                        .output_width = pixel_width,
+                                                        .output_height = pixel_height,
+                                                        .display_scale = scale,
+                                                        .geometry_changed = geometry_changed,
+                                                        .now = FrameClock::now()});
 
         SkiaRenderDiagnostics render_diagnostics;
-        if (animation.active) {
-            presenter_.render_animated(frame_layout, animation.frame, pixel_width, pixel_height,
+        if (frame.animated()) {
+            presenter_.render_animated(frame.layout(), frame.animation(), pixel_width, pixel_height,
                                        pixels_.data(), row_bytes, scale,
                                        inspection_ ? &render_diagnostics : nullptr);
-        } else if (scene_damage.full_repaint) {
-            presenter_.render(frame_layout, pixel_width, pixel_height, pixels_.data(), row_bytes,
+        } else if (frame.scene_damage().full_repaint) {
+            presenter_.render(frame.layout(), pixel_width, pixel_height, pixels_.data(), row_bytes,
                               scale, inspection_ ? &render_diagnostics : nullptr);
-        } else if (!logical_damage.empty()) {
-            presenter_.render_damage(frame_layout, pixel_width, pixel_height, pixels_.data(),
-                                     row_bytes, logical_damage, scale);
+        } else if (!frame.logical_damage().empty()) {
+            presenter_.render_damage(frame.layout(), pixel_width, pixel_height, pixels_.data(),
+                                     row_bytes, frame.logical_damage(), scale);
         }
 
         bool full_reference_match = true;
-        if (inspection_ && animation.active) {
+        if (inspection_ && frame.animated()) {
             diagnostic_pixels_.resize(pixel_count);
-            presenter_.render_animated(frame_layout, animation.frame, pixel_width, pixel_height,
+            presenter_.render_animated(frame.layout(), frame.animation(), pixel_width, pixel_height,
                                        diagnostic_pixels_.data(), row_bytes, scale);
             full_reference_match = diagnostic_pixels_ == pixels_;
-        } else if (inspection_ && !scene_damage.full_repaint) {
+        } else if (inspection_ && !frame.scene_damage().full_repaint) {
             diagnostic_pixels_.resize(pixel_count);
-            presenter_.render(frame_layout, pixel_width, pixel_height, diagnostic_pixels_.data(),
+            presenter_.render(frame.layout(), pixel_width, pixel_height, diagnostic_pixels_.data(),
                               row_bytes, scale, &render_diagnostics);
             full_reference_match = diagnostic_pixels_ == pixels_;
         }
 
         ensure_texture(pixel_width, pixel_height);
         const auto* pixel_bytes = reinterpret_cast<const std::byte*>(pixels_.data());
-        for (const PresentationDamageRect& rect : damage) {
+        for (const FrameDamageRect& rect : frame.damage()) {
             const SDL_Rect output_rect{.x = rect.output.x,
                                        .y = rect.output.y,
                                        .w = rect.output.width,
@@ -838,23 +506,17 @@ private:
             !SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr)) {
             throw std::runtime_error(std::format("SDL presentation failed: {}", SDL_GetError()));
         }
-        update_text_input_area(frame_layout, {.width = pixel_width, .height = pixel_height}, scale);
+        update_text_input_area(frame);
         SDL_RenderPresent(renderer_.get());
-        presented_cursor_rect_ = current_cursor;
         rendered_scale_ = scale;
-        publish_inspection(std::move(editor_snapshot), std::move(scene), pixel_width, pixel_height,
-                           scale, render_diagnostics, scene_damage,
-                           scene_damage.full_repaint || animation.active, animation.snapshot,
-                           damage, full_reference_match);
-        finish_animation_frame(animation);
+        publish_inspection(std::move(editor_snapshot), frame, render_diagnostics,
+                           full_reference_match);
+        frame_controller_.did_present(frame);
+        presented_frame_ = std::move(frame);
     }
 
-    void publish_inspection(EditorStateSnapshot editor_snapshot, ui::Scene scene, int pixel_width,
-                            int pixel_height, float scale, const SkiaRenderDiagnostics& diagnostics,
-                            const ui::SceneDamage& scene_damage, bool full_presentation_repaint,
-                            const RenderAnimationSnapshot& animation,
-                            const std::vector<PresentationDamageRect>& damage,
-                            bool full_reference_match) {
+    void publish_inspection(EditorStateSnapshot editor_snapshot, const PresentedFrame& frame,
+                            const SkiaRenderDiagnostics& diagnostics, bool full_reference_match) {
         if (!inspection_) {
             return;
         }
@@ -866,6 +528,31 @@ private:
             return LogicalPixelRectSnapshot{
                 .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height};
         };
+        const FrameAnimationState& frame_animation = frame.animation_state();
+        RenderAnimationSnapshot animation{
+            .active = frame_animation.active,
+            .scroll = frame_animation.scroll,
+            .cursor = frame_animation.cursor,
+            .cursor_owner = std::string(cursor_owner_name(frame_animation.cursor_owner)),
+            .scroll_progress = frame_animation.scroll_progress,
+            .cursor_progress = frame_animation.cursor_progress,
+            .scroll_velocity = frame_animation.scroll_velocity,
+            .visual_scroll_top = frame_animation.visual_scroll_top,
+            .target_scroll_top = frame_animation.target_scroll_top,
+            .layers = {},
+            .active_line_y = frame_animation.active_line_y,
+            .cursor_rect = std::nullopt,
+        };
+        animation.layers.reserve(frame_animation.layers.size());
+        for (const FrameScrollLayerState& layer : frame_animation.layers) {
+            animation.layers.push_back({.scroll_top = layer.scroll_top,
+                                        .grid_offset_y = layer.grid_offset_y,
+                                        .clip_top = layer.clip_top,
+                                        .clip_bottom = layer.clip_bottom});
+        }
+        if (frame_animation.cursor_rect) {
+            animation.cursor_rect = snapshot_rect(*frame_animation.cursor_rect);
+        }
         std::vector<PrimitiveRenderSnapshot> primitives;
         primitives.reserve(diagnostics.primitives.size());
         for (const SkiaPrimitiveRenderDiagnostics& primitive : diagnostics.primitives) {
@@ -966,22 +653,27 @@ private:
             echo_layout = std::move(snapshot);
         }
         RenderDamageSnapshot render_damage{
-            .full_repaint = full_presentation_repaint,
-            .damaged_cells = scene_damage.damaged_cells,
+            .full_repaint = frame.full_presentation_repaint(),
+            .damaged_cells = frame.scene_damage().damaged_cells,
             .damaged_output_pixels = 0,
             .output_fraction = 0.0,
             .full_reference_match = full_reference_match,
             .rects = {},
         };
-        render_damage.rects.reserve(damage.size());
-        for (const PresentationDamageRect& rect : damage) {
+        render_damage.rects.reserve(frame.damage().size());
+        for (const FrameDamageRect& rect : frame.damage()) {
             render_damage.damaged_output_pixels += static_cast<std::uint64_t>(rect.output.width) *
                                                    static_cast<std::uint64_t>(rect.output.height);
-            render_damage.rects.push_back(
-                {.logical = snapshot_rect(rect.logical), .output = rect.output});
+            render_damage.rects.push_back({
+                .logical = snapshot_rect(rect.logical),
+                .output = {.x = rect.output.x,
+                           .y = rect.output.y,
+                           .width = rect.output.width,
+                           .height = rect.output.height},
+            });
         }
-        const std::uint64_t output_pixels =
-            static_cast<std::uint64_t>(pixel_width) * static_cast<std::uint64_t>(pixel_height);
+        const std::uint64_t output_pixels = static_cast<std::uint64_t>(frame.output_width()) *
+                                            static_cast<std::uint64_t>(frame.output_height());
         if (output_pixels != 0) {
             render_damage.output_fraction =
                 static_cast<double>(render_damage.damaged_output_pixels) /
@@ -993,9 +685,9 @@ private:
                 SDL_GetRendererName(renderer_.get()) ? SDL_GetRendererName(renderer_.get()) : "",
             .window_width = window_width,
             .window_height = window_height,
-            .output_width = pixel_width,
-            .output_height = pixel_height,
-            .display_scale = scale,
+            .output_width = frame.output_width(),
+            .output_height = frame.output_height(),
+            .display_scale = frame.display_scale(),
             .cell_width = presenter_.cell_width(),
             .cell_height = presenter_.cell_height(),
             .rows = rows_,
@@ -1031,7 +723,7 @@ private:
             .echo_layout = std::move(echo_layout),
             .primitives = std::move(primitives),
         };
-        inspection_->publish(std::move(editor_snapshot), std::move(scene), std::move(render),
+        inspection_->publish(std::move(editor_snapshot), frame.scene(), std::move(render),
                              last_repaint_event_sequence_);
     }
 
@@ -1044,18 +736,19 @@ private:
         return hash;
     }
 
-    void update_text_input_area(const SkiaFrameLayout& layout, OutputSize output, float scale) {
+    void update_text_input_area(const PresentedFrame& frame) {
         int window_width = 0;
         int window_height = 0;
         if (!SDL_GetWindowSize(window_.get(), &window_width, &window_height) || window_width <= 0 ||
             window_height <= 0) {
             return;
         }
+        const float scale = frame.display_scale();
         const float x_factor =
-            static_cast<float>(window_width) * scale / static_cast<float>(output.width);
+            static_cast<float>(window_width) * scale / static_cast<float>(frame.output_width());
         const float y_factor =
-            static_cast<float>(window_height) * scale / static_cast<float>(output.height);
-        const std::optional<SkiaLogicalRect> cursor = presenter_.cursor_rect(layout);
+            static_cast<float>(window_height) * scale / static_cast<float>(frame.output_height());
+        const std::optional<SkiaLogicalRect>& cursor = frame.view().cursor_rect;
         if (!cursor) {
             return;
         }
@@ -1078,36 +771,22 @@ private:
         const float logical_x = window_x / static_cast<float>(window_width) * logical_output_width_;
         const float logical_y =
             window_y / static_cast<float>(window_height) * logical_output_height_;
-        if (last_scene_) {
-            const SkiaFrameLayout layout = presenter_.prepare_layout(
-                *last_scene_, logical_output_width_, logical_output_height_);
-            return presenter_.hit_test(layout, {.x = logical_x, .y = logical_y});
+        if (presented_frame_) {
+            return presented_frame_->hit_test(presenter_, {.x = logical_x, .y = logical_y});
         }
-        return {
-            .row = vertical_layout_ ? vertical_layout_->row_at(logical_y) : 0,
-            .column = std::clamp(static_cast<int>(std::floor(
-                                     logical_x / static_cast<float>(presenter_.cell_width()))),
-                                 0, columns_ - 1),
-        };
+        return {};
     }
 
     EditorModel& editor_;
     SkiaPresenter& presenter_;
+    GuiFrameController frame_controller_;
     InspectionHub* inspection_ = nullptr;
     std::unique_ptr<SDL_Window, WindowDeleter> window_;
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
     std::vector<std::uint32_t> pixels_;
     std::vector<std::uint32_t> diagnostic_pixels_;
-    ui::SceneDamageTracker damage_tracker_;
-    std::optional<ui::SceneVerticalLayout> vertical_layout_;
-    std::optional<ScrollAnimation> scroll_animation_;
-    std::optional<ViewAnimation> view_animation_;
-    std::optional<ui::Scene> last_scene_;
-    std::optional<float> last_scroll_top_;
-    std::optional<AnimationContext> last_animation_context_;
-    std::optional<SkiaViewPresentation> last_view_target_;
-    std::optional<SkiaLogicalRect> presented_cursor_rect_;
+    std::optional<PresentedFrame> presented_frame_;
     int texture_width_ = 0;
     int texture_height_ = 0;
     float rendered_scale_ = 0.0F;
@@ -1150,17 +829,24 @@ std::pair<CppIndentStyle, std::string> load_style(const std::string& path) {
 // Wayland: the presenter rasterizes into an owned buffer, the reliable way to
 // capture the real chrome for font-smoothing comparisons. The vendored Skia is
 // built without encoders, so a tiny external step turns the dump into a PNG.
+struct ScreenshotGeometry {
+    float font_size = 16.0F;
+    int logical_width = 0;
+    int logical_height = 0;
+    float scale = 1.0F;
+};
+
 int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    const std::filesystem::path& output, SkiaFontSmoothing smoothing,
-                   float font_size, int logical_width, int logical_height, float scale) {
+                   ScreenshotGeometry geometry) {
     auto [style, style_origin] = load_style(path);
     EditorModel editor(path, read_file(path), style, std::move(style_origin), initial_line, {});
-    SkiaPresenter presenter("MonoLisaCode", font_size, {}, smoothing);
+    SkiaPresenter presenter("MonoLisaCode", geometry.font_size, {}, smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
     const float cell_width = static_cast<float>(presenter.cell_width());
-    const float logical_w = static_cast<float>(logical_width);
-    const float logical_h = static_cast<float>(logical_height);
+    const float logical_w = static_cast<float>(geometry.logical_width);
+    const float logical_h = static_cast<float>(geometry.logical_height);
     const int rows = std::max(3, static_cast<int>(std::ceil(logical_h / cell_height)));
     const int columns = std::max(20, static_cast<int>(std::ceil(logical_w / cell_width)));
     const float footer = presenter.status_bar_height() + presenter.echo_area_height();
@@ -1170,12 +856,12 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
     editor.set_frame_rows(rows);
     ui::Scene scene = editor.compose(rows, columns, visible_text_rows);
 
-    const int pixel_width = static_cast<int>(std::lround(logical_w * scale));
-    const int pixel_height = static_cast<int>(std::lround(logical_h * scale));
+    const int pixel_width = static_cast<int>(std::lround(logical_w * geometry.scale));
+    const int pixel_height = static_cast<int>(std::lround(logical_h * geometry.scale));
     const std::size_t row_bytes = static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(pixel_width) *
                                       static_cast<std::size_t>(pixel_height));
-    presenter.render(scene, pixel_width, pixel_height, pixels.data(), row_bytes, scale);
+    presenter.render(scene, pixel_width, pixel_height, pixels.data(), row_bytes, geometry.scale);
 
     std::ofstream out(output, std::ios::binary);
     if (!out) {
@@ -1299,8 +985,11 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (screenshot) {
-            return cind::gui::run_screenshot(*file, initial_line, *screenshot, smoothing, font_size,
-                                             900, 600, 1.5F);
+            return cind::gui::run_screenshot(*file, initial_line, *screenshot, smoothing,
+                                             {.font_size = font_size,
+                                              .logical_width = 900,
+                                              .logical_height = 600,
+                                              .scale = 1.5F});
         }
         if (inspect && !inspector_socket) {
             inspector_socket =

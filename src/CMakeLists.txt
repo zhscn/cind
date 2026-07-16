@@ -99,8 +99,6 @@ if (CIND_BUILD_GUI)
 
   add_library(cind_gui_model STATIC
     gui/editor_model.cpp
-    gui/motion.cpp
-    gui/scroll_timeline.cpp
   )
   target_include_directories(cind_gui_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(cind_gui_model PUBLIC cind_editor cind_ui)
@@ -111,11 +109,20 @@ if (CIND_BUILD_GUI)
   target_include_directories(cind_skia_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(cind_skia_ui PUBLIC cind_ui PRIVATE Skia::Skia)
 
+  add_library(cind_gui_presentation STATIC
+    gui/frame_controller.cpp
+    gui/motion.cpp
+    gui/scroll_timeline.cpp
+  )
+  target_include_directories(cind_gui_presentation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(cind_gui_presentation PUBLIC cind_skia_ui)
+
   add_executable(cind-gui
     gui/main.cpp
   )
   target_link_libraries(cind-gui PRIVATE
     cind_gui_model
+    cind_gui_presentation
     cind_inspection
     cind_skia_ui
     SDL3::SDL3

@@ -3,6 +3,7 @@
 #include "ui/scene.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace cind::gui {
@@ -11,7 +12,7 @@ namespace cind::gui {
 // selects the two Scenes adjacent to the current visual document position, so
 // a retargeted animation presents one continuous document canvas.
 struct ScrollSceneLayer {
-    const ui::Scene* scene = nullptr;
+    std::shared_ptr<const ui::Scene> scene;
     float scroll_top = 0.0F;
 };
 
@@ -24,7 +25,7 @@ public:
 
 private:
     struct Keyframe {
-        ui::Scene scene;
+        std::shared_ptr<const ui::Scene> scene;
         float scroll_top = 0.0F;
     };
 

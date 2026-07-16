@@ -101,7 +101,7 @@ void append_cursor_transition_damage(std::vector<SkiaLogicalRect>& damage,
                                      const std::optional<SkiaLogicalRect>& current_cursor);
 
 struct SkiaScrollLayer {
-    const ui::Scene* scene = nullptr;
+    std::shared_ptr<const ui::Scene> scene;
     float grid_offset_y = 0.0F;
     float clip_top = 0.0F;
     float clip_bottom = 0.0F;

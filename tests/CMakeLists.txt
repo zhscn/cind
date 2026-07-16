@@ -44,7 +44,11 @@ add_test(NAME scene_damage_tests COMMAND scene_damage_tests)
 
 if (CIND_BUILD_GUI)
   add_executable(editor_model_tests gui/editor_model_tests.cpp)
-  target_link_libraries(editor_model_tests PRIVATE cind_gui_model doctest::doctest)
+  target_link_libraries(editor_model_tests PRIVATE
+    cind_gui_model
+    cind_gui_presentation
+    doctest::doctest
+  )
   add_test(NAME editor_model_tests COMMAND editor_model_tests)
 
   add_executable(inspection_tests ui/inspection_tests.cpp)
@@ -59,6 +63,15 @@ if (CIND_BUILD_GUI)
     Skia::Skia
   )
   add_test(NAME skia_presenter_tests COMMAND skia_presenter_tests)
+
+  add_executable(frame_controller_tests gui/frame_controller_tests.cpp)
+  target_link_libraries(frame_controller_tests PRIVATE
+    cind_gui_presentation
+    doctest::doctest
+    Fontconfig::Fontconfig
+    Skia::Skia
+  )
+  add_test(NAME frame_controller_tests COMMAND frame_controller_tests)
 endif()
 
 add_executable(relex_tests lexer/relex_tests.cpp)
