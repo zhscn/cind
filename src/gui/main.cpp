@@ -432,7 +432,7 @@ private:
             std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows_ - 2));
         page_rows_ = std::clamp(static_cast<int>(std::floor(text_height / cell_height + 0.0001F)),
                                 1, rows_ - 2);
-        editor_.set_frame_rows(rows_);
+        editor_.layout_view(rows_, columns_, visible_text_rows);
         ui::Scene scene = editor_.compose(rows_, columns_, visible_text_rows);
 
         const std::size_t pixel_count =
@@ -853,7 +853,7 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
     const float text_height = std::max(0.0F, logical_h - footer);
     const float visible_text_rows =
         std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows - 2));
-    editor.set_frame_rows(rows);
+    editor.layout_view(rows, columns, visible_text_rows);
     ui::Scene scene = editor.compose(rows, columns, visible_text_rows);
 
     const int pixel_width = static_cast<int>(std::lround(logical_w * geometry.scale));

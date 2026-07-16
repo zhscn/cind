@@ -5,6 +5,7 @@
 #include "ui/ansi_renderer.hpp"
 #include "ui/char_width.hpp"
 #include "ui/compose_line.hpp"
+#include "ui/editor_scene.hpp"
 #include "ui/line_signs.hpp"
 #include "ui/list_view.hpp"
 #include "ui/text_position.hpp"
@@ -54,6 +55,63 @@ TEST_CASE("list viewport retains its origin while selection remains visible") {
 
     viewport.reveal(0, 30, capacity);
     CHECK(viewport.first_item() == 0);
+}
+
+TEST_CASE("editor scene layout is explicit and composition preserves view state") {
+    const Text text("zero\none\ntwo\nthree\nfour\n");
+    const LexOutput lexed = lex(text);
+    const TokenBuffer tokens(lexed.tokens);
+    const LineSigns signs;
+    EditorSceneViewState current{
+        .viewport = {.top_line = 3, .top_line_offset = 0.5F, .left_column = 4},
+        .popup = {},
+    };
+    current.popup.reveal(8, 20, 4);
+
+    const EditorSceneViewState laid_out = layout_editor_scene({.text = text,
+                                                               .caret = TextOffset{0},
+                                                               .rows = 6,
+                                                               .cols = 40,
+                                                               .visible_text_rows = 3.5F,
+                                                               .tab_width = 4,
+                                                               .reveal_caret = true,
+                                                               .popup_item_count = 20,
+                                                               .popup_selection = 8},
+                                                              current);
+    CHECK(current.viewport.top_line == 3);
+    CHECK(current.viewport.top_line_offset == doctest::Approx(0.5F));
+    CHECK(laid_out.viewport.top_line == 0);
+    CHECK(laid_out.viewport.top_line_offset == doctest::Approx(0.0F));
+
+    const std::vector<EditorPopupItem> items(
+        20, EditorPopupItem{.label = "command", .detail = "command"});
+    const EditorSceneInput input{.text = text,
+                                 .tokens = tokens,
+                                 .signs = signs,
+                                 .caret = TextOffset{0},
+                                 .selection = std::nullopt,
+                                 .rows = 6,
+                                 .cols = 40,
+                                 .visible_text_rows = 3.5F,
+                                 .tab_width = 4,
+                                 .path = {},
+                                 .dirty = false,
+                                 .revision = 0,
+                                 .style_origin = {},
+                                 .last_key = {},
+                                 .echo = {},
+                                 .echo_cursor_column = std::nullopt,
+                                 .echo_cursor_byte = std::nullopt,
+                                 .popup_title = "Command",
+                                 .popup_items = items,
+                                 .popup_selection = 8,
+                                 .popup_input = std::nullopt,
+                                 .popup_input_cursor = std::nullopt};
+    const Scene first = compose_editor_scene(input, laid_out);
+    const Scene second = compose_editor_scene(input, laid_out);
+    CHECK(first.grid_offset_rows == doctest::Approx(second.grid_offset_rows));
+    CHECK(laid_out.viewport.top_line == 0);
+    CHECK(laid_out.popup.first_item() == 6);
 }
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {

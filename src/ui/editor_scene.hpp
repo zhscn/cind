@@ -24,6 +24,23 @@ struct EditorPopupItem {
     std::string_view detail;
 };
 
+struct EditorSceneViewState {
+    EditorViewport viewport;
+    ListViewport popup;
+};
+
+struct EditorSceneLayoutInput {
+    const Text& text;
+    TextOffset caret;
+    int rows = 24;
+    int cols = 80;
+    float visible_text_rows = 0.0F;
+    int tab_width = 4;
+    bool reveal_caret = true;
+    std::size_t popup_item_count = 0;
+    std::optional<std::size_t> popup_selection;
+};
+
 struct EditorSceneInput {
     const Text& text;
     const TokenBuffer& tokens;
@@ -43,8 +60,6 @@ struct EditorSceneInput {
     std::string_view style_origin;
     std::string_view last_key;
     std::string_view echo;
-    bool reveal_caret = true;
-
     // A present value puts the caret on the echo line at this zero-based cell.
     std::optional<int> echo_cursor_column;
     // UTF-8 byte offset in `echo`, used by pixel frontends to shape the caret
@@ -60,11 +75,15 @@ struct EditorSceneInput {
     std::optional<std::size_t> popup_input_cursor;
 };
 
-// Composes the editor's standard five-region frame and scrolls `viewport` just
-// enough to reveal the complete caret line. A fractional viewport position is
-// represented as a negative grid offset, allowing either edge to contain a
-// partial row. All geometry is in monospace line and cell units.
-Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport,
-                           ListViewport& popup_viewport);
+// Resolves caret reveal and popup selection into retained view state. The
+// operation is pure: callers explicitly apply the returned state before
+// composing one or more frontend frames from it.
+EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
+                                         EditorSceneViewState current);
+
+// Composes the editor's standard five-region frame from immutable model and
+// view state. Fractional vertical scroll is represented as a negative grid
+// offset, allowing either edge to contain a partial row.
+Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewState& view);
 
 } // namespace cind::ui

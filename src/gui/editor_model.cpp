@@ -23,6 +23,45 @@ EditorModel::EditorModel(std::string path, std::string initial, CppIndentStyle s
     application_.set_message("SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
 }
 
+void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
+    EditSession& session = application_.session();
+    const DocumentSnapshot snapshot = session.snapshot();
+    const InteractionState* interaction = application_.interaction().state();
+    std::size_t popup_item_count = 0;
+    std::optional<std::size_t> popup_selection;
+    if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
+        popup_item_count = interaction->candidates.size();
+        popup_selection = interaction->candidates.empty()
+                              ? std::nullopt
+                              : std::optional<std::size_t>(interaction->selected);
+    } else {
+        popup_item_count = application_.pending_key_hints().size();
+    }
+
+    ViewportState& state = session.view().viewport();
+    ui::EditorSceneViewState view{
+        .viewport = {.top_line = state.top_line,
+                     .top_line_offset = state.top_line_offset,
+                     .left_column = state.left_column},
+        .popup = popup_viewport_,
+    };
+    view = ui::layout_editor_scene({.text = snapshot.content(),
+                                    .caret = session.caret(),
+                                    .rows = rows,
+                                    .cols = columns,
+                                    .visible_text_rows = visible_text_rows,
+                                    .tab_width = session.style().tab_width,
+                                    .reveal_caret = application_.reveal_caret(),
+                                    .popup_item_count = popup_item_count,
+                                    .popup_selection = popup_selection},
+                                   view);
+    state.top_line = view.viewport.top_line;
+    state.top_line_offset = view.viewport.top_line_offset;
+    state.left_column = view.viewport.left_column;
+    popup_viewport_ = view.popup;
+    last_rows_ = rows;
+}
+
 ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
@@ -69,38 +108,36 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             popup_items.push_back({.label = hint.key, .detail = detail});
         }
     }
-    ViewportState& state = session.view().viewport();
-    ui::EditorViewport viewport{.top_line = state.top_line,
-                                .top_line_offset = state.top_line_offset,
-                                .left_column = state.left_column};
-    ui::Scene scene = ui::compose_editor_scene({.text = snapshot.content(),
-                                                .tokens = session.analysis().tree.tokens(),
-                                                .signs = signs(),
-                                                .caret = session.caret(),
-                                                .selection = session.selection(),
-                                                .rows = rows,
-                                                .cols = columns,
-                                                .visible_text_rows = visible_text_rows,
-                                                .tab_width = session.style().tab_width,
-                                                .path = application_.path(),
-                                                .dirty = application_.dirty(),
-                                                .revision = snapshot.revision(),
-                                                .style_origin = application_.style_origin(),
-                                                .last_key = application_.last_key(),
-                                                .echo = echo,
-                                                .reveal_caret = application_.reveal_caret(),
-                                                .echo_cursor_column = echo_cursor,
-                                                .echo_cursor_byte = echo_cursor_byte,
-                                                .popup_title = popup_title,
-                                                .popup_items = popup_items,
-                                                .popup_selection = popup_selection,
-                                                .popup_input = popup_input,
-                                                .popup_input_cursor = popup_input_cursor},
-                                               viewport, popup_viewport_);
-    state.top_line = viewport.top_line;
-    state.top_line_offset = viewport.top_line_offset;
-    state.left_column = viewport.left_column;
-    return scene;
+    const ViewportState& state = session.view().viewport();
+    const ui::EditorSceneViewState view{
+        .viewport = {.top_line = state.top_line,
+                     .top_line_offset = state.top_line_offset,
+                     .left_column = state.left_column},
+        .popup = popup_viewport_,
+    };
+    return ui::compose_editor_scene({.text = snapshot.content(),
+                                     .tokens = session.analysis().tree.tokens(),
+                                     .signs = signs(),
+                                     .caret = session.caret(),
+                                     .selection = session.selection(),
+                                     .rows = rows,
+                                     .cols = columns,
+                                     .visible_text_rows = visible_text_rows,
+                                     .tab_width = session.style().tab_width,
+                                     .path = application_.path(),
+                                     .dirty = application_.dirty(),
+                                     .revision = snapshot.revision(),
+                                     .style_origin = application_.style_origin(),
+                                     .last_key = application_.last_key(),
+                                     .echo = echo,
+                                     .echo_cursor_column = echo_cursor,
+                                     .echo_cursor_byte = echo_cursor_byte,
+                                     .popup_title = popup_title,
+                                     .popup_items = popup_items,
+                                     .popup_selection = popup_selection,
+                                     .popup_input = popup_input,
+                                     .popup_input_cursor = popup_input_cursor},
+                                    view);
 }
 
 bool EditorModel::handle_key(KeyStroke key, int page_rows) {

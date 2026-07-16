@@ -11,21 +11,48 @@
 
 namespace cind::ui {
 
-Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewport,
-                           ListViewport& popup_viewport) {
-    const int text_rows = std::max(1, input.rows - 2);
-    const double visible_text_rows =
-        std::clamp(input.visible_text_rows > 0.0F ? static_cast<double>(input.visible_text_rows)
-                                                  : static_cast<double>(text_rows),
-                   1.0, static_cast<double>(text_rows));
+namespace {
+
+int scene_text_rows(int rows) {
+    return std::max(1, rows - 2);
+}
+
+struct SceneGeometry {
+    int rows = 0;
+    int cols = 0;
+};
+
+double scene_visible_text_rows(int text_rows, float visible_text_rows) {
+    return std::clamp(visible_text_rows > 0.0F ? static_cast<double>(visible_text_rows)
+                                               : static_cast<double>(text_rows),
+                      1.0, static_cast<double>(text_rows));
+}
+
+std::size_t scene_popup_capacity(SceneGeometry geometry, std::size_t item_count) {
+    constexpr std::size_t maximum_popup_items = 12;
+    const int text_rows = scene_text_rows(geometry.rows);
+    if (item_count == 0 || geometry.cols < 16 || text_rows < 3) {
+        return 0;
+    }
+    return std::min<std::size_t>(
+        item_count,
+        std::min<std::size_t>(maximum_popup_items, static_cast<std::size_t>(text_rows - 1)));
+}
+
+} // namespace
+
+EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
+                                         EditorSceneViewState current) {
+    const int text_rows = scene_text_rows(input.rows);
+    const double visible_text_rows = scene_visible_text_rows(text_rows, input.visible_text_rows);
     const int text_column = text_area_column(input.text.line_count());
     const int text_width = std::max(1, input.cols - text_column);
     const LinePosition caret_position = input.text.position(input.caret);
     const int caret_column = display_column(input.text, input.caret, input.tab_width);
 
-    double scroll_top =
-        static_cast<double>(viewport.top_line) +
-        std::clamp(static_cast<double>(viewport.top_line_offset), 0.0, std::nextafter(1.0, 0.0));
+    double scroll_top = static_cast<double>(current.viewport.top_line) +
+                        std::clamp(static_cast<double>(current.viewport.top_line_offset), 0.0,
+                                   std::nextafter(1.0, 0.0));
     if (input.reveal_caret) {
         const double caret_top = static_cast<double>(caret_position.line);
         const double caret_bottom = caret_top + 1.0;
@@ -46,15 +73,32 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
         line_offset = 0.0;
     }
     const double maximum_line = static_cast<double>(std::numeric_limits<std::uint32_t>::max());
-    viewport.top_line = static_cast<std::uint32_t>(std::min(integral_scroll, maximum_line));
-    viewport.top_line_offset = static_cast<float>(line_offset);
+    current.viewport.top_line = static_cast<std::uint32_t>(std::min(integral_scroll, maximum_line));
+    current.viewport.top_line_offset = static_cast<float>(line_offset);
 
-    if (caret_column < viewport.left_column) {
-        viewport.left_column = caret_column;
+    if (caret_column < current.viewport.left_column) {
+        current.viewport.left_column = caret_column;
     }
-    if (caret_column >= viewport.left_column + text_width) {
-        viewport.left_column = caret_column - text_width + 1;
+    if (caret_column >= current.viewport.left_column + text_width) {
+        current.viewport.left_column = caret_column - text_width + 1;
     }
+
+    current.popup.reveal(
+        input.popup_selection, input.popup_item_count,
+        scene_popup_capacity({.rows = input.rows, .cols = input.cols}, input.popup_item_count));
+    return current;
+}
+
+Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewState& view) {
+    const EditorViewport& viewport = view.viewport;
+    const int text_rows = scene_text_rows(input.rows);
+    const double visible_text_rows = scene_visible_text_rows(text_rows, input.visible_text_rows);
+    const int text_column = text_area_column(input.text.line_count());
+    const int text_width = std::max(1, input.cols - text_column);
+    const LinePosition caret_position = input.text.position(input.caret);
+    const int caret_column = display_column(input.text, input.caret, input.tab_width);
+
+    constexpr double offset_tolerance = 0.0001;
 
     Scene scene;
     scene.rows = input.rows;
@@ -161,17 +205,16 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     };
 
     std::optional<Region> popup;
-    constexpr std::size_t maximum_popup_items = 12;
     const std::optional<std::size_t> popup_selection =
         input.popup_selection && *input.popup_selection < input.popup_items.size()
             ? input.popup_selection
             : std::nullopt;
     if (!input.popup_items.empty() && input.cols >= 16 && text_rows >= 3) {
-        const std::size_t capacity = static_cast<std::size_t>(
-            std::min<int>(static_cast<int>(maximum_popup_items), text_rows - 1));
+        const std::size_t capacity = scene_popup_capacity({.rows = input.rows, .cols = input.cols},
+                                                          input.popup_items.size());
         const std::size_t visible_count = std::min(input.popup_items.size(), capacity);
-        popup_viewport.reveal(popup_selection, input.popup_items.size(), capacity);
-        const std::size_t first = popup_viewport.first_item();
+        const std::size_t maximum_first = input.popup_items.size() - visible_count;
+        const std::size_t first = std::min(view.popup.first_item(), maximum_first);
         const int popup_width = std::min(input.cols - 4, 88);
         const int popup_rows = static_cast<int>(visible_count) + 1;
         const int popup_row = std::max(0, text_rows - popup_rows);
@@ -209,8 +252,6 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
                                     StyleClass::Popup, popup_selection == index, PrimKind::Text,
                                     std::format("popup:item:{}", index)});
         }
-    } else {
-        popup_viewport.reveal(std::nullopt, 0, 0);
     }
 
     if (input.echo_cursor_column) {
@@ -219,7 +260,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     } else {
         const double caret_top = static_cast<double>(caret_position.line);
         const double caret_bottom = caret_top + 1.0;
-        scroll_top =
+        const double scroll_top =
             static_cast<double>(viewport.top_line) + static_cast<double>(viewport.top_line_offset);
         const bool vertical_visible =
             caret_top + offset_tolerance >= scroll_top &&

@@ -390,9 +390,25 @@ private:
             }
         }
         ViewportState& state = session().view().viewport();
-        ui::EditorViewport viewport{.top_line = state.top_line,
-                                    .top_line_offset = state.top_line_offset,
-                                    .left_column = state.left_column};
+        ui::EditorSceneViewState view{
+            .viewport = {.top_line = state.top_line,
+                         .top_line_offset = state.top_line_offset,
+                         .left_column = state.left_column},
+            .popup = popup_viewport_,
+        };
+        view = ui::layout_editor_scene({.text = snap.content(),
+                                        .caret = session().caret(),
+                                        .rows = size.rows,
+                                        .cols = size.cols,
+                                        .tab_width = tab_width(),
+                                        .reveal_caret = true,
+                                        .popup_item_count = popup_items.size(),
+                                        .popup_selection = popup_selection},
+                                       view);
+        state.top_line = view.viewport.top_line;
+        state.top_line_offset = view.viewport.top_line_offset;
+        state.left_column = view.viewport.left_column;
+        popup_viewport_ = view.popup;
         ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
                                                     .tokens = tokens(),
                                                     .signs = signs(),
@@ -414,10 +430,7 @@ private:
                                                     .popup_selection = popup_selection,
                                                     .popup_input = popup_input,
                                                     .popup_input_cursor = popup_input_cursor},
-                                                   viewport, popup_viewport_);
-        state.top_line = viewport.top_line;
-        state.top_line_offset = viewport.top_line_offset;
-        state.left_column = viewport.left_column;
+                                                   view);
         return scene;
     }
 

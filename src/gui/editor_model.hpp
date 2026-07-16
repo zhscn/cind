@@ -18,6 +18,7 @@ public:
                 std::string style_origin, std::uint32_t initial_line,
                 EditorPlatformServices platform_services = {});
 
+    void layout_view(int rows, int columns, float visible_text_rows = 0.0F);
     ui::Scene compose(int rows, int columns, float visible_text_rows = 0.0F);
     bool handle_key(KeyStroke key, int page_rows);
     bool has_pending_key_sequence() const {
@@ -26,7 +27,6 @@ public:
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);
     void click(ui::CellPoint point);
-    void set_frame_rows(int rows) { last_rows_ = rows; }
     void scroll_lines(int delta);
     bool has_background_work() const { return application_.has_background_work(); }
     bool poll_background_work() { return application_.poll_background_work(); }

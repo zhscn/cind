@@ -19,6 +19,15 @@
 using namespace cind;
 using namespace cind::gui;
 
+namespace {
+
+ui::Scene compose_frame(EditorModel& model, int rows, int columns, float visible_text_rows = 0.0F) {
+    model.layout_view(rows, columns, visible_text_rows);
+    return model.compose(rows, columns, visible_text_rows);
+}
+
+} // namespace
+
 TEST_CASE("critical spring preserves motion when its target changes") {
     constexpr float frequency = 32.0F;
     const SpringState moving = advance_critical_spring(
@@ -97,31 +106,31 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
         source += "line\n";
     }
     EditorModel model("sample.cc", source, CppIndentStyle{}, "test", 1);
-    model.compose(8, 80);
+    compose_frame(model, 8, 80);
     const TextOffset caret = model.inspect().caret;
 
     model.scroll_lines(10);
-    const ui::Scene scrolled = model.compose(8, 80);
+    const ui::Scene scrolled = compose_frame(model, 8, 80);
     const EditorStateSnapshot state = model.inspect();
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
     CHECK_FALSE(scrolled.cursor_visible);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 6));
-    const ui::Scene revealed = model.compose(8, 80);
+    const ui::Scene revealed = compose_frame(model, 8, 80);
     CHECK(model.inspect().caret_position.line == 1);
     CHECK(revealed.cursor_visible);
 }
 
 TEST_CASE("caret reveal moves a fractional row to the top edge") {
     EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
-    model.compose(6, 80, 3.5F);
+    compose_frame(model, 6, 80, 3.5F);
 
     for (int line = 0; line < 3; ++line) {
         CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 3));
     }
 
-    const ui::Scene scene = model.compose(6, 80, 3.5F);
+    const ui::Scene scene = compose_frame(model, 6, 80, 3.5F);
     const EditorStateSnapshot state = model.inspect();
     CHECK(state.caret_position.line == 3);
     CHECK(state.viewport.top_line == 0);
@@ -129,6 +138,25 @@ TEST_CASE("caret reveal moves a fractional row to the top edge") {
     CHECK(scene.grid_offset_rows == doctest::Approx(-0.5F));
     CHECK(scene.cursor_visible);
     CHECK(scene.cursor_row == 4);
+}
+
+TEST_CASE("scene composition does not mutate retained view state") {
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", CppIndentStyle{}, "test", 1);
+    for (int line = 0; line < 3; ++line) {
+        CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 2));
+    }
+    model.layout_view(5, 40, 2.5F);
+    const ui::EditorViewport before = model.inspect().viewport;
+
+    const ui::Scene first = model.compose(5, 40, 2.5F);
+    const ui::Scene second = model.compose(5, 40, 2.5F);
+    const ui::EditorViewport after = model.inspect().viewport;
+
+    CHECK(after.top_line == before.top_line);
+    CHECK(after.top_line_offset == doctest::Approx(before.top_line_offset));
+    CHECK(after.left_column == before.left_column);
+    CHECK(second.grid_offset_rows == doctest::Approx(first.grid_offset_rows));
+    CHECK(second.cursor_row == first.cursor_row);
 }
 
 TEST_CASE("cursor movement and deletion operate on extended grapheme clusters") {
@@ -162,7 +190,7 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     CHECK(state.interaction.active);
     CHECK(state.interaction.prompt == "search: ");
     CHECK(state.command_loop.last_command == "search.prompt");
-    ui::Scene scene = model.compose(8, 80);
+    ui::Scene scene = compose_frame(model, 8, 80);
     const ui::Region* echo = scene.find(ui::RegionRole::EchoArea);
     REQUIRE(echo != nullptr);
     REQUIRE(echo->echo);
@@ -171,7 +199,7 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     CHECK(initial_echo.cursor_byte == 8);
 
     model.insert_text("two");
-    scene = model.compose(8, 80);
+    scene = compose_frame(model, 8, 80);
     echo = scene.find(ui::RegionRole::EchoArea);
     REQUIRE(echo != nullptr);
     REQUIRE(echo->echo);
@@ -189,7 +217,7 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
 
     CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
-    ui::Scene scene = model.compose(16, 100);
+    ui::Scene scene = compose_frame(model, 16, 100);
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     CHECK(popup->vertical_anchor == ui::VerticalAnchor::Overlay);
@@ -202,7 +230,7 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
 
     CHECK(model.handle_key(KeyStroke::character_key(U'g', KeyModifier::Control), 10));
     CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
-    scene = model.compose(16, 100);
+    scene = compose_frame(model, 16, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     REQUIRE(popup->popup);
@@ -213,7 +241,7 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
 
     model.insert_text("edit");
     REQUIRE(model.handle_key(KeyStroke::character_key(U'b', KeyModifier::Control), 10));
-    scene = model.compose(16, 100);
+    scene = compose_frame(model, 16, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     REQUIRE(popup->popup);
@@ -225,7 +253,7 @@ TEST_CASE("command palette retains a global selection and stable list viewport")
     EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
-    ui::Scene scene = model.compose(20, 100);
+    ui::Scene scene = compose_frame(model, 20, 100);
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     REQUIRE(popup->popup);
@@ -237,7 +265,7 @@ TEST_CASE("command palette retains a global selection and stable list viewport")
 
     for (std::size_t step = 0; step < downward_steps; ++step) {
         REQUIRE(model.handle_key(KeyStroke::character_key(U'n', KeyModifier::Control), 10));
-        scene = model.compose(20, 100);
+        scene = compose_frame(model, 20, 100);
     }
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
@@ -247,7 +275,7 @@ TEST_CASE("command palette retains a global selection and stable list viewport")
     CHECK(popup->prims.back().selected);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'p', KeyModifier::Control), 10));
-    scene = model.compose(20, 100);
+    scene = compose_frame(model, 20, 100);
     popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);
     REQUIRE(popup->popup);
