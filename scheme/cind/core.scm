@@ -419,6 +419,17 @@
           (list "edit.copy-region" copy-region #f)
           (list "edit.yank" yank #f))))
 
+(define (make-structural-motion-command host motion)
+  (lambda (context invocation)
+    (let ((view (context-view context)))
+      (reset-preferred-column! host view)
+      (let ((target (structural-motion-target host view motion)))
+        (if target
+            (begin
+              (set-view-caret! host view target)
+              (request-redraw! host))))
+      (command-completed))))
+
 (define (core-commands host)
   (append
    (list (list "command.palette.accept" command-palette-accept #f)
@@ -495,6 +506,15 @@
         (list "editor.redraw"
               (lambda (context invocation)
                 (editor-redraw host))
+              #f)
+        (list "cursor.forward-expression"
+              (make-structural-motion-command host 'forward-expression)
+              #f)
+        (list "cursor.backward-expression"
+              (make-structural-motion-command host 'backward-expression)
+              #f)
+        (list "cursor.up-list"
+              (make-structural-motion-command host 'up-list)
               #f)
         (list "cursor.goto-line.accept"
               (lambda (context invocation)

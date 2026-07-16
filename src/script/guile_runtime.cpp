@@ -669,6 +669,73 @@ SCM soft_kill_range(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-view-caret!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-view-caret!", 2);
+        const TextOffset offset = text_offset_from_scheme(offset_value, "set-view-caret!", 3);
+        host.runtime->views().set_caret(view, offset);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-view-caret!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-view-caret!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM reset_preferred_column(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "reset-preferred-column!");
+        const ViewId view =
+            entity_id_from_scheme<ViewTag>(view_value, "reset-preferred-column!", 2);
+        host.runtime->views().get(view).viewport().preferred_column.reset();
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("reset-preferred-column!", exception.what());
+    } catch (...) {
+        scm_misc_error("reset-preferred-column!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM structural_motion_target(SCM host_object, SCM view_value, SCM motion_value) {
+    GuileStructuralMotion motion;
+    if (symbol_is(motion_value, "forward-expression")) {
+        motion = GuileStructuralMotion::ForwardExpression;
+    } else if (symbol_is(motion_value, "backward-expression")) {
+        motion = GuileStructuralMotion::BackwardExpression;
+    } else if (symbol_is(motion_value, "up-list")) {
+        motion = GuileStructuralMotion::UpList;
+    } else {
+        scm_wrong_type_arg_msg("structural-motion-target", 3, motion_value,
+                               "'forward-expression, 'backward-expression or 'up-list");
+    }
+
+    HostLease& host = require_host(host_object, "structural-motion-target");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "structural-motion-target", 2);
+    if (!host.services.structural_target) {
+        scm_misc_error("structural-motion-target", "structural query capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::optional<std::uint32_t> target = host.services.structural_target(view, motion);
+        return target ? scm_from_uint32(*target) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("structural-motion-target", exception.what());
+    } catch (...) {
+        scm_misc_error("structural-motion-target", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM write_clipboard(SCM host_object, SCM text_value) {
     if (!scm_is_string(text_value)) {
@@ -1241,6 +1308,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("insert-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(insert_text));
     (void)scm_c_define_gsubr("soft-kill-range", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(soft_kill_range));
+    (void)scm_c_define_gsubr("set-view-caret!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_view_caret));
+    (void)scm_c_define_gsubr("reset-preferred-column!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(reset_preferred_column));
+    (void)scm_c_define_gsubr("structural-motion-target", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(structural_motion_target));
     (void)scm_c_define_gsubr("write-clipboard!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(write_clipboard));
     (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
@@ -1286,6 +1359,7 @@ void initialize_host_module(void*) {
                  "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
                  "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
                  "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+                 "set-view-caret!", "reset-preferred-column!", "structural-motion-target",
                  "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
                  "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
                  "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",

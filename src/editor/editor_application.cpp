@@ -195,6 +195,23 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
                return GuileTextRange{range.start.value, range.end.value};
            },
+           .structural_target =
+               [this](ViewId view, GuileStructuralMotion motion) -> std::optional<std::uint32_t> {
+               EditSession& active = session_for(view);
+               std::optional<TextRange> range;
+               switch (motion) {
+               case GuileStructuralMotion::ForwardExpression:
+                   range = sexp_forward(active.analysis().tree, active.caret());
+                   return range ? std::optional<std::uint32_t>{range->end.value} : std::nullopt;
+               case GuileStructuralMotion::BackwardExpression:
+                   range = sexp_backward(active.analysis().tree, active.caret());
+                   break;
+               case GuileStructuralMotion::UpList:
+                   range = enclosing_list(active.analysis().tree, active.caret());
+                   break;
+               }
+               return range ? std::optional<std::uint32_t>{range->start.value} : std::nullopt;
+           },
            .write_clipboard = [this](std::string_view text) -> std::expected<void, std::string> {
                if (!platform_services_.write_clipboard) {
                    return {};
@@ -1467,35 +1484,6 @@ void EditorApplication::register_commands() {
             "line {}/{}, column {}, byte {}/{}", position.line + 1, text.line_count(),
             ui::display_column(text, session().caret(), session().style().tab_width) + 1,
             session().caret().value, text.size_bytes());
-    });
-    auto define_structural_move = [this](std::string name, auto target) {
-        runtime_.commands().define(
-            std::move(name),
-            [this, target = std::move(target)](CommandContext& context,
-                                               const CommandInvocation&) -> CommandResult {
-                EditSession& active = session_for(context.view_id());
-                basic_commands_.reset_preferred_column(context.view_id());
-                if (const std::optional<TextRange> range =
-                        target(active.analysis().tree, active.caret())) {
-                    active.set_caret(range->start);
-                    reveal_caret_ = true;
-                }
-                return CommandCompleted{};
-            });
-    };
-    define_structural_move("cursor.forward-expression",
-                           [](const SyntaxTree& tree, TextOffset caret) {
-                               std::optional<TextRange> range = sexp_forward(tree, caret);
-                               if (range) {
-                                   range->start = range->end;
-                               }
-                               return range;
-                           });
-    define_structural_move(
-        "cursor.backward-expression",
-        [](const SyntaxTree& tree, TextOffset caret) { return sexp_backward(tree, caret); });
-    define_structural_move("cursor.up-list", [](const SyntaxTree& tree, TextOffset caret) {
-        return enclosing_list(tree, caret);
     });
     define("selection.expand", [this](const CommandInvocation&) {
         const TextRange current =

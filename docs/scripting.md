@@ -68,6 +68,9 @@ The native module exports:
 (erase-range! host view-id start end)
 (insert-text! host view-id text)
 (soft-kill-range host view-id)
+(set-view-caret! host view-id offset)
+(reset-preferred-column! host view-id)
+(structural-motion-target host view-id motion)
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
@@ -123,6 +126,10 @@ start/end vectors. `view-caret`, `view-mark` and `view-selection` are immutable 
 `buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
 native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
 caret reveal coherent. `soft-kill-range` is a syntax-aware range query and does not mutate text.
+`structural-motion-target` accepts `forward-expression`, `backward-expression` or `up-list` and
+returns the corresponding syntax-derived byte offset or `#f`. `set-view-caret!` changes the
+document anchor, while `reset-preferred-column!` clears vertical-motion affinity. Scheme composes
+these mechanisms with `request-redraw!` into structural movement commands.
 
 `write-clipboard!` returns `#f` on success or an error string. `read-clipboard` returns a
 two-element vector containing an optional string and optional error. The absence of a platform
@@ -179,10 +186,11 @@ retained in `editor.scripting.last_error`.
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and
 movement, window layout and application quit policy, project file selection and project search with
 project-aware enabled predicates, key-help selection and message presentation, mark/region
-commands, and kill/yank behavior. Each installed core policy owns a bounded kill ring in its Scheme
-closure. Copy and kill commands synchronize the newest entry with the platform clipboard; yank
-imports the clipboard when that ring is empty. File and project commands compose native storage,
-indexing and search capabilities without owning asynchronous state.
+commands, structural expression/list movement, and kill/yank behavior. Each installed core policy
+owns a bounded kill ring in its Scheme closure. Copy and kill commands synchronize the newest entry
+with the platform clipboard; yank imports the clipboard when that ring is empty. File and project
+commands compose native storage, indexing and search capabilities without owning asynchronous
+state.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

@@ -27,6 +27,12 @@ struct GuileTextRange {
     std::uint32_t end = 0;
 };
 
+enum class GuileStructuralMotion : std::uint8_t {
+    ForwardExpression,
+    BackwardExpression,
+    UpList,
+};
+
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
@@ -52,6 +58,7 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> insert_text;
     std::function<std::optional<GuileTextRange>(ViewId)> soft_kill_range;
+    std::function<std::optional<std::uint32_t>(ViewId, GuileStructuralMotion)> structural_target;
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
     std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;
 };

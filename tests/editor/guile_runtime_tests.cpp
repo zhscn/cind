@@ -154,6 +154,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string clipboard;
     std::string clipboard_error;
     std::optional<GuileTextRange> requested_soft_kill_range;
+    std::optional<std::uint32_t> requested_structural_target;
+    std::optional<ViewId> requested_structural_view;
+    std::optional<GuileStructuralMotion> requested_structural_motion;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -284,6 +287,12 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
+         .structural_target =
+             [&](ViewId target, GuileStructuralMotion motion) {
+                 requested_structural_view = target;
+                 requested_structural_motion = motion;
+                 return requested_structural_target;
+             },
          .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
              if (!clipboard_error.empty()) {
                  return std::unexpected(clipboard_error);
@@ -300,7 +309,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 34);
+    CHECK(*installed == 37);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -489,6 +498,28 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(redraw.has_value());
     CHECK(redraw_requested);
 
+    redraw_requested = false;
+    runtime.views().set_caret(view, TextOffset{0});
+    runtime.views().get(view).viewport().preferred_column = 9;
+    requested_structural_target = 2;
+    const CommandResult forward_expression =
+        runtime.commands().invoke(require_command(runtime, "cursor.forward-expression"), context);
+    REQUIRE(forward_expression.has_value());
+    CHECK(requested_structural_view == std::optional<ViewId>{view});
+    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::ForwardExpression});
+    CHECK(runtime.views().caret(view) == TextOffset{2});
+    CHECK_FALSE(runtime.views().get(view).viewport().preferred_column.has_value());
+    CHECK(redraw_requested);
+
+    const CommandResult backward_expression =
+        runtime.commands().invoke(require_command(runtime, "cursor.backward-expression"), context);
+    REQUIRE(backward_expression.has_value());
+    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::BackwardExpression});
+    const CommandResult up_list =
+        runtime.commands().invoke(require_command(runtime, "cursor.up-list"), context);
+    REQUIRE(up_list.has_value());
+    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::UpList});
+
     window_error = "cannot delete the only window";
     const CommandResult refused_delete =
         runtime.commands().invoke(require_command(runtime, "window.delete"), context);
@@ -591,6 +622,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(searched_window == window);
     CHECK(search_query == "needle");
 
+    runtime.views().set_caret(view, TextOffset{0});
     const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");
     const CommandResult mark_set = runtime.commands().invoke(toggle_mark, context);
     REQUIRE(mark_set.has_value());
@@ -631,7 +663,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 34);
+    CHECK(snapshot.scripted_commands == 37);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());
