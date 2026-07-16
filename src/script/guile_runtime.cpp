@@ -33,12 +33,18 @@ struct ScriptInputState {
     SCM handler = SCM_BOOL_F;
 };
 
+struct ScriptInputStateObserver {
+    SCM procedure = SCM_UNDEFINED;
+    InputStateRegistry::ListenerId listener = 0;
+};
+
 struct GuileState {
     std::thread::id owner;
     bool active = true;
     std::vector<ScriptCommand> commands;
     std::vector<ScriptProvider> providers;
     std::vector<ScriptInputState> input_states;
+    std::vector<ScriptInputStateObserver> input_state_observers;
     std::uint64_t command_revision = 0;
     std::uint64_t provider_revision = 0;
     std::uint64_t input_state_revision = 0;
@@ -190,6 +196,9 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
                                                     std::size_t state_index, EditorRuntime& runtime,
                                                     ViewId view, KeyStroke key);
+void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
+                                        std::size_t observer_index, EditorRuntime& runtime,
+                                        const InputStateChange& change);
 
 // The Guile ABI fixes four adjacent SCM arguments; Scheme-level names and
 // validation preserve their semantic order.
@@ -716,6 +725,48 @@ SCM view_input_states(SCM host_object, SCM view_value) {
         scm_misc_error("view-input-states", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("view-input-states", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM observe_input_state_changes(SCM host_object, SCM procedure_value) {
+    if (!scheme_true(scm_procedure_p(procedure_value))) {
+        scm_wrong_type_arg_msg("observe-input-state-changes!", 2, procedure_value, "procedure");
+    }
+    try {
+        HostLease& host = require_host(host_object, "observe-input-state-changes!");
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("observe-input-state-changes!", "Guile runtime has expired", SCM_EOL);
+        }
+        const std::size_t observer_index = state->input_state_observers.size();
+        (void)scm_gc_protect_object(procedure_value);
+        InputStateRegistry::ListenerId listener = 0;
+        try {
+            const std::weak_ptr<GuileState> weak = state;
+            EditorRuntime* runtime = host.runtime;
+            listener = host.runtime->input_states().subscribe([weak, observer_index, runtime](
+                                                                  const InputStateChange& change) {
+                const std::shared_ptr<GuileState> locked = weak.lock();
+                if (locked && locked->active) {
+                    invoke_script_input_state_observer(locked, observer_index, *runtime, change);
+                }
+            });
+            state->input_state_observers.push_back(
+                {.procedure = procedure_value, .listener = listener});
+            return scm_from_size_t(observer_index);
+        } catch (...) {
+            if (listener != 0) {
+                (void)host.runtime->input_states().unsubscribe(listener);
+            }
+            (void)scm_gc_unprotect_object(procedure_value);
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("observe-input-state-changes!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("observe-input-state-changes!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1719,6 +1770,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(reset_input_states));
     (void)scm_c_define_gsubr("view-input-states", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(view_input_states));
+    (void)scm_c_define_gsubr("observe-input-state-changes!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(observe_input_state_changes));
     (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
@@ -1788,21 +1841,21 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-                 "define-input-state!", "set-base-input-state!", "push-input-state!",
-                 "pop-input-state!", "reset-input-states!", "view-input-states",
-                 "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
-                 "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
-                 "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
-                 "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
-                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-                 "set-view-caret!", "reset-preferred-column!", "structural-motion-target",
-                 "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
-                 "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
-                 "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",
-                 "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-                 "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export(
+        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+        "define-input-state!", "set-base-input-state!", "push-input-state!", "pop-input-state!",
+        "reset-input-states!", "view-input-states", "observe-input-state-changes!",
+        "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
+        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
+        "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!", "buffer-substring",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "structural-motion-target", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "move-caret-to-line!", "set-message!", "ensure-project-index!",
+        "open-file!", "start-project-search!", "set-buffer-resource!", "save-buffer!",
+        "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
+        "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -1820,6 +1873,7 @@ struct GuileCall {
         InvokeCommand,
         InvokeProvider,
         InvokeInputHandler,
+        InvokeInputStateObserver,
         CheckEnabled,
     };
 
@@ -1834,6 +1888,8 @@ struct GuileCall {
     const CommandInvocation* invocation = nullptr;
     ViewId view;
     KeyStroke key;
+    const InputStateChange* input_state_change = nullptr;
+    EditorRuntime* runtime = nullptr;
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
     bool enabled = false;
@@ -2075,6 +2131,23 @@ SCM call_body(void* data) {
                 scm_call_2(call.procedure, entity_id(call.view.slot, call.view.generation),
                            scm_from_utf8_string(format_key_stroke(call.key).c_str()));
             break;
+        case GuileCall::Operation::InvokeInputStateObserver: {
+            const InputStateChange& change = *call.input_state_change;
+            const auto state_name = [&](std::optional<InputStateId> state) {
+                return state ? name_symbol(call.runtime->input_states().definition(*state).name)
+                             : SCM_BOOL_F;
+            };
+            SCM event = scm_c_make_vector(4, SCM_UNSPECIFIED);
+            const char* kind = change.kind == InputStateChangeKind::Push  ? "push"
+                               : change.kind == InputStateChangeKind::Pop ? "pop"
+                                                                          : "base";
+            scm_c_vector_set_x(event, 0, scm_from_utf8_symbol(kind));
+            scm_c_vector_set_x(event, 1, entity_id(change.view.slot, change.view.generation));
+            scm_c_vector_set_x(event, 2, state_name(change.from));
+            scm_c_vector_set_x(event, 3, state_name(change.to));
+            call.result = scm_call_1(call.procedure, event);
+            break;
+        }
         case GuileCall::Operation::CheckEnabled:
             call.result = scm_call_1(call.procedure, command_context_value(*call.context));
             call.enabled = scheme_true(call.result);
@@ -2209,6 +2282,25 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
         "Guile input state handler must return pass, consume, or #(dispatch command)");
 }
 
+void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
+                                        std::size_t observer_index, EditorRuntime& runtime,
+                                        const InputStateChange& change) {
+    if (std::this_thread::get_id() != state->owner || !state->active ||
+        observer_index >= state->input_state_observers.size()) {
+        state->last_error = "Guile input state observer used outside its runtime";
+        return;
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeInputStateObserver;
+    call.procedure = state->input_state_observers[observer_index].procedure;
+    call.input_state_change = &change;
+    call.runtime = &runtime;
+    const std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = std::format("Guile input state observer failed: {}", result.error());
+    }
+}
+
 bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_t command_index,
                             const CommandContext& context) {
     if (std::this_thread::get_id() != state->owner || !state->active ||
@@ -2255,6 +2347,11 @@ public:
     }
 
     ~Impl() {
+        for (const ScriptInputStateObserver& observer : state_->input_state_observers) {
+            (void)lease_->runtime->input_states().unsubscribe(observer.listener);
+            (void)scm_gc_unprotect_object(observer.procedure);
+        }
+        state_->input_state_observers.clear();
         state_->active = false;
         for (const ScriptCommand& command : state_->commands) {
             (void)scm_gc_unprotect_object(command.execute);

@@ -409,13 +409,18 @@ EditorStateSnapshot EditorModel::inspect() {
     }
     std::vector<OpenWindowStateSnapshot> windows;
     for (const OpenWindowSnapshot& window : application_.open_windows()) {
+        std::vector<std::string> input_states;
+        for (const InputStateId state : runtime.views().get(window.view).input_states().stack()) {
+            input_states.push_back(runtime.input_states().definition(state).name);
+        }
         windows.push_back({.window_slot = window.window.slot,
                            .window_generation = window.window.generation,
                            .view_slot = window.view.slot,
                            .view_generation = window.view.generation,
                            .buffer_slot = window.buffer.slot,
                            .buffer_generation = window.buffer.generation,
-                           .active = window.active});
+                           .active = window.active,
+                           .input_states = std::move(input_states)});
     }
     std::vector<ProjectStateSnapshot> projects;
     for (const ProjectId project_id : runtime.projects().all()) {

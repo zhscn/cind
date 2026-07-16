@@ -339,6 +339,8 @@ void append_windows(std::string& output, const std::vector<OpenWindowStateSnapsh
                               window.window_slot, window.window_generation, window.view_slot,
                               window.view_generation, window.buffer_slot, window.buffer_generation);
         append_bool(output, window.active);
+        output += ",\"input_states\":";
+        append_strings(output, window.input_states);
         output.push_back('}');
     }
     output.push_back(']');
@@ -2254,7 +2256,14 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << "      window:" << window.window_slot << ':' << window.window_generation
                << (window.active ? " active" : "") << " view:" << window.view_slot << ':'
                << window.view_generation << " buffer:" << window.buffer_slot << ':'
-               << window.buffer_generation << '\n';
+               << window.buffer_generation << " input-states=";
+        for (std::size_t index = 0; index < window.input_states.size(); ++index) {
+            if (index != 0) {
+                output << ',';
+            }
+            output << printable(window.input_states[index]);
+        }
+        output << '\n';
     }
     output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
     if (frame.scene.cursor_visible) {

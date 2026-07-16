@@ -58,6 +58,7 @@ The native module exports:
 (pop-input-state! host view-id)
 (reset-input-states! host view-id)
 (view-input-states host view-id)
+(observe-input-state-changes! host procedure)
 (enabled-command-names host context)
 (open-buffer-summaries host)
 (project-root host project-id)
@@ -137,6 +138,11 @@ changes the durable state. Push adds a transient state, pop removes one transien
 removes all transients while preserving the base. `view-input-states` returns the stack from durable
 state to top as a vector of names. Every application View is initialized with the `emacs` state
 defined by `(cind core)`; its empty state keymap list preserves the default Emacs keymap policy.
+
+`observe-input-state-changes!` registers an editor-thread procedure for every base, push, and pop
+transition. It receives `#(kind view-id from-state-or-#f to-state-or-#f)`. Observer conditions are
+retained as scripting diagnostics and do not roll back the completed state transition or interrupt
+other observers.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of

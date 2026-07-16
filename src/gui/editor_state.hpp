@@ -56,6 +56,7 @@ struct OpenWindowStateSnapshot {
     std::uint32_t buffer_slot = 0;
     std::uint32_t buffer_generation = 0;
     bool active = false;
+    std::vector<std::string> input_states;
 };
 
 struct ProjectStateSnapshot {

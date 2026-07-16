@@ -135,6 +135,8 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
     CHECK(state.scripting.scripted_input_states == 1);
+    REQUIRE(state.windows.size() == 1);
+    CHECK(state.windows.front().input_states == std::vector<std::string>{"emacs"});
     CHECK_FALSE(scrolled.cursor_visible);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 6));
