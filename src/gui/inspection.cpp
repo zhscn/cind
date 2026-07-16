@@ -375,6 +375,20 @@ void append_region(std::string& output, const ui::Region& region) {
     } else {
         output += "null";
     }
+    output += ",\"echo\":";
+    if (region.echo) {
+        output += "{\"text\":";
+        append_json_string(output, region.echo->text);
+        output += ",\"cursor_byte\":";
+        if (region.echo->cursor_byte) {
+            output += std::to_string(*region.echo->cursor_byte);
+        } else {
+            output += "null";
+        }
+        output.push_back('}');
+    } else {
+        output += "null";
+    }
     output += ",\"prims\":[";
     for (std::size_t index = 0; index < region.prims.size(); ++index) {
         if (index != 0) {
@@ -506,6 +520,34 @@ void append_popup_layout(std::string& output, const std::optional<PopupLayoutSna
     output += "]}";
 }
 
+void append_echo_layout(std::string& output, const std::optional<EchoLayoutSnapshot>& echo) {
+    if (!echo) {
+        output += "null";
+        return;
+    }
+    output += "{\"coordinate_space\":\"logical-pixels\",\"bounds\":";
+    append_logical_rect(output, echo->bounds);
+    output += std::format(",\"horizontal_scroll\":{},\"text_bytes\":{},\"cursor_byte\":",
+                          echo->horizontal_scroll, echo->text_bytes);
+    if (echo->cursor_byte) {
+        output += std::to_string(*echo->cursor_byte);
+    } else {
+        output += "null";
+    }
+    output += std::format(",\"cursor_advance\":{},\"unclamped_cursor_x\":{},\"cursor_clamped\":",
+                          echo->cursor_advance, echo->unclamped_cursor_x);
+    append_bool(output, echo->cursor_clamped);
+    output += ",\"cursor_rect\":";
+    if (echo->cursor_rect) {
+        append_logical_rect(output, *echo->cursor_rect);
+    } else {
+        output += "null";
+    }
+    output += ",\"text\":";
+    append_text_layout(output, echo->text);
+    output.push_back('}');
+}
+
 void append_render_damage(std::string& output, const RenderDamageSnapshot& damage) {
     output += "{\"full_repaint\":";
     append_bool(output, damage.full_repaint);
@@ -602,6 +644,8 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_render_damage(output, render.damage);
     output += ",\"popup_layout\":";
     append_popup_layout(output, render.popup_layout);
+    output += ",\"echo_layout\":";
+    append_echo_layout(output, render.echo_layout);
     output += ",\"primitives\":";
     append_render_primitives(output, render.primitives);
     output.push_back('}');
@@ -808,6 +852,18 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             }
             return true;
         });
+        (void)region.echo.transform([&](const ui::Region::EchoContent& echo) {
+            if (region.role != ui::RegionRole::EchoArea) {
+                violations.emplace_back("structured echo content is outside the echo region");
+            }
+            if (echo.cursor_byte && *echo.cursor_byte > echo.text.size()) {
+                violations.emplace_back("echo cursor byte is past the text end");
+            }
+            if (region.prims.empty() || region.prims.front().text != echo.text) {
+                violations.emplace_back("echo content does not match scene primitives");
+            }
+            return true;
+        });
     }
     if (frame.render.display_scale <= 0.0F) {
         violations.emplace_back("render display scale must be positive");
@@ -890,6 +946,63 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 !std::isfinite(text.origin.x) || !std::isfinite(text.origin.y)) {
                 violations.emplace_back("render popup text layout is not finite");
                 break;
+            }
+        }
+    }
+    const ui::Region* echo_region = frame.scene.find(ui::RegionRole::EchoArea);
+    const ui::Region::EchoContent* echo =
+        echo_region != nullptr && echo_region->echo ? &*echo_region->echo : nullptr;
+    const bool popup_owns_input = popup != nullptr && popup->input.has_value();
+    if (echo != nullptr && !popup_owns_input && !frame.render.echo_layout) {
+        violations.emplace_back("scene echo has no render echo layout");
+    }
+    if (popup_owns_input && frame.render.echo_layout) {
+        violations.emplace_back("popup input and render echo both own the cursor");
+    }
+    if (frame.render.echo_layout) {
+        const EchoLayoutSnapshot& layout = *frame.render.echo_layout;
+        if (echo == nullptr) {
+            violations.emplace_back("render echo layout has no scene echo");
+        } else {
+            if (layout.text_bytes != echo->text.size() ||
+                layout.text.byte_count != echo->text.size()) {
+                violations.emplace_back("render echo text does not match scene echo");
+            }
+            if (layout.cursor_byte != echo->cursor_byte) {
+                violations.emplace_back("render echo cursor does not match scene echo");
+            }
+            if (echo->cursor_byte) {
+                if (!layout.cursor_rect) {
+                    violations.emplace_back("render echo input has no cursor layout");
+                }
+                if (std::abs(layout.text.origin.x + layout.cursor_advance -
+                             layout.unclamped_cursor_x) > 0.01F) {
+                    violations.emplace_back("render echo cursor advance disagrees with text");
+                }
+            } else if (layout.cursor_rect) {
+                violations.emplace_back("non-input echo has interactive cursor layout");
+            }
+        }
+        if (layout.horizontal_scroll > 0.01F) {
+            violations.emplace_back("render echo horizontal scroll is positive");
+        }
+        if (!std::isfinite(layout.text.advance) || layout.text.advance < 0.0F ||
+            !std::isfinite(layout.text.origin.x) || !std::isfinite(layout.text.origin.y)) {
+            violations.emplace_back("render echo text layout is not finite");
+        }
+        if (layout.cursor_rect) {
+            const float bounds_right = layout.bounds.x + layout.bounds.width;
+            const float bounds_bottom = layout.bounds.y + layout.bounds.height;
+            const float cursor_right = layout.cursor_rect->x + layout.cursor_rect->width;
+            const float cursor_bottom = layout.cursor_rect->y + layout.cursor_rect->height;
+            if (layout.cursor_rect->x < layout.bounds.x - 0.01F ||
+                layout.cursor_rect->y < layout.bounds.y - 0.01F ||
+                cursor_right > bounds_right + 0.01F || cursor_bottom > bounds_bottom + 0.01F) {
+                violations.emplace_back("render echo cursor is outside its bounds");
+            }
+            if (!layout.cursor_clamped &&
+                std::abs(layout.cursor_rect->x - layout.unclamped_cursor_x) > 0.01F) {
+                violations.emplace_back("render echo cursor does not match shaped advance");
             }
         }
     }
@@ -1068,6 +1181,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_render_damage(output, frame.render.damage);
     } else if (path == "render.popup_layout") {
         append_popup_layout(output, frame.render.popup_layout);
+    } else if (path == "render.echo_layout") {
+        append_echo_layout(output, frame.render.echo_layout);
     } else if (path == "render.primitives") {
         append_render_primitives(output, frame.render.primitives);
     } else if (path.starts_with("render.primitive.")) {
@@ -1453,6 +1568,15 @@ std::string inspection_tree_text(const FrameInspection& frame) {
             }
             output << '\n';
         }
+        if (region.echo) {
+            output << "      echo bytes=" << region.echo->text.size() << " cursor=";
+            if (region.echo->cursor_byte) {
+                output << *region.echo->cursor_byte;
+            } else {
+                output << "none";
+            }
+            output << '\n';
+        }
         for (std::size_t index = 0; index < region.prims.size(); ++index) {
             const ui::Prim& prim = region.prims[index];
             output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
@@ -1491,6 +1615,17 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                    << " advance=" << text.advance << " origin=" << text.origin.x << ':'
                    << text.origin.y << '\n';
         }
+    }
+    if (frame.render.echo_layout) {
+        const EchoLayoutSnapshot& echo = *frame.render.echo_layout;
+        output << "    echo-layout bounds=(" << echo.bounds.x << ',' << echo.bounds.y << ' '
+               << echo.bounds.width << 'x' << echo.bounds.height
+               << ") scroll-x=" << echo.horizontal_scroll << " text=" << echo.text_bytes;
+        if (echo.cursor_byte) {
+            output << " cursor=" << *echo.cursor_byte << " advance=" << echo.cursor_advance
+                   << (echo.cursor_clamped ? " clamped" : "");
+        }
+        output << '\n';
     }
     output << "    animation=" << (frame.render.animation.active ? "active" : "idle")
            << " scroll=" << (frame.render.animation.scroll ? "true" : "false")

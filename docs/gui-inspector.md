@@ -19,14 +19,15 @@ EditorModel ──> ui::Scene ─────┼──> InspectionHub ──> Un
                     └─> SkiaFrameLayout ─> SkiaPresenter ─> retained raster
                               │              │
                               │              └─> primitive diagnostics
-                              └─> popup layout diagnostics
+                              └─> popup/echo layout diagnostics
 ```
 
 `EditorModel` 提供文档、caret、viewport 和编辑状态。`ui::Scene` 是后端无关的 cell
 布局与 display list。`SceneDamageTracker` 比较相邻帧的 cell visual state，生成内容和
 cursor 损伤区域。GUI 为每个 Scene 和逻辑 viewport 准备一个不可变的 `SkiaFrameLayout`；
-它持有浮层几何、shaped text blob、glyph advance、文字 origin、水平滚动和最终 cursor
-矩形。绘制、动画、damage 转换、IME 定位和 diagnostics 在该帧内共享同一个 layout。
+它持有浮层和 echo 几何、shaped text blob、glyph advance、文字 origin、水平滚动和最终
+cursor 矩形。绘制、动画、damage 转换、IME 定位和 diagnostics 在该帧内共享同一个
+layout。
 `SkiaPresenter` 只清除并重绘损伤逻辑像素矩形；SDL streaming texture 只上传对应的物理
 output 像素矩形。SDL renderer 仍将完整 retained texture 合成到当前 swapchain image，
 因为 swapchain image 不保留上一帧内容。
@@ -125,6 +126,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `render.animation` | 当前滚动/光标过渡的进度和逻辑像素位置 |
 | `render.damage` | 当前帧的逻辑/物理损伤矩形、覆盖率和参考 raster 校验结果 |
 | `render.popup_layout` | GUI popup 的最终像素布局、shaped advance、滚动和 cursor 几何 |
+| `render.echo_layout` | GUI echo/minibuffer 的 shaped text、byte caret、滚动和 cursor 几何 |
 | `render.primitives` | 所有已绘制 primitive 的 diagnostics |
 | `render.primitive.<id>` | 指定稳定 ID 的 primitive diagnostics |
 | `event.last_sequence` | 最新事件序号 |
@@ -142,6 +144,7 @@ cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
 cmk run -p gui cind-ui-inspect -- get render.damage
 cmk run -p gui cind-ui-inspect -- get render.popup_layout
+cmk run -p gui cind-ui-inspect -- get render.echo_layout
 cmk run -p gui cind-ui-inspect -- get render.primitive.line:0/number
 cmk run -p gui cind-ui-inspect -- pick 15 15
 ```
@@ -160,11 +163,12 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   分数偏移；scene cursor 使用 1-based 坐标。Popup region 还携带结构化 title、input、
   `input_cursor`、`first_item`、`total_items`、`selected_item` 以及可见项的 label 和 detail，
   供 GUI 进行独立于 cell 网格的浮层布局并检查 text/list viewport；StatusBar region 同样
-  携带结构化 path、dirty、line、column、line_count、revision、style_origin 和 key，供
-  GUI modeline 独立排版（TUI 仍消费 cell primitives）。
+  携带结构化 path、dirty、line、column、line_count、revision、style_origin 和 key。
+  EchoArea region 携带完整 UTF-8 文本和可选 byte caret，供 GUI 建立像素布局；TUI 仍消费
+  cell primitives 和 Scene cursor。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell
-  大小、字体、主题、pixel hash、animation progress/velocity、damage、popup layout 和
-  primitive diagnostics。
+  大小、字体、主题、pixel hash、animation progress/velocity、damage、popup/echo layout
+  和 primitive diagnostics。
 - `recent_events`：事件序号、类型、细节、处理结果、重绘标记和 revision 转换。
 - `violations`：模型、scene 与 renderer 之间的 invariant 违规。
 
@@ -216,6 +220,21 @@ GUI popup layout 时值为 `null`。其坐标均为逻辑像素：
 
 Inspector 校验 Scene input 与 render layout 的 byte/caret 对应关系、input origin 加
 `cursor_advance` 与自然 cursor 位置的一致性，以及 panel、header 和 cursor 的包含关系。
+
+### Echo layout diagnostics
+
+`render.echo_layout` 是 `SkiaFrameLayout` 中用于 GUI echo/minibuffer 的最终像素布局。
+Picker popup 拥有输入 caret 时该值为 `null`。其坐标均为逻辑像素：
+
+- `bounds` 是 echo strip 的 clip 和 damage 边界；
+- `text_bytes`、`cursor_byte` 与 Scene EchoArea 的 UTF-8 文本及可选 byte caret 对应；
+- `text` 包含绘制使用的 shaped advance、origin 和 shape bounds；
+- `horizontal_scroll` 使活动 caret 保持在 echo strip 可见范围内；
+- `cursor_advance`、`unclamped_cursor_x`、`cursor_clamped` 和 `cursor_rect` 描述从文本
+  origin 到最终 caret 的映射。
+
+Inspector 校验 Scene echo 文本/byte caret 与 render layout 一致，未裁剪的 cursor 横坐标
+等于 text origin 加 shaped cursor advance，且最终 cursor 位于 echo bounds 内。
 
 ### Animation diagnostics
 
@@ -361,6 +380,8 @@ response。
   该区间内；可见项与 popup primitives 一一对应。
 - GUI popup layout 的 input byte/caret 与 Scene popup 一致；未裁剪的 cursor 横坐标等于
   input origin 加 shaped cursor advance，最终 cursor 位于 header 内。
+- GUI echo layout 的 text byte/caret 与 Scene echo 一致；文本、cursor、damage 和 IME 定位
+  共享同一份 prepared layout。
 - Event ring 固定保留 256 条记录。请求早于可用范围时，事件批次使用 `gap: true`
   表示缺口。
 - `paint_bounds` 通过比较 primitive 绘制前后的像素得到。与已有像素完全同色的重复

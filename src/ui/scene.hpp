@@ -101,6 +101,13 @@ struct Region {
         std::string style_origin;
         std::string key;
     };
+    struct EchoContent {
+        std::string text;
+        // UTF-8 byte offset in `text`. A present value makes the echo area an
+        // active input surface; presenters derive their native caret geometry
+        // from this offset.
+        std::optional<std::size_t> cursor_byte;
+    };
 
     Region() = default;
     Region(RegionRole role, Rect rect, std::vector<Prim> prims,
@@ -126,6 +133,11 @@ struct Region {
     // Structured status-bar content for graphical presenters, mirroring the
     // popup arrangement: terminal presenters keep consuming the primitives.
     std::optional<StatusContent> status;
+
+    // Structured echo content preserves the text/caret relationship across
+    // cell and pixel frontends. Terminal presenters keep consuming the
+    // primitive and Scene cursor.
+    std::optional<EchoContent> echo;
 };
 
 struct Scene {

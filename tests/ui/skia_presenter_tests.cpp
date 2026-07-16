@@ -79,6 +79,69 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
     }
 }
 
+TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    SceneDamageTracker tracker;
+
+    Scene scene;
+    scene.rows = 3;
+    scene.cols = 40;
+    Region body{RegionRole::TextArea, {0, 0, 1, 40}, {}};
+    Region status{
+        RegionRole::StatusBar, {1, 0, 1, 40}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region echo{
+        RegionRole::EchoArea, {2, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    const std::string text = "search: sdfasdf";
+    echo.prims.push_back({0, 0, text, StyleClass::Message, false});
+    echo.echo = Region::EchoContent{.text = text, .cursor_byte = text.size()};
+    scene.regions = {body, status, echo};
+    scene.cursor_row = 3;
+    scene.cursor_col = static_cast<int>(text.size()) + 1;
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() + static_cast<int>(presenter.status_bar_height()) +
+                       static_cast<int>(presenter.echo_area_height());
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+    REQUIRE(tracker.update(scene).full_repaint);
+    const SkiaFrameLayout layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(layout, width, height, retained.data(), row_bytes, 1.0F, &diagnostics);
+    const std::optional<SkiaLogicalRect> cursor = presenter.cursor_rect(layout);
+    REQUIRE(cursor);
+    const SkiaLogicalRect cursor_bounds = cursor.value_or(SkiaLogicalRect{});
+    if (!diagnostics.echo_layout) {
+        FAIL("echo layout diagnostics are missing");
+        return;
+    }
+    const SkiaEchoLayoutDiagnostics& echo_diagnostics = *diagnostics.echo_layout;
+    CHECK(echo_diagnostics.cursor_byte == text.size());
+    CHECK(echo_diagnostics.text.byte_count == text.size());
+    CHECK(cursor_bounds.x ==
+          doctest::Approx(echo_diagnostics.text.origin.x + echo_diagnostics.cursor_advance));
+    REQUIRE(echo_diagnostics.cursor_rect);
+    const SkiaLogicalRect diagnostic_cursor =
+        echo_diagnostics.cursor_rect.value_or(SkiaLogicalRect{});
+    CHECK(cursor_bounds.x == doctest::Approx(diagnostic_cursor.x));
+
+    scene.regions.back().echo = Region::EchoContent{.text = text, .cursor_byte = 10};
+    scene.cursor_col = 11;
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    const SkiaFrameLayout changed_layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(changed_layout, damage);
+    CHECK(std::ranges::any_of(rectangles, [&](const SkiaLogicalRect& rect) {
+        return rect.width == doctest::Approx(static_cast<float>(width));
+    }));
+    presenter.render_damage(changed_layout, width, height, retained.data(), row_bytes, rectangles);
+    presenter.render(changed_layout, width, height, reference.data(), row_bytes);
+    CHECK(retained == reference);
+}
+
 TEST_CASE("Skia presenter paints semantic change-sign colors") {
     SkiaTheme theme;
     SkiaPresenter presenter("monospace", 16.0F, theme);

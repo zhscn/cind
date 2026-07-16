@@ -837,6 +837,19 @@ private:
             }
             primitives.push_back(std::move(snapshot));
         }
+        const auto snapshot_text = [&](const SkiaTextLayoutDiagnostics& text) {
+            TextLayoutSnapshot snapshot{
+                .role = text.role,
+                .byte_count = text.byte_count,
+                .advance = text.advance,
+                .origin = {.x = text.origin.x, .y = text.origin.y},
+                .shape_bounds = std::nullopt,
+            };
+            if (text.shape_bounds) {
+                snapshot.shape_bounds = snapshot_rect(*text.shape_bounds);
+            }
+            return snapshot;
+        };
         std::optional<PopupLayoutSnapshot> popup_layout;
         if (diagnostics.popup_layout) {
             const SkiaPopupLayoutDiagnostics& popup = *diagnostics.popup_layout;
@@ -857,19 +870,28 @@ private:
             }
             snapshot.header_text.reserve(popup.header_text.size());
             for (const SkiaTextLayoutDiagnostics& text : popup.header_text) {
-                TextLayoutSnapshot text_snapshot{
-                    .role = text.role,
-                    .byte_count = text.byte_count,
-                    .advance = text.advance,
-                    .origin = {.x = text.origin.x, .y = text.origin.y},
-                    .shape_bounds = std::nullopt,
-                };
-                if (text.shape_bounds) {
-                    text_snapshot.shape_bounds = snapshot_rect(*text.shape_bounds);
-                }
-                snapshot.header_text.push_back(std::move(text_snapshot));
+                snapshot.header_text.push_back(snapshot_text(text));
             }
             popup_layout = std::move(snapshot);
+        }
+        std::optional<EchoLayoutSnapshot> echo_layout;
+        if (diagnostics.echo_layout) {
+            const SkiaEchoLayoutDiagnostics& echo = *diagnostics.echo_layout;
+            EchoLayoutSnapshot snapshot{
+                .bounds = snapshot_rect(echo.bounds),
+                .horizontal_scroll = echo.horizontal_scroll,
+                .text_bytes = echo.text_bytes,
+                .cursor_byte = echo.cursor_byte,
+                .cursor_advance = echo.cursor_advance,
+                .unclamped_cursor_x = echo.unclamped_cursor_x,
+                .cursor_clamped = echo.cursor_clamped,
+                .cursor_rect = std::nullopt,
+                .text = snapshot_text(echo.text),
+            };
+            if (echo.cursor_rect) {
+                snapshot.cursor_rect = snapshot_rect(*echo.cursor_rect);
+            }
+            echo_layout = std::move(snapshot);
         }
         RenderDamageSnapshot render_damage{
             .full_repaint = full_presentation_repaint,
@@ -933,6 +955,7 @@ private:
             .animation = animation,
             .damage = std::move(render_damage),
             .popup_layout = std::move(popup_layout),
+            .echo_layout = std::move(echo_layout),
             .primitives = std::move(primitives),
         };
         inspection_->publish(std::move(editor_snapshot), std::move(scene), std::move(render),

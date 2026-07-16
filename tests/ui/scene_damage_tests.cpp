@@ -145,6 +145,27 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
     CHECK_FALSE(moved.cell_rects.empty());
 }
 
+TEST_CASE("scene damage tracks a structured echo byte caret within one cell") {
+    Scene scene;
+    scene.rows = 2;
+    scene.cols = 20;
+    scene.cursor_row = 2;
+    scene.cursor_col = 10;
+    Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
+    Region echo{
+        RegionRole::EchoArea, {1, 0, 1, 20}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    echo.prims.push_back({0, 0, "search: é", StyleClass::Message, false});
+    echo.echo = Region::EchoContent{.text = "search: é", .cursor_byte = 9};
+    scene.regions = {std::move(body), std::move(echo)};
+
+    SceneDamageTracker tracker;
+    REQUIRE(tracker.update(scene).full_repaint);
+    scene.regions.back().echo = Region::EchoContent{.text = "search: é", .cursor_byte = 11};
+    const SceneDamage moved = tracker.update(scene);
+    CHECK_FALSE(moved.full_repaint);
+    CHECK_FALSE(moved.cell_rects.empty());
+}
+
 TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bottom") {
     Scene scene;
     scene.rows = 4;

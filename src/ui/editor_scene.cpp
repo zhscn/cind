@@ -153,6 +153,12 @@ Scene compose_editor_scene(const EditorSceneInput& input, EditorViewport& viewpo
     }
     echo.prims.push_back(
         {0, 0, std::string(input.echo), StyleClass::Message, false, PrimKind::Text, "echo:main"});
+    echo.echo = Region::EchoContent{
+        .text = std::string(input.echo),
+        .cursor_byte = input.echo_cursor_byte
+                           ? std::optional(std::min(*input.echo_cursor_byte, input.echo.size()))
+                           : std::nullopt,
+    };
 
     std::optional<Region> popup;
     constexpr std::size_t maximum_popup_items = 12;

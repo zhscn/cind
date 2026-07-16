@@ -122,8 +122,22 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     CHECK(state.interaction.active);
     CHECK(state.interaction.prompt == "search: ");
     CHECK(state.command_loop.last_command == "search.prompt");
+    ui::Scene scene = model.compose(8, 80);
+    const ui::Region* echo = scene.find(ui::RegionRole::EchoArea);
+    REQUIRE(echo != nullptr);
+    REQUIRE(echo->echo);
+    const ui::Region::EchoContent initial_echo = echo->echo.value_or(ui::Region::EchoContent{});
+    CHECK(initial_echo.text == "search: ");
+    CHECK(initial_echo.cursor_byte == 8);
 
     model.insert_text("two");
+    scene = model.compose(8, 80);
+    echo = scene.find(ui::RegionRole::EchoArea);
+    REQUIRE(echo != nullptr);
+    REQUIRE(echo->echo);
+    const ui::Region::EchoContent edited_echo = echo->echo.value_or(ui::Region::EchoContent{});
+    CHECK(edited_echo.text == "search: two");
+    CHECK(edited_echo.cursor_byte == 11);
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Enter), 10));
     state = model.inspect();
     CHECK_FALSE(state.interaction.active);

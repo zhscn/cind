@@ -28,6 +28,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     const DocumentSnapshot snapshot = session.snapshot();
     std::string interaction_echo;
     std::optional<int> echo_cursor;
+    std::optional<std::size_t> echo_cursor_byte;
     const InteractionState* interaction = application_.interaction().state();
     const std::string_view echo = [&]() -> std::string_view {
         if (interaction != nullptr) {
@@ -35,6 +36,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             echo_cursor = ui::display_width(interaction->request.prompt) +
                           ui::display_width(std::string_view(interaction->input.text())
                                                 .substr(0, interaction->input.caret()));
+            echo_cursor_byte = interaction->request.prompt.size() + interaction->input.caret();
             return interaction_echo;
         }
         return preedit_.empty() ? std::string_view(application_.message())
@@ -88,6 +90,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                                 .echo = echo,
                                                 .reveal_caret = application_.reveal_caret(),
                                                 .echo_cursor_column = echo_cursor,
+                                                .echo_cursor_byte = echo_cursor_byte,
                                                 .popup_title = popup_title,
                                                 .popup_items = popup_items,
                                                 .popup_selection = popup_selection,

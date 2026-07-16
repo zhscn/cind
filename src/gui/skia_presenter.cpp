@@ -153,6 +153,19 @@ struct PopupLayout {
     std::optional<SkRect> cursor;
 };
 
+struct EchoLayout {
+    const ui::Region* region = nullptr;
+    const ui::Region::EchoContent* content = nullptr;
+    SkRect bounds;
+    PositionedText text;
+    float horizontal_scroll = 0.0F;
+    std::optional<std::size_t> cursor_byte;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<SkRect> cursor;
+};
+
 struct LogicalViewport {
     float width = 0.0F;
     float height = 0.0F;
@@ -478,6 +491,7 @@ struct SkiaFrameLayout::Storage {
     float viewport_width = 0.0F;
     float viewport_height = 0.0F;
     std::optional<PopupLayout> popup;
+    std::optional<EchoLayout> echo;
 };
 
 SkiaFrameLayout::~SkiaFrameLayout() = default;
@@ -685,6 +699,55 @@ struct SkiaPresenter::Impl {
         return prepared;
     }
 
+    std::optional<EchoLayout> prepare_echo_layout(const ui::Scene& scene, LogicalViewport viewport,
+                                                  const PopupLayout* popup) const {
+        if (popup != nullptr && popup->input_active) {
+            return std::nullopt;
+        }
+        const ui::Region* region = scene.find(ui::RegionRole::EchoArea);
+        if (region == nullptr || !region->echo) {
+            return std::nullopt;
+        }
+        const ui::SceneVerticalLayout vertical_layout(scene, vertical_metrics(viewport.height));
+        const SkRect bounds = region_pixel_rect(*region, cell_width, cell_height, vertical_layout);
+        const ui::Region::EchoContent& content = *region->echo;
+        ShapedText shaped = shape_text(content.text);
+        const float text_top =
+            bounds.top() + (bounds.height() - static_cast<float>(cell_height)) * 0.5F;
+        const float natural_left = bounds.left() + footer_padding_x;
+        float horizontal_scroll = 0.0F;
+        std::optional<std::size_t> cursor_byte;
+        float cursor_advance = 0.0F;
+        float unclamped_cursor_x = 0.0F;
+        bool cursor_clamped = false;
+        std::optional<SkRect> cursor;
+        if (content.cursor_byte) {
+            cursor_byte = std::min(*content.cursor_byte, content.text.size());
+            cursor_advance = shape_text(content.text.substr(0, *cursor_byte)).advance;
+            const float cursor_right = std::max(natural_left, bounds.right() - footer_padding_x);
+            horizontal_scroll = std::min(0.0F, cursor_right - natural_left - cursor_advance);
+            unclamped_cursor_x = natural_left + horizontal_scroll + cursor_advance;
+            const float maximum_cursor_x = std::max(natural_left, bounds.right() - 3.0F);
+            const float cursor_x = std::clamp(unclamped_cursor_x, natural_left, maximum_cursor_x);
+            cursor_clamped = std::abs(cursor_x - unclamped_cursor_x) > 0.01F;
+            cursor = SkRect::MakeXYWH(cursor_x, text_top, 2.0F, static_cast<float>(cell_height));
+        }
+        return EchoLayout{
+            .region = region,
+            .content = &content,
+            .bounds = bounds,
+            .text = {.role = "echo",
+                     .shaped = std::move(shaped),
+                     .origin = SkPoint::Make(natural_left + horizontal_scroll, text_top)},
+            .horizontal_scroll = horizontal_scroll,
+            .cursor_byte = cursor_byte,
+            .cursor_advance = cursor_advance,
+            .unclamped_cursor_x = unclamped_cursor_x,
+            .cursor_clamped = cursor_clamped,
+            .cursor = cursor,
+        };
+    }
+
     void draw_hairline(SkCanvas& canvas, const SkRect& rect) {
         SkPaint paint;
         paint.setAntiAlias(false);
@@ -844,6 +907,66 @@ struct SkiaPresenter::Impl {
         }
 
         canvas.restore();
+    }
+
+    void paint_echo(SkCanvas& canvas, const EchoLayout& layout, std::size_t region_index,
+                    const RasterView& raster, SkiaRenderDiagnostics* diagnostics,
+                    const SkRect* damage_bounds) {
+        if (damage_bounds && !SkRect::Intersects(layout.bounds, *damage_bounds)) {
+            return;
+        }
+        SkPaint fill;
+        fill.setAntiAlias(false);
+        fill.setColor(color(theme.canvas));
+        canvas.drawRect(layout.bounds, fill);
+
+        std::optional<PixelProbe> probe;
+        if (diagnostics) {
+            probe = capture_probe(layout.bounds, raster);
+        }
+        canvas.save();
+        canvas.clipRect(layout.bounds);
+        if (layout.text.shaped.blob) {
+            SkPaint paint;
+            paint.setAntiAlias(true);
+            paint.setColor(color(theme.muted));
+            canvas.drawTextBlob(layout.text.shaped.blob, layout.text.origin.x(),
+                                layout.text.origin.y(), paint);
+        }
+        canvas.restore();
+
+        if (diagnostics && !layout.region->prims.empty()) {
+            const std::optional<SkRect> shape_bounds =
+                layout.text.shaped.blob ? std::optional(positioned_shape_bounds(layout.text))
+                                        : std::nullopt;
+            SkiaPrimitiveRenderDiagnostics primitive{
+                .region_index = region_index,
+                .primitive_index = 0,
+                .layout_bounds = logical_rect(layout.bounds),
+                .shape_bounds = std::nullopt,
+                .paint_bounds = std::nullopt,
+                .draw_bounds_cross_region_clip = false,
+                .row_overflow = false,
+                .column_overflow = false,
+            };
+            if (shape_bounds) {
+                primitive.shape_bounds = logical_rect(*shape_bounds);
+                primitive.draw_bounds_cross_region_clip =
+                    extends_horizontally(*shape_bounds, layout.bounds) ||
+                    extends_vertically(*shape_bounds, layout.bounds);
+            }
+            if (probe) {
+                primitive.paint_bounds = changed_pixel_bounds(*probe, raster);
+            }
+            if (primitive.paint_bounds) {
+                const SkRect painted =
+                    SkRect::MakeXYWH(primitive.paint_bounds->x, primitive.paint_bounds->y,
+                                     primitive.paint_bounds->width, primitive.paint_bounds->height);
+                primitive.row_overflow = extends_vertically(painted, layout.bounds);
+                primitive.column_overflow = extends_horizontally(painted, layout.bounds);
+            }
+            diagnostics->primitives.push_back(primitive);
+        }
     }
 
     void paint_status(SkCanvas& canvas, const ui::Region& region, const SkRect& bounds,
@@ -1017,10 +1140,33 @@ struct SkiaPresenter::Impl {
         return diagnostics;
     }
 
+    static SkiaEchoLayoutDiagnostics echo_diagnostics(const EchoLayout& layout) {
+        return {
+            .bounds = logical_rect(layout.bounds),
+            .horizontal_scroll = layout.horizontal_scroll,
+            .text_bytes = layout.content->text.size(),
+            .cursor_byte = layout.cursor_byte,
+            .cursor_advance = layout.cursor_advance,
+            .unclamped_cursor_x = layout.unclamped_cursor_x,
+            .cursor_clamped = layout.cursor_clamped,
+            .cursor_rect =
+                layout.cursor ? std::optional(logical_rect(*layout.cursor)) : std::nullopt,
+            .text = {.role = layout.text.role,
+                     .byte_count = layout.text.shaped.text.size(),
+                     .advance = layout.text.shaped.advance,
+                     .origin = {.x = layout.text.origin.x(), .y = layout.text.origin.y()},
+                     .shape_bounds =
+                         layout.text.shaped.blob
+                             ? std::optional(logical_rect(positioned_shape_bounds(layout.text)))
+                             : std::nullopt},
+        };
+    }
+
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale, SkiaRenderDiagnostics* diagnostics,
                 std::span<const SkiaLogicalRect> damage, bool full_repaint,
-                const SkiaAnimationFrame* animation, const PopupLayout* prepared_popup) {
+                const SkiaAnimationFrame* animation, const PopupLayout* prepared_popup,
+                const EchoLayout* prepared_echo) {
         if (!(device_scale > 0.0F)) {
             throw std::invalid_argument("SkiaPresenter received an invalid device scale");
         }
@@ -1042,6 +1188,8 @@ struct SkiaPresenter::Impl {
             diagnostics->baseline_from_row_top = -ascent;
             diagnostics->popup_layout =
                 prepared_popup ? std::optional(popup_diagnostics(*prepared_popup)) : std::nullopt;
+            diagnostics->echo_layout =
+                prepared_echo ? std::optional(echo_diagnostics(*prepared_echo)) : std::nullopt;
             diagnostics->primitives.clear();
             std::size_t primitive_count = 0;
             for (const ui::Region& region : scene.regions) {
@@ -1069,6 +1217,7 @@ struct SkiaPresenter::Impl {
             const SkRect grid_clip =
                 SkRect::MakeLTRB(0.0F, 0.0F, viewport_width, vertical_layout.grid_clip_bottom());
             const PopupLayout* panel = &layer_scene == &scene ? prepared_popup : nullptr;
+            const EchoLayout* echo = &layer_scene == &scene ? prepared_echo : nullptr;
             SkPaint fill;
             fill.setAntiAlias(false);
             for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
@@ -1081,6 +1230,11 @@ struct SkiaPresenter::Impl {
                 if (panel != nullptr && panel->region == &region) {
                     paint_popup(canvas, *panel, region_index, raster, layer_diagnostics,
                                 damage_bounds);
+                    continue;
+                }
+                if (echo != nullptr && echo->region == &region) {
+                    paint_echo(canvas, *echo, region_index, raster, layer_diagnostics,
+                               damage_bounds);
                     continue;
                 }
                 SkRect bounds = region_pixel_rect(region, cell_width, cell_height, vertical_layout);
@@ -1257,9 +1411,15 @@ struct SkiaPresenter::Impl {
             bool cursor_in_echo = false;
             const std::optional<SkRect> popup_cursor =
                 prepared_popup != nullptr ? prepared_popup->cursor : std::nullopt;
+            const std::optional<SkRect> echo_cursor =
+                prepared_echo != nullptr ? prepared_echo->cursor : std::nullopt;
             if (popup_cursor) {
                 cursor_in_footer = true;
                 cursor_clip = prepared_popup->header;
+            } else if (echo_cursor) {
+                cursor_in_footer = true;
+                cursor_in_echo = true;
+                cursor_clip = prepared_echo->bounds;
             } else {
                 for (const ui::Region& region : scene.regions) {
                     if (contains(region.rect, cursor_row, cursor_col)) {
@@ -1291,6 +1451,9 @@ struct SkiaPresenter::Impl {
             if (popup_cursor) {
                 cursor_x = popup_cursor->left();
                 cursor_y = popup_cursor->top();
+            } else if (echo_cursor) {
+                cursor_x = echo_cursor->left();
+                cursor_y = echo_cursor->top();
             }
             if (position) {
                 cursor_x = position->x;
@@ -1443,6 +1606,9 @@ SkiaFrameLayout SkiaPresenter::prepare_layout(const ui::Scene& scene, float view
     storage->viewport_height = viewport_height;
     storage->popup =
         impl_->prepare_popup_layout(scene, {.width = viewport_width, .height = viewport_height});
+    storage->echo =
+        impl_->prepare_echo_layout(scene, {.width = viewport_width, .height = viewport_height},
+                                   storage->popup ? &*storage->popup : nullptr);
     return SkiaFrameLayout(std::move(storage));
 }
 
@@ -1465,6 +1631,9 @@ std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout&
     }
     if (storage.popup && storage.popup->cursor) {
         return logical_rect(*storage.popup->cursor);
+    }
+    if (storage.echo && storage.echo->cursor) {
+        return logical_rect(*storage.echo->cursor);
     }
     const ui::SceneVerticalLayout vertical_layout(scene,
                                                   impl_->vertical_metrics(storage.viewport_height));
@@ -1600,6 +1769,23 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const SkiaFrameLayout& 
             }
         }
     }
+    if (storage.echo) {
+        const ui::Rect& echo_region = storage.echo->region->rect;
+        const auto overlaps_echo = [&](const ui::Rect& cells) {
+            return cells.row < echo_region.row + echo_region.rows &&
+                   cells.row + cells.rows > echo_region.row &&
+                   cells.col < echo_region.col + echo_region.cols &&
+                   cells.col + cells.cols > echo_region.col;
+        };
+        const bool touched_by_cells = std::ranges::any_of(damage.cell_rects, overlaps_echo);
+        const bool touched_by_cursor =
+            std::ranges::any_of(damage.cursor_cells, [&](const ui::CellPoint& cursor) {
+                return contains(echo_region, cursor.row, cursor.column);
+            });
+        if (touched_by_cells || touched_by_cursor) {
+            append_damage(rectangles, logical_rect(storage.echo->bounds));
+        }
+    }
     if ((!damage.cell_rects.empty() || !damage.cursor_cells.empty())) {
         if (storage.popup) {
             append_damage(rectangles, logical_rect(storage.popup->shadow));
@@ -1647,7 +1833,8 @@ void SkiaPresenter::render(const SkiaFrameLayout& layout, int pixel_width, int p
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
                   diagnostics, std::span<const SkiaLogicalRect>{}, true, nullptr,
-                  storage.popup ? &*storage.popup : nullptr);
+                  storage.popup ? &*storage.popup : nullptr,
+                  storage.echo ? &*storage.echo : nullptr);
 }
 
 void SkiaPresenter::render_damage(const ui::Scene& scene, int pixel_width, int pixel_height,
@@ -1670,7 +1857,8 @@ void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width
         {.width = storage.viewport_width, .height = storage.viewport_height},
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
-                  nullptr, damage, false, nullptr, storage.popup ? &*storage.popup : nullptr);
+                  nullptr, damage, false, nullptr, storage.popup ? &*storage.popup : nullptr,
+                  storage.echo ? &*storage.echo : nullptr);
 }
 
 void SkiaPresenter::render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
@@ -1697,7 +1885,8 @@ void SkiaPresenter::render_animated(const SkiaFrameLayout& layout,
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
                   diagnostics, std::span<const SkiaLogicalRect>{}, true, &animation,
-                  storage.popup ? &*storage.popup : nullptr);
+                  storage.popup ? &*storage.popup : nullptr,
+                  storage.echo ? &*storage.echo : nullptr);
 }
 
 } // namespace cind::gui

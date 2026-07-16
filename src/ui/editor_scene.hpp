@@ -47,6 +47,9 @@ struct EditorSceneInput {
 
     // A present value puts the caret on the echo line at this zero-based cell.
     std::optional<int> echo_cursor_column;
+    // UTF-8 byte offset in `echo`, used by pixel frontends to shape the caret
+    // with the same text layout that they paint.
+    std::optional<std::size_t> echo_cursor_byte;
 
     std::string_view popup_title;
     std::span<const EditorPopupItem> popup_items;

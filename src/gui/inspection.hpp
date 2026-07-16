@@ -123,6 +123,18 @@ struct PopupLayoutSnapshot {
     std::vector<TextLayoutSnapshot> header_text;
 };
 
+struct EchoLayoutSnapshot {
+    LogicalPixelRectSnapshot bounds;
+    float horizontal_scroll = 0.0F;
+    std::size_t text_bytes = 0;
+    std::optional<std::size_t> cursor_byte;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<LogicalPixelRectSnapshot> cursor_rect;
+    TextLayoutSnapshot text;
+};
+
 struct RenderStateSnapshot {
     std::string video_driver;
     std::string render_driver;
@@ -144,6 +156,7 @@ struct RenderStateSnapshot {
     RenderAnimationSnapshot animation;
     RenderDamageSnapshot damage;
     std::optional<PopupLayoutSnapshot> popup_layout;
+    std::optional<EchoLayoutSnapshot> echo_layout;
     std::vector<PrimitiveRenderSnapshot> primitives;
 };
 
@@ -158,7 +171,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 15;
+    static constexpr int schema_version = 16;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

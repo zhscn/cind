@@ -119,12 +119,25 @@ struct SkiaPopupLayoutDiagnostics {
     std::vector<SkiaTextLayoutDiagnostics> header_text;
 };
 
+struct SkiaEchoLayoutDiagnostics {
+    SkiaLogicalRect bounds;
+    float horizontal_scroll = 0.0F;
+    std::size_t text_bytes = 0;
+    std::optional<std::size_t> cursor_byte;
+    float cursor_advance = 0.0F;
+    float unclamped_cursor_x = 0.0F;
+    bool cursor_clamped = false;
+    std::optional<SkiaLogicalRect> cursor_rect;
+    SkiaTextLayoutDiagnostics text;
+};
+
 struct SkiaRenderDiagnostics {
     float ascent = 0.0F;
     float descent = 0.0F;
     float leading = 0.0F;
     float baseline_from_row_top = 0.0F;
     std::optional<SkiaPopupLayoutDiagnostics> popup_layout;
+    std::optional<SkiaEchoLayoutDiagnostics> echo_layout;
     std::vector<SkiaPrimitiveRenderDiagnostics> primitives;
 };
 

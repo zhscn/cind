@@ -352,12 +352,15 @@ private:
                                  "C-s search  M-x commands  C-h b help"
                                : message_;
         std::optional<int> echo_cursor;
+        std::optional<std::size_t> echo_cursor_byte;
         if (interaction != nullptr) {
             echo_cursor = ui::display_width(interaction->request.prompt) +
                           ui::display_width(std::string_view(interaction->input.text())
                                                 .substr(0, interaction->input.caret()));
+            echo_cursor_byte = interaction->request.prompt.size() + interaction->input.caret();
         } else if (any_prompt) {
             echo_cursor = ui::display_width(echo_text);
+            echo_cursor_byte = echo_text.size();
         }
         const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
         std::vector<ui::EditorPopupItem> popup_items;
@@ -405,6 +408,7 @@ private:
                                                     .last_key = application_.last_key(),
                                                     .echo = echo_text,
                                                     .echo_cursor_column = echo_cursor,
+                                                    .echo_cursor_byte = echo_cursor_byte,
                                                     .popup_title = popup_title,
                                                     .popup_items = popup_items,
                                                     .popup_selection = popup_selection,

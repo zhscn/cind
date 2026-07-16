@@ -140,6 +140,14 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                 append_integer(signature, popup.selected_item.value_or(0));
                 return true;
             });
+            (void)region.echo.transform([&](const Region::EchoContent& echo) {
+                std::string& signature =
+                    cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+                signature.push_back('\x1d');
+                append_integer(signature, static_cast<std::uint32_t>(echo.cursor_byte.has_value()));
+                append_integer(signature, echo.cursor_byte.value_or(0));
+                return true;
+            });
         }
     }
     return cells;

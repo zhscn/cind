@@ -20,7 +20,8 @@ using namespace cind::ui;
 namespace {
 
 void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
-                        bool full_reference_match = true, bool popup_cursor_mismatch = false) {
+                        bool full_reference_match = true, bool popup_cursor_mismatch = false,
+                        bool echo_frame = false, bool echo_cursor_mismatch = false) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -108,7 +109,56 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                                        .total_items = 1,
                                        .selected_item = 0,
                                        .items = {{.label = "file.save", .detail = "command"}}};
-    scene.regions = {body, status, popup};
+    Region echo{
+        RegionRole::EchoArea, {1, 0, 1, 10}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    echo.prims.push_back(
+        {0, 0, "search: x", StyleClass::Message, false, PrimKind::Text, "echo:main"});
+    echo.echo = Region::EchoContent{.text = "search: x", .cursor_byte = 9};
+    std::optional<PopupLayoutSnapshot> popup_layout;
+    std::optional<EchoLayoutSnapshot> echo_layout;
+    if (echo_frame) {
+        scene.regions = {body, status, echo};
+        echo_layout = EchoLayoutSnapshot{
+            .bounds = {.x = 0.0F, .y = 72.0F, .width = 200.0F, .height = 28.0F},
+            .horizontal_scroll = 0.0F,
+            .text_bytes = 9,
+            .cursor_byte = 9,
+            .cursor_advance = 63.0F,
+            .unclamped_cursor_x = echo_cursor_mismatch ? 79.0F : 75.0F,
+            .cursor_clamped = echo_cursor_mismatch,
+            .cursor_rect =
+                LogicalPixelRectSnapshot{.x = 75.0F, .y = 76.0F, .width = 2.0F, .height = 20.0F},
+            .text = {.role = "echo",
+                     .byte_count = 9,
+                     .advance = 63.0F,
+                     .origin = {.x = 12.0F, .y = 76.0F},
+                     .shape_bounds = std::nullopt},
+        };
+    } else {
+        scene.regions = {body, status, popup};
+        popup_layout = PopupLayoutSnapshot{
+            .panel_bounds = {.x = 40.0F, .y = 4.0F, .width = 120.0F, .height = 72.0F},
+            .header_bounds = {.x = 40.0F, .y = 8.0F, .width = 120.0F, .height = 28.0F},
+            .horizontal_scroll = 0.0F,
+            .input_bytes = 0,
+            .input_cursor = 0,
+            .cursor_advance = 0.0F,
+            .unclamped_cursor_x = popup_cursor_mismatch ? 116.0F : 112.0F,
+            .cursor_clamped = popup_cursor_mismatch,
+            .cursor_rect =
+                LogicalPixelRectSnapshot{.x = 112.0F, .y = 12.0F, .width = 2.0F, .height = 20.0F},
+            .header_text = {{.role = "prompt",
+                             .byte_count = 8,
+                             .advance = 70.0F,
+                             .origin = {.x = 52.0F, .y = 12.0F},
+                             .shape_bounds = std::nullopt},
+                            {.role = "input",
+                             .byte_count = 0,
+                             .advance = 0.0F,
+                             .origin = {.x = 112.0F, .y = 12.0F},
+                             .shape_bounds = std::nullopt}},
+        };
+    }
     RenderStateSnapshot render{
         .video_driver = "wayland",
         .render_driver = "gpu",
@@ -138,30 +188,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                    .full_reference_match = full_reference_match,
                    .rects = {{.logical = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
                               .output = {.x = 0, .y = 0, .width = 45, .height = 30}}}},
-        .popup_layout =
-            PopupLayoutSnapshot{
-                .panel_bounds = {.x = 40.0F, .y = 4.0F, .width = 120.0F, .height = 72.0F},
-                .header_bounds = {.x = 40.0F, .y = 8.0F, .width = 120.0F, .height = 28.0F},
-                .horizontal_scroll = 0.0F,
-                .input_bytes = 0,
-                .input_cursor = 0,
-                .cursor_advance = 0.0F,
-                .unclamped_cursor_x = popup_cursor_mismatch ? 116.0F : 112.0F,
-                .cursor_clamped = popup_cursor_mismatch,
-                .cursor_rect =
-                    LogicalPixelRectSnapshot{
-                        .x = 112.0F, .y = 12.0F, .width = 2.0F, .height = 20.0F},
-                .header_text = {{.role = "prompt",
-                                 .byte_count = 8,
-                                 .advance = 70.0F,
-                                 .origin = {.x = 52.0F, .y = 12.0F},
-                                 .shape_bounds = std::nullopt},
-                                {.role = "input",
-                                 .byte_count = 0,
-                                 .advance = 0.0F,
-                                 .origin = {.x = 112.0F, .y = 12.0F},
-                                 .shape_bounds = std::nullopt}},
-            },
+        .popup_layout = std::move(popup_layout),
+        .echo_layout = std::move(echo_layout),
         .primitives =
             {{.region_index = 0,
               .primitive_index = 0,
@@ -206,7 +234,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":15") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":16") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -357,6 +385,32 @@ TEST_CASE("inspection reports popup shaped cursor divergence") {
     REQUIRE(frame);
     REQUIRE(frame->violations.size() == 1);
     CHECK(frame->violations.front() == "render popup cursor advance disagrees with input");
+}
+
+TEST_CASE("inspection exposes echo shaped layout") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    CHECK(frame->violations.empty());
+    const std::string snapshot = inspection_snapshot_json(*frame);
+    CHECK(snapshot.find("\"echo_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
+          std::string::npos);
+    const InspectionResponse echo_layout = run_inspection_query(hub, "get render.echo_layout");
+    REQUIRE(echo_layout.ok);
+    CHECK(echo_layout.payload.find("\"cursor_byte\":9") != std::string::npos);
+    CHECK(echo_layout.payload.find("\"role\":\"echo\"") != std::string::npos);
+}
+
+TEST_CASE("inspection reports echo shaped cursor divergence") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, true, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "render echo cursor advance disagrees with text");
 }
 
 TEST_CASE("inspection server uses a private Unix socket and framed responses") {
