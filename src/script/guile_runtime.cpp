@@ -55,6 +55,7 @@ struct GuileState {
     std::uint64_t provider_revision = 0;
     std::uint64_t input_state_revision = 0;
     std::size_t input_state_definitions = 0;
+    std::size_t input_strategy_definitions = 0;
     std::uint64_t mode_revision = 0;
     std::size_t mode_definitions = 0;
     std::optional<std::string> last_error;
@@ -68,6 +69,7 @@ struct HostLease {
     std::size_t providers_installed = 0;
     std::size_t bindings_installed = 0;
     std::size_t input_states_installed = 0;
+    std::size_t input_strategies_installed = 0;
     std::size_t modes_installed = 0;
 };
 
@@ -658,6 +660,99 @@ InputStateId require_input_state(HostLease& host, SCM value, const char* caller,
     return *state;
 }
 
+InputStrategyId require_input_strategy(HostLease& host, SCM value, const char* caller,
+                                       int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<InputStrategyId> strategy = host.runtime->input_strategies().find(name);
+    if (!strategy) {
+        scm_misc_error(caller, "unknown input strategy: ~S", scm_list_1(value));
+    }
+    return *strategy;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SCM interface_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-input-strategy!");
+        const std::string name = scheme_name(name_value, "define-input-strategy!", 2);
+        InputStrategyRegistry::Definition definition{
+            .name = name,
+            .editing = require_input_state(host, editing_value, "define-input-strategy!", 3),
+            .interface = require_input_state(host, interface_value, "define-input-strategy!", 4)};
+        const std::optional<InputStrategyId> existing = host.runtime->input_strategies().find(name);
+        InputStrategyId id;
+        if (existing) {
+            id = *existing;
+            host.runtime->input_strategies().configure(id, std::move(definition));
+        } else {
+            id = host.runtime->input_strategies().define(std::move(definition));
+            ++host.state->input_strategy_definitions;
+        }
+        host.runtime->views().refresh_mode_input_states();
+        ++host.input_strategies_installed;
+        return scm_from_uint32(id.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-input-strategy!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-input-strategy!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_default_input_strategy(SCM host_object, SCM strategy_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-default-input-strategy!");
+        const InputStrategyId strategy =
+            require_input_strategy(host, strategy_value, "set-default-input-strategy!", 2);
+        host.runtime->set_default_input_strategy(strategy);
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-default-input-strategy!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-default-input-strategy!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_view_input_strategy(SCM host_object, SCM view_value, SCM strategy_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-view-input-strategy!");
+        const ViewId view =
+            entity_id_from_scheme<ViewTag>(view_value, "set-view-input-strategy!", 2);
+        std::optional<InputStrategyId> strategy;
+        if (!scheme_false(strategy_value)) {
+            strategy = require_input_strategy(host, strategy_value, "set-view-input-strategy!", 3);
+        }
+        host.runtime->views().set_input_strategy(view, strategy);
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-view-input-strategy!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-view-input-strategy!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_input_strategy(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "view-input-strategy");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-input-strategy", 2);
+        const View& selected = host.runtime->views().get(view);
+        const std::optional<InputStrategyId> strategy =
+            selected.input_strategy() ? selected.input_strategy()
+                                      : host.runtime->input_strategies().default_strategy();
+        return strategy ? name_symbol(host.runtime->input_strategies().definition(*strategy).name)
+                        : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        scm_misc_error("view-input-strategy", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("view-input-strategy", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 ModeId require_mode(HostLease& host, SCM value, const char* caller, int position) {
     const std::string name = scheme_name(value, caller, position);
     const std::optional<ModeId> mode = host.runtime->modes().find(name);
@@ -820,26 +915,6 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
         scm_misc_error("mode-properties", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM set_interaction_class_state(SCM host_object, SCM class_value, SCM state_value) {
-    try {
-        HostLease& host = require_host(host_object, "%set-interaction-class-state!");
-        const InteractionClass interaction_class =
-            interaction_class_from_scheme(class_value, "%set-interaction-class-state!", 2);
-        std::optional<InputStateId> state;
-        if (!scheme_false(state_value)) {
-            state = require_input_state(host, state_value, "%set-interaction-class-state!", 3);
-        }
-        host.runtime->set_interaction_class_state(interaction_class, state);
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("%set-interaction-class-state!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("%set-interaction-class-state!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -2058,6 +2133,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(resolve_key_sequence));
     (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
+    (void)scm_c_define_gsubr("define-input-strategy!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_input_strategy));
+    (void)scm_c_define_gsubr("set-default-input-strategy!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_default_input_strategy));
+    (void)scm_c_define_gsubr("set-view-input-strategy!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_view_input_strategy));
+    (void)scm_c_define_gsubr("view-input-strategy", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_input_strategy));
     (void)scm_c_define_gsubr("set-base-input-state!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_base_input_state));
     (void)scm_c_define_gsubr("push-input-state!", 3, 0, 0,
@@ -2073,8 +2156,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("%define-mode!", 8, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
     (void)scm_c_define_gsubr("mode-properties", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(mode_properties));
-    (void)scm_c_define_gsubr("%set-interaction-class-state!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_interaction_class_state));
     (void)scm_c_define_gsubr("set-buffer-major-mode!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_major_mode));
     (void)scm_c_define_gsubr("set-buffer-minor-mode!", 4, 0, 0,
@@ -2152,23 +2233,25 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export(
-        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-        "define-input-state!", "set-base-input-state!", "push-input-state!", "pop-input-state!",
-        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "%define-mode!",
-        "mode-properties", "%set-interaction-class-state!", "set-buffer-major-mode!",
-        "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
-        "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
-        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
-        "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!", "buffer-substring",
-        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "structural-motion-target", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "move-caret-to-line!", "set-message!", "ensure-project-index!",
-        "open-file!", "start-project-search!", "set-buffer-resource!", "save-buffer!",
-        "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
-        "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+                 "define-input-state!", "define-input-strategy!", "set-default-input-strategy!",
+                 "set-view-input-strategy!", "view-input-strategy", "set-base-input-state!",
+                 "push-input-state!", "pop-input-state!", "reset-input-states!",
+                 "view-input-states", "observe-input-state-changes!", "%define-mode!",
+                 "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
+                 "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
+                 "open-buffer-summaries", "project-root", "project-files", "path-relative",
+                 "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-resource",
+                 "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
+                 "view-selection", "set-selection!", "clear-selection!", "buffer-substring",
+                 "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+                 "reset-preferred-column!", "structural-motion-target", "write-clipboard!",
+                 "read-clipboard", "display-buffer!", "move-caret-to-line!", "set-message!",
+                 "ensure-project-index!", "open-file!", "start-project-search!",
+                 "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",
+                 "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+                 "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -2804,6 +2887,7 @@ public:
     std::expected<std::size_t, std::string> install_input_states() {
         require_owner_thread();
         lease_->input_states_installed = 0;
+        lease_->input_strategies_installed = 0;
         GuileCall call;
         call.operation = GuileCall::Operation::InstallInputStates;
         call.host = host_;
@@ -2815,6 +2899,10 @@ public:
         if (call.count != lease_->input_states_installed) {
             state_->last_error =
                 "Guile input state policy returned an inconsistent definition count";
+            return std::unexpected(*state_->last_error);
+        }
+        if (lease_->input_strategies_installed == 0) {
+            state_->last_error = "Guile input policy did not define an input strategy";
             return std::unexpected(*state_->last_error);
         }
         ++state_->input_state_revision;
@@ -2853,6 +2941,7 @@ public:
                 .binding_revision = binding_revision_,
                 .input_state_revision = state_->input_state_revision,
                 .scripted_input_states = state_->input_state_definitions,
+                .scripted_input_strategies = state_->input_strategy_definitions,
                 .mode_revision = state_->mode_revision,
                 .scripted_modes = state_->mode_definitions,
                 .last_error = state_->last_error};

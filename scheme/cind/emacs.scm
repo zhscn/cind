@@ -4,6 +4,6 @@
 
 (define (install-emacs-input-state! host)
   (define-input-state! host 'emacs '#() 'accept 'beam "" #f)
-  (%set-interaction-class-state! host 'editing 'emacs)
-  (%set-interaction-class-state! host 'interface 'emacs)
+  (define-input-strategy! host 'emacs 'emacs 'emacs)
+  (set-default-input-strategy! host 'emacs)
   1)

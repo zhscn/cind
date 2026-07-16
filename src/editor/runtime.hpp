@@ -3,6 +3,7 @@
 #include "editor/buffer.hpp"
 #include "editor/command.hpp"
 #include "editor/input_state.hpp"
+#include "editor/input_strategy.hpp"
 #include "editor/interaction.hpp"
 #include "editor/keymap.hpp"
 #include "editor/mode.hpp"
@@ -42,6 +43,8 @@ public:
     const KeymapRegistry& keymaps() const { return keymaps_; }
     InputStateRegistry& input_states() { return input_states_; }
     const InputStateRegistry& input_states() const { return input_states_; }
+    InputStrategyRegistry& input_strategies() { return input_strategies_; }
+    const InputStrategyRegistry& input_strategies() const { return input_strategies_; }
     InteractionProviderRegistry& interaction_providers() { return interaction_providers_; }
     const InteractionProviderRegistry& interaction_providers() const {
         return interaction_providers_;
@@ -53,8 +56,7 @@ public:
     bool extensions_sealed() const { return extensions_sealed_; }
 
     SettingsResolver settings_for(BufferId buffer, ViewId view) const;
-    void set_interaction_class_state(InteractionClass interaction_class,
-                                     std::optional<InputStateId> state);
+    void set_default_input_strategy(std::optional<InputStrategyId> strategy);
 
 private:
     void append_mode_layers(std::vector<const SettingsLayer*>& layers, ModeId mode) const;
@@ -65,6 +67,7 @@ private:
     CommandRegistry commands_;
     KeymapRegistry keymaps_;
     InputStateRegistry input_states_;
+    InputStrategyRegistry input_strategies_;
     ModeRegistry modes_;
     BufferRegistry buffers_;
     ProjectRegistry projects_;

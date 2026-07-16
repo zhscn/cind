@@ -7,10 +7,11 @@ namespace cind {
 
 EditorRuntime::EditorRuntime()
     : application_settings_(setting_definitions_, SettingScope::Application),
-      languages_(setting_definitions_), input_states_(keymaps_),
+      languages_(setting_definitions_), input_states_(keymaps_), input_strategies_(input_states_),
       modes_(setting_definitions_, languages_, keymaps_, input_states_),
       buffers_(setting_definitions_, modes_), projects_(buffers_, setting_definitions_),
-      views_(buffers_, setting_definitions_, input_states_, modes_), windows_(views_) {}
+      views_(buffers_, setting_definitions_, input_states_, input_strategies_, modes_),
+      windows_(views_) {}
 
 void EditorRuntime::seal_extensions() {
     if (extensions_sealed_) {
@@ -22,6 +23,7 @@ void EditorRuntime::seal_extensions() {
     commands_.seal();
     keymaps_.seal();
     input_states_.seal();
+    input_strategies_.seal();
     interaction_providers_.seal();
     extensions_sealed_ = true;
 }
@@ -66,9 +68,8 @@ SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id)
     return SettingsResolver(setting_definitions_, std::move(layers));
 }
 
-void EditorRuntime::set_interaction_class_state(InteractionClass interaction_class,
-                                                std::optional<InputStateId> state) {
-    modes_.set_interaction_class_state(interaction_class, state);
+void EditorRuntime::set_default_input_strategy(std::optional<InputStrategyId> strategy) {
+    input_strategies_.set_default(strategy);
     views_.refresh_mode_input_states();
 }
 

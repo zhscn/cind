@@ -32,8 +32,9 @@ becomes a C++ error value and is retained in the scripting inspection snapshot. 
 raised by a host primitive are translated into Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
-provider, input-state, and mode counts, command/provider/keymap/input-state/mode installation
-revisions, and the most recent error. This state is diagnostic and is not a plugin ABI.
+provider, input-state, input-strategy, and mode counts, command/provider/keymap/input-state/mode
+installation revisions, and the most recent error. This state is diagnostic and is not a plugin
+ABI.
 
 ## Host capabilities
 
@@ -53,6 +54,10 @@ The native module exports:
 (keymap-bindings host keymap-name)
 (resolve-key-sequence host keymap-names key-sequence)
 (define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
+(define-input-strategy! host name editing-state interface-state)
+(set-default-input-strategy! host strategy-name)
+(set-view-input-strategy! host view-id strategy-name-or-#f)
+(view-input-strategy host view-id)
 (set-base-input-state! host view-id state-name)
 (push-input-state! host view-id state-name)
 (pop-input-state! host view-id)
@@ -61,7 +66,6 @@ The native module exports:
 (observe-input-state-changes! host procedure)
 (%define-mode! host name kind parent keymap interaction-class initial-state things)
 (mode-properties host mode-name)
-(%set-interaction-class-state! host interaction-class state-name-or-#f)
 (set-buffer-major-mode! host buffer-id mode-name-or-#f)
 (set-buffer-minor-mode! host buffer-id mode-name enabled?)
 (buffer-mode-policy host buffer-id)
@@ -140,6 +144,12 @@ canonical key notation. It returns `pass`, `consume`, or `#(dispatch command-nam
 are retained by the scripting runtime and consume the key without escaping into a frontend event
 loop.
 
+An input strategy is a named mapping from the `editing` and `interface` interaction classes to
+durable states. The application has a default strategy, while each View may select an independent
+override. Passing `#f` to `set-view-input-strategy!` restores inheritance from the application
+default. Selecting a strategy immediately rederives the View's durable state from its Buffer mode;
+a mode-specific `initial-state` remains the higher-priority override.
+
 The state mutation procedures address a generational View ID. Base replacement initializes or
 changes the durable state. Push adds a transient state, pop removes one transient state, and reset
 removes all transients while preserving the base. `view-input-states` returns the stack from durable
@@ -160,12 +170,10 @@ mechanism kinds. Parent modes have the same major/minor kind. When a child keyma
 parent, mode inheritance assigns the nearest parent mode keymap. `mode-properties` returns the
 declared metadata together with the effective keymap names.
 
-`set-interaction-class-states!` configures a strategy's `editing` and `interface` durable states.
-The native `%set-interaction-class-state!` primitive applies each mapping and immediately rederives
-all existing Views. `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode
-state. `buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy
-changes update every View of the Buffer and notify procedures registered through
-`observe-mode-policy-changes!` with
+`set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode state.
+`buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy changes
+rederive every View of the Buffer through that View's selected strategy and notify procedures
+registered through `observe-mode-policy-changes!` with
 `#(kind buffer-id mode-name-or-#f before-policy after-policy)`. A mode's explicit initial state
 precedes the class mapping, and the most recently enabled minor-mode declaration precedes the major
 mode.
@@ -268,10 +276,11 @@ and the always-active system escape map are bootstrap mechanisms with their own 
 precedence contracts.
 
 `(cind toy-modal)` is a small strategy that exercises the same public mechanisms as an extension.
-`C-c n` selects its `toy-normal` base state, whose `toy-modal.normal` map provides `h`, `j`, `k`,
-`l`, `0`, `$`, and `x`, ignores direct text input, presents a block cursor, and displays `N` in the
-modeline. `i` restores the `emacs` base state. Strategy commands address the invoking View rather
-than changing application-global input policy.
+`C-c n` selects the `toy-modal` strategy for the invoking View. Its `toy-normal` editing state and
+`toy-modal.normal` map provide `h`, `j`, `k`, `l`, `0`, `$`, and `x`, ignore direct text input,
+present a block cursor, and display `N` in the modeline. `i` selects the `emacs` strategy for that
+View. The toy strategy maps interface Buffers to the Emacs state, demonstrating class-specific
+behavior without package-specific routing.
 
 The same module declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
 programming buffers have the `editing` interaction class; special buffers have `interface`.

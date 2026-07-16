@@ -108,9 +108,6 @@ public:
     std::vector<KeymapId> effective_keymaps(ModeId mode) const;
 
     EffectiveModePolicy effective_policy(const BufferModes& modes) const;
-    void set_interaction_class_state(InteractionClass interaction_class,
-                                     std::optional<InputStateId> state);
-    std::optional<InputStateId> interaction_class_state(InteractionClass interaction_class) const;
 
     ListenerId subscribe(Listener listener);
     bool unsubscribe(ListenerId listener);
@@ -136,8 +133,6 @@ private:
     const InputStateRegistry* input_states_;
     std::vector<std::unique_ptr<Definition>> definitions_;
     std::unordered_map<std::string, ModeId> by_name_;
-    std::optional<InputStateId> editing_state_;
-    std::optional<InputStateId> interface_state_;
     std::vector<std::pair<ListenerId, Listener>> listeners_;
     ListenerId next_listener_ = 1;
     bool sealed_ = false;

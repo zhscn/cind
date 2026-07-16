@@ -226,8 +226,11 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     const InputStateId normal = input_state("normal");
     const InputStateId motion = input_state("motion");
     const InputStateId transient = input_state("transient");
-    runtime.set_interaction_class_state(InteractionClass::Editing, normal);
-    runtime.set_interaction_class_state(InteractionClass::Interface, motion);
+    const InputStrategyId modal = runtime.input_strategies().define(
+        {.name = "modal", .editing = normal, .interface = motion});
+    const InputStrategyId alternate = runtime.input_strategies().define(
+        {.name = "alternate", .editing = normal, .interface = transient});
+    runtime.set_default_input_strategy(modal);
 
     const CommandId parent_command = runtime.commands().define(
         "test.parent", [](CommandContext&, const CommandInvocation&) -> CommandResult {
@@ -267,7 +270,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     const EffectiveModePolicy initial =
         runtime.modes().effective_policy(runtime.buffers().get(buffer).modes());
     CHECK(initial.interaction_class == InteractionClass::Interface);
-    CHECK(initial.initial_state == motion);
+    CHECK_FALSE(initial.initial_state);
     CHECK(initial.things == std::vector<ModeThingBinding>{{.name = "word", .kind = "interface"},
                                                           {.name = "item", .kind = "line"}});
 
@@ -275,6 +278,10 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     const ViewId second = runtime.views().create(buffer);
     CHECK(runtime.views().get(first).input_states().base() == motion);
     CHECK(runtime.views().get(second).input_states().base() == motion);
+    runtime.views().set_input_strategy(first, alternate);
+    CHECK(runtime.views().get(first).input_states().base() == transient);
+    CHECK(runtime.views().get(first).input_strategy() == alternate);
+    CHECK_FALSE(runtime.views().get(second).input_strategy());
 
     std::vector<BufferModePolicyChange> changes;
     const ModeRegistry::ListenerId listener = runtime.modes().subscribe(
@@ -288,7 +295,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
 
     runtime.views().push_input_state(first, transient);
     REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(editable));
-    CHECK(runtime.views().get(first).input_states().base() == motion);
+    CHECK(runtime.views().get(first).input_states().base() == transient);
     CHECK(runtime.views().get(first).input_states().top() == transient);
     CHECK(runtime.views().get(second).input_states().base() == motion);
     runtime.views().reset_input_states(first);
@@ -297,10 +304,16 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     CHECK(runtime.views().get(first).input_states().base() == transient);
     CHECK(runtime.views().get(second).input_states().base() == transient);
     REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(forced));
-    CHECK(runtime.views().get(first).input_states().base() == motion);
-    runtime.set_interaction_class_state(InteractionClass::Interface, transient);
+    CHECK(runtime.views().get(first).input_states().base() == transient);
+    runtime.set_default_input_strategy(alternate);
     CHECK(runtime.views().get(first).input_states().base() == transient);
     CHECK(runtime.views().get(second).input_states().base() == transient);
+    runtime.set_default_input_strategy(modal);
+    CHECK(runtime.views().get(first).input_states().base() == transient);
+    CHECK(runtime.views().get(second).input_states().base() == motion);
+    runtime.views().set_input_strategy(first, std::nullopt);
+    CHECK_FALSE(runtime.views().get(first).input_strategy());
+    CHECK(runtime.views().get(first).input_states().base() == motion);
     CHECK(runtime.modes().unsubscribe(listener));
 }
 

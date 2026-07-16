@@ -10,7 +10,6 @@
             install-core-modes!
             define-major-mode!
             define-minor-mode!
-            set-interaction-class-states!
             install-default-keymaps!))
 
 (define (last-string-argument invocation)
@@ -602,11 +601,6 @@
                             (initial-state #f)
                             (things '()))
   (%define-mode! host name 'minor parent keymap interaction-class initial-state things))
-
-(define (set-interaction-class-states! host mappings)
-  (for-each (lambda (mapping)
-              (%set-interaction-class-state! host (car mapping) (cdr mapping)))
-            mappings))
 
 (define (install-core-modes! host)
   (define-major-mode! host 'fundamental-mode

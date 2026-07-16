@@ -6,8 +6,10 @@
 namespace cind {
 
 ViewRegistry::ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings,
-                           InputStateRegistry& input_states, ModeRegistry& modes)
-    : buffers_(&buffers), settings_(&settings), input_states_(&input_states), modes_(&modes) {
+                           InputStateRegistry& input_states,
+                           InputStrategyRegistry& input_strategies, ModeRegistry& modes)
+    : buffers_(&buffers), settings_(&settings), input_states_(&input_states),
+      input_strategies_(&input_strategies), modes_(&modes) {
     mode_listener_ = modes_->subscribe(
         [this](const BufferModePolicyChange& change) { refresh_mode_input_states(change.buffer); });
 }
@@ -53,8 +55,7 @@ ViewId ViewRegistry::create(BufferId buffer_id, TextOffset caret_offset) {
         const ViewId id{slot_index, slot.generation};
         slot.value = std::unique_ptr<View>(new View(id, buffer_id, caret, *settings_));
         ++buffer.attached_views_;
-        if (const std::optional<InputStateId> state =
-                modes_->effective_policy(buffer.modes()).initial_state) {
+        if (const std::optional<InputStateId> state = effective_base_state(*slot.value)) {
             slot.value->input_states_.set_base(*input_states_, id, *state);
         }
         return id;
@@ -196,6 +197,15 @@ void ViewRegistry::clear_selection(ViewId id) {
     view.mark_.reset();
 }
 
+void ViewRegistry::set_input_strategy(ViewId view_id, std::optional<InputStrategyId> strategy) {
+    if (strategy) {
+        (void)input_strategies_->definition(*strategy);
+    }
+    View& view = get(view_id);
+    view.input_strategy_ = strategy;
+    refresh_mode_input_state(view);
+}
+
 void ViewRegistry::set_base_input_state(ViewId view, InputStateId state) {
     get(view).input_states_.set_base(*input_states_, view, state);
 }
@@ -212,16 +222,32 @@ void ViewRegistry::reset_input_states(ViewId view) {
     get(view).input_states_.reset(*input_states_, view);
 }
 
+std::optional<InputStateId> ViewRegistry::effective_base_state(const View& view) const {
+    const EffectiveModePolicy policy =
+        modes_->effective_policy(buffers_->get(view.buffer_id()).modes());
+    if (policy.initial_state) {
+        return policy.initial_state;
+    }
+    const std::optional<InputStrategyId> strategy =
+        view.input_strategy_ ? view.input_strategy_ : input_strategies_->default_strategy();
+    if (!strategy) {
+        return std::nullopt;
+    }
+    return input_strategies_->state(*strategy, policy.interaction_class);
+}
+
+void ViewRegistry::refresh_mode_input_state(View& view) {
+    if (const std::optional<InputStateId> state = effective_base_state(view)) {
+        view.input_states_.set_base(*input_states_, view.id(), *state);
+    }
+}
+
 void ViewRegistry::refresh_mode_input_states(std::optional<BufferId> buffer) {
     for (Slot& slot : slots_) {
         if (!slot.value || (buffer && slot.value->buffer_id() != *buffer)) {
             continue;
         }
-        const std::optional<InputStateId> state =
-            modes_->effective_policy(buffers_->get(slot.value->buffer_id()).modes()).initial_state;
-        if (state) {
-            slot.value->input_states_.set_base(*input_states_, slot.value->id(), *state);
-        }
+        refresh_mode_input_state(*slot.value);
     }
 }
 

@@ -973,9 +973,13 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
                                       ? "editing"
                                       : "interface",
              .initial_input_state =
-                 mode_policy.initial_state
-                     ? runtime_.input_states().definition(*mode_policy.initial_state).name
-                     : std::string(),
+                 [&] {
+                     const std::optional<InputStateId> input_state =
+                         view != nullptr ? runtime_.views().get(view->view).input_states().base()
+                                         : mode_policy.initial_state;
+                     return input_state ? runtime_.input_states().definition(*input_state).name
+                                        : std::string();
+                 }(),
              .things = mode_policy.things,
              .location_count = buffer.locations().size()});
     }
@@ -1193,9 +1197,11 @@ void EditorApplication::register_input_states() {
     if (!state) {
         throw std::logic_error("Guile input state policy did not define emacs");
     }
-    if (runtime_.modes().interaction_class_state(InteractionClass::Editing) != state ||
-        runtime_.modes().interaction_class_state(InteractionClass::Interface) != state) {
-        throw std::logic_error("Guile input state policy did not map the core interaction classes");
+    const std::optional<InputStrategyId> strategy = runtime_.input_strategies().find("emacs");
+    if (!strategy || runtime_.input_strategies().default_strategy() != strategy ||
+        runtime_.input_strategies().state(*strategy, InteractionClass::Editing) != state ||
+        runtime_.input_strategies().state(*strategy, InteractionClass::Interface) != state) {
+        throw std::logic_error("Guile input policy did not install the default Emacs strategy");
     }
 }
 

@@ -11,19 +11,20 @@
   (define-keymap! host toy-normal-keymap #f)
   (define-input-state! host 'toy-normal
     (vector toy-normal-keymap) 'ignore 'block "N" #f)
+  (define-input-strategy! host 'toy-modal 'toy-normal 'emacs)
   1)
 
-(define (set-input-state-command host state)
+(define (set-input-strategy-command host strategy)
   (lambda (context invocation)
-    (set-base-input-state! host (context-view context) state)
+    (set-view-input-strategy! host (context-view context) strategy)
     (command-completed)))
 
 (define (toy-modal-command-definitions host)
   (list (list "toy-modal.enter-normal"
-              (set-input-state-command host 'toy-normal)
+              (set-input-strategy-command host 'toy-modal)
               #f)
         (list "toy-modal.enter-emacs"
-              (set-input-state-command host 'emacs)
+              (set-input-strategy-command host 'emacs)
               #f)))
 
 (define toy-normal-bindings

@@ -4,6 +4,7 @@
 #include "editor/buffer.hpp"
 #include "editor/ids.hpp"
 #include "editor/input_state.hpp"
+#include "editor/input_strategy.hpp"
 #include "editor/settings.hpp"
 
 #include <cstdint>
@@ -39,6 +40,7 @@ public:
     std::vector<KeymapId>& keymaps() { return keymaps_; }
     const std::vector<KeymapId>& keymaps() const { return keymaps_; }
     const ViewInputStates& input_states() const { return input_states_; }
+    std::optional<InputStrategyId> input_strategy() const { return input_strategy_; }
     std::uint32_t attached_window_count() const { return attached_windows_; }
 
 private:
@@ -56,13 +58,15 @@ private:
     SettingsLayer settings_;
     std::vector<KeymapId> keymaps_;
     ViewInputStates input_states_;
+    std::optional<InputStrategyId> input_strategy_;
     std::uint32_t attached_windows_ = 0;
 };
 
 class ViewRegistry {
 public:
     ViewRegistry(BufferRegistry& buffers, const SettingRegistry& settings,
-                 InputStateRegistry& input_states, ModeRegistry& modes);
+                 InputStateRegistry& input_states, InputStrategyRegistry& input_strategies,
+                 ModeRegistry& modes);
     ~ViewRegistry();
 
     ViewRegistry(const ViewRegistry&) = delete;
@@ -82,6 +86,7 @@ public:
     std::optional<TextRange> selection(ViewId id) const;
     void set_selection(ViewId id, SelectionEndpoints selection);
     void clear_selection(ViewId id);
+    void set_input_strategy(ViewId view, std::optional<InputStrategyId> strategy);
     void set_base_input_state(ViewId view, InputStateId state);
     void push_input_state(ViewId view, InputStateId state);
     std::optional<InputStateId> pop_input_state(ViewId view);
@@ -96,10 +101,13 @@ private:
 
     void remove_anchors(View& view);
     AnchorId make_anchor(Buffer& buffer, TextOffset offset, AnchorAffinity affinity);
+    std::optional<InputStateId> effective_base_state(const View& view) const;
+    void refresh_mode_input_state(View& view);
 
     BufferRegistry* buffers_;
     const SettingRegistry* settings_;
     InputStateRegistry* input_states_;
+    InputStrategyRegistry* input_strategies_;
     ModeRegistry* modes_;
     ModeRegistry::ListenerId mode_listener_ = 0;
     std::vector<Slot> slots_;

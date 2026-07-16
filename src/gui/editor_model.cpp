@@ -378,6 +378,8 @@ EditorStateSnapshot EditorModel::inspect() {
                                            .binding_revision = guile.binding_revision,
                                            .input_state_revision = guile.input_state_revision,
                                            .scripted_input_states = guile.scripted_input_states,
+                                           .scripted_input_strategies =
+                                               guile.scripted_input_strategies,
                                            .mode_revision = guile.mode_revision,
                                            .scripted_modes = guile.scripted_modes,
                                            .last_error = std::move(guile.last_error)};
@@ -472,6 +474,10 @@ EditorStateSnapshot EditorModel::inspect() {
     }
     const WindowId active_window = application_.window_id();
     const InputStateRegistry::Definition& input_state = application_.input_state();
+    const View& active_view = application_.runtime().views().get(application_.view_id());
+    const std::optional<InputStrategyId> input_strategy =
+        active_view.input_strategy() ? active_view.input_strategy()
+                                     : application_.runtime().input_strategies().default_strategy();
     return {.path = application_.path(),
             .revision = snapshot.revision(),
             .document_bytes = text.size_bytes(),
@@ -492,6 +498,10 @@ EditorStateSnapshot EditorModel::inspect() {
             .active_window_slot = active_window.slot,
             .active_window_generation = active_window.generation,
             .input_focus = std::string(application_.input_focus()),
+            .input_strategy =
+                input_strategy
+                    ? application_.runtime().input_strategies().definition(*input_strategy).name
+                    : std::string(),
             .input_state = input_state.name,
             .input_cursor_shape = std::string(cursor_shape_name(input_state.cursor)),
             .input_state_indicator = input_state.indicator,

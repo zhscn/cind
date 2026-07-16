@@ -422,11 +422,13 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
     output += std::format(
         ",\"command_revision\":{},\"scripted_commands\":{},\"provider_revision\":{},"
         "\"scripted_providers\":{},\"binding_revision\":{},\"input_state_revision\":{},"
-        "\"scripted_input_states\":{},\"mode_revision\":{},\"scripted_modes\":{},"
+        "\"scripted_input_states\":{},\"scripted_input_strategies\":{},"
+        "\"mode_revision\":{},\"scripted_modes\":{},"
         "\"last_error\":",
         scripting.command_revision, scripting.scripted_commands, scripting.provider_revision,
         scripting.scripted_providers, scripting.binding_revision, scripting.input_state_revision,
-        scripting.scripted_input_states, scripting.mode_revision, scripting.scripted_modes);
+        scripting.scripted_input_states, scripting.scripted_input_strategies,
+        scripting.mode_revision, scripting.scripted_modes);
     if (scripting.last_error) {
         append_json_string(output, *scripting.last_error);
     } else {
@@ -461,6 +463,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += std::format(",\"active_window\":{{\"slot\":{},\"generation\":{}}},\"input_focus\":",
                           editor.active_window_slot, editor.active_window_generation);
     append_json_string(output, editor.input_focus);
+    output += ",\"input_strategy\":";
+    append_json_string(output, editor.input_strategy);
     output += ",\"input_state\":";
     append_json_string(output, editor.input_state);
     output += ",\"input_cursor_shape\":";
@@ -1818,7 +1822,9 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_json_string(output, frame.editor.input_focus);
         output.push_back('}');
     } else if (path == "editor.input_state") {
-        output = "{\"name\":";
+        output = "{\"strategy\":";
+        append_json_string(output, frame.editor.input_strategy);
+        output += ",\"name\":";
         append_json_string(output, frame.editor.input_state);
         output += ",\"cursor_shape\":";
         append_json_string(output, frame.editor.input_cursor_shape);
@@ -2253,6 +2259,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << frame.editor.viewport.top_line_offset
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
     output << "    focus=" << printable(frame.editor.input_focus)
+           << " strategy=" << printable(frame.editor.input_strategy)
            << " state=" << printable(frame.editor.input_state)
            << " cursor=" << printable(frame.editor.input_cursor_shape) << " indicator=\""
            << printable(frame.editor.input_state_indicator) << '"'
@@ -2271,6 +2278,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " provider-revision=" << frame.editor.scripting.provider_revision
            << " binding-revision=" << frame.editor.scripting.binding_revision
            << " input-states=" << frame.editor.scripting.scripted_input_states
+           << " input-strategies=" << frame.editor.scripting.scripted_input_strategies
            << " input-state-revision=" << frame.editor.scripting.input_state_revision
            << " modes=" << frame.editor.scripting.scripted_modes
            << " mode-revision=" << frame.editor.scripting.mode_revision;

@@ -204,10 +204,6 @@ EffectiveModePolicy ModeRegistry::effective_policy(const BufferModes& modes) con
     if (!result.initial_state && modes.major()) {
         result.initial_state = inherited_initial_state(*modes.major());
     }
-    if (!result.initial_state) {
-        result.initial_state = interaction_class_state(result.interaction_class);
-    }
-
     for (auto mode = modes.minors().rbegin(); mode != modes.minors().rend(); ++mode) {
         append_inherited_things(*mode, result.things);
     }
@@ -215,19 +211,6 @@ EffectiveModePolicy ModeRegistry::effective_policy(const BufferModes& modes) con
         append_inherited_things(*modes.major(), result.things);
     }
     return result;
-}
-
-void ModeRegistry::set_interaction_class_state(InteractionClass interaction_class,
-                                               std::optional<InputStateId> state) {
-    if (state) {
-        (void)input_states_->definition(*state);
-    }
-    (interaction_class == InteractionClass::Editing ? editing_state_ : interface_state_) = state;
-}
-
-std::optional<InputStateId>
-ModeRegistry::interaction_class_state(InteractionClass interaction_class) const {
-    return interaction_class == InteractionClass::Editing ? editing_state_ : interface_state_;
 }
 
 ModeRegistry::ListenerId ModeRegistry::subscribe(Listener listener) {

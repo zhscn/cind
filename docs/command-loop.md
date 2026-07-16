@@ -72,10 +72,12 @@ have keymaps, the child's primary keymap receives the parent's primary map as it
 parent. Active minor modes are evaluated in reverse activation order before the major mode.
 
 Each mode may declare an `editing` or `interface` interaction class, an initial InputState override,
-and named thing bindings. A mode-specific initial state takes precedence over the strategy's
-class-to-state mapping; otherwise the effective interaction class selects the durable state. Mode
-policy changes publish the Buffer identity and before/after policies, then update the base state of
-every View displaying that Buffer while preserving each View's transient state stack. This makes a
+and named thing bindings. Named input strategies map both interaction classes to durable states.
+Each View may select its own strategy or inherit the application default. A mode-specific initial
+state takes precedence over that mapping; otherwise the effective interaction class selects the
+durable state. Mode policy changes publish the Buffer identity and before/after policies, then
+rederive the base state of every View displaying that Buffer through its selected strategy while
+preserving each View's transient state stack. This makes a
 minor mode that changes an interface into editable text sufficient to change modal behavior without
 package-specific key-routing code.
 

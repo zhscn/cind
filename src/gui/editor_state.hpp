@@ -120,6 +120,7 @@ struct ScriptingStateSnapshot {
     std::uint64_t binding_revision = 0;
     std::uint64_t input_state_revision = 0;
     std::size_t scripted_input_states = 0;
+    std::size_t scripted_input_strategies = 0;
     std::uint64_t mode_revision = 0;
     std::size_t scripted_modes = 0;
     std::optional<std::string> last_error;
@@ -144,6 +145,7 @@ struct EditorStateSnapshot {
     std::uint32_t active_window_slot = 0;
     std::uint32_t active_window_generation = 0;
     std::string input_focus;
+    std::string input_strategy;
     std::string input_state;
     std::string input_cursor_shape;
     std::string input_state_indicator;

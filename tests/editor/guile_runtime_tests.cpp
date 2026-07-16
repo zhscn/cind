@@ -142,6 +142,18 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     REQUIRE(toy_definition.keymaps.size() == 1);
     CHECK(runtime.keymaps().definition(toy_definition.keymaps.front()).name == "toy-modal.normal");
     CHECK(guile.snapshot().scripted_input_states == 2);
+    CHECK(guile.snapshot().scripted_input_strategies == 2);
+    const InputStrategyId emacs_strategy =
+        runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
+    const InputStrategyId toy_strategy =
+        runtime.input_strategies().find("toy-modal").value_or(InputStrategyId{});
+    REQUIRE(emacs_strategy);
+    REQUIRE(toy_strategy);
+    CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
+    CHECK(runtime.input_strategies().state(emacs_strategy, InteractionClass::Editing) == emacs);
+    CHECK(runtime.input_strategies().state(emacs_strategy, InteractionClass::Interface) == emacs);
+    CHECK(runtime.input_strategies().state(toy_strategy, InteractionClass::Editing) == toy);
+    CHECK(runtime.input_strategies().state(toy_strategy, InteractionClass::Interface) == emacs);
 }
 
 TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
@@ -167,10 +179,10 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
           std::vector<ModeThingBinding>{{.name = "defun", .kind = "cst"}});
     CHECK(runtime.modes().definition(special).parent == fundamental);
     CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
-    CHECK(runtime.modes().interaction_class_state(InteractionClass::Editing) ==
-          runtime.input_states().find("emacs"));
-    CHECK(runtime.modes().interaction_class_state(InteractionClass::Interface) ==
-          runtime.input_states().find("emacs"));
+    const InputStrategyId emacs_strategy =
+        runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
+    REQUIRE(emacs_strategy);
+    CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
     CHECK(guile.snapshot().scripted_modes == 3);
 }

@@ -50,6 +50,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .active_window_slot = 0,
         .active_window_generation = 1,
         .input_focus = "interaction",
+        .input_strategy = "emacs",
         .input_state = "emacs",
         .input_cursor_shape = "beam",
         .input_state_indicator = "",
@@ -75,6 +76,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .binding_revision = 1,
                       .input_state_revision = 3,
                       .scripted_input_states = 2,
+                      .scripted_input_strategies = 2,
                       .mode_revision = 2,
                       .scripted_modes = 3,
                       .last_error = std::nullopt},
@@ -361,7 +363,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":32") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":33") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -405,8 +407,9 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
 
     const InspectionResponse input_state = run_inspection_query(hub, "get editor.input_state");
     REQUIRE(input_state.ok);
-    CHECK(input_state.payload == "{\"name\":\"emacs\",\"cursor_shape\":\"beam\",\"indicator\":\"\","
-                                 "\"text_input\":\"accept\"}");
+    CHECK(input_state.payload ==
+          "{\"strategy\":\"emacs\",\"name\":\"emacs\",\"cursor_shape\":\"beam\","
+          "\"indicator\":\"\",\"text_input\":\"accept\"}");
 
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);
@@ -420,6 +423,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"input_state_revision\":3") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_input_states\":2") != std::string::npos);
+    CHECK(scripting.payload.find("\"scripted_input_strategies\":2") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
