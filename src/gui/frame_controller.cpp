@@ -119,8 +119,12 @@ PresentedFrame::PresentedFrame(std::shared_ptr<const ui::Scene> scene,
       view_finished_(lifecycle.view_finished), output_width_(output.width),
       output_height_(output.height), display_scale_(output.scale) {}
 
-ui::CellPoint PresentedFrame::hit_test(const SkiaPresenter& presenter,
-                                       SkiaLogicalPoint point) const {
+std::optional<ui::HitTarget> PresentedFrame::hit_test(const SkiaPresenter& presenter,
+                                                      SkiaLogicalPoint point) const {
+    if (const std::optional<ui::ViewHit> fixed =
+            presenter.hit_test_view(*layout_, point, SkiaHitTestScope::Fixed)) {
+        return ui::resolve_hit_target(*scene_, *fixed);
+    }
     for (const SkiaScrollLayer& layer : animation_.scroll_layers) {
         if (!layer.scene || point.y < layer.clip_top || point.y >= layer.clip_bottom) {
             continue;
@@ -128,9 +132,14 @@ ui::CellPoint PresentedFrame::hit_test(const SkiaPresenter& presenter,
         const SkiaFrameLayout layer_layout = presenter.prepare_layout(
             *layer.scene, static_cast<float>(output_width_) / display_scale_,
             static_cast<float>(output_height_) / display_scale_);
-        return presenter.hit_test(layer_layout, {.x = point.x, .y = point.y - layer.grid_offset_y});
+        const std::optional<ui::ViewHit> hit = presenter.hit_test_view(
+            layer_layout, {.x = point.x, .y = point.y - layer.grid_offset_y},
+            SkiaHitTestScope::Grid);
+        return hit ? ui::resolve_hit_target(*layer.scene, *hit) : std::nullopt;
     }
-    return presenter.hit_test(*layout_, point);
+    const std::optional<ui::ViewHit> hit =
+        presenter.hit_test_view(*layout_, point, SkiaHitTestScope::Grid);
+    return hit ? ui::resolve_hit_target(*scene_, *hit) : std::nullopt;
 }
 
 bool GuiFrameController::animations_active() const {

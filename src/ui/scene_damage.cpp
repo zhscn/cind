@@ -1,10 +1,12 @@
 #include "ui/scene_damage.hpp"
 
 #include "ui/char_width.hpp"
+#include "ui/view_tree.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <type_traits>
 
@@ -26,21 +28,23 @@ bool contains(const Rect& rect, int row, int col) {
            col < rect.col + rect.cols;
 }
 
-bool same_rect(const std::optional<Rect>& left, const std::optional<Rect>& right) {
-    if (left.has_value() != right.has_value()) {
+bool same_rects(std::span<const Rect> left, std::span<const Rect> right) {
+    if (left.size() != right.size()) {
         return false;
     }
-    return !left || (left->row == right->row && left->col == right->col &&
-                     left->rows == right->rows && left->cols == right->cols);
+    return std::ranges::equal(left, right, [](const Rect& lhs, const Rect& rhs) {
+        return lhs.row == rhs.row && lhs.col == rhs.col && lhs.rows == rhs.rows &&
+               lhs.cols == rhs.cols;
+    });
 }
 
-std::optional<Rect> overlay_rect(const Scene& scene) {
-    for (const Region& region : scene.regions) {
-        if (region.vertical_anchor == VerticalAnchor::Overlay) {
-            return region.rect;
-        }
+std::vector<Rect> overlay_rects(const Scene& scene) {
+    std::vector<Rect> result;
+    const ViewTree tree(scene);
+    for (const ViewNode& node : tree.layer(ViewLayer::Overlay).children) {
+        result.push_back(node.rect);
     }
-    return std::nullopt;
+    return result;
 }
 
 std::size_t cell_index(int row, int col, int cols) {
@@ -73,98 +77,102 @@ std::vector<std::string> visual_cells(const Scene& scene) {
         return cells;
     }
 
-    for (const Region& region : scene.regions) {
-        const int first_row = std::clamp(region.rect.row, 0, scene.rows);
-        const int last_row = std::clamp(region.rect.row + region.rect.rows, 0, scene.rows);
-        const int first_col = std::clamp(region.rect.col, 0, scene.cols);
-        const int last_col = std::clamp(region.rect.col + region.rect.cols, 0, scene.cols);
-        for (int row = first_row; row < last_row; ++row) {
-            for (int col = first_col; col < last_col; ++col) {
-                cells[cell_index(row, col, scene.cols)] = {
-                    static_cast<char>(region.surface), static_cast<char>(region.vertical_anchor),
-                    static_cast<char>(region.role)};
-                if (scene.active_text_row == row && (region.role == RegionRole::TextArea ||
-                                                     region.role == RegionRole::LineNumbers ||
-                                                     region.role == RegionRole::ChangeSigns)) {
-                    cells[cell_index(row, col, scene.cols)].push_back('\x7f');
-                }
-            }
-        }
-
-        for (const Prim& prim : region.primitives()) {
-            const int row = region.rect.row + prim.row;
-            int col = region.rect.col + prim.col;
-            if (row < 0 || row >= scene.rows) {
-                continue;
-            }
-            if (prim.kind != PrimKind::Text) {
-                if (col >= 0 && col < scene.cols && contains(region.rect, row, col)) {
-                    append_fragment(cells[cell_index(row, col, scene.cols)], {}, prim.style,
-                                    prim.selected, prim.kind, 0, 1);
-                }
-                continue;
-            }
-
-            std::string_view text = prim.text;
-            while (!text.empty()) {
-                const GraphemeDecode grapheme = decode_grapheme(text);
-                const std::string_view bytes =
-                    text.substr(0, static_cast<std::size_t>(grapheme.bytes));
-                const int width = std::max(1, grapheme.width);
-                const int glyph_col =
-                    grapheme.width == 0 ? std::max(region.rect.col, col - 1) : col;
-                for (int part = 0; part < width; ++part) {
-                    const int painted_col = glyph_col + part;
-                    if (painted_col >= 0 && painted_col < scene.cols &&
-                        contains(region.rect, row, painted_col)) {
-                        append_fragment(cells[cell_index(row, painted_col, scene.cols)], bytes,
-                                        prim.style, prim.selected, prim.kind, part, width);
+    const ViewTree tree(scene);
+    for (const ViewLayerNode& layer : tree.layers()) {
+        for (const ViewNode& node : layer.children) {
+            const Region& region = scene.regions[node.region_index];
+            const int first_row = std::clamp(region.rect.row, 0, scene.rows);
+            const int last_row = std::clamp(region.rect.row + region.rect.rows, 0, scene.rows);
+            const int first_col = std::clamp(region.rect.col, 0, scene.cols);
+            const int last_col = std::clamp(region.rect.col + region.rect.cols, 0, scene.cols);
+            for (int row = first_row; row < last_row; ++row) {
+                for (int col = first_col; col < last_col; ++col) {
+                    cells[cell_index(row, col, scene.cols)] = {
+                        static_cast<char>(region.surface),
+                        static_cast<char>(region.vertical_anchor), static_cast<char>(region.role)};
+                    if (scene.active_text_row == row && (region.role == RegionRole::TextArea ||
+                                                         region.role == RegionRole::LineNumbers ||
+                                                         region.role == RegionRole::ChangeSigns)) {
+                        cells[cell_index(row, col, scene.cols)].push_back('\x7f');
                     }
                 }
-                col += grapheme.width;
-                text.remove_prefix(static_cast<std::size_t>(grapheme.bytes));
             }
-        }
-        if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&
-            region.rect.col < scene.cols) {
-            std::string& signature =
-                cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
-            if (const Region::PopupContent* popup = region.popup()) {
-                signature.push_back('\x1e');
-                append_text(signature, popup->title);
-                append_integer(signature, static_cast<std::uint32_t>(popup->input.has_value()));
-                if (popup->input) {
-                    append_text(signature, *popup->input);
+
+            for (const Prim& prim : region.primitives()) {
+                const int row = region.rect.row + prim.row;
+                int col = region.rect.col + prim.col;
+                if (row < 0 || row >= scene.rows) {
+                    continue;
                 }
-                append_integer(signature,
-                               static_cast<std::uint32_t>(popup->input_cursor.has_value()));
-                append_integer(signature, popup->input_cursor.value_or(0));
-                append_integer(signature, popup->first_item);
-                append_integer(signature, popup->total_items);
-                append_integer(signature,
-                               static_cast<std::uint32_t>(popup->selected_item.has_value()));
-                append_integer(signature, popup->selected_item.value_or(0));
-                append_integer(signature, popup->items.size());
-                for (const Region::PopupItem& item : popup->items) {
-                    append_text(signature, item.label);
-                    append_text(signature, item.detail);
+                if (prim.kind != PrimKind::Text) {
+                    if (col >= 0 && col < scene.cols && contains(region.rect, row, col)) {
+                        append_fragment(cells[cell_index(row, col, scene.cols)], {}, prim.style,
+                                        prim.selected, prim.kind, 0, 1);
+                    }
+                    continue;
                 }
-            } else if (const Region::StatusContent* status = region.status()) {
-                signature.push_back('\x1c');
-                append_text(signature, status->path);
-                append_integer(signature, static_cast<std::uint32_t>(status->dirty));
-                append_integer(signature, status->line);
-                append_integer(signature, status->column);
-                append_integer(signature, status->line_count);
-                append_integer(signature, status->revision);
-                append_text(signature, status->style_origin);
-                append_text(signature, status->key);
-            } else if (const Region::EchoContent* echo = region.echo()) {
-                signature.push_back('\x1d');
-                append_text(signature, echo->text);
-                append_integer(signature,
-                               static_cast<std::uint32_t>(echo->cursor_byte.has_value()));
-                append_integer(signature, echo->cursor_byte.value_or(0));
+
+                std::string_view text = prim.text;
+                while (!text.empty()) {
+                    const GraphemeDecode grapheme = decode_grapheme(text);
+                    const std::string_view bytes =
+                        text.substr(0, static_cast<std::size_t>(grapheme.bytes));
+                    const int width = std::max(1, grapheme.width);
+                    const int glyph_col =
+                        grapheme.width == 0 ? std::max(region.rect.col, col - 1) : col;
+                    for (int part = 0; part < width; ++part) {
+                        const int painted_col = glyph_col + part;
+                        if (painted_col >= 0 && painted_col < scene.cols &&
+                            contains(region.rect, row, painted_col)) {
+                            append_fragment(cells[cell_index(row, painted_col, scene.cols)], bytes,
+                                            prim.style, prim.selected, prim.kind, part, width);
+                        }
+                    }
+                    col += grapheme.width;
+                    text.remove_prefix(static_cast<std::size_t>(grapheme.bytes));
+                }
+            }
+            if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&
+                region.rect.col < scene.cols) {
+                std::string& signature =
+                    cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
+                if (const Region::PopupContent* popup = region.popup()) {
+                    signature.push_back('\x1e');
+                    append_text(signature, popup->title);
+                    append_integer(signature, static_cast<std::uint32_t>(popup->input.has_value()));
+                    if (popup->input) {
+                        append_text(signature, *popup->input);
+                    }
+                    append_integer(signature,
+                                   static_cast<std::uint32_t>(popup->input_cursor.has_value()));
+                    append_integer(signature, popup->input_cursor.value_or(0));
+                    append_integer(signature, popup->first_item);
+                    append_integer(signature, popup->total_items);
+                    append_integer(signature,
+                                   static_cast<std::uint32_t>(popup->selected_item.has_value()));
+                    append_integer(signature, popup->selected_item.value_or(0));
+                    append_integer(signature, popup->items.size());
+                    for (const Region::PopupItem& item : popup->items) {
+                        append_text(signature, item.label);
+                        append_text(signature, item.detail);
+                    }
+                } else if (const Region::StatusContent* status = region.status()) {
+                    signature.push_back('\x1c');
+                    append_text(signature, status->path);
+                    append_integer(signature, static_cast<std::uint32_t>(status->dirty));
+                    append_integer(signature, status->line);
+                    append_integer(signature, status->column);
+                    append_integer(signature, status->line_count);
+                    append_integer(signature, status->revision);
+                    append_text(signature, status->style_origin);
+                    append_text(signature, status->key);
+                } else if (const Region::EchoContent* echo = region.echo()) {
+                    signature.push_back('\x1d');
+                    append_text(signature, echo->text);
+                    append_integer(signature,
+                                   static_cast<std::uint32_t>(echo->cursor_byte.has_value()));
+                    append_integer(signature, echo->cursor_byte.value_or(0));
+                }
             }
         }
     }
@@ -235,11 +243,11 @@ std::vector<Rect> coalesce_cells(const std::vector<bool>& dirty, const Scene& sc
 SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repaint) {
     std::vector<std::string> next_cells = visual_cells(scene);
     const std::optional<CellPoint> next_cursor = visible_cursor(scene);
-    const std::optional<Rect> next_overlay_rect = overlay_rect(scene);
+    const std::vector<Rect> next_overlay_rects = overlay_rects(scene);
     const std::size_t total_cells = next_cells.size();
     const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols ||
                                   std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F ||
-                                  !same_rect(overlay_rect_, next_overlay_rect);
+                                  !same_rects(overlay_rects_, next_overlay_rects);
 
     SceneDamage damage;
     if (force_full_repaint || !initialized_ || geometry_changed) {
@@ -270,7 +278,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     initialized_ = true;
     cells_ = std::move(next_cells);
     cursor_ = next_cursor;
-    overlay_rect_ = next_overlay_rect;
+    overlay_rects_ = next_overlay_rects;
     return damage;
 }
 
@@ -281,7 +289,7 @@ void SceneDamageTracker::reset() {
     initialized_ = false;
     cells_.clear();
     cursor_.reset();
-    overlay_rect_.reset();
+    overlay_rects_.clear();
 }
 
 } // namespace cind::ui

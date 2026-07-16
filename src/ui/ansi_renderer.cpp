@@ -1,6 +1,7 @@
 #include "ui/ansi_renderer.hpp"
 
 #include "ui/char_width.hpp"
+#include "ui/view_tree.hpp"
 
 #include <format>
 
@@ -66,46 +67,54 @@ std::string render_ansi(const Scene& scene) {
 
     // Primitive regions are already cell-shaped. Semantic chrome is projected
     // into cells here, keeping its formatting policy in the terminal backend.
-    for (const Region& region : scene.regions) {
-        for (const Prim& prim : region.primitives()) {
-            paint_primitive(region, prim);
-        }
-        if (const Region::StatusContent* status = region.status()) {
-            std::string left = std::format(" {}{}  {}:{}  rev {}  style {} ", status->path,
-                                           status->dirty ? " [+]" : "", status->line,
-                                           status->column, status->revision, status->style_origin);
-            std::string key =
-                status->key.empty() ? std::string() : std::format("key: {} ", status->key);
-            key = std::string(clip_to_display_width(key, region.rect.cols));
-            const int key_width = display_width(key);
-            left = std::string(clip_to_display_width(left, region.rect.cols - key_width));
-            const int fill = region.rect.cols - display_width(left) - key_width;
-            paint_primitive(region, {0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
-                                     StyleClass::StatusBar, false, PrimKind::Text, "status:main"});
-            if (!key.empty()) {
-                paint_primitive(region,
-                                {0, region.rect.cols - key_width, std::move(key),
-                                 StyleClass::StatusKey, false, PrimKind::Text, "status:key"});
+    const ViewTree tree(scene);
+    for (const ViewLayerNode& layer : tree.layers()) {
+        for (const ViewNode& node : layer.children) {
+            const Region& region = scene.regions[node.region_index];
+            for (const Prim& prim : region.primitives()) {
+                paint_primitive(region, prim);
             }
-        } else if (const Region::EchoContent* echo = region.echo()) {
-            paint_primitive(region, {0, 0, echo->text, StyleClass::Message, false, PrimKind::Text,
-                                     "echo:main"});
-        } else if (const Region::PopupContent* popup = region.popup()) {
-            std::string title = std::string(clip_to_display_width(popup->title, region.rect.cols));
-            title.append(static_cast<std::size_t>(region.rect.cols - display_width(title)), ' ');
-            paint_primitive(region, {0, 0, std::move(title), StyleClass::StatusKey, false,
-                                     PrimKind::Text, "popup:title"});
-            for (std::size_t offset = 0; offset < popup->items.size(); ++offset) {
-                const Region::PopupItem& item = popup->items[offset];
-                std::string row = item.detail.empty()
-                                      ? item.label
-                                      : std::format("{:<10} {}", item.label, item.detail);
-                row = std::string(clip_to_display_width(row, region.rect.cols));
-                row.append(static_cast<std::size_t>(region.rect.cols - display_width(row)), ' ');
+            if (const Region::StatusContent* status = region.status()) {
+                std::string left = std::format(
+                    " {}{}  {}:{}  rev {}  style {} ", status->path, status->dirty ? " [+]" : "",
+                    status->line, status->column, status->revision, status->style_origin);
+                std::string key =
+                    status->key.empty() ? std::string() : std::format("key: {} ", status->key);
+                key = std::string(clip_to_display_width(key, region.rect.cols));
+                const int key_width = display_width(key);
+                left = std::string(clip_to_display_width(left, region.rect.cols - key_width));
+                const int fill = region.rect.cols - display_width(left) - key_width;
                 paint_primitive(region,
-                                {static_cast<int>(offset) + 1, 0, std::move(row), StyleClass::Popup,
+                                {0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
+                                 StyleClass::StatusBar, false, PrimKind::Text, "status:main"});
+                if (!key.empty()) {
+                    paint_primitive(region,
+                                    {0, region.rect.cols - key_width, std::move(key),
+                                     StyleClass::StatusKey, false, PrimKind::Text, "status:key"});
+                }
+            } else if (const Region::EchoContent* echo = region.echo()) {
+                paint_primitive(region, {0, 0, echo->text, StyleClass::Message, false,
+                                         PrimKind::Text, "echo:main"});
+            } else if (const Region::PopupContent* popup = region.popup()) {
+                std::string title =
+                    std::string(clip_to_display_width(popup->title, region.rect.cols));
+                title.append(static_cast<std::size_t>(region.rect.cols - display_width(title)),
+                             ' ');
+                paint_primitive(region, {0, 0, std::move(title), StyleClass::StatusKey, false,
+                                         PrimKind::Text, "popup:title"});
+                for (std::size_t offset = 0; offset < popup->items.size(); ++offset) {
+                    const Region::PopupItem& item = popup->items[offset];
+                    std::string row = item.detail.empty()
+                                          ? item.label
+                                          : std::format("{:<10} {}", item.label, item.detail);
+                    row = std::string(clip_to_display_width(row, region.rect.cols));
+                    row.append(static_cast<std::size_t>(region.rect.cols - display_width(row)),
+                               ' ');
+                    paint_primitive(
+                        region, {static_cast<int>(offset) + 1, 0, std::move(row), StyleClass::Popup,
                                  popup->selected_item == popup->first_item + offset, PrimKind::Text,
                                  std::format("popup:item:{}", popup->first_item + offset)});
+                }
             }
         }
     }

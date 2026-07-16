@@ -81,8 +81,13 @@ enum class VerticalAnchor : std::uint8_t {
 };
 
 struct Region {
+    struct DocumentMapping {
+        std::uint32_t first_line = 0;
+        std::optional<int> first_display_column;
+    };
     struct PrimitiveContent {
         std::vector<Prim> items;
+        std::optional<DocumentMapping> document;
     };
     struct PopupItem {
         std::string label;
@@ -122,7 +127,8 @@ struct Region {
            VerticalAnchor vertical_anchor = VerticalAnchor::Grid, std::string id = {},
            std::uint64_t revision = 0)
         : role(role), rect(rect), surface(surface), vertical_anchor(vertical_anchor),
-          id(std::move(id)), revision(revision), content(PrimitiveContent{std::move(prims)}) {}
+          id(std::move(id)), revision(revision),
+          content(PrimitiveContent{.items = std::move(prims), .document = std::nullopt}) {}
 
     RegionRole role = RegionRole::TextArea;
     Rect rect;
@@ -155,6 +161,13 @@ struct Region {
     void set_popup(PopupContent popup) { content = std::move(popup); }
     void set_status(StatusContent status) { content = std::move(status); }
     void set_echo(EchoContent echo) { content = std::move(echo); }
+    void set_document_mapping(DocumentMapping mapping) {
+        std::get<PrimitiveContent>(content).document = mapping;
+    }
+    const DocumentMapping* document_mapping() const {
+        const PrimitiveContent* primitives = std::get_if<PrimitiveContent>(&content);
+        return primitives != nullptr && primitives->document ? &*primitives->document : nullptr;
+    }
 
     std::size_t item_count() const {
         if (const PopupContent* popup_content = popup()) {

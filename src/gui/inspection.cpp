@@ -2,6 +2,7 @@
 
 #include "ui/char_width.hpp"
 #include "ui/scene_layout.hpp"
+#include "ui/view_tree.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -86,6 +87,18 @@ std::string_view vertical_anchor_name(ui::VerticalAnchor anchor) {
     return "unknown";
 }
 
+std::string_view view_layer_name(ui::ViewLayer layer) {
+    switch (layer) {
+    case ui::ViewLayer::Grid:
+        return "grid";
+    case ui::ViewLayer::Chrome:
+        return "chrome";
+    case ui::ViewLayer::Overlay:
+        return "overlay";
+    }
+    return "unknown";
+}
+
 std::string_view prim_kind_name(ui::PrimKind kind) {
     switch (kind) {
     case ui::PrimKind::Text:
@@ -99,10 +112,7 @@ std::string_view prim_kind_name(ui::PrimKind kind) {
 }
 
 std::string region_id(const ui::Region& region) {
-    if (!region.id.empty()) {
-        return region.id;
-    }
-    return std::format("region:{}", region_role_name(region.role));
+    return ui::region_view_id(region);
 }
 
 std::string_view region_content_name(const ui::Region& region) {
@@ -381,6 +391,34 @@ void append_prim(std::string& output, const ui::Region& region, const ui::Prim& 
     output.push_back('}');
 }
 
+void append_hit_target(std::string& output, const ui::HitTarget& target) {
+    output += "{\"kind\":";
+    append_json_string(output, ui::hit_target_kind_name(target.kind));
+    output += ",\"view_id\":";
+    append_json_string(output, target.view_id);
+    output += std::format(",\"region_index\":{},\"role\":", target.region_index);
+    append_json_string(output, region_role_name(target.role));
+    output += ",\"document_line\":";
+    if (target.document_line) {
+        output += std::to_string(*target.document_line);
+    } else {
+        output += "null";
+    }
+    output += ",\"display_column\":";
+    if (target.display_column) {
+        output += std::to_string(*target.display_column);
+    } else {
+        output += "null";
+    }
+    output += ",\"popup_item\":";
+    if (target.popup_item) {
+        output += std::to_string(*target.popup_item);
+    } else {
+        output += "null";
+    }
+    output.push_back('}');
+}
+
 void append_region(std::string& output, const ui::Region& region) {
     output += "{\"id\":";
     append_json_string(output, region_id(region));
@@ -393,6 +431,18 @@ void append_region(std::string& output, const ui::Region& region) {
     output += std::format(",\"revision\":{}", region.revision);
     output += ",\"content_type\":";
     append_json_string(output, region_content_name(region));
+    output += ",\"document_mapping\":";
+    if (const ui::Region::DocumentMapping* mapping = region.document_mapping()) {
+        output += std::format("{{\"first_line\":{},\"first_display_column\":", mapping->first_line);
+        if (mapping->first_display_column) {
+            output += std::to_string(*mapping->first_display_column);
+        } else {
+            output += "null";
+        }
+        output.push_back('}');
+    } else {
+        output += "null";
+    }
     output += ",\"rect\":";
     append_rect(output, region.rect);
     output += ",\"popup\":";
@@ -474,6 +524,37 @@ void append_region(std::string& output, const ui::Region& region) {
     output += "]}";
 }
 
+void append_view_tree(std::string& output, const ui::Scene& scene) {
+    const ui::ViewTree tree(scene);
+    output += "{\"id\":\"scene\",\"layers\":[";
+    for (std::size_t layer_index = 0; layer_index < tree.layers().size(); ++layer_index) {
+        if (layer_index != 0) {
+            output.push_back(',');
+        }
+        const ui::ViewLayerNode& layer = tree.layers()[layer_index];
+        output += "{\"id\":";
+        append_json_string(output, layer.id);
+        output += ",\"layer\":";
+        append_json_string(output, view_layer_name(layer.layer));
+        output += ",\"children\":[";
+        for (std::size_t index = 0; index < layer.children.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const ui::ViewNode& node = layer.children[index];
+            output += "{\"id\":";
+            append_json_string(output, node.id);
+            output += std::format(",\"region_index\":{},\"role\":", node.region_index);
+            append_json_string(output, region_role_name(node.role));
+            output += ",\"rect\":";
+            append_rect(output, node.rect);
+            output.push_back('}');
+        }
+        output += "]}";
+    }
+    output += "]}";
+}
+
 void append_scene(std::string& output, const ui::Scene& scene) {
     output += std::format("{{\"rows\":{},\"cols\":{},\"grid_offset_rows\":{},\"active_text_row\":",
                           scene.rows, scene.cols, scene.grid_offset_rows);
@@ -485,7 +566,9 @@ void append_scene(std::string& output, const ui::Scene& scene) {
     output += std::format(",\"cursor\":{{\"row\":{},\"col\":{},\"visible\":", scene.cursor_row,
                           scene.cursor_col);
     append_bool(output, scene.cursor_visible);
-    output += "},\"regions\":[";
+    output += "},\"view_tree\":";
+    append_view_tree(output, scene);
+    output += ",\"regions\":[";
     for (std::size_t index = 0; index < scene.regions.size(); ++index) {
         if (index != 0) {
             output.push_back(',');
@@ -946,7 +1029,15 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
          frame.scene.cursor_col < 1 || frame.scene.cursor_col > frame.scene.cols)) {
         violations.emplace_back("scene cursor is outside the scene");
     }
+    std::vector<std::string> view_ids;
+    view_ids.reserve(frame.scene.regions.size());
     for (const ui::Region& region : frame.scene.regions) {
+        const std::string view_id = ui::region_view_id(region);
+        if (std::ranges::find(view_ids, view_id) != view_ids.end()) {
+            violations.push_back(std::format("duplicate scene view id '{}'", view_id));
+        } else {
+            view_ids.push_back(view_id);
+        }
         if (region.rect.row < 0 || region.rect.col < 0 || region.rect.rows < 0 ||
             region.rect.cols < 0 || region.rect.row + region.rect.rows > frame.scene.rows ||
             region.rect.col + region.rect.cols > frame.scene.cols) {
@@ -959,6 +1050,26 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 prim.col >= region.rect.cols) {
                 violations.push_back(std::format("region:{}/prim:{} starts outside its region",
                                                  region_role_name(region.role), index));
+            }
+        }
+        if (const ui::Region::DocumentMapping* mapping = region.document_mapping()) {
+            if (region.role != ui::RegionRole::TextArea &&
+                region.role != ui::RegionRole::LineNumbers &&
+                region.role != ui::RegionRole::ChangeSigns) {
+                violations.emplace_back("document mapping is outside a document region");
+            }
+            if (mapping->first_display_column && *mapping->first_display_column < 0) {
+                violations.emplace_back("document mapping starts before display column zero");
+            }
+        }
+        if (region.role == ui::RegionRole::TextArea) {
+            const ui::Region::DocumentMapping* mapping = region.document_mapping();
+            if (mapping == nullptr || !mapping->first_display_column) {
+                violations.emplace_back("scene text area has no document coordinate mapping");
+            } else if (mapping->first_line != frame.editor.viewport.top_line ||
+                       *mapping->first_display_column != frame.editor.viewport.left_column) {
+                violations.emplace_back(
+                    "scene document mapping does not match the editor viewport");
             }
         }
         if (const ui::Region::PopupContent* popup = region.popup()) {
@@ -1493,6 +1604,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
     } else if (path == "scene.cursor") {
         output = std::format("{{\"row\":{},\"col\":{},\"visible\":{}}}", frame.scene.cursor_row,
                              frame.scene.cursor_col, frame.scene.cursor_visible);
+    } else if (path == "scene.view_tree") {
+        append_view_tree(output, frame.scene);
     } else if (path == "render") {
         append_render(output, frame.render);
     } else if (path == "render.font_metrics") {
@@ -1565,10 +1678,11 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     int cell_row = vertical_layout.row_at(logical_y);
     const int overlay_row =
         static_cast<int>(std::floor(logical_y / static_cast<float>(frame.render.cell_height)));
-    for (auto iterator = frame.scene.regions.rbegin(); iterator != frame.scene.regions.rend();
+    const ui::ViewTree view_tree(frame.scene);
+    const ui::ViewLayerNode& overlays = view_tree.layer(ui::ViewLayer::Overlay);
+    for (auto iterator = overlays.children.rbegin(); iterator != overlays.children.rend();
          ++iterator) {
-        if (iterator->vertical_anchor == ui::VerticalAnchor::Overlay &&
-            overlay_row >= iterator->rect.row &&
+        if (overlay_row >= iterator->rect.row &&
             overlay_row < iterator->rect.row + iterator->rect.rows &&
             cell_col >= iterator->rect.col && cell_col < iterator->rect.col + iterator->rect.cols) {
             cell_row = overlay_row;
@@ -1580,7 +1694,7 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         std::format("{{\"window\":{{\"x\":{},\"y\":{}}},\"cell\":{{\"row\":{},\"col\":{}}}",
                     window_x, window_y, cell_row, cell_col);
     if (cell_row >= frame.scene.rows || cell_col >= frame.scene.cols) {
-        output += ",\"region\":null,\"prim\":null,\"render\":null}";
+        output += ",\"region\":null,\"target\":null,\"prim\":null,\"render\":null}";
         return {true, std::move(output)};
     }
 
@@ -1601,20 +1715,26 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         }
     }
     if (!hit_region) {
-        for (std::size_t reverse = frame.scene.regions.size(); reverse > 0; --reverse) {
-            const std::size_t index = reverse - 1;
-            const ui::Region& region = frame.scene.regions[index];
-            if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
-                cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
-                hit_region = &region;
-                hit_region_index = index;
-                break;
+        const auto find_in_layer = [&](ui::ViewLayer layer) {
+            const ui::ViewLayerNode& layer_node = view_tree.layer(layer);
+            for (auto iterator = layer_node.children.rbegin();
+                 iterator != layer_node.children.rend(); ++iterator) {
+                const ui::Region& region = frame.scene.regions[iterator->region_index];
+                if (cell_row >= region.rect.row && cell_row < region.rect.row + region.rect.rows &&
+                    cell_col >= region.rect.col && cell_col < region.rect.col + region.rect.cols) {
+                    hit_region = &region;
+                    hit_region_index = iterator->region_index;
+                    return true;
+                }
             }
-        }
+            return false;
+        };
+        (void)(find_in_layer(ui::ViewLayer::Overlay) || find_in_layer(ui::ViewLayer::Chrome) ||
+               find_in_layer(ui::ViewLayer::Grid));
     }
 
     if (!hit_region) {
-        output += ",\"region\":null,\"prim\":null,\"render\":null}";
+        output += ",\"region\":null,\"target\":null,\"prim\":null,\"render\":null}";
         return {true, std::move(output)};
     }
 
@@ -1622,17 +1742,12 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
     append_json_string(output, region_id(*hit_region));
     const int local_row = cell_row - hit_region->rect.row;
     const int local_col = cell_col - hit_region->rect.col;
-    if (hit_render && hit_region->vertical_anchor == ui::VerticalAnchor::Overlay) {
+    const bool pixel_overlay_hit =
+        hit_render && hit_region->vertical_anchor == ui::VerticalAnchor::Overlay;
+    if (pixel_overlay_hit) {
         output += ",\"local_cell\":null";
     } else {
         output += std::format(",\"local_cell\":{{\"row\":{},\"col\":{}}}", local_row, local_col);
-    }
-    if (hit_region->role == ui::RegionRole::TextArea ||
-        hit_region->role == ui::RegionRole::LineNumbers ||
-        hit_region->role == ui::RegionRole::ChangeSigns) {
-        output += std::format(",\"document_line\":{}",
-                              frame.editor.viewport.top_line +
-                                  static_cast<std::uint32_t>(std::max(0, local_row)));
     }
 
     std::optional<ui::Prim> hit_primitive;
@@ -1658,6 +1773,24 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
                 hit_primitive_index = semantic_index;
             }
         }
+    }
+    const std::optional<ui::HitTarget> target = ui::resolve_hit_target(
+        frame.scene,
+        {.region_index = hit_region_index,
+         .scene_cell = pixel_overlay_hit
+                           ? std::nullopt
+                           : std::optional(ui::CellPoint{.row = cell_row, .column = cell_col}),
+         .local_cell = pixel_overlay_hit
+                           ? std::nullopt
+                           : std::optional(ui::CellPoint{.row = local_row, .column = local_col}),
+         .content_index = hit_primitive_index < hit_region->item_count()
+                              ? std::optional(hit_primitive_index)
+                              : std::nullopt});
+    output += ",\"target\":";
+    if (target) {
+        append_hit_target(output, *target);
+    } else {
+        output += "null";
     }
     output += ",\"prim\":";
     if (hit_primitive) {
@@ -1885,39 +2018,45 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << "hidden";
     }
     output << '\n';
-    for (const ui::Region& region : frame.scene.regions) {
-        output << "    " << region_id(region) << " role=" << region_role_name(region.role)
-               << " rev=" << region.revision << " rect=(" << region.rect.row << ','
-               << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
-               << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
-               << " items=" << region.item_count() << '\n';
-        if (const ui::Region::PopupContent* popup = region.popup()) {
-            output << "      list first=" << popup->first_item << " visible=" << popup->items.size()
-                   << " total=" << popup->total_items << " selected=";
-            if (popup->selected_item) {
-                output << *popup->selected_item;
-            } else {
-                output << "none";
+    const ui::ViewTree view_tree(frame.scene);
+    for (const ui::ViewLayerNode& layer : view_tree.layers()) {
+        output << "    " << layer.id << " layer=" << view_layer_name(layer.layer) << '\n';
+        for (const ui::ViewNode& node : layer.children) {
+            const ui::Region& region = frame.scene.regions[node.region_index];
+            output << "    " << region_id(region) << " role=" << region_role_name(region.role)
+                   << " rev=" << region.revision << " rect=(" << region.rect.row << ','
+                   << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
+                   << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
+                   << " items=" << region.item_count() << '\n';
+            if (const ui::Region::PopupContent* popup = region.popup()) {
+                output << "      list first=" << popup->first_item
+                       << " visible=" << popup->items.size() << " total=" << popup->total_items
+                       << " selected=";
+                if (popup->selected_item) {
+                    output << *popup->selected_item;
+                } else {
+                    output << "none";
+                }
+                output << '\n';
             }
-            output << '\n';
-        }
-        if (const ui::Region::EchoContent* echo = region.echo()) {
-            output << "      echo bytes=" << echo->text.size() << " cursor=";
-            if (echo->cursor_byte) {
-                output << *echo->cursor_byte;
-            } else {
-                output << "none";
+            if (const ui::Region::EchoContent* echo = region.echo()) {
+                output << "      echo bytes=" << echo->text.size() << " cursor=";
+                if (echo->cursor_byte) {
+                    output << *echo->cursor_byte;
+                } else {
+                    output << "none";
+                }
+                output << '\n';
             }
-            output << '\n';
-        }
-        for (std::size_t index = 0; index < region.primitives().size(); ++index) {
-            const ui::Prim& prim = region.primitives()[index];
-            output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
-                   << " cell=(" << prim.row << ',' << prim.col
-                   << ") kind=" << prim_kind_name(prim.kind)
-                   << " style=" << style_class_name(prim.style)
-                   << (prim.selected ? " selected" : "") << " text=\"" << printable(prim.text)
-                   << "\"\n";
+            for (std::size_t index = 0; index < region.primitives().size(); ++index) {
+                const ui::Prim& prim = region.primitives()[index];
+                output << "      prim:" << (prim.id.empty() ? std::to_string(index) : prim.id)
+                       << " cell=(" << prim.row << ',' << prim.col
+                       << ") kind=" << prim_kind_name(prim.kind)
+                       << " style=" << style_class_name(prim.style)
+                       << (prim.selected ? " selected" : "") << " text=\"" << printable(prim.text)
+                       << "\"\n";
+            }
         }
     }
     output << "  render video-driver=" << frame.render.video_driver

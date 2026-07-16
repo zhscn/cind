@@ -28,7 +28,7 @@ private:
     bool initialized_ = false;
     std::vector<std::string> cells_;
     std::optional<CellPoint> cursor_;
-    std::optional<Rect> overlay_rect_;
+    std::vector<Rect> overlay_rects_;
 };
 
 } // namespace cind::ui

@@ -19,6 +19,7 @@ add_library(cind_ui STATIC
   ui/line_signs.cpp
   ui/scene_damage.cpp
   ui/scene_layout.cpp
+  ui/view_tree.cpp
   ui/ansi_renderer.cpp
   ui/text_position.cpp
 )

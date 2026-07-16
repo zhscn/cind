@@ -309,7 +309,10 @@ private:
             return {true, true};
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (event.button.button == SDL_BUTTON_LEFT) {
-                editor_.click(mouse_cell_point(event.button.x, event.button.y));
+                if (const std::optional<ui::HitTarget> target =
+                        mouse_hit_target(event.button.x, event.button.y)) {
+                    editor_.click(*target);
+                }
                 return {true, true};
             }
             return {};
@@ -376,10 +379,20 @@ private:
         case SDL_EVENT_TEXT_EDITING:
             return std::format("preedit={}", event.edit.text ? event.edit.text : "");
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
-            const ui::CellPoint point = mouse_cell_point(event.button.x, event.button.y);
-            return std::format("button={} window=({}, {}) cell=({}, {})",
-                               static_cast<int>(event.button.button), event.button.x,
-                               event.button.y, point.row, point.column);
+            const std::optional<ui::HitTarget> target =
+                mouse_hit_target(event.button.x, event.button.y);
+            if (!target) {
+                return std::format("button={} window=({}, {}) target=none",
+                                   static_cast<int>(event.button.button), event.button.x,
+                                   event.button.y);
+            }
+            return std::format(
+                "button={} window=({}, {}) target={} view={} line={} column={} item={}",
+                static_cast<int>(event.button.button), event.button.x, event.button.y,
+                ui::hit_target_kind_name(target->kind), target->view_id,
+                target->document_line ? std::to_string(*target->document_line) : "none",
+                target->display_column ? std::to_string(*target->display_column) : "none",
+                target->popup_item ? std::to_string(*target->popup_item) : "none");
         }
         case SDL_EVENT_MOUSE_WHEEL:
             return std::format("delta=({}, {}) direction={}", event.wheel.x, event.wheel.y,
@@ -761,12 +774,12 @@ private:
         SDL_SetTextInputArea(window_.get(), &area, 0);
     }
 
-    ui::CellPoint mouse_cell_point(float window_x, float window_y) const {
+    std::optional<ui::HitTarget> mouse_hit_target(float window_x, float window_y) const {
         int window_width = 0;
         int window_height = 0;
         SDL_GetWindowSize(window_.get(), &window_width, &window_height);
         if (window_width <= 0 || window_height <= 0) {
-            return {};
+            return std::nullopt;
         }
         const float logical_x = window_x / static_cast<float>(window_width) * logical_output_width_;
         const float logical_y =
@@ -774,7 +787,7 @@ private:
         if (presented_frame_) {
             return presented_frame_->hit_test(presenter_, {.x = logical_x, .y = logical_y});
         }
-        return {};
+        return std::nullopt;
     }
 
     EditorModel& editor_;

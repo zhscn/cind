@@ -8,7 +8,9 @@
 #include "ui/editor_scene.hpp"
 #include "ui/line_signs.hpp"
 #include "ui/list_view.hpp"
+#include "ui/scene_damage.hpp"
 #include "ui/text_position.hpp"
+#include "ui/view_tree.hpp"
 
 #include <string>
 
@@ -145,6 +147,106 @@ TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
     CHECK(decode_utf8("\x80").bytes == 1);
     CHECK(decode_utf8("\x80").cp == 0xFFFD);
     CHECK(decode_utf8("\xE4\xB8").bytes == 1); // truncated 3-byte sequence
+}
+
+TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
+    const Text text("zero\none\ntwo\nthree\n");
+    const TokenBuffer tokens(lex(text).tokens);
+    const std::vector<EditorPopupItem> popup_items{
+        {.label = "first", .detail = "command"},
+        {.label = "second", .detail = "command"},
+    };
+    const EditorSceneViewState view{
+        .viewport = {.top_line = 1, .top_line_offset = 0.0F, .left_column = 4},
+        .popup = {},
+    };
+    const Scene scene = compose_editor_scene({.text = text,
+                                              .tokens = tokens,
+                                              .signs = {},
+                                              .caret = TextOffset{4},
+                                              .selection = std::nullopt,
+                                              .rows = 8,
+                                              .cols = 80,
+                                              .visible_text_rows = 6.0F,
+                                              .tab_width = 4,
+                                              .path = "sample.cc",
+                                              .dirty = false,
+                                              .revision = 3,
+                                              .style_origin = ".clang-format",
+                                              .last_key = {},
+                                              .echo = {},
+                                              .echo_cursor_column = std::nullopt,
+                                              .echo_cursor_byte = std::nullopt,
+                                              .popup_title = "Command",
+                                              .popup_items = popup_items,
+                                              .popup_selection = 1,
+                                              .popup_input = std::nullopt,
+                                              .popup_input_cursor = std::nullopt},
+                                             view);
+    const ViewTree tree(scene);
+    CHECK(tree.layer(ViewLayer::Grid).children.size() == 3);
+    CHECK(tree.layer(ViewLayer::Chrome).children.size() == 2);
+    CHECK(tree.layer(ViewLayer::Overlay).children.size() == 1);
+
+    const ViewNode& document = tree.layer(ViewLayer::Grid).children.back();
+    const std::optional<HitTarget> document_target = resolve_hit_target(
+        scene, {.region_index = document.region_index,
+                .scene_cell = CellPoint{.row = 2, .column = document.rect.col + 3},
+                .local_cell = CellPoint{.row = 2, .column = 3},
+                .content_index = std::nullopt});
+    REQUIRE(document_target);
+    CHECK(document_target->kind == HitTargetKind::DocumentText);
+    CHECK(document_target->document_line == 3);
+    CHECK(document_target->display_column == 7);
+
+    const ViewNode& gutter = tree.layer(ViewLayer::Grid).children.front();
+    const std::optional<HitTarget> gutter_target =
+        resolve_hit_target(scene, {.region_index = gutter.region_index,
+                                   .scene_cell = CellPoint{.row = 1, .column = 0},
+                                   .local_cell = CellPoint{.row = 1, .column = 0},
+                                   .content_index = std::nullopt});
+    REQUIRE(gutter_target);
+    CHECK(gutter_target->kind == HitTargetKind::DocumentGutter);
+    CHECK(gutter_target->document_line == 2);
+
+    const ViewNode& popup = tree.layer(ViewLayer::Overlay).children.front();
+    const std::optional<HitTarget> popup_target =
+        resolve_hit_target(scene, {.region_index = popup.region_index,
+                                   .scene_cell = std::nullopt,
+                                   .local_cell = std::nullopt,
+                                   .content_index = 2});
+    REQUIRE(popup_target);
+    CHECK(popup_target->kind == HitTargetKind::PopupItem);
+    CHECK(popup_target->popup_item == 1);
+}
+
+TEST_CASE("view layers define paint order independently of region storage order") {
+    Scene scene;
+    scene.rows = 1;
+    scene.cols = 8;
+    scene.cursor_visible = false;
+    Region overlay{RegionRole::Popup,       {0, 0, 1, 8}, {}, SurfaceClass::Status,
+                   VerticalAnchor::Overlay, "overlay"};
+    overlay.primitives().push_back({0, 0, "top", StyleClass::Popup, false});
+    Region document{RegionRole::TextArea, {0, 0, 1, 8},         {},
+                    SurfaceClass::Editor, VerticalAnchor::Grid, "document"};
+    document.primitives().push_back({0, 0, "body", StyleClass::Text, false});
+    scene.regions = {overlay, document};
+
+    const std::string rendered = render_ansi(scene);
+    CHECK(rendered.find("body") < rendered.find("top"));
+
+    SceneDamageTracker tracker;
+    REQUIRE(tracker.update(scene).full_repaint);
+    scene.regions[1].primitives().front().text = "xxxx";
+    const SceneDamage obscured_change = tracker.update(scene);
+    CHECK_FALSE(obscured_change.full_repaint);
+    CHECK(obscured_change.cell_rects.empty());
+
+    std::swap(scene.regions[0], scene.regions[1]);
+    const SceneDamage reordered = tracker.update(scene);
+    CHECK_FALSE(reordered.full_repaint);
+    CHECK(reordered.cell_rects.empty());
 }
 
 TEST_CASE("text positions follow extended grapheme boundaries") {

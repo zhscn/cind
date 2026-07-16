@@ -153,32 +153,28 @@ void EditorModel::set_preedit(std::string_view text) {
     preedit_ = text.empty() ? std::string() : std::format("IME · {}", text);
 }
 
-void EditorModel::click(ui::CellPoint point) {
+void EditorModel::click(const ui::HitTarget& target) {
     if (application_.interaction().active() ||
         !application_.command_loop().pending_sequence().empty()) {
+        return;
+    }
+    if (!target.document_line || (target.kind != ui::HitTargetKind::DocumentText &&
+                                  target.kind != ui::HitTargetKind::DocumentGutter)) {
         return;
     }
     application_.reset_preferred_column();
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
     const Text& text = snapshot.content();
-    const int text_column = ui::text_area_column(text.line_count());
-    const int visible_rows = std::max(1, last_rows_ - 2);
-    if (point.row < 0 || point.row >= visible_rows) {
-        return;
-    }
-    const std::uint32_t line =
-        std::min(session.view().viewport().top_line + static_cast<std::uint32_t>(point.row),
-                 text.line_count() - 1);
-    if (point.column < text_column) {
+    const std::uint32_t line = std::min(*target.document_line, text.line_count() - 1);
+    if (target.kind == ui::HitTargetKind::DocumentGutter || !target.display_column) {
         session.set_caret(text.line_start(line));
         application_.show_caret();
         return;
     }
-    const int display_column =
-        session.view().viewport().left_column + std::max(0, point.column - text_column);
-    session.set_caret(ui::offset_at_display_column(text, {.line = line, .column = display_column},
-                                                   session.style().tab_width));
+    session.set_caret(ui::offset_at_display_column(
+        text, {.line = line, .column = std::max(0, *target.display_column)},
+        session.style().tab_width));
     application_.show_caret();
 }
 

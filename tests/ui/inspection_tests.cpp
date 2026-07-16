@@ -98,11 +98,13 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     scene.cursor_col = 4;
     scene.active_text_row =
         scroll_frame || document_cursor_animation ? std::optional(0) : std::nullopt;
-    Region body{RegionRole::TextArea, {0, 0, 1, 10}, {}};
+    Region body{RegionRole::TextArea, {0, 0, 1, 10},     {}, SurfaceClass::Editor,
+                VerticalAnchor::Grid, "editor/document", 7};
+    body.set_document_mapping({.first_line = 0, .first_display_column = 0});
     body.primitives().push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
-    Region status{
-        RegionRole::StatusBar, {1, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    Region status{RegionRole::StatusBar,  {1, 0, 1, 10},     {}, SurfaceClass::Status,
+                  VerticalAnchor::Bottom, "editor/modeline", 7};
     status.set_status(Region::StatusContent{
         .path = "sample.cc",
         .line = 1,
@@ -112,8 +114,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .style_origin = ".clang-format",
         .key = "C-x",
     });
-    Region popup{
-        RegionRole::Popup, {0, 5, 2, 5}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    Region popup{RegionRole::Popup,       {0, 5, 2, 5},           {}, SurfaceClass::Status,
+                 VerticalAnchor::Overlay, "editor/overlay/popup", 7};
     popup.set_popup(Region::PopupContent{
         .title = "Help",
         .input = "",
@@ -123,8 +125,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .selected_item = 0,
         .items = {{.label = "file.save", .detail = "command"}},
     });
-    Region echo{
-        RegionRole::EchoArea, {1, 0, 1, 10}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    Region echo{RegionRole::EchoArea,   {1, 0, 1, 10}, {}, SurfaceClass::Echo,
+                VerticalAnchor::Bottom, "editor/echo", 7};
     echo.set_echo(Region::EchoContent{.text = "search: x", .cursor_byte = 9});
     std::optional<PopupLayoutSnapshot> popup_layout;
     std::optional<EchoLayoutSnapshot> echo_layout;
@@ -281,7 +283,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
               .row_overflow = row_overflow,
               .column_overflow = false},
              {.region_index = 2,
-              .primitive_index = 0,
+              .primitive_index = 1,
               .id = {},
               .region = {},
               .kind = {},
@@ -292,6 +294,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
               .row_overflow = false,
               .column_overflow = false}},
     };
+    if (echo_frame) {
+        render.primitives[1].primitive_index = 0;
+    }
     if (document_cursor_animation) {
         render.primitives.resize(1);
     }
@@ -312,11 +317,13 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":21") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":22") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"content_type\":\"popup\"") != std::string::npos);
     CHECK(snapshot.find("\"content_type\":\"status\"") != std::string::npos);
+    CHECK(snapshot.find("\"view_tree\":{\"id\":\"scene\"") != std::string::npos);
+    CHECK(snapshot.find("\"id\":\"scene/overlay\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
     CHECK(snapshot.find("\"display_scale\":1.5") != std::string::npos);
     CHECK(snapshot.find("\"grid_offset_rows\":0") != std::string::npos);
@@ -378,23 +385,33 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(focus.ok);
     CHECK(focus.payload.find("\"target\":\"interaction\"") != std::string::npos);
 
+    const InspectionResponse view_tree = run_inspection_query(hub, "get scene.view_tree");
+    REQUIRE(view_tree.ok);
+    CHECK(view_tree.payload.find("\"id\":\"editor/document\"") != std::string::npos);
+    CHECK(view_tree.payload.find("\"layer\":\"overlay\"") != std::string::npos);
+
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);
-    CHECK(pick.payload.find("\"region\":\"region:text-area\"") != std::string::npos);
+    CHECK(pick.payload.find("\"region\":\"editor/document\"") != std::string::npos);
+    CHECK(pick.payload.find("\"kind\":\"document-text\"") != std::string::npos);
+    CHECK(pick.payload.find("\"document_line\":0") != std::string::npos);
     CHECK(pick.payload.find("\"style\":\"keyword\"") != std::string::npos);
     CHECK(pick.payload.find("\"paint_bounds\":{\"x\":1") != std::string::npos);
 
     const InspectionResponse footer_pick = run_inspection_query(hub, "pick 20 90");
     REQUIRE(footer_pick.ok);
-    CHECK(footer_pick.payload.find("\"region\":\"region:status-bar\"") != std::string::npos);
+    CHECK(footer_pick.payload.find("\"region\":\"editor/modeline\"") != std::string::npos);
+    CHECK(footer_pick.payload.find("\"kind\":\"status\"") != std::string::npos);
 
     const InspectionResponse popup_pick = run_inspection_query(hub, "pick 70 10");
     REQUIRE(popup_pick.ok);
-    CHECK(popup_pick.payload.find("\"region\":\"region:popup\"") != std::string::npos);
+    CHECK(popup_pick.payload.find("\"region\":\"editor/overlay/popup\"") != std::string::npos);
 
     const InspectionResponse visual_popup_pick = run_inspection_query(hub, "pick 30 50");
     REQUIRE(visual_popup_pick.ok);
-    CHECK(visual_popup_pick.payload.find("\"region\":\"region:popup\"") != std::string::npos);
+    CHECK(visual_popup_pick.payload.find("\"region\":\"editor/overlay/popup\"") !=
+          std::string::npos);
+    CHECK(visual_popup_pick.payload.find("\"kind\":\"popup-item\"") != std::string::npos);
     CHECK(visual_popup_pick.payload.find("\"local_cell\":null") != std::string::npos);
 
     const InspectionResponse metrics = run_inspection_query(hub, "get render.font_metrics");

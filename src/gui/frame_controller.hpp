@@ -113,7 +113,8 @@ public:
     int output_height() const { return output_height_; }
     float display_scale() const { return display_scale_; }
 
-    ui::CellPoint hit_test(const SkiaPresenter& presenter, SkiaLogicalPoint point) const;
+    std::optional<ui::HitTarget> hit_test(const SkiaPresenter& presenter,
+                                          SkiaLogicalPoint point) const;
 
 private:
     PresentedFrame(std::shared_ptr<const ui::Scene> scene,

@@ -353,6 +353,28 @@ bool contains(const ui::Rect& rect, int row, int col) {
            col < rect.col + rect.cols;
 }
 
+const ui::Region* topmost_region_at(const ui::Scene& scene, int row, int column) {
+    const ui::ViewTree tree(scene);
+    const auto find_in_layer = [&](ui::ViewLayer layer) -> const ui::Region* {
+        const ui::ViewLayerNode& layer_node = tree.layer(layer);
+        for (auto iterator = layer_node.children.rbegin(); iterator != layer_node.children.rend();
+             ++iterator) {
+            const ui::Region& region = scene.regions[iterator->region_index];
+            if (contains(region.rect, row, column)) {
+                return &region;
+            }
+        }
+        return nullptr;
+    };
+    if (const ui::Region* overlay = find_in_layer(ui::ViewLayer::Overlay)) {
+        return overlay;
+    }
+    if (const ui::Region* chrome = find_in_layer(ui::ViewLayer::Chrome)) {
+        return chrome;
+    }
+    return find_in_layer(ui::ViewLayer::Grid);
+}
+
 SkiaLogicalRect logical_rect(const SkRect& rect) {
     return {.x = rect.x(), .y = rect.y(), .width = rect.width(), .height = rect.height()};
 }
@@ -525,6 +547,7 @@ struct SkiaFrameLayout::Storage {
     const void* presenter_identity = nullptr;
     float viewport_width = 0.0F;
     float viewport_height = 0.0F;
+    std::optional<ui::ViewTree> view_tree;
     std::optional<DocumentLayout> document;
     std::optional<PopupLayout> popup;
     std::optional<EchoLayout> echo;
@@ -1510,200 +1533,209 @@ struct SkiaPresenter::Impl {
             const EchoLayout* echo = &layer_scene == &scene ? prepared_echo : nullptr;
             SkPaint fill;
             fill.setAntiAlias(false);
-            for (std::size_t region_index = 0; region_index < layer_scene.regions.size();
-                 ++region_index) {
-                const ui::Region& region = layer_scene.regions[region_index];
-                const bool moving_grid = region.vertical_anchor == ui::VerticalAnchor::Grid;
-                if ((moving_grid && !paint_grid) || (!moving_grid && !paint_footer)) {
-                    continue;
-                }
-                if (panel != nullptr && panel->region == &region) {
-                    paint_popup(canvas, *panel, region_index, raster, layer_diagnostics,
-                                damage_bounds);
-                    continue;
-                }
-                if (echo != nullptr && echo->region == &region) {
-                    paint_echo(canvas, *echo, region_index, raster, layer_diagnostics,
-                               damage_bounds);
-                    continue;
-                }
-                SkRect bounds = region_pixel_rect(region, cell_width, cell_height, vertical_layout);
-                if (moving_grid) {
-                    bounds.offset(0.0F, grid_offset_y);
-                }
-                const SkRect* effective_damage_bounds =
-                    moving_grid && grid_layer_clip ? grid_layer_clip : damage_bounds;
-                if (effective_damage_bounds &&
-                    !SkRect::Intersects(bounds, *effective_damage_bounds)) {
-                    continue;
-                }
-                if (region.role == ui::RegionRole::StatusBar && region.status() != nullptr) {
-                    paint_status(canvas, region, bounds, region_index, raster, layer_diagnostics,
-                                 damage_bounds);
-                    continue;
-                }
-                fill.setColor(color(region.surface == ui::SurfaceClass::Status ? theme.surface
-                                                                               : theme.canvas));
-                canvas.save();
-                if (moving_grid) {
-                    canvas.clipRect(grid_clip);
-                    if (grid_layer_clip) {
-                        canvas.clipRect(*grid_layer_clip);
-                    }
-                }
-                canvas.clipRect(bounds);
-                canvas.drawRect(bounds, fill);
-                if ((active_line_top || layer_scene.active_text_row) && moving_grid &&
-                    (region.role == ui::RegionRole::TextArea ||
-                     region.role == ui::RegionRole::LineNumbers ||
-                     region.role == ui::RegionRole::ChangeSigns)) {
-                    const float active_top =
-                        active_line_top
-                            ? *active_line_top
-                            : bounds.top() + static_cast<float>(*layer_scene.active_text_row -
-                                                                region.rect.row) *
-                                                 static_cast<float>(cell_height);
-                    fill.setColor(color(theme.active_line));
-                    canvas.drawRect(SkRect::MakeXYWH(bounds.left(), active_top, bounds.width(),
-                                                     static_cast<float>(cell_height)),
-                                    fill);
-                }
-                if (document != nullptr && document->region == &region) {
-                    paint_document(canvas, *document, region_index, raster, layer_diagnostics,
-                                   effective_damage_bounds, grid_offset_y);
-                    canvas.restore();
-                    continue;
-                }
-                if (region.role == ui::RegionRole::StatusBar) {
-                    draw_hairline(canvas, SkRect::MakeXYWH(bounds.left(), bounds.top(),
-                                                           bounds.width(), 1.0F));
-                }
-                const bool footer_region = region.vertical_anchor == ui::VerticalAnchor::Bottom;
-                const bool suppress_echo_text = panel != nullptr && panel->input_active &&
-                                                region.role == ui::RegionRole::EchoArea;
-                for (std::size_t primitive_index = 0; primitive_index < region.primitives().size();
-                     ++primitive_index) {
-                    if (suppress_echo_text) {
+            const ui::ViewTree view_tree(layer_scene);
+            for (const ui::ViewLayerNode& layer_node : view_tree.layers()) {
+                for (const ui::ViewNode& node : layer_node.children) {
+                    const std::size_t region_index = node.region_index;
+                    const ui::Region& region = layer_scene.regions[region_index];
+                    const bool moving_grid = region.vertical_anchor == ui::VerticalAnchor::Grid;
+                    if ((moving_grid && !paint_grid) || (!moving_grid && !paint_footer)) {
                         continue;
                     }
-                    const ui::Prim& prim = region.primitives()[primitive_index];
-                    SkScalar x = bounds.left() + static_cast<SkScalar>(prim.col * cell_width);
-                    SkScalar top = bounds.top() + static_cast<SkScalar>(prim.row * cell_height);
-                    if (footer_region) {
-                        const int scene_row = region.rect.row + prim.row;
-                        top = vertical_layout.row_top(scene_row) +
-                              (vertical_layout.row_height(scene_row) -
-                               static_cast<float>(cell_height)) *
-                                  0.5F;
-                        if (region.role == ui::RegionRole::EchoArea) {
-                            x += footer_padding_x;
-                        }
+                    if (panel != nullptr && panel->region == &region) {
+                        paint_popup(canvas, *panel, region_index, raster, layer_diagnostics,
+                                    damage_bounds);
+                        continue;
                     }
-                    const SkRect cell_bounds = SkRect::MakeXYWH(
-                        x, top,
-                        static_cast<SkScalar>(std::max(1, ui::display_width(prim.text)) *
-                                              cell_width),
-                        static_cast<SkScalar>(cell_height));
+                    if (echo != nullptr && echo->region == &region) {
+                        paint_echo(canvas, *echo, region_index, raster, layer_diagnostics,
+                                   damage_bounds);
+                        continue;
+                    }
+                    SkRect bounds =
+                        region_pixel_rect(region, cell_width, cell_height, vertical_layout);
+                    if (moving_grid) {
+                        bounds.offset(0.0F, grid_offset_y);
+                    }
+                    const SkRect* effective_damage_bounds =
+                        moving_grid && grid_layer_clip ? grid_layer_clip : damage_bounds;
                     if (effective_damage_bounds &&
-                        !SkRect::Intersects(cell_bounds, *effective_damage_bounds)) {
+                        !SkRect::Intersects(bounds, *effective_damage_bounds)) {
                         continue;
                     }
-
-                    if (prim.selected) {
-                        fill.setColor(color(theme.selection));
-                        canvas.drawRect(
-                            SkRect::MakeXYWH(
-                                x, top,
-                                static_cast<SkScalar>(ui::display_width(prim.text) * cell_width),
-                                static_cast<SkScalar>(cell_height)),
-                            fill);
+                    if (region.role == ui::RegionRole::StatusBar && region.status() != nullptr) {
+                        paint_status(canvas, region, bounds, region_index, raster,
+                                     layer_diagnostics, damage_bounds);
+                        continue;
                     }
+                    fill.setColor(color(region.surface == ui::SurfaceClass::Status ? theme.surface
+                                                                                   : theme.canvas));
+                    canvas.save();
+                    if (moving_grid) {
+                        canvas.clipRect(grid_clip);
+                        if (grid_layer_clip) {
+                            canvas.clipRect(*grid_layer_clip);
+                        }
+                    }
+                    canvas.clipRect(bounds);
+                    canvas.drawRect(bounds, fill);
+                    if ((active_line_top || layer_scene.active_text_row) && moving_grid &&
+                        (region.role == ui::RegionRole::TextArea ||
+                         region.role == ui::RegionRole::LineNumbers ||
+                         region.role == ui::RegionRole::ChangeSigns)) {
+                        const float active_top =
+                            active_line_top
+                                ? *active_line_top
+                                : bounds.top() + static_cast<float>(*layer_scene.active_text_row -
+                                                                    region.rect.row) *
+                                                     static_cast<float>(cell_height);
+                        fill.setColor(color(theme.active_line));
+                        canvas.drawRect(SkRect::MakeXYWH(bounds.left(), active_top, bounds.width(),
+                                                         static_cast<float>(cell_height)),
+                                        fill);
+                    }
+                    if (document != nullptr && document->region == &region) {
+                        paint_document(canvas, *document, region_index, raster, layer_diagnostics,
+                                       effective_damage_bounds, grid_offset_y);
+                        canvas.restore();
+                        continue;
+                    }
+                    if (region.role == ui::RegionRole::StatusBar) {
+                        draw_hairline(canvas, SkRect::MakeXYWH(bounds.left(), bounds.top(),
+                                                               bounds.width(), 1.0F));
+                    }
+                    const bool footer_region = region.vertical_anchor == ui::VerticalAnchor::Bottom;
+                    const bool suppress_echo_text = panel != nullptr && panel->input_active &&
+                                                    region.role == ui::RegionRole::EchoArea;
+                    for (std::size_t primitive_index = 0;
+                         primitive_index < region.primitives().size(); ++primitive_index) {
+                        if (suppress_echo_text) {
+                            continue;
+                        }
+                        const ui::Prim& prim = region.primitives()[primitive_index];
+                        SkScalar x = bounds.left() + static_cast<SkScalar>(prim.col * cell_width);
+                        SkScalar top = bounds.top() + static_cast<SkScalar>(prim.row * cell_height);
+                        if (footer_region) {
+                            const int scene_row = region.rect.row + prim.row;
+                            top = vertical_layout.row_top(scene_row) +
+                                  (vertical_layout.row_height(scene_row) -
+                                   static_cast<float>(cell_height)) *
+                                      0.5F;
+                            if (region.role == ui::RegionRole::EchoArea) {
+                                x += footer_padding_x;
+                            }
+                        }
+                        const SkRect cell_bounds = SkRect::MakeXYWH(
+                            x, top,
+                            static_cast<SkScalar>(std::max(1, ui::display_width(prim.text)) *
+                                                  cell_width),
+                            static_cast<SkScalar>(cell_height));
+                        if (effective_damage_bounds &&
+                            !SkRect::Intersects(cell_bounds, *effective_damage_bounds)) {
+                            continue;
+                        }
 
-                    SkPaint paint;
-                    paint.setAntiAlias(true);
-                    const bool active_line_number =
-                        region.role == ui::RegionRole::LineNumbers &&
-                        (active_line_top
-                             ? *active_line_top + static_cast<float>(cell_height) * 0.5F >= top &&
-                                   *active_line_top + static_cast<float>(cell_height) * 0.5F <
-                                       top + static_cast<float>(cell_height)
-                             : layer_scene.active_text_row &&
-                                   prim.row == *layer_scene.active_text_row - region.rect.row);
-                    paint.setColor(active_line_number ? color(theme.text)
-                                                      : foreground(prim.style, theme));
-                    std::optional<SkRect> draw_bounds;
-                    std::optional<SkRect> shape_bounds;
-                    ShapedText shaped;
-                    if (prim.kind != ui::PrimKind::Text) {
-                        if (prim.kind == ui::PrimKind::ChangeDeletion) {
-                            draw_bounds = SkRect::MakeXYWH(
-                                x + 1.0F, top + 1.0F, static_cast<SkScalar>(cell_width - 2), 2.0F);
+                        if (prim.selected) {
+                            fill.setColor(color(theme.selection));
+                            canvas.drawRect(
+                                SkRect::MakeXYWH(x, top,
+                                                 static_cast<SkScalar>(
+                                                     ui::display_width(prim.text) * cell_width),
+                                                 static_cast<SkScalar>(cell_height)),
+                                fill);
+                        }
+
+                        SkPaint paint;
+                        paint.setAntiAlias(true);
+                        const bool active_line_number =
+                            region.role == ui::RegionRole::LineNumbers &&
+                            (active_line_top
+                                 ? *active_line_top + static_cast<float>(cell_height) * 0.5F >=
+                                           top &&
+                                       *active_line_top + static_cast<float>(cell_height) * 0.5F <
+                                           top + static_cast<float>(cell_height)
+                                 : layer_scene.active_text_row &&
+                                       prim.row == *layer_scene.active_text_row - region.rect.row);
+                        paint.setColor(active_line_number ? color(theme.text)
+                                                          : foreground(prim.style, theme));
+                        std::optional<SkRect> draw_bounds;
+                        std::optional<SkRect> shape_bounds;
+                        ShapedText shaped;
+                        if (prim.kind != ui::PrimKind::Text) {
+                            if (prim.kind == ui::PrimKind::ChangeDeletion) {
+                                draw_bounds =
+                                    SkRect::MakeXYWH(x + 1.0F, top + 1.0F,
+                                                     static_cast<SkScalar>(cell_width - 2), 2.0F);
+                            } else {
+                                draw_bounds =
+                                    SkRect::MakeXYWH(x + 1.0F, top + 2.0F, 3.0F,
+                                                     static_cast<SkScalar>(cell_height - 4));
+                            }
                         } else {
-                            draw_bounds = SkRect::MakeXYWH(x + 1.0F, top + 2.0F, 3.0F,
-                                                           static_cast<SkScalar>(cell_height - 4));
+                            shaped = shape_text(prim.text);
+                            if (shaped.blob) {
+                                shape_bounds = shaped.shape_bounds;
+                                shape_bounds->offset(x, top);
+                                draw_bounds = shape_bounds;
+                            }
                         }
-                    } else {
-                        shaped = shape_text(prim.text);
-                        if (shaped.blob) {
-                            shape_bounds = shaped.shape_bounds;
-                            shape_bounds->offset(x, top);
-                            draw_bounds = shape_bounds;
-                        }
-                    }
 
-                    std::optional<PixelProbe> probe;
-                    if (layer_diagnostics && draw_bounds) {
-                        SkRect probe_bounds = cell_bounds;
-                        probe_bounds.join(*draw_bounds);
-                        probe = capture_probe(probe_bounds, raster);
-                    }
-                    if (prim.kind != ui::PrimKind::Text && draw_bounds) {
-                        if (prim.kind == ui::PrimKind::ChangeBar) {
-                            SkPaint bar;
-                            bar.setAntiAlias(true);
-                            bar.setColor(paint.getColor());
-                            canvas.drawRRect(SkRRect::MakeRectXY(*draw_bounds, 1.5F, 1.5F), bar);
-                        } else {
-                            canvas.drawRect(*draw_bounds, paint);
+                        std::optional<PixelProbe> probe;
+                        if (layer_diagnostics && draw_bounds) {
+                            SkRect probe_bounds = cell_bounds;
+                            probe_bounds.join(*draw_bounds);
+                            probe = capture_probe(probe_bounds, raster);
                         }
-                    } else if (shaped.blob) {
-                        canvas.drawTextBlob(shaped.blob, x, top, paint);
-                    }
+                        if (prim.kind != ui::PrimKind::Text && draw_bounds) {
+                            if (prim.kind == ui::PrimKind::ChangeBar) {
+                                SkPaint bar;
+                                bar.setAntiAlias(true);
+                                bar.setColor(paint.getColor());
+                                canvas.drawRRect(SkRRect::MakeRectXY(*draw_bounds, 1.5F, 1.5F),
+                                                 bar);
+                            } else {
+                                canvas.drawRect(*draw_bounds, paint);
+                            }
+                        } else if (shaped.blob) {
+                            canvas.drawTextBlob(shaped.blob, x, top, paint);
+                        }
 
-                    if (layer_diagnostics) {
-                        SkiaPrimitiveRenderDiagnostics primitive{
-                            .region_index = region_index,
-                            .primitive_index = primitive_index,
-                            .layout_bounds = logical_rect(cell_bounds),
-                            .shape_bounds = std::nullopt,
-                            .paint_bounds = std::nullopt,
-                            .draw_bounds_cross_region_clip = false,
-                            .row_overflow = false,
-                            .column_overflow = false,
-                        };
-                        if (shape_bounds) {
-                            primitive.shape_bounds = logical_rect(*shape_bounds);
+                        if (layer_diagnostics) {
+                            SkiaPrimitiveRenderDiagnostics primitive{
+                                .region_index = region_index,
+                                .primitive_index = primitive_index,
+                                .layout_bounds = logical_rect(cell_bounds),
+                                .shape_bounds = std::nullopt,
+                                .paint_bounds = std::nullopt,
+                                .draw_bounds_cross_region_clip = false,
+                                .row_overflow = false,
+                                .column_overflow = false,
+                            };
+                            if (shape_bounds) {
+                                primitive.shape_bounds = logical_rect(*shape_bounds);
+                            }
+                            if (draw_bounds) {
+                                primitive.draw_bounds_cross_region_clip =
+                                    extends_horizontally(*draw_bounds, bounds) ||
+                                    extends_vertically(*draw_bounds, bounds);
+                            }
+                            if (probe) {
+                                primitive.paint_bounds = changed_pixel_bounds(*probe, raster);
+                            }
+                            if (primitive.paint_bounds) {
+                                const SkRect raster_bounds = SkRect::MakeXYWH(
+                                    primitive.paint_bounds->x, primitive.paint_bounds->y,
+                                    primitive.paint_bounds->width, primitive.paint_bounds->height);
+                                primitive.row_overflow =
+                                    extends_vertically(raster_bounds, cell_bounds);
+                                primitive.column_overflow =
+                                    extends_horizontally(raster_bounds, cell_bounds);
+                            }
+                            layer_diagnostics->primitives.push_back(primitive);
                         }
-                        if (draw_bounds) {
-                            primitive.draw_bounds_cross_region_clip =
-                                extends_horizontally(*draw_bounds, bounds) ||
-                                extends_vertically(*draw_bounds, bounds);
-                        }
-                        if (probe) {
-                            primitive.paint_bounds = changed_pixel_bounds(*probe, raster);
-                        }
-                        if (primitive.paint_bounds) {
-                            const SkRect raster_bounds = SkRect::MakeXYWH(
-                                primitive.paint_bounds->x, primitive.paint_bounds->y,
-                                primitive.paint_bounds->width, primitive.paint_bounds->height);
-                            primitive.row_overflow = extends_vertically(raster_bounds, cell_bounds);
-                            primitive.column_overflow =
-                                extends_horizontally(raster_bounds, cell_bounds);
-                        }
-                        layer_diagnostics->primitives.push_back(primitive);
                     }
+                    canvas.restore();
                 }
-                canvas.restore();
             }
         };
 
@@ -1735,18 +1767,15 @@ struct SkiaPresenter::Impl {
                 cursor_clip = prepared_document->bounds;
                 cursor_clip->offset(0.0F, grid_offset_y);
             } else {
-                for (const ui::Region& region : scene.regions) {
-                    if (contains(region.rect, cursor_row, cursor_col)) {
-                        cursor_in_footer = region.vertical_anchor != ui::VerticalAnchor::Grid;
-                        cursor_in_echo = cursor_in_footer &&
-                                         region.vertical_anchor == ui::VerticalAnchor::Bottom &&
-                                         region.role == ui::RegionRole::EchoArea;
-                        cursor_clip =
-                            region_pixel_rect(region, cell_width, cell_height, vertical_layout);
-                        if (!cursor_in_footer) {
-                            cursor_clip->offset(0.0F, grid_offset_y);
-                        }
-                        break;
+                if (const ui::Region* region = topmost_region_at(scene, cursor_row, cursor_col)) {
+                    cursor_in_footer = region->vertical_anchor != ui::VerticalAnchor::Grid;
+                    cursor_in_echo = cursor_in_footer &&
+                                     region->vertical_anchor == ui::VerticalAnchor::Bottom &&
+                                     region->role == ui::RegionRole::EchoArea;
+                    cursor_clip =
+                        region_pixel_rect(*region, cell_width, cell_height, vertical_layout);
+                    if (!cursor_in_footer) {
+                        cursor_clip->offset(0.0F, grid_offset_y);
                     }
                 }
             }
@@ -1940,6 +1969,7 @@ SkiaFrameLayout SkiaPresenter::prepare_layout(const ui::Scene& scene, float view
     storage->presenter_identity = impl_.get();
     storage->viewport_width = viewport_width;
     storage->viewport_height = viewport_height;
+    storage->view_tree.emplace(scene);
     storage->document =
         impl_->prepare_document_layout(scene, {.width = viewport_width, .height = viewport_height});
     storage->popup =
@@ -1993,22 +2023,16 @@ SkiaViewPresentation SkiaPresenter::view_presentation(const SkiaFrameLayout& lay
     float x = static_cast<float>(column * impl_->cell_width);
     float y = vertical_layout.row_top(row);
     result.cursor_owner = SkiaCursorOwner::Other;
-    for (const ui::Region& region : scene.regions) {
-        if (region.role == ui::RegionRole::TextArea && contains(region.rect, row, column)) {
-            result.cursor_owner = SkiaCursorOwner::Document;
-            break;
-        }
+    const ui::Region* cursor_region = topmost_region_at(scene, row, column);
+    if (cursor_region != nullptr && cursor_region->role == ui::RegionRole::TextArea) {
+        result.cursor_owner = SkiaCursorOwner::Document;
     }
     const std::optional<int>& anchor = vertical_layout.bottom_anchor_row();
     if (anchor && row >= *anchor) {
         y += (vertical_layout.row_height(row) - static_cast<float>(impl_->cell_height)) * 0.5F;
-        for (const ui::Region& region : scene.regions) {
-            if (region.role == ui::RegionRole::EchoArea &&
-                region.vertical_anchor == ui::VerticalAnchor::Bottom &&
-                contains(region.rect, row, column)) {
-                x += footer_padding_x;
-                break;
-            }
+        if (cursor_region != nullptr && cursor_region->role == ui::RegionRole::EchoArea &&
+            cursor_region->vertical_anchor == ui::VerticalAnchor::Bottom) {
+            x += footer_padding_x;
         }
     }
     result.cursor_rect = SkiaLogicalRect{
@@ -2024,28 +2048,109 @@ std::optional<SkiaLogicalRect> SkiaPresenter::cursor_rect(const SkiaFrameLayout&
     return view_presentation(layout).cursor_rect;
 }
 
-ui::CellPoint SkiaPresenter::hit_test(const SkiaFrameLayout& layout, SkiaLogicalPoint point) const {
+std::optional<ui::ViewHit> SkiaPresenter::hit_test_view(const SkiaFrameLayout& layout,
+                                                        SkiaLogicalPoint point,
+                                                        SkiaHitTestScope scope) const {
     const SkiaFrameLayout::Storage& storage = checked_layout(layout);
     const ui::Scene& scene = *storage.scene;
     const ui::SceneVerticalLayout vertical_layout(scene,
                                                   impl_->vertical_metrics(storage.viewport_height));
-    const int row = vertical_layout.row_at(point.y);
-    int column =
-        std::clamp(static_cast<int>(std::floor(point.x / static_cast<float>(impl_->cell_width))), 0,
-                   std::max(0, scene.cols - 1));
-    if (storage.document) {
-        const DocumentLayout& document = *storage.document;
-        const ui::Rect& region = document.region->rect;
-        if (row >= region.row && row < region.row + region.rows &&
-            point.x >= document.bounds.left() && point.x < document.bounds.right()) {
-            const DocumentLineLayout& line =
-                document.lines[static_cast<std::size_t>(row - region.row)];
-            const int local_column = impl_->document_column_at_x(
-                document, line, {.x = point.x, .maximum_column = std::max(0, region.cols - 1)});
-            column = std::clamp(region.col + local_column, 0, std::max(0, scene.cols - 1));
+    const auto hit_layer = [&](ui::ViewLayer layer) -> std::optional<ui::ViewHit> {
+        const ui::ViewLayerNode& layer_node = storage.view_tree->layer(layer);
+        for (auto iterator = layer_node.children.rbegin(); iterator != layer_node.children.rend();
+             ++iterator) {
+            const ui::ViewNode& node = *iterator;
+            const ui::Region& region = scene.regions[node.region_index];
+            if (storage.popup && storage.popup->region == &region) {
+                const PopupLayout& popup = *storage.popup;
+                if (!popup.panel.contains(point.x, point.y)) {
+                    continue;
+                }
+                std::size_t content_index = 0;
+                for (std::size_t index = 0; index < popup.items.size(); ++index) {
+                    if (popup.items[index].row.contains(point.x, point.y)) {
+                        content_index = index + 1;
+                        break;
+                    }
+                }
+                return ui::ViewHit{.region_index = node.region_index,
+                                   .scene_cell = std::nullopt,
+                                   .local_cell = std::nullopt,
+                                   .content_index = content_index};
+            }
+
+            const SkRect bounds =
+                region_pixel_rect(region, impl_->cell_width, impl_->cell_height, vertical_layout);
+            if (!bounds.contains(point.x, point.y)) {
+                continue;
+            }
+            const int row =
+                region.vertical_anchor == ui::VerticalAnchor::Overlay
+                    ? static_cast<int>(std::floor(point.y / static_cast<float>(impl_->cell_height)))
+                    : vertical_layout.row_at(point.y);
+            int column = std::clamp(
+                static_cast<int>(std::floor(point.x / static_cast<float>(impl_->cell_width))), 0,
+                std::max(0, scene.cols - 1));
+            if (storage.document && storage.document->region == &region && row >= region.rect.row &&
+                row < region.rect.row + region.rect.rows) {
+                const DocumentLayout& document = *storage.document;
+                const DocumentLineLayout& line =
+                    document.lines[static_cast<std::size_t>(row - region.rect.row)];
+                const int local_column = impl_->document_column_at_x(
+                    document, line,
+                    {.x = point.x, .maximum_column = std::max(0, region.rect.cols - 1)});
+                column = std::clamp(region.rect.col + local_column, 0, std::max(0, scene.cols - 1));
+            }
+            const ui::CellPoint scene_cell{.row = row, .column = column};
+            const ui::CellPoint local_cell{.row = row - region.rect.row,
+                                           .column = column - region.rect.col};
+            std::optional<std::size_t> content_index;
+            for (std::size_t index = region.primitives().size(); index > 0; --index) {
+                const ui::Prim& primitive = region.primitives()[index - 1];
+                const int width = primitive.kind == ui::PrimKind::Text
+                                      ? std::max(1, ui::display_width(primitive.text))
+                                      : 1;
+                if (primitive.row == local_cell.row && local_cell.column >= primitive.col &&
+                    local_cell.column < primitive.col + width) {
+                    content_index = index - 1;
+                    break;
+                }
+            }
+            return ui::ViewHit{.region_index = node.region_index,
+                               .scene_cell = scene_cell,
+                               .local_cell = local_cell,
+                               .content_index = content_index};
+        }
+        return std::nullopt;
+    };
+
+    if (scope != SkiaHitTestScope::Grid) {
+        if (std::optional<ui::ViewHit> hit = hit_layer(ui::ViewLayer::Overlay)) {
+            return hit;
+        }
+        if (std::optional<ui::ViewHit> hit = hit_layer(ui::ViewLayer::Chrome)) {
+            return hit;
         }
     }
-    return {.row = row, .column = column};
+    if (scope != SkiaHitTestScope::Fixed) {
+        return hit_layer(ui::ViewLayer::Grid);
+    }
+    return std::nullopt;
+}
+
+ui::CellPoint SkiaPresenter::hit_test(const SkiaFrameLayout& layout, SkiaLogicalPoint point) const {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    if (const std::optional<ui::ViewHit> hit = hit_test_view(layout, point);
+        hit && hit->scene_cell) {
+        return *hit->scene_cell;
+    }
+    const ui::Scene& scene = *storage.scene;
+    const ui::SceneVerticalLayout vertical_layout(scene,
+                                                  impl_->vertical_metrics(storage.viewport_height));
+    return {.row = vertical_layout.row_at(point.y),
+            .column = std::clamp(
+                static_cast<int>(std::floor(point.x / static_cast<float>(impl_->cell_width))), 0,
+                std::max(0, scene.cols - 1))};
 }
 
 std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const ui::Scene& scene,

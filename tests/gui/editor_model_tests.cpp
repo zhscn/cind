@@ -248,6 +248,35 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     CHECK(popup->popup()->input_cursor == 3);
 }
 
+TEST_CASE("semantic pointer targets edit document positions without viewport reconstruction") {
+    EditorModel model("sample.cc", "zero\none\ntwo\n", CppIndentStyle{}, "test", 1);
+    model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentText,
+                              .view_id = "editor/document",
+                              .region_index = 0,
+                              .role = ui::RegionRole::TextArea,
+                              .scene_cell = std::nullopt,
+                              .local_cell = std::nullopt,
+                              .document_line = 1,
+                              .display_column = 2,
+                              .popup_item = std::nullopt});
+    EditorStateSnapshot state = model.inspect();
+    CHECK(state.caret_position.line == 1);
+    CHECK(state.caret_display_column == 2);
+
+    model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentGutter,
+                              .view_id = "editor/gutter/line-numbers",
+                              .region_index = 1,
+                              .role = ui::RegionRole::LineNumbers,
+                              .scene_cell = std::nullopt,
+                              .local_cell = std::nullopt,
+                              .document_line = 2,
+                              .display_column = std::nullopt,
+                              .popup_item = std::nullopt});
+    state = model.inspect();
+    CHECK(state.caret_position.line == 2);
+    CHECK(state.caret_display_column == 0);
+}
+
 TEST_CASE("command palette retains a global selection and stable list viewport") {
     EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
 

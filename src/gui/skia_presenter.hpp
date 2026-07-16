@@ -3,6 +3,7 @@
 #include "ui/scene.hpp"
 #include "ui/scene_damage.hpp"
 #include "ui/scene_layout.hpp"
+#include "ui/view_tree.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -190,6 +191,12 @@ struct SkiaRenderDiagnostics {
     std::vector<SkiaPrimitiveRenderDiagnostics> primitives;
 };
 
+enum class SkiaHitTestScope : std::uint8_t {
+    All,
+    Grid,
+    Fixed,
+};
+
 // Immutable, frame-scoped pixel layout prepared from one stable Scene and
 // logical viewport. The source Scene must outlive the layout and remain
 // unchanged. Painting, cursor geometry, damage conversion, IME placement, and
@@ -253,6 +260,8 @@ public:
     // Maps a logical pixel point through the prepared text layout. Document
     // rows use their shaped advances; cell-oriented regions retain grid hits.
     ui::CellPoint hit_test(const SkiaFrameLayout& layout, SkiaLogicalPoint point) const;
+    std::optional<ui::ViewHit> hit_test_view(const SkiaFrameLayout& layout, SkiaLogicalPoint point,
+                                             SkiaHitTestScope scope = SkiaHitTestScope::All) const;
     std::vector<SkiaLogicalRect> damage_rects(const ui::Scene& scene, const ui::SceneDamage& damage,
                                               float viewport_width, float viewport_height) const;
     std::vector<SkiaLogicalRect> damage_rects(const SkiaFrameLayout& layout,

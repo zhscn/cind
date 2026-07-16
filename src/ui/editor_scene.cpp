@@ -137,6 +137,12 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                 VerticalAnchor::Bottom,
                 "editor/echo",
                 input.revision};
+    numbers.set_document_mapping(
+        {.first_line = viewport.top_line, .first_display_column = std::nullopt});
+    marks.set_document_mapping(
+        {.first_line = viewport.top_line, .first_display_column = std::nullopt});
+    body.set_document_mapping(
+        {.first_line = viewport.top_line, .first_display_column = viewport.left_column});
 
     for (int row = 0; row < text_rows; ++row) {
         const std::uint32_t line = viewport.top_line + static_cast<std::uint32_t>(row);
