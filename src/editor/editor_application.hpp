@@ -70,10 +70,15 @@ public:
     EditorRuntime& runtime() { return runtime_; }
     const EditorRuntime& runtime() const { return runtime_; }
     BufferId buffer_id() const;
+    BufferId buffer_id(WindowId window) const;
     ViewId view_id() const;
+    ViewId view_id(WindowId window) const;
     WindowId window_id() const { return active_window_; }
     EditSession& session();
     const EditSession& session() const;
+    EditSession& session(WindowId window);
+    const EditSession& session(WindowId window) const;
+    const WindowLayout& window_layout() const { return window_layout_; }
     SearchCommands& search_commands() { return search_commands_; }
     const SearchCommands& search_commands() const { return search_commands_; }
     CommandLoop& command_loop() { return command_loop_; }
@@ -90,6 +95,11 @@ public:
 
     std::expected<BufferId, std::string> open_file(std::string_view path);
     bool switch_buffer(BufferId buffer);
+    bool focus_window(WindowId window);
+    bool split_window(WindowSplitAxis axis);
+    bool delete_window();
+    void delete_other_windows();
+    bool select_other_window(int delta = 1);
     std::expected<void, std::string> kill_buffer(BufferId buffer, bool force = false);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
@@ -165,6 +175,7 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
+    void destroy_window(WindowId window);
 
     void register_commands();
     void register_interaction_providers();
@@ -195,6 +206,7 @@ private:
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
     WindowId active_window_;
+    WindowLayout window_layout_;
     InteractionController interaction_;
     BasicEditorCommands basic_commands_;
     SearchCommands search_commands_;

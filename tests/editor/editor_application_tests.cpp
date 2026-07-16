@@ -127,6 +127,50 @@ TEST_CASE("default keymap follows Emacs movement search undo and prefix conventi
     CHECK(application.command_loop().pending_sequence().empty());
 }
 
+TEST_CASE("window commands maintain a split tree and independent view state") {
+    EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
+    const WindowId first = application.window_id();
+    application.session().set_caret(TextOffset{4});
+    application.session().view().viewport().top_line_offset = 0.25F;
+
+    send_keys(application, "C-x 3");
+    REQUIRE(application.open_windows().size() == 2);
+    REQUIRE(application.window_layout().root() != nullptr);
+    CHECK_FALSE(application.window_layout().root()->leaf());
+    CHECK(application.window_layout().root()->axis == WindowSplitAxis::Columns);
+    const WindowId second = application.window_layout().leaves()[1];
+    CHECK(application.window_id() == first);
+    CHECK(application.session(second).caret() == TextOffset{4});
+    CHECK(application.session(second).view().viewport().top_line_offset == doctest::Approx(0.25F));
+
+    send_keys(application, "C-x o");
+    CHECK(application.window_id() == second);
+    application.session().set_caret(TextOffset{0});
+    CHECK(application.session(first).caret() == TextOffset{4});
+
+    send_keys(application, "C-x 2");
+    REQUIRE(application.window_layout().leaves().size() == 3);
+    REQUIRE(application.window_layout().root()->second != nullptr);
+    CHECK(application.window_layout().root()->second->axis == WindowSplitAxis::Rows);
+
+    send_keys(application, "C-x 0");
+    CHECK(application.window_layout().leaves().size() == 2);
+    CHECK(application.runtime().windows().try_get(second) == nullptr);
+    send_keys(application, "C-x 1");
+    CHECK(application.window_layout().leaves().size() == 1);
+    CHECK(application.open_windows().front().active);
+}
+
+TEST_CASE("deleting the sole window preserves the application focus target") {
+    EditorApplication application = make_application("sample.cc", "text");
+    const WindowId window = application.window_id();
+
+    send_keys(application, "C-x 0");
+    CHECK(application.window_id() == window);
+    CHECK(application.open_windows().size() == 1);
+    CHECK(application.message() == "cannot delete the only window");
+}
+
 TEST_CASE("which-key help and command palette use searchable interaction providers") {
     EditorApplication application = make_application("sample.cc", "text");
 

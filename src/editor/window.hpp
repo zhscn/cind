@@ -4,11 +4,52 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 
 namespace cind {
 
 class ViewRegistry;
+
+enum class WindowSplitAxis : std::uint8_t {
+    Rows,
+    Columns,
+};
+
+// Persistent frontend-independent pane topology. Leaves are editor windows;
+// branches divide their available extent between two children. Frontends may
+// map the normalized ratio to cells or pixels without owning editor state.
+struct WindowLayoutNode {
+    WindowId window;
+    WindowSplitAxis axis = WindowSplitAxis::Rows;
+    float ratio = 0.5F;
+    std::unique_ptr<WindowLayoutNode> first;
+    std::unique_ptr<WindowLayoutNode> second;
+
+    bool leaf() const { return window.valid(); }
+};
+
+class WindowLayout {
+public:
+    WindowLayout() = default;
+    explicit WindowLayout(WindowId root);
+
+    const WindowLayoutNode* root() const { return root_.get(); }
+    std::span<const WindowId> leaves() const { return leaves_; }
+    bool contains(WindowId window) const;
+
+    bool split(WindowId window, WindowId new_window, WindowSplitAxis axis, float ratio = 0.5F);
+    bool erase(WindowId window);
+    bool retain(WindowId window);
+    std::optional<WindowId> next(WindowId window, int delta = 1) const;
+
+private:
+    void rebuild_leaves();
+
+    std::unique_ptr<WindowLayoutNode> root_;
+    std::vector<WindowId> leaves_;
+};
 
 // A window is an application focus and display target. It binds one View,
 // while the View owns buffer-relative caret, selection, and viewport state.

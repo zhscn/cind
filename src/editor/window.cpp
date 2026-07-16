@@ -2,9 +2,127 @@
 
 #include "editor/view.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace cind {
+
+namespace {
+
+std::unique_ptr<WindowLayoutNode> make_leaf(WindowId window) {
+    auto node = std::make_unique<WindowLayoutNode>();
+    node->window = window;
+    return node;
+}
+
+std::unique_ptr<WindowLayoutNode>* find_leaf(std::unique_ptr<WindowLayoutNode>& node,
+                                             WindowId window) {
+    if (!node) {
+        return nullptr;
+    }
+    if (node->leaf()) {
+        return node->window == window ? &node : nullptr;
+    }
+    if (std::unique_ptr<WindowLayoutNode>* found = find_leaf(node->first, window)) {
+        return found;
+    }
+    return find_leaf(node->second, window);
+}
+
+void collect_leaves(const WindowLayoutNode* node, std::vector<WindowId>& leaves) {
+    if (node == nullptr) {
+        return;
+    }
+    if (node->leaf()) {
+        leaves.push_back(node->window);
+        return;
+    }
+    collect_leaves(node->first.get(), leaves);
+    collect_leaves(node->second.get(), leaves);
+}
+
+bool erase_leaf(std::unique_ptr<WindowLayoutNode>& node, WindowId window) {
+    if (!node || node->leaf()) {
+        return false;
+    }
+    if (node->first && node->first->leaf() && node->first->window == window) {
+        node = std::move(node->second);
+        return true;
+    }
+    if (node->second && node->second->leaf() && node->second->window == window) {
+        node = std::move(node->first);
+        return true;
+    }
+    return erase_leaf(node->first, window) || erase_leaf(node->second, window);
+}
+
+} // namespace
+
+WindowLayout::WindowLayout(WindowId root) : root_(make_leaf(root)), leaves_{root} {
+    if (!root.valid()) {
+        throw std::invalid_argument("window layout root is invalid");
+    }
+}
+
+bool WindowLayout::contains(WindowId window) const {
+    return std::ranges::find(leaves_, window) != leaves_.end();
+}
+
+bool WindowLayout::split(WindowId window, WindowId new_window, WindowSplitAxis axis, float ratio) {
+    if (!new_window.valid() || contains(new_window) || !std::isfinite(ratio) || ratio <= 0.0F ||
+        ratio >= 1.0F) {
+        return false;
+    }
+    std::unique_ptr<WindowLayoutNode>* target = find_leaf(root_, window);
+    if (target == nullptr) {
+        return false;
+    }
+    auto branch = std::make_unique<WindowLayoutNode>();
+    branch->axis = axis;
+    branch->ratio = ratio;
+    branch->first = std::move(*target);
+    branch->second = make_leaf(new_window);
+    *target = std::move(branch);
+    rebuild_leaves();
+    return true;
+}
+
+bool WindowLayout::erase(WindowId window) {
+    if (leaves_.size() <= 1 || !erase_leaf(root_, window)) {
+        return false;
+    }
+    rebuild_leaves();
+    return true;
+}
+
+bool WindowLayout::retain(WindowId window) {
+    if (!contains(window)) {
+        return false;
+    }
+    root_ = make_leaf(window);
+    rebuild_leaves();
+    return true;
+}
+
+std::optional<WindowId> WindowLayout::next(WindowId window, int delta) const {
+    if (leaves_.empty()) {
+        return std::nullopt;
+    }
+    const auto found = std::ranges::find(leaves_, window);
+    if (found == leaves_.end()) {
+        return std::nullopt;
+    }
+    const auto size = static_cast<std::ptrdiff_t>(leaves_.size());
+    const auto index = std::distance(leaves_.begin(), found);
+    const auto wrapped = ((index + static_cast<std::ptrdiff_t>(delta)) % size + size) % size;
+    return leaves_[static_cast<std::size_t>(wrapped)];
+}
+
+void WindowLayout::rebuild_leaves() {
+    leaves_.clear();
+    collect_leaves(root_.get(), leaves_);
+}
 
 WindowRegistry::~WindowRegistry() {
     for (Slot& slot : slots_) {
