@@ -5,6 +5,7 @@
 #include "editor/basic_commands.hpp"
 #include "editor/command_loop.hpp"
 #include "editor/interaction.hpp"
+#include "editor/location_list_mode.hpp"
 #include "editor/project_service.hpp"
 #include "editor/search_commands.hpp"
 #include "formatting/cpp_indent_style.hpp"
@@ -23,6 +24,8 @@
 #include <vector>
 
 namespace cind {
+
+struct LocationListDocument;
 
 struct EditorPlatformServices {
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
@@ -51,6 +54,8 @@ struct OpenBufferSnapshot {
     bool modified = false;
     bool active = false;
     bool saving = false;
+    std::string major_mode;
+    std::size_t location_count = 0;
 };
 
 struct OpenWindowSnapshot {
@@ -86,6 +91,8 @@ public:
     const EditSession& session() const;
     EditSession& session(WindowId window);
     const EditSession& session(WindowId window) const;
+    const TokenBuffer& syntax_tokens() const;
+    const TokenBuffer& syntax_tokens(WindowId window) const;
     const WindowLayout& window_layout() const { return window_layout_; }
     SearchCommands& search_commands() { return search_commands_; }
     const SearchCommands& search_commands() const { return search_commands_; }
@@ -142,7 +149,9 @@ public:
     void hide_caret() { reveal_caret_ = false; }
 
     bool has_background_work() const;
-    bool project_search_running() const { return project_search_.process.valid(); }
+    bool project_search_running() const {
+        return project_search_.process.valid() || project_search_.parse_task.valid();
+    }
     bool poll_background_work();
     bool should_quit() const { return quit_; }
     bool quit_armed() const { return quit_armed_; }
@@ -159,7 +168,7 @@ private:
     struct PendingOpen {
         std::string resource;
         WindowId target_window;
-        std::uint32_t initial_line = 0;
+        std::optional<LinePosition> position;
         AsyncTaskId task;
     };
 
@@ -174,6 +183,7 @@ private:
     struct ProjectSearchState {
         std::uint64_t generation = 0;
         AsyncProcessId process;
+        AsyncTaskId parse_task;
     };
 
     struct ViewState {
@@ -197,7 +207,7 @@ private:
     EditSession& session_for(ViewId view);
     const EditSession& session_for(ViewId view) const;
     BufferId create_buffer(BufferSpec spec, CppIndentStyle style, std::string style_origin,
-                           TextOffset caret = {});
+                           std::optional<ModeId> major_mode, TextOffset caret = {});
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
@@ -206,8 +216,14 @@ private:
                                                           WindowId target_window);
     void finish_project_search(ProjectId project, WindowId target_window, std::uint64_t generation,
                                std::string query, AsyncProcessResult result);
+    void finish_project_search_document(ProjectId project, WindowId target_window,
+                                        std::uint64_t generation, std::string query,
+                                        LocationListDocument document);
     void fail_project_search(std::uint64_t generation, const std::exception_ptr& failure);
     void cancel_project_search(std::uint64_t generation);
+    void apply_position(WindowId window, LinePosition position);
+    CommandResult visit_location(CommandContext& context);
+    CommandResult move_location(CommandContext& context, int direction);
 
     void register_commands();
     void register_interaction_providers();
@@ -221,7 +237,7 @@ private:
     std::optional<std::string> import_clipboard();
     void save();
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
-                                               std::uint32_t initial_line);
+                                               std::optional<LinePosition> position);
     void finish_open(std::string resource, std::string contents, CppIndentStyle style,
                      std::string style_origin, const std::optional<ProjectDiscovery>& project);
     void fail_open(std::string_view resource, const std::exception_ptr& failure);
@@ -271,6 +287,8 @@ private:
     CommandId goto_line_accept_;
     CommandId project_find_file_accept_;
     CommandId project_search_accept_;
+    ModeId cpp_mode_;
+    ModeId location_list_mode_;
     int command_page_rows_ = 1;
     std::string message_;
     std::string last_key_;

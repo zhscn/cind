@@ -38,5 +38,8 @@ thread.
 
 `project.search` (`C-x p g`) prompts for a pattern and launches `rg` with the project root as its
 working directory. The libuv process service captures stdout and stderr without a shell. Exit
-statuses zero and one produce a read-only process buffer; other statuses surface the diagnostic in
-the echo area. Starting another search cancels the previous application-wide project search.
+statuses zero and one produce a read-only `cind.location-list` buffer; other statuses surface the
+diagnostic in the echo area. Result parsing runs on the worker pool and publishes semantic source
+locations with the generated text. `M-n` and `M-p` move between results, and `RET` opens the result
+at its exact byte line and column. Starting another search cancels the previous application-wide
+project search.

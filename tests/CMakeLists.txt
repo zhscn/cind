@@ -6,6 +6,10 @@ add_executable(project_files_tests project/project_files_tests.cpp)
 target_link_libraries(project_files_tests PRIVATE cind_project_io doctest::doctest)
 add_test(NAME project_files_tests COMMAND project_files_tests)
 
+add_executable(search_results_tests project/search_results_tests.cpp)
+target_link_libraries(search_results_tests PRIVATE cind_project_io doctest::doctest)
+add_test(NAME search_results_tests COMMAND search_results_tests)
+
 add_executable(document_tests document/document_tests.cpp)
 target_link_libraries(document_tests PRIVATE cind_document doctest::doctest)
 add_test(NAME document_tests COMMAND document_tests)

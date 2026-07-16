@@ -44,6 +44,8 @@ struct OpenBufferStateSnapshot {
     bool modified = false;
     bool active = false;
     bool saving = false;
+    std::string major_mode;
+    std::size_t location_count = 0;
 };
 
 struct OpenWindowStateSnapshot {
@@ -65,6 +67,13 @@ struct ProjectStateSnapshot {
     std::uint64_t index_revision = 0;
     bool indexing = false;
     std::string index_error;
+};
+
+struct LocationStateSnapshot {
+    bool present = false;
+    TextRange source_range;
+    std::string resource;
+    LinePosition target;
 };
 
 struct KeymapLayerStateSnapshot {
@@ -107,6 +116,7 @@ struct EditorStateSnapshot {
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;
     std::vector<ProjectStateSnapshot> projects;
+    LocationStateSnapshot location_at_caret;
     bool background_work = false;
     bool project_search_running = false;
     bool quit_armed = false;

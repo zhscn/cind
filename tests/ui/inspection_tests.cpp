@@ -84,7 +84,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .resource = "/tmp/sample.cc",
                      .modified = true,
                      .active = true,
-                     .saving = false}},
+                     .saving = false,
+                     .major_mode = "cind.cpp",
+                     .location_count = 0}},
         .windows = {{.window_slot = 0,
                      .window_generation = 1,
                      .view_slot = 0,
@@ -100,6 +102,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .index_revision = 3,
                       .indexing = false,
                       .index_error = {}}},
+        .location_at_caret = {},
         .background_work = false,
         .project_search_running = false,
         .quit_armed = false,
@@ -331,7 +334,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":26") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":27") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -392,6 +395,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
     REQUIRE(buffers.ok);
     CHECK(buffers.payload.find("\"name\":\"sample.cc\"") != std::string::npos);
+    CHECK(buffers.payload.find("\"major_mode\":\"cind.cpp\"") != std::string::npos);
+    CHECK(buffers.payload.find("\"location_count\":0") != std::string::npos);
 
     const InspectionResponse windows = run_inspection_query(hub, "get editor.windows");
     REQUIRE(windows.ok);
@@ -401,6 +406,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(projects.ok);
     CHECK(projects.payload.find("\"name\":\"sample\"") != std::string::npos);
     CHECK(projects.payload.find("\"index_revision\":3") != std::string::npos);
+
+    const InspectionResponse location = run_inspection_query(hub, "get editor.location");
+    REQUIRE(location.ok);
+    CHECK(location.payload == "null");
 
     const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
     REQUIRE(focus.ok);

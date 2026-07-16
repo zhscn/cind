@@ -174,7 +174,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         .popup = popup_viewport_,
     };
     const ui::EditorSceneInput active_input{.text = snapshot.content(),
-                                            .tokens = session.analysis().tree.tokens(),
+                                            .tokens = application_.syntax_tokens(),
                                             .signs = signs(application_.window_id()),
                                             .caret = session.caret(),
                                             .selection = session.selection(),
@@ -216,7 +216,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         const bool active = placement.window == application_.window_id();
         ui::Scene pane_scene = ui::compose_editor_scene(
             {.text = pane_snapshot.content(),
-             .tokens = pane_session.analysis().tree.tokens(),
+             .tokens = application_.syntax_tokens(placement.window),
              .signs = signs(placement.window),
              .caret = pane_session.caret(),
              .selection = pane_session.selection(),
@@ -391,7 +391,9 @@ EditorStateSnapshot EditorModel::inspect() {
                            .resource = buffer.resource.value_or(std::string()),
                            .modified = buffer.modified,
                            .active = buffer.active,
-                           .saving = buffer.saving});
+                           .saving = buffer.saving,
+                           .major_mode = buffer.major_mode,
+                           .location_count = buffer.location_count});
     }
     std::vector<OpenWindowStateSnapshot> windows;
     for (const OpenWindowSnapshot& window : application_.open_windows()) {
@@ -414,6 +416,13 @@ EditorStateSnapshot EditorModel::inspect() {
                             .index_revision = project.index_revision(),
                             .indexing = project.indexing(),
                             .index_error = project.index_error().value_or(std::string())});
+    }
+    LocationStateSnapshot location_at_caret;
+    if (const BufferLocation* location = session.buffer().location_at(caret)) {
+        location_at_caret = {.present = true,
+                             .source_range = location->source_range,
+                             .resource = location->resource,
+                             .target = location->target};
     }
     const WindowId active_window = application_.window_id();
     return {.path = application_.path(),
@@ -441,6 +450,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .buffers = std::move(buffers),
             .windows = std::move(windows),
             .projects = std::move(projects),
+            .location_at_caret = std::move(location_at_caret),
             .background_work = application_.has_background_work(),
             .project_search_running = application_.project_search_running(),
             .quit_armed = application_.quit_armed(),

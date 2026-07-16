@@ -413,7 +413,7 @@ private:
 
     // ---- rendering --------------------------------------------------------
 
-    const TokenBuffer& tokens() { return session().analysis().tree.tokens(); }
+    const TokenBuffer& tokens() { return application_.syntax_tokens(); }
 
     // Unsaved-change signs, cached per (revision, save generation): the
     // structural diff makes a miss O(changed bytes + log n).
@@ -512,7 +512,7 @@ private:
                 const bool active = placement.window == application_.window_id();
                 ui::Scene pane_scene = ui::compose_editor_scene(
                     {.text = pane_snapshot.content(),
-                     .tokens = pane_session.analysis().tree.tokens(),
+                     .tokens = application_.syntax_tokens(placement.window),
                      .signs = pane_signs,
                      .caret = pane_session.caret(),
                      .selection = pane_session.selection(),

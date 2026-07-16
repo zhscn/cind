@@ -4,6 +4,7 @@
 #include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/interaction.hpp"
+#include "editor/location_list_mode.hpp"
 #include "editor/runtime.hpp"
 
 #include <chrono>
@@ -89,6 +90,61 @@ TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
     // and extension definitions are frozen.
     runtime.application_settings().set(tab_width, std::int64_t{10});
     CHECK(runtime.application_settings().find(tab_width) != nullptr);
+}
+
+TEST_CASE("buffers expose validated semantic source locations") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "locations",
+                                                      .initial_text = "first\nsecond\n",
+                                                      .kind = BufferKind::Generated,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = true});
+    runtime.buffers().set_locations(buffer, {{.source_range = make_range(0, 6),
+                                              .resource = "/work/first.cpp",
+                                              .target = {.line = 4, .byte_column = 2}},
+                                             {.source_range = make_range(6, 13),
+                                              .resource = "/work/second.cpp",
+                                              .target = {.line = 8, .byte_column = 1}}});
+
+    const Buffer& result = runtime.buffers().get(buffer);
+    REQUIRE(result.location_at(TextOffset{2}) != nullptr);
+    CHECK(result.location_at(TextOffset{2})->resource == "/work/first.cpp");
+    REQUIRE(result.location_at(result.snapshot().content().end_offset()) != nullptr);
+    CHECK_THROWS_AS(
+        runtime.buffers().set_locations(
+            buffer, {{.source_range = make_range(0, 7), .resource = "/work/a.cpp", .target = {}},
+                     {.source_range = make_range(6, 8), .resource = "/work/b.cpp", .target = {}}}),
+        std::invalid_argument);
+    Buffer& mutable_result = runtime.buffers().get(buffer);
+    mutable_result.set_read_only(false);
+    auto transaction = mutable_result.begin_transaction();
+    transaction.insert(mutable_result.snapshot().content().end_offset(), "changed");
+    transaction.commit();
+    CHECK(mutable_result.locations().empty());
+}
+
+TEST_CASE("location-list mode owns sparse navigation bindings without a language profile") {
+    EditorRuntime runtime;
+    const auto command = [&](std::string name) {
+        return runtime.commands().define(
+            std::move(name), [](CommandContext&, const CommandInvocation&) -> CommandResult {
+                return CommandCompleted{};
+            });
+    };
+    const CommandId visit = command("location.visit");
+    const CommandId next = command("location.next");
+    const CommandId previous = command("location.previous");
+    const LocationListModeRegistration mode =
+        ensure_location_list_mode(runtime, {.visit = visit, .next = next, .previous = previous});
+
+    CHECK_FALSE(runtime.modes().definition(mode.mode).language.has_value());
+    CHECK(runtime.modes().definition(mode.mode).keymaps == std::vector<KeymapId>{mode.keymap});
+    const KeySequence enter = *parse_key_sequence("RET");
+    const KeySequence alt_next = *parse_key_sequence("M-n");
+    CHECK(runtime.keymaps().resolve(mode.keymap, enter).command == visit);
+    CHECK(runtime.keymaps().resolve(mode.keymap, alt_next).command == next);
+    CHECK(ensure_location_list_mode(runtime, {.visit = visit, .next = next, .previous = previous})
+              .mode == mode.mode);
 }
 
 TEST_CASE("major modes select composed language profiles instead of inheriting parsers") {
@@ -395,6 +451,30 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
 
     CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-x", local), std::invalid_argument);
     CHECK_THROWS_AS(runtime.keymaps().bind(base_map, "C-a C-b", local), std::invalid_argument);
+}
+
+TEST_CASE("command loop contains command exceptions") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "errors",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+
+    const CommandId failing = runtime.commands().define(
+        "test.fail", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            throw std::logic_error("buffer is read-only");
+        });
+
+    CommandLoop loop(runtime);
+    const CommandLoopResult result = loop.execute(failing, context);
+    CHECK(result.status == CommandLoopStatus::Error);
+    CHECK(result.consumed);
+    CHECK(result.command == failing);
+    CHECK(result.message == "buffer is read-only");
 }
 
 TEST_CASE("keymap parents compose sparse local bindings") {

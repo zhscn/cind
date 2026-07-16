@@ -173,7 +173,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
     }
     {
         std::ofstream output(root / "src" / "other.cpp");
-        output << "int other() {}\n";
+        output << "zero\n  int other() {}\n";
     }
 
     {
@@ -234,7 +234,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         send_keys(application, "C-x p g");
         REQUIRE(application.interaction().state() != nullptr);
         CHECK(application.interaction().state()->request.prompt == "Project search: ");
-        application.insert_text("int other");
+        application.insert_text("int");
         send_keys(application, "RET");
         while (application.has_background_work()) {
             REQUIRE(wake.wait());
@@ -244,6 +244,27 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.session().buffer().read_only());
         CHECK(application.session().snapshot().content().to_string().find("src/other.cpp") !=
               std::string::npos);
+        const Buffer& results = application.session().buffer();
+        REQUIRE(results.modes().major().has_value());
+        CHECK(application.runtime().modes().definition(*results.modes().major()).name ==
+              "cind.location-list");
+        CHECK(application.syntax_tokens().empty());
+        REQUIRE(results.locations().size() == 3);
+        const BufferLocation second = results.locations()[1];
+        send_keys(application, "M-n");
+        CHECK(application.session().caret() == second.source_range.start);
+        const std::string result_text = application.session().snapshot().content().to_string();
+        application.insert_text("ignored");
+        CHECK(application.session().snapshot().content().to_string() == result_text);
+        CHECK(application.message() == "buffer is read-only");
+        send_keys(application, "RET");
+        while (application.has_background_work()) {
+            REQUIRE(wake.wait());
+            (void)application.poll_background_work();
+        }
+        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.session().snapshot().content().position(application.session().caret()) ==
+              second.target);
     }
     std::filesystem::remove_all(root);
 }

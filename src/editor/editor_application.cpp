@@ -5,6 +5,7 @@
 #include "editor/cpp_mode.hpp"
 #include "editor/default_keymap.hpp"
 #include "project/project_files.hpp"
+#include "project/search_results.hpp"
 #include "syntax/structure.hpp"
 #include "ui/text_position.hpp"
 
@@ -96,6 +97,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             }
         });
     register_commands();
+    cpp_mode_ = ensure_cpp_mode(runtime_).mode;
     register_interaction_providers();
 
     const bool deferred_initial_load = !spec.initial_text && !spec.path.empty();
@@ -112,25 +114,25 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         }
         initial_buffer.resource_uri = std::move(*path);
     }
-    const BufferId initial =
-        create_buffer(std::move(initial_buffer), spec.style, std::move(spec.style_origin));
+    const BufferId initial = create_buffer(std::move(initial_buffer), spec.style,
+                                           std::move(spec.style_origin), cpp_mode_);
     const ViewId initial_view = create_view({}, initial);
     active_window_ = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = active_window_;
     window_layout_ = WindowLayout(active_window_);
     if (spec.initial_line > 0 && !deferred_initial_load) {
-        const DocumentSnapshot snapshot = session().snapshot();
-        const std::uint32_t line =
-            std::min(spec.initial_line - 1, snapshot.content().line_count() - 1);
-        session().set_caret(snapshot.content().line_start(line));
+        apply_position(active_window_, {.line = spec.initial_line - 1, .byte_column = 0});
     }
 
     register_keymaps();
     sync_keymaps();
     if (deferred_initial_load) {
         startup_placeholder_ = initial;
-        if (std::expected<void, std::string> opened =
-                open_file(spec.path, active_window_, spec.initial_line);
+        if (std::expected<void, std::string> opened = open_file(
+                spec.path, active_window_,
+                spec.initial_line > 0
+                    ? std::optional(LinePosition{.line = spec.initial_line - 1, .byte_column = 0})
+                    : std::nullopt);
             !opened) {
             message_ = std::format("open failed: {}", opened.error());
         }
@@ -169,6 +171,20 @@ const EditSession& EditorApplication::session(WindowId window) const {
     return session_for(view_id(window));
 }
 
+const TokenBuffer& EditorApplication::syntax_tokens() const {
+    return syntax_tokens(active_window_);
+}
+
+const TokenBuffer& EditorApplication::syntax_tokens(WindowId window) const {
+    static const TokenBuffer plain_text;
+    const Buffer& buffer = session(window).buffer();
+    const std::optional<ModeId> major = buffer.modes().major();
+    if (!major || !runtime_.modes().definition(*major).language) {
+        return plain_text;
+    }
+    return session(window).analysis().tree.tokens();
+}
+
 void EditorApplication::refresh_default_keymap() {
     (void)bind_default_editor_keys(runtime_, keymap_);
 }
@@ -197,6 +213,10 @@ void EditorApplication::insert_text(std::string_view text) {
         last_key_ = "text";
         return;
     }
+    if (session().buffer().read_only()) {
+        message_ = "buffer is read-only";
+        return;
+    }
     if (text.size() == 1 && static_cast<unsigned char>(text.front()) >= 0x20U) {
         session().type_text(text);
     } else {
@@ -212,25 +232,28 @@ void EditorApplication::reset_preferred_column() {
 }
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
-    return open_file(input, active_window_, 0);
+    return open_file(input, active_window_, std::nullopt);
 }
 
-std::expected<void, std::string> EditorApplication::open_file(std::string_view input,
-                                                              WindowId target_window,
-                                                              std::uint32_t initial_line) {
+std::expected<void, std::string>
+EditorApplication::open_file(std::string_view input, WindowId target_window,
+                             std::optional<LinePosition> position) {
     std::expected<std::string, std::string> normalized = normalized_path(input);
     if (!normalized) {
         return std::unexpected(normalized.error());
     }
     if (const std::optional<BufferId> existing = runtime_.buffers().find_by_resource(*normalized)) {
         (void)show_buffer(target_window, *existing);
+        if (position) {
+            apply_position(target_window, *position);
+        }
         return {};
     }
     if (auto pending = std::ranges::find_if(
             pending_opens_, [&](const PendingOpen& open) { return open.resource == *normalized; });
         pending != pending_opens_.end()) {
         pending->target_window = target_window;
-        pending->initial_line = initial_line;
+        pending->position = position;
         message_ = std::format("opening {}…", *normalized);
         return {};
     }
@@ -239,7 +262,7 @@ std::expected<void, std::string> EditorApplication::open_file(std::string_view i
     try {
         pending_opens_.push_back({.resource = resource,
                                   .target_window = target_window,
-                                  .initial_line = initial_line,
+                                  .position = position,
                                   .task = {}});
         PendingOpen& pending = pending_opens_.back();
         auto requested_resource = std::make_shared<const std::string>(resource);
@@ -306,7 +329,7 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
         return;
     }
     const WindowId requested_window = pending->target_window;
-    const std::uint32_t initial_line = pending->initial_line;
+    const std::optional<LinePosition> position = pending->position;
     pending_opens_.erase(pending);
 
     try {
@@ -320,7 +343,7 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
                                               .kind = BufferKind::File,
                                               .resource_uri = resource,
                                               .read_only = false},
-                                   style, std::move(style_origin));
+                                   style, std::move(style_origin), cpp_mode_);
         }
         project_service_->attach_buffer(buffer, project);
         const WindowId target = runtime_.windows().try_get(requested_window) != nullptr
@@ -328,12 +351,8 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
                                     : active_window_;
         if (runtime_.windows().try_get(target) != nullptr) {
             (void)show_buffer(target, buffer);
-            if (initial_line > 0) {
-                EditSession& opened = session(target);
-                const DocumentSnapshot snapshot = opened.snapshot();
-                const std::uint32_t line =
-                    std::min(initial_line - 1, snapshot.content().line_count() - 1);
-                opened.set_caret(snapshot.content().line_start(line));
+            if (position) {
+                apply_position(target, *position);
             }
         }
         if (startup_placeholder_ && *startup_placeholder_ != buffer) {
@@ -363,13 +382,16 @@ std::expected<void, std::string> EditorApplication::start_project_search(Project
     if (project_search_.process.valid()) {
         (void)async_runtime_.terminate(project_search_.process);
     }
+    if (project_search_.parse_task.valid()) {
+        (void)async_runtime_.cancel(project_search_.parse_task);
+    }
     const std::uint64_t generation = ++project_search_.generation;
     const std::string root = definition->roots().front();
     try {
         project_search_.process = async_runtime_.spawn({
             .file = "rg",
             .arguments = {"--line-number", "--column", "--no-heading", "--color", "never",
-                          "--smart-case", "--", query, "."},
+                          "--smart-case", "--null", "--", query, "."},
             .working_directory = root,
             .completed =
                 [this, project, target_window, generation,
@@ -409,16 +431,79 @@ void EditorApplication::finish_project_search(ProjectId project, WindowId target
         return;
     }
     try {
-        if (result.standard_output.empty()) {
-            result.standard_output = std::format("No matches for: {}\n", query);
+        const Project* definition = runtime_.projects().try_get(project);
+        if (definition == nullptr || definition->roots().empty()) {
+            message_ = "project search failed: project is no longer available";
+            return;
         }
+        struct ParseJob {
+            ProjectId project;
+            WindowId target_window;
+            std::uint64_t generation = 0;
+            std::string query;
+            std::string root;
+            std::string output;
+            EditorApplication* application = nullptr;
+        };
+        auto job = std::make_shared<ParseJob>(ParseJob{.project = project,
+                                                       .target_window = target_window,
+                                                       .generation = generation,
+                                                       .query = std::move(query),
+                                                       .root = definition->roots().front(),
+                                                       .output = std::move(result.standard_output),
+                                                       .application = this});
+        project_search_.parse_task = async_runtime_.submit({
+            .work = [job](const std::stop_token& cancellation) -> AsyncCompletion {
+                if (cancellation.stop_requested()) {
+                    throw AsyncTaskCancelled();
+                }
+                std::expected<LocationListDocument, std::string> document =
+                    parse_rg_search_results({.project_root = job->root, .output = job->output});
+                if (!document) {
+                    throw std::runtime_error(document.error());
+                }
+                if (document->text.empty()) {
+                    document->text = std::format("No matches for: {}\n", job->query);
+                }
+                if (cancellation.stop_requested()) {
+                    throw AsyncTaskCancelled();
+                }
+                auto shared_document = std::make_shared<LocationListDocument>(std::move(*document));
+                return [job, shared_document] {
+                    job->application->finish_project_search_document(
+                        job->project, job->target_window, job->generation, std::move(job->query),
+                        std::move(*shared_document));
+                };
+            },
+            .cancelled = [this, generation] { cancel_project_search(generation); },
+            .failed =
+                [this, generation](const std::exception_ptr& failure) {
+                    fail_project_search(generation, failure);
+                },
+        });
+        message_ = "preparing project search results…";
+    } catch (const std::exception& exception) {
+        project_search_.parse_task = {};
+        message_ = std::format("project search failed: {}", exception.what());
+    }
+}
+
+void EditorApplication::finish_project_search_document(ProjectId project, WindowId target_window,
+                                                       std::uint64_t generation, std::string query,
+                                                       LocationListDocument document) {
+    if (project_search_.generation != generation) {
+        return;
+    }
+    project_search_.parse_task = {};
+    try {
         const BufferId buffer =
             create_buffer(BufferSpec{.name = std::format("*project grep: {}*", query),
-                                     .initial_text = std::move(result.standard_output),
+                                     .initial_text = std::move(document.text),
                                      .kind = BufferKind::Process,
                                      .resource_uri = std::nullopt,
                                      .read_only = true},
-                          CppIndentStyle{}, "process output");
+                          CppIndentStyle{}, "location-list", location_list_mode_);
+        runtime_.buffers().set_locations(buffer, std::move(document.locations));
         runtime_.projects().assign(buffer, project);
         const WindowId target =
             runtime_.windows().try_get(target_window) != nullptr ? target_window : active_window_;
@@ -435,6 +520,7 @@ void EditorApplication::fail_project_search(std::uint64_t generation,
         return;
     }
     project_search_.process = {};
+    project_search_.parse_task = {};
     try {
         if (failure) {
             std::rethrow_exception(failure);
@@ -452,6 +538,7 @@ void EditorApplication::cancel_project_search(std::uint64_t generation) {
         return;
     }
     project_search_.process = {};
+    project_search_.parse_task = {};
     message_ = "project search cancelled";
 }
 
@@ -624,13 +711,17 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
         const BufferState& state = *entry;
         const Buffer& buffer = runtime_.buffers().get(state.buffer);
         const ViewState* view = find_view(active_window_, state.buffer);
-        result.push_back({.buffer = state.buffer,
-                          .view = view != nullptr ? std::optional(view->view) : std::nullopt,
-                          .name = buffer.name(),
-                          .resource = buffer.resource_uri(),
-                          .modified = buffer.modified(),
-                          .active = state.buffer == buffer_id(),
-                          .saving = state.pending_save.has_value()});
+        const std::optional<ModeId> major = buffer.modes().major();
+        result.push_back(
+            {.buffer = state.buffer,
+             .view = view != nullptr ? std::optional(view->view) : std::nullopt,
+             .name = buffer.name(),
+             .resource = buffer.resource_uri(),
+             .modified = buffer.modified(),
+             .active = state.buffer == buffer_id(),
+             .saving = state.pending_save.has_value(),
+             .major_mode = major ? runtime_.modes().definition(*major).name : std::string(),
+             .location_count = buffer.locations().size()});
     }
     return result;
 }
@@ -780,12 +871,12 @@ const EditSession& EditorApplication::session_for(ViewId view) const {
 }
 
 BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
-                                          std::string style_origin, TextOffset caret) {
+                                          std::string style_origin,
+                                          std::optional<ModeId> major_mode, TextOffset caret) {
     (void)caret;
-    const CppModeRegistration cpp = ensure_cpp_mode(runtime_);
     const BufferId buffer = runtime_.buffers().create(std::move(spec));
     try {
-        runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(), cpp.mode);
+        runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(), major_mode);
         auto state = std::make_unique<BufferState>();
         state->buffer = buffer;
         state->style = std::make_shared<CppIndentStyle>(style);
@@ -834,6 +925,76 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     return true;
 }
 
+void EditorApplication::apply_position(WindowId window, LinePosition position) {
+    if (runtime_.windows().try_get(window) == nullptr) {
+        return;
+    }
+    EditSession& target = session(window);
+    const DocumentSnapshot snapshot = target.snapshot();
+    const Text& text = snapshot.content();
+    position.line = std::min(position.line, text.line_count() - 1);
+    position.byte_column =
+        std::min(position.byte_column, text.line_content_range(position.line).length());
+    target.set_caret(text.offset(position));
+    basic_commands_.reset_preferred_column(target.view_id());
+    reveal_caret_ = true;
+}
+
+CommandResult EditorApplication::visit_location(CommandContext& context) {
+    const Buffer& buffer = context.buffer();
+    const TextOffset caret = runtime_.views().caret(context.view_id());
+    const BufferLocation* location = buffer.location_at(caret);
+    if (location == nullptr) {
+        const auto found =
+            std::ranges::find_if(buffer.locations(), [&](const BufferLocation& item) {
+                return item.source_range.start >= caret;
+            });
+        if (found != buffer.locations().end()) {
+            location = &*found;
+        }
+    }
+    if (location == nullptr) {
+        return std::unexpected(CommandError{"no location at point"});
+    }
+    std::expected<void, std::string> opened =
+        open_file(location->resource, context.window_id(), location->target);
+    return opened ? CommandResult{CommandCompleted{}}
+                  : CommandResult{std::unexpected(CommandError{opened.error()})};
+}
+
+CommandResult EditorApplication::move_location(CommandContext& context, int direction) {
+    const std::vector<BufferLocation>& locations = context.buffer().locations();
+    if (locations.empty()) {
+        return std::unexpected(CommandError{"location list is empty"});
+    }
+    const TextOffset caret = runtime_.views().caret(context.view_id());
+    std::optional<std::size_t> selected;
+    if (direction > 0) {
+        for (std::size_t index = 0; index < locations.size(); ++index) {
+            if (locations[index].source_range.start > caret) {
+                selected = index;
+                break;
+            }
+        }
+    } else {
+        for (std::size_t index = locations.size(); index > 0; --index) {
+            if (locations[index - 1].source_range.start < caret) {
+                selected = index - 1;
+                break;
+            }
+        }
+    }
+    if (!selected) {
+        return std::unexpected(
+            CommandError{direction > 0 ? "end of location list" : "beginning of location list"});
+    }
+    runtime_.views().set_caret(context.view_id(), locations[*selected].source_range.start);
+    basic_commands_.reset_preferred_column(context.view_id());
+    reveal_caret_ = true;
+    message_ = std::format("location {}/{}", *selected + 1, locations.size());
+    return CommandCompleted{};
+}
+
 void EditorApplication::destroy_window(WindowId window) {
     if (!runtime_.windows().erase(window)) {
         throw std::logic_error("window lifecycle registry is inconsistent");
@@ -857,7 +1018,7 @@ BufferId EditorApplication::create_scratch_buffer() {
                                     .kind = BufferKind::Scratch,
                                     .resource_uri = std::nullopt,
                                     .read_only = false},
-                         CppIndentStyle{}, "llvm (fallback)");
+                         CppIndentStyle{}, "llvm (fallback)", cpp_mode_);
 }
 
 void EditorApplication::register_commands() {
@@ -869,6 +1030,32 @@ void EditorApplication::register_commands() {
                 return completed();
             });
     };
+
+    const auto location_list_active = [this](const CommandContext& context) {
+        return context.buffer().modes().major() == location_list_mode_;
+    };
+    const CommandId location_visit = runtime_.commands().define(
+        "location.visit",
+        [this](CommandContext& context, const CommandInvocation&) {
+            return visit_location(context);
+        },
+        location_list_active);
+    const CommandId location_next = runtime_.commands().define(
+        "location.next",
+        [this](CommandContext& context, const CommandInvocation&) {
+            return move_location(context, 1);
+        },
+        location_list_active);
+    const CommandId location_previous = runtime_.commands().define(
+        "location.previous",
+        [this](CommandContext& context, const CommandInvocation&) {
+            return move_location(context, -1);
+        },
+        location_list_active);
+    location_list_mode_ = ensure_location_list_mode(runtime_, {.visit = location_visit,
+                                                               .next = location_next,
+                                                               .previous = location_previous})
+                              .mode;
 
     define("file.save", [this](const CommandInvocation&) { save(); });
     define("application.quit", [this](const CommandInvocation&) { request_quit(); });
@@ -1816,7 +2003,7 @@ CommandResult EditorApplication::accept_project_find_file(CommandContext& contex
     if (path == nullptr) {
         return std::unexpected(CommandError{"project file picker requires a path"});
     }
-    std::expected<void, std::string> opened = open_file(*path, context.window_id(), 0);
+    std::expected<void, std::string> opened = open_file(*path, context.window_id(), std::nullopt);
     return opened ? CommandResult{CommandCompleted{}}
                   : CommandResult{std::unexpected(CommandError{opened.error()})};
 }

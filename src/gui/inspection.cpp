@@ -318,6 +318,9 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
         append_bool(output, buffer.active);
         output += ",\"saving\":";
         append_bool(output, buffer.saving);
+        output += ",\"major_mode\":";
+        append_json_string(output, buffer.major_mode);
+        output += std::format(",\"location_count\":{}", buffer.location_count);
         output.push_back('}');
     }
     output.push_back(']');
@@ -363,6 +366,18 @@ void append_projects(std::string& output, const std::vector<ProjectStateSnapshot
     output.push_back(']');
 }
 
+void append_location(std::string& output, const LocationStateSnapshot& location) {
+    if (!location.present) {
+        output += "null";
+        return;
+    }
+    output += std::format("{{\"source_range\":{{\"start\":{},\"end\":{}}},\"resource\":",
+                          location.source_range.start.value, location.source_range.end.value);
+    append_json_string(output, location.resource);
+    output += std::format(",\"target\":{{\"line\":{},\"byte_column\":{}}}}}", location.target.line,
+                          location.target.byte_column);
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -399,6 +414,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_windows(output, editor.windows);
     output += ",\"projects\":";
     append_projects(output, editor.projects);
+    output += ",\"location_at_caret\":";
+    append_location(output, editor.location_at_caret);
     output += ",\"background_work\":";
     append_bool(output, editor.background_work);
     output += ",\"project_search_running\":";
@@ -1709,6 +1726,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_windows(output, frame.editor.windows);
     } else if (path == "editor.projects") {
         append_projects(output, frame.editor.projects);
+    } else if (path == "editor.location") {
+        append_location(output, frame.editor.location_at_caret);
     } else if (path == "editor.focus") {
         output =
             std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",

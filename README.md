@@ -94,3 +94,4 @@ preferred.
 - [Command and interaction architecture](docs/command-loop.md)
 - [Asynchronous runtime](docs/async-runtime.md)
 - [Projects](docs/projects.md)
+- [Location lists](docs/location-lists.md)

@@ -19,6 +19,28 @@ bool Buffer::modified() const {
     return diff_edit(save_point_, document_.snapshot().content()).has_value();
 }
 
+const BufferLocation* Buffer::location_at(TextOffset offset) const {
+    const std::vector<BufferLocation>& current = locations();
+    const auto after =
+        std::ranges::upper_bound(current, offset, {}, [](const BufferLocation& location) {
+            return location.source_range.start;
+        });
+    if (after == current.begin()) {
+        return nullptr;
+    }
+    const BufferLocation& candidate = *std::prev(after);
+    return candidate.source_range.contains(offset) ||
+                   (offset == snapshot().content().end_offset() &&
+                    candidate.source_range.end == offset)
+               ? &candidate
+               : nullptr;
+}
+
+const std::vector<BufferLocation>& Buffer::locations() const {
+    static const std::vector<BufferLocation> empty;
+    return locations_revision_ == snapshot().revision() ? locations_ : empty;
+}
+
 void Buffer::require_writable() const {
     if (read_only_) {
         throw std::logic_error("buffer is read-only");
@@ -209,6 +231,28 @@ void BufferRegistry::set_resource(BufferId id, std::optional<std::string> uri, B
     if (buffer.resource_uri_) {
         by_resource_.emplace(*buffer.resource_uri_, id);
     }
+}
+
+void BufferRegistry::set_locations(BufferId id, std::vector<BufferLocation> locations) {
+    Buffer& buffer = get(id);
+    const std::uint32_t document_size = buffer.snapshot().size_bytes();
+    TextOffset previous_end{};
+    bool first = true;
+    for (const BufferLocation& location : locations) {
+        if (location.source_range.empty() || location.source_range.end.value > document_size) {
+            throw std::invalid_argument("buffer location has an invalid source range");
+        }
+        if (!first && location.source_range.start < previous_end) {
+            throw std::invalid_argument("buffer locations must be ordered and non-overlapping");
+        }
+        if (location.resource.empty()) {
+            throw std::invalid_argument("buffer location has no target resource");
+        }
+        previous_end = location.source_range.end;
+        first = false;
+    }
+    buffer.locations_ = std::move(locations);
+    buffer.locations_revision_ = buffer.snapshot().revision();
 }
 
 } // namespace cind

@@ -34,6 +34,17 @@ struct BufferSpec {
     bool read_only = false;
 };
 
+// A semantic link from a range in a generated buffer to a source location.
+// Location-list, compilation and diagnostic buffers share this contract;
+// the payload remains frontend- and mode-independent.
+struct BufferLocation {
+    TextRange source_range;
+    std::string resource;
+    LinePosition target;
+
+    friend bool operator==(const BufferLocation&, const BufferLocation&) = default;
+};
+
 class Buffer {
 public:
     BufferId id() const { return id_; }
@@ -61,6 +72,8 @@ public:
     std::vector<KeymapId>& keymaps() { return keymaps_; }
     const std::vector<KeymapId>& keymaps() const { return keymaps_; }
     std::uint32_t attached_view_count() const { return attached_views_; }
+    const std::vector<BufferLocation>& locations() const;
+    const BufferLocation* location_at(TextOffset offset) const;
 
 private:
     friend class BufferRegistry;
@@ -82,6 +95,8 @@ private:
     SettingsLayer settings_;
     BufferModes modes_;
     std::vector<KeymapId> keymaps_;
+    std::vector<BufferLocation> locations_;
+    RevisionId locations_revision_ = 0;
     std::uint32_t attached_views_ = 0;
 };
 
@@ -103,6 +118,7 @@ public:
 
     void rename(BufferId id, std::string requested_name);
     void set_resource(BufferId id, std::optional<std::string> uri, BufferKind kind);
+    void set_locations(BufferId id, std::vector<BufferLocation> locations);
 
 private:
     struct Slot {

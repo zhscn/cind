@@ -82,7 +82,8 @@ save point. Edits made while the write is in progress stay modified, so asynchro
 cannot mark newer content as saved.
 
 Project indexing uses worker tasks, directory watches and generation checks. Project search runs
-`rg` through the process service and creates a read-only process buffer from its output.
+`rg` through the process service, parses its completed output on the worker pool and creates a
+read-only location-list buffer on the editor thread.
 
 Modes and services can submit additional work through `EditorApplication::async_runtime()`. Their
 completion callbacks must validate any resource identity or revision they captured before applying

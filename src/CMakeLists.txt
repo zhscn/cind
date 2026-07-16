@@ -6,6 +6,7 @@ target_link_libraries(cind_async PRIVATE PkgConfig::Libuv Threads::Threads)
 
 add_library(cind_project_io STATIC
   project/project_files.cpp
+  project/search_results.cpp
 )
 target_include_directories(cind_project_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -63,6 +64,7 @@ add_library(cind_application STATIC
   editor/interaction.cpp
   editor/keymap.cpp
   editor/language.cpp
+  editor/location_list_mode.cpp
   editor/mode.cpp
   editor/project.cpp
   editor/runtime.cpp

@@ -3,6 +3,7 @@
 #include "editor/runtime.hpp"
 
 #include <algorithm>
+#include <exception>
 #include <stdexcept>
 #include <utility>
 
@@ -131,7 +132,14 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                     .message = "command is disabled in this context",
                     .interaction = std::nullopt};
         }
-        CommandResult result = commands.invoke(current, context, current_invocation);
+        CommandResult result;
+        try {
+            result = commands.invoke(current, context, current_invocation);
+        } catch (const std::exception& exception) {
+            result = std::unexpected(CommandError{exception.what()});
+        } catch (...) {
+            result = std::unexpected(CommandError{"command failed with an unknown exception"});
+        }
         if (!result) {
             return finish(current, std::move(result), std::move(key_sequence));
         }
