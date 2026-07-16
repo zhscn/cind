@@ -851,10 +851,10 @@ struct ScreenshotGeometry {
 
 int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    const std::filesystem::path& output, SkiaFontSmoothing smoothing,
-                   ScreenshotGeometry geometry) {
+                   std::string font_family, ScreenshotGeometry geometry) {
     auto [style, style_origin] = load_style(path);
     EditorModel editor(path, read_file(path), style, std::move(style_origin), initial_line, {});
-    SkiaPresenter presenter("MonoLisaCode", geometry.font_size, {}, smoothing);
+    SkiaPresenter presenter(std::move(font_family), geometry.font_size, {}, smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
     const float cell_width = static_cast<float>(presenter.cell_width());
@@ -890,7 +890,7 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
 
 int run_editor(const std::string& path, std::uint32_t initial_line,
                const std::optional<std::filesystem::path>& inspector_socket,
-               SkiaFontSmoothing smoothing, float font_size) {
+               SkiaFontSmoothing smoothing, std::string font_family, float font_size) {
     std::string initial = read_file(path);
     auto [style, style_origin] = load_style(path);
 
@@ -914,7 +914,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
         }};
     EditorModel editor(path, std::move(initial), style, std::move(style_origin), initial_line,
                        std::move(platform_services));
-    SkiaPresenter presenter("MonoLisaCode", font_size, {}, smoothing);
+    SkiaPresenter presenter(std::move(font_family), font_size, {}, smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {
@@ -939,6 +939,7 @@ int main(int argc, char** argv) {
     std::optional<std::string> file;
     std::optional<std::filesystem::path> screenshot;
     cind::gui::SkiaFontSmoothing smoothing = cind::gui::SkiaFontSmoothing::Smooth;
+    std::string_view font_family = "monospace";
     float font_size = 16.0F;
 
     try {
@@ -948,6 +949,7 @@ int main(int argc, char** argv) {
                 inspect = true;
             } else if (argument == "--help" || argument == "-h") {
                 std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] "
+                                     "[--font-family FAMILY] [--font-size SIZE] "
                                      "[--font-smoothing smooth|crisp|sharp|lcd] [+LINE] <file>\n");
                 return 0;
             } else if (argument == "--inspect-socket") {
@@ -961,6 +963,14 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("--font-smoothing requires a mode");
                 }
                 smoothing = cind::gui::parse_font_smoothing(argv[index]);
+            } else if (argument == "--font-family") {
+                if (++index >= argc) {
+                    throw std::runtime_error("--font-family requires a family");
+                }
+                font_family = argv[index];
+                if (font_family.empty()) {
+                    throw std::runtime_error("--font-family must not be empty");
+                }
             } else if (argument == "--screenshot") {
                 if (++index >= argc) {
                     throw std::runtime_error("--screenshot requires a path");
@@ -994,11 +1004,13 @@ int main(int argc, char** argv) {
         }
         if (!file) {
             std::fprintf(stderr, "usage: cind-gui [--inspect] [--inspect-socket PATH] "
+                                 "[--font-family FAMILY] [--font-size SIZE] "
                                  "[--font-smoothing smooth|crisp|sharp|lcd] [+LINE] <file>\n");
             return 2;
         }
         if (screenshot) {
             return cind::gui::run_screenshot(*file, initial_line, *screenshot, smoothing,
+                                             std::string(font_family),
                                              {.font_size = font_size,
                                               .logical_width = 900,
                                               .logical_height = 600,
@@ -1008,7 +1020,8 @@ int main(int argc, char** argv) {
             inspector_socket =
                 cind::gui::default_inspector_socket_path(static_cast<int>(::getpid()));
         }
-        return cind::gui::run_editor(*file, initial_line, inspector_socket, smoothing, font_size);
+        return cind::gui::run_editor(*file, initial_line, inspector_socket, smoothing,
+                                     std::string(font_family), font_size);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "cind-gui: %s\n", error.what());
         return 1;
