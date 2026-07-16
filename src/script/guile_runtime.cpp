@@ -242,6 +242,88 @@ SCM buffer_id_by_name(SCM host_object, SCM name_value) {
     return SCM_BOOL_F;
 }
 
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_resource(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-resource");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-resource", 2);
+        const std::optional<std::string>& resource =
+            host.runtime->buffers().get(buffer).resource_uri();
+        return resource ? scm_from_utf8_string(resource->c_str()) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-resource", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-resource", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM path_parent(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("path-parent", 2, path_value, "string");
+    }
+    (void)require_host(host_object, "path-parent");
+    try {
+        const std::string parent =
+            std::filesystem::path(scheme_string(path_value)).parent_path().string();
+        return scm_from_utf8_string(parent.c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("path-parent", exception.what());
+    } catch (...) {
+        scm_misc_error("path-parent", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM directory_path_p(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("directory-path?", 2, path_value, "string");
+    }
+    (void)require_host(host_object, "directory-path?");
+    try {
+        const std::string path = scheme_string(path_value);
+        return scm_from_bool(!path.empty() &&
+                             path.back() == std::filesystem::path::preferred_separator);
+    } catch (const std::exception& exception) {
+        raise_host_error("directory-path?", exception.what());
+    } catch (...) {
+        scm_misc_error("directory-path?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM path_as_directory(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("path-as-directory", 2, path_value, "string");
+    }
+    (void)require_host(host_object, "path-as-directory");
+    try {
+        std::string path =
+            std::filesystem::path(scheme_string(path_value)).lexically_normal().string();
+        if (path.empty() || path.back() != std::filesystem::path::preferred_separator) {
+            path.push_back(std::filesystem::path::preferred_separator);
+        }
+        return scm_from_utf8_string(path.c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("path-as-directory", exception.what());
+    } catch (...) {
+        scm_misc_error("path-as-directory", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -402,6 +484,35 @@ SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, S
     return SCM_UNSPECIFIED;
 }
 
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("set-buffer-resource!", 3, path_value, "string");
+    }
+    HostLease& host = require_host(host_object, "set-buffer-resource!");
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-resource!", 2);
+    if (!host.services.set_buffer_resource) {
+        scm_misc_error("set-buffer-resource!", "buffer-resource capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> updated =
+            host.services.set_buffer_resource(buffer, scheme_string(path_value));
+        if (!updated) {
+            raise_host_error("set-buffer-resource!", updated.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-buffer-resource!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-buffer-resource!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -413,6 +524,13 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
     (void)scm_c_define_gsubr("buffer-id-by-name", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_id_by_name));
+    (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_resource));
+    (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
+    (void)scm_c_define_gsubr("directory-path?", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(directory_path_p));
+    (void)scm_c_define_gsubr("path-as-directory", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(path_as_directory));
     (void)scm_c_define_gsubr("display-buffer!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer));
     (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
@@ -423,9 +541,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("open-file!", 3, 0, 0, reinterpret_cast<scm_t_subr>(open_file));
     (void)scm_c_define_gsubr("start-project-search!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_project_search));
-    scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "display-buffer!",
+    (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_resource));
+    scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "buffer-resource",
+                 "path-parent", "directory-path?", "path-as-directory", "display-buffer!",
                  "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-                 "start-project-search!", nullptr);
+                 "start-project-search!", "set-buffer-resource!", nullptr);
 }
 
 void initialize_guile() {

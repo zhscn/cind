@@ -4,6 +4,7 @@
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -114,6 +115,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     WindowId searched_window;
     std::string search_query;
     bool project_search_started = false;
+    BufferId resource_buffer;
+    std::string resource_path;
+    bool buffer_resource_set = false;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -147,10 +151,17 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              search_query = std::move(query);
              project_search_started = true;
              return {};
+         },
+         .set_buffer_resource = [&](BufferId target_buffer,
+                                    std::string path) -> std::expected<void, std::string> {
+             resource_buffer = target_buffer;
+             resource_path = std::move(path);
+             buffer_resource_set = true;
+             return {};
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 12);
+    CHECK(*installed == 16);
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -173,6 +184,59 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const auto* dispatch = std::get_if<CommandDispatch>(&*accepted);
     REQUIRE(dispatch != nullptr);
     CHECK(dispatch->command == save);
+
+    const CommandResult open_result =
+        runtime.commands().invoke(require_command(runtime, "file.open"), context);
+    REQUIRE(open_result.has_value());
+    const auto* open_request = std::get_if<InteractionRequest>(&*open_result);
+    REQUIRE(open_request != nullptr);
+    CHECK(open_request->kind == InteractionKind::Picker);
+    CHECK(open_request->prompt == "Open file: ");
+    CHECK(open_request->initial_input ==
+          std::string(".") + std::filesystem::path::preferred_separator);
+    CHECK(open_request->provider == "files");
+    CHECK(runtime.commands().definition(open_request->accept_command).name == "file.open.accept");
+
+    const std::string directory = std::string("/tmp") + std::filesystem::path::preferred_separator;
+    const CommandResult directory_result = runtime.commands().invoke(
+        open_request->accept_command, context,
+        CommandInvocation{.arguments = {directory}, .repeat_count = std::nullopt});
+    REQUIRE(directory_result.has_value());
+    const auto* directory_request = std::get_if<InteractionRequest>(&*directory_result);
+    REQUIRE(directory_request != nullptr);
+    CHECK(directory_request->initial_input == directory);
+    CHECK_FALSE(file_opened);
+
+    const CommandResult opened =
+        runtime.commands().invoke(open_request->accept_command, context,
+                                  CommandInvocation{.arguments = {std::string("/tmp/example.cpp")},
+                                                    .repeat_count = std::nullopt});
+    REQUIRE(opened.has_value());
+    REQUIRE(file_opened);
+    CHECK(opened_window == window);
+    CHECK(opened_path == "/tmp/example.cpp");
+
+    const CommandResult save_as_result =
+        runtime.commands().invoke(require_command(runtime, "file.save-as"), context);
+    REQUIRE(save_as_result.has_value());
+    const auto* save_as_request = std::get_if<InteractionRequest>(&*save_as_result);
+    REQUIRE(save_as_request != nullptr);
+    CHECK(save_as_request->kind == InteractionKind::Text);
+    CHECK(save_as_request->prompt == "Write file: ");
+    CHECK(save_as_request->initial_input.empty());
+    CHECK(runtime.commands().definition(save_as_request->accept_command).name ==
+          "file.save-as.accept");
+    const CommandResult save_as_accepted =
+        runtime.commands().invoke(save_as_request->accept_command, context,
+                                  CommandInvocation{.arguments = {std::string("/tmp/written.cpp")},
+                                                    .repeat_count = std::nullopt});
+    REQUIRE(save_as_accepted.has_value());
+    REQUIRE(buffer_resource_set);
+    CHECK(resource_buffer == buffer);
+    CHECK(resource_path == "/tmp/written.cpp");
+    const auto* save_dispatch = std::get_if<CommandDispatch>(&*save_as_accepted);
+    REQUIRE(save_dispatch != nullptr);
+    CHECK(save_dispatch->command == save);
 
     const CommandResult switched = runtime.commands().invoke(
         require_command(runtime, "buffer.switch.accept"), context,
@@ -231,6 +295,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(project_index_requested);
     CHECK(indexed_project == project);
 
+    file_opened = false;
+    opened_path.clear();
     const CommandResult file_accepted = runtime.commands().invoke(
         find_file_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/sample/main.cpp")},
@@ -262,6 +328,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 12);
+    CHECK(snapshot.scripted_commands == 16);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

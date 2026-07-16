@@ -47,12 +47,17 @@ The native module exports:
 (define-command! host command-name execute enabled)
 (bind-key-if-command! host keymap-name key-sequence command-name)
 (buffer-id-by-name host name)
+(buffer-resource host buffer-id)
+(path-parent host path)
+(directory-path? host path)
+(path-as-directory host path)
 (display-buffer! host window-id buffer-id)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
 (ensure-project-index! host project-id)
 (open-file! host window-id path)
 (start-project-search! host project-id window-id query)
+(set-buffer-resource! host buffer-id path)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -71,6 +76,12 @@ moves a view caret using zero-based logical line and display-column coordinates,
 the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
+
+`buffer-resource` returns a buffer's resource path or `#f`. `path-parent`, `directory-path?` and
+`path-as-directory` expose platform filesystem syntax without embedding separator rules in Scheme.
+`set-buffer-resource!` normalizes a path, changes the buffer to file-backed storage, derives its
+display name and attaches the matching project. File commands use these primitives to keep prompt
+and save-as policy in Scheme.
 
 `ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
 `open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the
@@ -99,10 +110,11 @@ and accept commands are resolved through the invoking `EditorRuntime`; a script 
 foreign registry ID. Scheme conditions and bridge exceptions become `CommandError` values and are
 retained in `editor.scripting.last_error`.
 
-`(cind core)` defines the command palette and its dispatching accept command, buffer switching and
-its accept command, goto-line parsing and movement, project file selection and project search with
-project-aware enabled predicates, and key-help selection and message presentation. Project commands
-compose native indexing, file-open and search capabilities without owning asynchronous state.
+`(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
+interactions, buffer switching and its accept command, goto-line parsing and movement, project file
+selection and project search with project-aware enabled predicates, and key-help selection and
+message presentation. File and project commands compose native storage, indexing and search
+capabilities without owning asynchronous state.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

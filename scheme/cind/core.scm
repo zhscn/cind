@@ -20,6 +20,42 @@
   (interaction 'picker "Command: " "" "commands" "commands" #f
                "command.palette.accept"))
 
+(define (file-open-interaction initial-input)
+  (interaction 'picker "Open file: " initial-input "files" "files" #t
+               "file.open.accept"))
+
+(define (file-open host context invocation)
+  (let* ((resource (buffer-resource host (context-buffer context)))
+         (directory (if resource (path-parent host resource) ".")))
+    (file-open-interaction (path-as-directory host directory))))
+
+(define (file-open-accept host context invocation)
+  (let ((path (last-string-argument invocation)))
+    (cond ((not path)
+           (command-error "open file requires a path"))
+          ((= (string-length path) 0)
+           (command-error "file path is empty"))
+          ((directory-path? host path)
+           (file-open-interaction (path-as-directory host path)))
+          (else
+           (open-file! host (context-window context) path)
+           (command-completed)))))
+
+(define (file-save-as host context invocation)
+  (let ((resource (buffer-resource host (context-buffer context))))
+    (interaction 'text "Write file: " (if resource resource "") "files" "" #t
+                 "file.save-as.accept")))
+
+(define (file-save-as-accept host context invocation)
+  (let ((path (last-string-argument invocation)))
+    (cond ((not path)
+           (command-error "write file requires a path"))
+          ((= (string-length path) 0)
+           (command-error "file path is empty"))
+          (else
+           (set-buffer-resource! host (context-buffer context) path)
+           (command-dispatch "file.save")))))
+
 (define (buffer-switch context invocation)
   (interaction 'picker "Switch buffer: " "" "buffers" "buffers" #f
                "buffer.switch.accept"))
@@ -134,6 +170,22 @@
 (define (core-commands host)
   (list (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
+        (list "file.open.accept"
+              (lambda (context invocation)
+                (file-open-accept host context invocation))
+              #f)
+        (list "file.open"
+              (lambda (context invocation)
+                (file-open host context invocation))
+              #f)
+        (list "file.save-as.accept"
+              (lambda (context invocation)
+                (file-save-as-accept host context invocation))
+              #f)
+        (list "file.save-as"
+              (lambda (context invocation)
+                (file-save-as host context invocation))
+              #f)
         (list "buffer.switch.accept"
               (lambda (context invocation)
                 (buffer-switch-accept host context invocation))

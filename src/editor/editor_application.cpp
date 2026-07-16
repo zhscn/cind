@@ -27,13 +27,6 @@ CommandResult completed() {
     return CommandCompleted{};
 }
 
-const std::string* submitted_string(const CommandInvocation& invocation) {
-    if (invocation.arguments.empty()) {
-        return nullptr;
-    }
-    return std::get_if<std::string>(&invocation.arguments.back());
-}
-
 std::expected<std::string, std::string> normalized_path(std::string_view input) {
     if (input.empty()) {
         return std::unexpected("file path is empty");
@@ -105,7 +98,22 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .start_project_search =
                [this](ProjectId project, WindowId window, std::string query) {
                    return start_project_search(project, std::move(query), window);
-               }}),
+               },
+           .set_buffer_resource = [this](BufferId buffer, const std::string& input)
+               -> std::expected<void, std::string> {
+               std::expected<std::string, std::string> path = normalized_path(input);
+               if (!path) {
+                   return std::unexpected(path.error());
+               }
+               try {
+                   runtime_.buffers().set_resource(buffer, *path, BufferKind::File);
+                   runtime_.buffers().rename(buffer, fs::path(*path).filename().string());
+                   runtime_.projects().assign(buffer, runtime_.projects().find_for_resource(*path));
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1468,24 +1476,6 @@ void EditorApplication::register_commands() {
         session().set_selection({.anchor = previous.start, .head = previous.end});
     });
 
-    open_file_accept_ = runtime_.commands().define(
-        "file.open.accept", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_open_file(context, invocation);
-        });
-    runtime_.commands().define(
-        "file.open", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_open_file(context, invocation);
-        });
-    save_as_accept_ = runtime_.commands().define(
-        "file.save-as.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_save_as(context, invocation);
-        });
-    runtime_.commands().define(
-        "file.save-as", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return begin_save_as(context, invocation);
-        });
-
     define("buffer.next", [this](const CommandInvocation&) { switch_relative(1); });
     define("buffer.previous", [this](const CommandInvocation&) { switch_relative(-1); });
     runtime_.commands().define(
@@ -1919,75 +1909,6 @@ void EditorApplication::switch_relative(int delta) {
         next += size;
     }
     (void)switch_buffer(buffers_[static_cast<std::size_t>(next)]->buffer);
-}
-
-CommandResult EditorApplication::begin_open_file(CommandContext&, const CommandInvocation&) const {
-    const Buffer& buffer = session().buffer();
-    const fs::path directory =
-        buffer.resource_uri() ? fs::path(*buffer.resource_uri()).parent_path() : fs::path(".");
-    return InteractionRequest{.kind = InteractionKind::Picker,
-                              .prompt = "Open file: ",
-                              .initial_input = directory_input(directory),
-                              .history = "files",
-                              .provider = "files",
-                              .allow_custom_input = true,
-                              .accept_command = open_file_accept_,
-                              .arguments = {}};
-}
-
-CommandResult EditorApplication::accept_open_file(CommandContext&,
-                                                  const CommandInvocation& invocation) {
-    const std::string* input = submitted_string(invocation);
-    if (input == nullptr) {
-        return std::unexpected(CommandError{"open file requires a path"});
-    }
-    if (input->ends_with(fs::path::preferred_separator)) {
-        return InteractionRequest{.kind = InteractionKind::Picker,
-                                  .prompt = "Open file: ",
-                                  .initial_input = directory_input(*input),
-                                  .history = "files",
-                                  .provider = "files",
-                                  .allow_custom_input = true,
-                                  .accept_command = open_file_accept_,
-                                  .arguments = {}};
-    }
-    std::expected<void, std::string> opened = open_file(*input);
-    return opened ? CommandResult{CommandCompleted{}}
-                  : CommandResult{std::unexpected(CommandError{opened.error()})};
-}
-
-CommandResult EditorApplication::begin_save_as(CommandContext&, const CommandInvocation&) const {
-    const Buffer& buffer = session().buffer();
-    return InteractionRequest{.kind = InteractionKind::Text,
-                              .prompt = "Write file: ",
-                              .initial_input = buffer.resource_uri().value_or(std::string()),
-                              .history = "files",
-                              .provider = {},
-                              .allow_custom_input = true,
-                              .accept_command = save_as_accept_,
-                              .arguments = {}};
-}
-
-CommandResult EditorApplication::accept_save_as(CommandContext& context,
-                                                const CommandInvocation& invocation) {
-    const std::string* input = submitted_string(invocation);
-    if (input == nullptr) {
-        return std::unexpected(CommandError{"write file requires a path"});
-    }
-    std::expected<std::string, std::string> path = normalized_path(*input);
-    if (!path) {
-        return std::unexpected(CommandError{path.error()});
-    }
-    try {
-        runtime_.buffers().set_resource(context.buffer_id(), *path, BufferKind::File);
-        runtime_.buffers().rename(context.buffer_id(), fs::path(*path).filename().string());
-        runtime_.projects().assign(context.buffer_id(),
-                                   runtime_.projects().find_for_resource(*path));
-    } catch (const std::exception& exception) {
-        return std::unexpected(CommandError{exception.what()});
-    }
-    save();
-    return CommandCompleted{};
 }
 
 } // namespace cind

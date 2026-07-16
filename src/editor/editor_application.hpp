@@ -265,11 +265,6 @@ private:
     void mark_saved(BufferId buffer, Text content);
     void switch_relative(int delta);
 
-    CommandResult begin_open_file(CommandContext&, const CommandInvocation&) const;
-    CommandResult accept_open_file(CommandContext&, const CommandInvocation&);
-    CommandResult begin_save_as(CommandContext&, const CommandInvocation&) const;
-    CommandResult accept_save_as(CommandContext&, const CommandInvocation&);
-
     EditorRuntime runtime_;
     GuileRuntime guile_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
@@ -290,8 +285,6 @@ private:
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
-    CommandId open_file_accept_;
-    CommandId save_as_accept_;
     ModeId cpp_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;

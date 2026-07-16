@@ -65,7 +65,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .version = "3.0.9",
                       .modules = {"cind command", "cind core"},
                       .command_revision = 1,
-                      .scripted_commands = 12,
+                      .scripted_commands = 16,
                       .binding_revision = 1,
                       .last_error = std::nullopt},
         .interaction =
@@ -394,7 +394,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind core\"]") !=
           std::string::npos);
     CHECK(scripting.payload.find("\"command_revision\":1") != std::string::npos);
-    CHECK(scripting.payload.find("\"scripted_commands\":12") != std::string::npos);
+    CHECK(scripting.payload.find("\"scripted_commands\":16") != std::string::npos);
     CHECK(scripting.payload.find("\"binding_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
 

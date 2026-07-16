@@ -125,6 +125,40 @@ TEST_CASE("background saving is independent of a graphical event loop") {
     std::filesystem::remove(path, ignored);
 }
 
+TEST_CASE("scripted save-as policy configures and saves a file buffer") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        std::format("cind-application-save-as-{}.cc", static_cast<long>(::getpid()));
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+
+    WakeSignal wake;
+    EditorApplication application = make_application(
+        {}, "contents", {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                             wake.notify();
+                         }});
+    send_keys(application, "C-x C-w");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Write file: ");
+    CHECK(application.interaction().state()->input.text().empty());
+    application.insert_text(path.string());
+    send_keys(application, "RET");
+    CHECK(application.last_command() == "file.save");
+
+    REQUIRE(wake.wait());
+    CHECK(application.poll_background_work());
+    CHECK_FALSE(application.has_background_work());
+    CHECK(application.session().buffer().kind() == BufferKind::File);
+    CHECK(application.session().buffer().resource_uri() == path.string());
+    CHECK(application.session().buffer().name() == path.filename().string());
+    std::ifstream input(path, std::ios::binary);
+    const std::string saved{std::istreambuf_iterator<char>(input),
+                            std::istreambuf_iterator<char>()};
+    CHECK(saved == "contents");
+
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_CASE("initial files load through the async runtime and replace the startup scratch buffer") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /
