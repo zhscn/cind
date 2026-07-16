@@ -13,6 +13,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -98,6 +99,17 @@ TEST_CASE("scroll timeline brackets the visual position after reversing directio
     REQUIRE(layers.size() == 2);
     CHECK(layers[0].scroll_top == doctest::Approx(5.0F));
     CHECK(layers[1].scroll_top == doctest::Approx(6.0F));
+}
+
+TEST_CASE("scroll timeline preserves equivalent scene identity at one position") {
+    ScrollSceneTimeline timeline;
+    auto original = std::make_shared<const ui::Scene>();
+    timeline.insert(original, 0.0F);
+    timeline.insert(std::make_shared<const ui::Scene>(), 0.0F);
+
+    const std::vector<ScrollSceneLayer> layers = timeline.layers_at(0.0F);
+    REQUIRE(layers.size() == 1);
+    CHECK(layers.front().scene == original);
 }
 
 TEST_CASE("wheel scrolling moves the viewport without moving the caret") {

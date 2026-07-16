@@ -1459,8 +1459,10 @@ struct SkiaPresenter::Impl {
     void render(const ui::Scene& scene, int pixel_width, int pixel_height, void* pixels,
                 std::size_t row_bytes, float device_scale, SkiaRenderDiagnostics* diagnostics,
                 std::span<const SkiaLogicalRect> damage, bool full_repaint,
-                const SkiaAnimationFrame* animation, const PopupLayout* prepared_popup,
-                const EchoLayout* prepared_echo, const DocumentLayout* prepared_document) {
+                const SkiaPreparedAnimationFrame* animation,
+                std::span<const DocumentLayout* const> animation_documents,
+                const PopupLayout* prepared_popup, const EchoLayout* prepared_echo,
+                const DocumentLayout* prepared_document) {
         if (!(device_scale > 0.0F)) {
             throw std::invalid_argument("SkiaPresenter received an invalid device scale");
         }
@@ -1505,17 +1507,6 @@ struct SkiaPresenter::Impl {
         }
         canvas.scale(device_scale, device_scale);
 
-        std::vector<std::optional<DocumentLayout>> animation_documents;
-        if (animation) {
-            animation_documents.reserve(animation->scroll_layers.size());
-            for (const SkiaScrollLayer& layer : animation->scroll_layers) {
-                if (!layer.scene) {
-                    throw std::invalid_argument("Skia scroll layer has no Scene");
-                }
-                animation_documents.push_back(prepare_document_layout(
-                    *layer.scene, {.width = viewport_width, .height = viewport_height}));
-            }
-        }
         const std::optional<float> animation_active_line_top =
             animation ? animation->view.active_line_y : std::nullopt;
 
@@ -1832,8 +1823,8 @@ struct SkiaPresenter::Impl {
         if (full_repaint) {
             if (animation && !animation->scroll_layers.empty()) {
                 for (std::size_t index = 0; index < animation->scroll_layers.size(); ++index) {
-                    const SkiaScrollLayer& layer = animation->scroll_layers[index];
-                    const std::optional<DocumentLayout>& document = animation_documents[index];
+                    const SkiaPreparedScrollLayer& layer = animation->scroll_layers[index];
+                    const DocumentLayout* document = animation_documents[index];
                     if (!std::isfinite(layer.clip_top) || !std::isfinite(layer.clip_bottom) ||
                         layer.clip_bottom <= layer.clip_top) {
                         continue;
@@ -1846,8 +1837,7 @@ struct SkiaPresenter::Impl {
                     const SkRect layer_clip =
                         SkRect::MakeLTRB(0.0F, layer.clip_top, viewport_width, ink_guard_bottom);
                     paint_layer(*layer.scene, layer.grid_offset_y, true, false, nullptr, nullptr,
-                                document ? &*document : nullptr, animation_active_line_top,
-                                &layer_clip);
+                                document, animation_active_line_top, &layer_clip);
                 }
                 paint_layer(scene, 0.0F, false, true, diagnostics, nullptr, prepared_document,
                             std::nullopt, nullptr);
@@ -1978,6 +1968,32 @@ SkiaFrameLayout SkiaPresenter::prepare_layout(const ui::Scene& scene, float view
         impl_->prepare_echo_layout(scene, {.width = viewport_width, .height = viewport_height},
                                    storage->popup ? &*storage->popup : nullptr);
     return SkiaFrameLayout(std::move(storage));
+}
+
+SkiaPreparedAnimationFrame
+SkiaPresenter::prepare_animation_frame(const SkiaAnimationFrame& animation, float viewport_width,
+                                       float viewport_height) const {
+    if (!std::isfinite(viewport_width) || !std::isfinite(viewport_height) ||
+        viewport_width < 0.0F || viewport_height < 0.0F) {
+        throw std::invalid_argument("SkiaPresenter received an invalid logical viewport");
+    }
+
+    SkiaPreparedAnimationFrame result;
+    result.view = animation.view;
+    result.scroll_layers.reserve(animation.scroll_layers.size());
+    for (const SkiaScrollLayer& layer : animation.scroll_layers) {
+        if (!layer.scene) {
+            throw std::invalid_argument("Skia scroll layer has no Scene");
+        }
+        result.scroll_layers.push_back(
+            {.scene = layer.scene,
+             .layout = std::make_shared<const SkiaFrameLayout>(
+                 prepare_layout(*layer.scene, viewport_width, viewport_height)),
+             .grid_offset_y = layer.grid_offset_y,
+             .clip_top = layer.clip_top,
+             .clip_bottom = layer.clip_bottom});
+    }
+    return result;
 }
 
 void SkiaPresenter::set_show_debug_status(bool show) {
@@ -2389,7 +2405,7 @@ void SkiaPresenter::render(const SkiaFrameLayout& layout, int pixel_width, int p
         {.width = storage.viewport_width, .height = storage.viewport_height},
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
-                  diagnostics, std::span<const SkiaLogicalRect>{}, true, nullptr,
+                  diagnostics, std::span<const SkiaLogicalRect>{}, true, nullptr, {},
                   storage.popup ? &*storage.popup : nullptr,
                   storage.echo ? &*storage.echo : nullptr,
                   storage.document ? &*storage.document : nullptr);
@@ -2415,7 +2431,7 @@ void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width
         {.width = storage.viewport_width, .height = storage.viewport_height},
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
-                  nullptr, damage, false, nullptr, storage.popup ? &*storage.popup : nullptr,
+                  nullptr, damage, false, nullptr, {}, storage.popup ? &*storage.popup : nullptr,
                   storage.echo ? &*storage.echo : nullptr,
                   storage.document ? &*storage.document : nullptr);
 }
@@ -2439,12 +2455,40 @@ void SkiaPresenter::render_animated(const SkiaFrameLayout& layout,
                                     int pixel_height, void* pixels, std::size_t row_bytes,
                                     float device_scale, SkiaRenderDiagnostics* diagnostics) {
     const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    const SkiaPreparedAnimationFrame prepared =
+        prepare_animation_frame(animation, storage.viewport_width, storage.viewport_height);
+    render_animated(layout, prepared, pixel_width, pixel_height, pixels, row_bytes, device_scale,
+                    diagnostics);
+}
+
+void SkiaPresenter::render_animated(const SkiaFrameLayout& layout,
+                                    const SkiaPreparedAnimationFrame& animation, int pixel_width,
+                                    int pixel_height, void* pixels, std::size_t row_bytes,
+                                    float device_scale, SkiaRenderDiagnostics* diagnostics) {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
     validate_layout_viewport(
         {.width = storage.viewport_width, .height = storage.viewport_height},
         {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
+
+    std::vector<const DocumentLayout*> animation_documents;
+    animation_documents.reserve(animation.scroll_layers.size());
+    for (const SkiaPreparedScrollLayer& layer : animation.scroll_layers) {
+        if (!layer.scene || !layer.layout) {
+            throw std::invalid_argument("Skia prepared scroll layer is incomplete");
+        }
+        const SkiaFrameLayout::Storage& layer_storage = checked_layout(*layer.layout);
+        if (layer_storage.scene != layer.scene.get()) {
+            throw std::invalid_argument("Skia prepared scroll layer layout has another Scene");
+        }
+        if (std::abs(layer_storage.viewport_width - storage.viewport_width) > 0.01F ||
+            std::abs(layer_storage.viewport_height - storage.viewport_height) > 0.01F) {
+            throw std::invalid_argument("Skia prepared scroll layer has another viewport");
+        }
+        animation_documents.push_back(layer_storage.document ? &*layer_storage.document : nullptr);
+    }
     impl_->render(*storage.scene, pixel_width, pixel_height, pixels, row_bytes, device_scale,
                   diagnostics, std::span<const SkiaLogicalRect>{}, true, &animation,
-                  storage.popup ? &*storage.popup : nullptr,
+                  animation_documents, storage.popup ? &*storage.popup : nullptr,
                   storage.echo ? &*storage.echo : nullptr,
                   storage.document ? &*storage.document : nullptr);
 }

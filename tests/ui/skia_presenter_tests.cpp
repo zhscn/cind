@@ -702,6 +702,14 @@ TEST_CASE("Skia animation frames scroll only the grid") {
         .view = {},
     };
     presenter.render_animated(target, middle, width, height, animated_pixels.data(), row_bytes);
+    const SkiaFrameLayout target_layout =
+        presenter.prepare_layout(target, static_cast<float>(width), static_cast<float>(height));
+    const SkiaPreparedAnimationFrame prepared_middle = presenter.prepare_animation_frame(
+        middle, static_cast<float>(width), static_cast<float>(height));
+    std::vector<std::uint32_t> prepared_pixels(animated_pixels.size());
+    presenter.render_animated(target_layout, prepared_middle, width, height, prepared_pixels.data(),
+                              row_bytes);
+    CHECK(prepared_pixels == animated_pixels);
     const auto pixel = [&](int x, int y) {
         return animated_pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
                                static_cast<std::size_t>(x)];

@@ -107,7 +107,7 @@ struct GuiFrameController::AnimationPresentation {
 
 PresentedFrame::PresentedFrame(std::shared_ptr<const ui::Scene> scene,
                                std::shared_ptr<const SkiaFrameLayout> layout,
-                               SkiaAnimationFrame animation, ui::SceneDamage scene_damage,
+                               SkiaPreparedAnimationFrame animation, ui::SceneDamage scene_damage,
                                std::vector<SkiaLogicalRect> logical_damage,
                                std::vector<FrameDamageRect> damage,
                                FrameAnimationState animation_state, FrameLifecycle lifecycle,
@@ -125,15 +125,13 @@ std::optional<ui::HitTarget> PresentedFrame::hit_test(const SkiaPresenter& prese
             presenter.hit_test_view(*layout_, point, SkiaHitTestScope::Fixed)) {
         return ui::resolve_hit_target(*scene_, *fixed);
     }
-    for (const SkiaScrollLayer& layer : animation_.scroll_layers) {
-        if (!layer.scene || point.y < layer.clip_top || point.y >= layer.clip_bottom) {
+    for (const SkiaPreparedScrollLayer& layer : animation_.scroll_layers) {
+        if (!layer.scene || !layer.layout || point.y < layer.clip_top ||
+            point.y >= layer.clip_bottom) {
             continue;
         }
-        const SkiaFrameLayout layer_layout = presenter.prepare_layout(
-            *layer.scene, static_cast<float>(output_width_) / display_scale_,
-            static_cast<float>(output_height_) / display_scale_);
         const std::optional<ui::ViewHit> hit = presenter.hit_test_view(
-            layer_layout, {.x = point.x, .y = point.y - layer.grid_offset_y},
+            *layer.layout, {.x = point.x, .y = point.y - layer.grid_offset_y},
             SkiaHitTestScope::Grid);
         return hit ? ui::resolve_hit_target(*layer.scene, *hit) : std::nullopt;
     }
@@ -161,6 +159,59 @@ SkiaViewPresentation GuiFrameController::animated_view(const ViewAnimation& anim
     return interpolate_view_presentation(animation.from, animation.target, progress);
 }
 
+std::shared_ptr<const SkiaFrameLayout>
+GuiFrameController::prepared_layout(const std::shared_ptr<const ui::Scene>& scene,
+                                    float viewport_width, float viewport_height) {
+    const auto cached = std::ranges::find_if(layout_cache_, [&](const CachedLayout& entry) {
+        return entry.scene == scene && entry.viewport_width == viewport_width &&
+               entry.viewport_height == viewport_height;
+    });
+    if (cached != layout_cache_.end()) {
+        return cached->layout;
+    }
+
+    auto layout = std::make_shared<const SkiaFrameLayout>(
+        presenter_.prepare_layout(*scene, viewport_width, viewport_height));
+    layout_cache_.push_back({.scene = scene,
+                             .layout = layout,
+                             .viewport_width = viewport_width,
+                             .viewport_height = viewport_height});
+    return layout;
+}
+
+SkiaPreparedAnimationFrame
+GuiFrameController::prepare_animation(const SkiaAnimationFrame& animation, float viewport_width,
+                                      float viewport_height) {
+    SkiaPreparedAnimationFrame result;
+    result.view = animation.view;
+    result.scroll_layers.reserve(animation.scroll_layers.size());
+    for (const SkiaScrollLayer& layer : animation.scroll_layers) {
+        if (!layer.scene) {
+            throw std::invalid_argument("GUI animation scroll layer has no Scene");
+        }
+        result.scroll_layers.push_back(
+            {.scene = layer.scene,
+             .layout = prepared_layout(layer.scene, viewport_width, viewport_height),
+             .grid_offset_y = layer.grid_offset_y,
+             .clip_top = layer.clip_top,
+             .clip_bottom = layer.clip_bottom});
+    }
+    return result;
+}
+
+void GuiFrameController::retain_presented_layouts(const std::shared_ptr<const ui::Scene>& scene,
+                                                  const SkiaPreparedAnimationFrame& animation) {
+    std::erase_if(layout_cache_, [&](const CachedLayout& entry) {
+        if (entry.scene == scene) {
+            return false;
+        }
+        return std::ranges::none_of(
+            animation.scroll_layers, [&](const SkiaPreparedScrollLayer& layer) {
+                return layer.scene == entry.scene && layer.layout == entry.layout;
+            });
+    });
+}
+
 void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui::Scene>& scene,
                                                   const SkiaViewPresentation& target_view,
                                                   float scroll_top, const FrameIdentity& identity,
@@ -180,8 +231,8 @@ void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui
             if (scroll_animation_) {
                 timeline = std::move(scroll_animation_->timeline);
             }
-            timeline.insert(*last_scene_, *last_scroll_top_);
-            timeline.insert(*scene, scroll_top);
+            timeline.insert(last_scene_, *last_scroll_top_);
+            timeline.insert(scene, scroll_top);
             timeline.retain_motion_range(motion.position, scroll_top);
             scroll_animation_ =
                 ScrollAnimation{.timeline = std::move(timeline),
@@ -195,7 +246,7 @@ void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui
         view_animation_.reset();
     } else if (scroll_animation_) {
         const SpringState motion = scroll_state(*scroll_animation_, now);
-        scroll_animation_->timeline.insert(*scene, scroll_top);
+        scroll_animation_->timeline.insert(scene, scroll_top);
         scroll_animation_->timeline.retain_motion_range(motion.position,
                                                         scroll_animation_->target_scroll_top);
     } else if (target_view.cursor_rect && last_view_target_ && last_view_target_->cursor_rect &&
@@ -307,9 +358,14 @@ PresentedFrame GuiFrameController::build(FrameRequest request) {
         !(request.display_scale > 0.0F)) {
         throw std::invalid_argument("GUI frame request has invalid output geometry");
     }
-    auto scene = std::make_shared<const ui::Scene>(std::move(request.scene));
-    auto layout = std::make_shared<const SkiaFrameLayout>(
-        presenter_.prepare_layout(*scene, request.logical_width, request.logical_height));
+    std::shared_ptr<const ui::Scene> scene;
+    if (!request.geometry_changed && last_scene_ && *last_scene_ == request.scene) {
+        scene = last_scene_;
+    } else {
+        scene = std::make_shared<const ui::Scene>(std::move(request.scene));
+    }
+    const std::shared_ptr<const SkiaFrameLayout> layout =
+        prepared_layout(scene, request.logical_width, request.logical_height);
     const SkiaViewPresentation target_view = presenter_.view_presentation(*layout);
     update_animation_targets(scene, target_view, request.scroll_top, request.identity,
                              request.geometry_changed, request.now);
@@ -336,7 +392,11 @@ PresentedFrame GuiFrameController::build(FrameRequest request) {
         logical_damage.push_back(rect.logical);
     }
 
-    return PresentedFrame(std::move(scene), std::move(layout), std::move(animation.frame),
+    SkiaPreparedAnimationFrame prepared_animation =
+        prepare_animation(animation.frame, request.logical_width, request.logical_height);
+    retain_presented_layouts(scene, prepared_animation);
+
+    return PresentedFrame(std::move(scene), layout, std::move(prepared_animation),
                           std::move(scene_damage), std::move(logical_damage), std::move(damage),
                           std::move(animation.state),
                           {.animated = animation.active,
@@ -366,6 +426,7 @@ void GuiFrameController::reset() {
     last_identity_.reset();
     last_view_target_.reset();
     presented_cursor_rect_.reset();
+    layout_cache_.clear();
 }
 
 } // namespace cind::gui

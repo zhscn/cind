@@ -19,6 +19,7 @@ struct ScrollSceneLayer {
 class ScrollSceneTimeline {
 public:
     void insert(ui::Scene scene, float scroll_top);
+    void insert(std::shared_ptr<const ui::Scene> scene, float scroll_top);
     void retain_motion_range(float visual_scroll_top, float target_scroll_top);
     std::vector<ScrollSceneLayer> layers_at(float visual_scroll_top) const;
     std::size_t size() const;

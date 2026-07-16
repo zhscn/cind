@@ -26,11 +26,15 @@ struct Rect {
     int col = 0;
     int rows = 0;
     int cols = 0;
+
+    bool operator==(const Rect&) const = default;
 };
 
 struct CellPoint {
     int row = 0;
     int column = 0;
+
+    bool operator==(const CellPoint&) const = default;
 };
 
 enum class PrimKind : std::uint8_t {
@@ -56,6 +60,8 @@ struct Prim {
     bool selected = false;
     PrimKind kind = PrimKind::Text;
     std::string id;
+
+    bool operator==(const Prim&) const = default;
 };
 
 enum class SurfaceClass : std::uint8_t {
@@ -84,14 +90,20 @@ struct Region {
     struct DocumentMapping {
         std::uint32_t first_line = 0;
         std::optional<int> first_display_column;
+
+        bool operator==(const DocumentMapping&) const = default;
     };
     struct PrimitiveContent {
         std::vector<Prim> items;
         std::optional<DocumentMapping> document;
+
+        bool operator==(const PrimitiveContent&) const = default;
     };
     struct PopupItem {
         std::string label;
         std::string detail;
+
+        bool operator==(const PopupItem&) const = default;
     };
     struct PopupContent {
         std::string title;
@@ -101,6 +113,8 @@ struct Region {
         std::size_t total_items = 0;
         std::optional<std::size_t> selected_item;
         std::vector<PopupItem> items;
+
+        bool operator==(const PopupContent&) const = default;
     };
     struct StatusContent {
         std::string path;
@@ -111,6 +125,8 @@ struct Region {
         std::uint64_t revision = 0;
         std::string style_origin;
         std::string key;
+
+        bool operator==(const StatusContent&) const = default;
     };
     struct EchoContent {
         std::string text;
@@ -118,6 +134,8 @@ struct Region {
         // active input surface; presenters derive their native caret geometry
         // from this offset.
         std::optional<std::size_t> cursor_byte;
+
+        bool operator==(const EchoContent&) const = default;
     };
     using Content = std::variant<PrimitiveContent, PopupContent, StatusContent, EchoContent>;
 
@@ -178,6 +196,8 @@ struct Region {
         }
         return primitives().size();
     }
+
+    bool operator==(const Region&) const = default;
 };
 
 struct Scene {
@@ -207,6 +227,8 @@ struct Scene {
         }
         return nullptr;
     }
+
+    bool operator==(const Scene&) const = default;
 };
 
 } // namespace cind::ui

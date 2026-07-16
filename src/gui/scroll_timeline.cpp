@@ -18,23 +18,33 @@ bool same_scroll_top(float left, float right) {
 } // namespace
 
 void ScrollSceneTimeline::insert(ui::Scene scene, float scroll_top) {
-    auto owned_scene = std::make_shared<const ui::Scene>(std::move(scene));
+    insert(std::make_shared<const ui::Scene>(std::move(scene)), scroll_top);
+}
+
+void ScrollSceneTimeline::insert(std::shared_ptr<const ui::Scene> scene, float scroll_top) {
+    if (!scene) {
+        return;
+    }
     const auto position = std::ranges::lower_bound(
         keyframes_, scroll_top, {}, [](const Keyframe& keyframe) { return keyframe.scroll_top; });
     if (position != keyframes_.end() && same_scroll_top(position->scroll_top, scroll_top)) {
-        position->scene = std::move(owned_scene);
+        if (*position->scene != *scene) {
+            position->scene = std::move(scene);
+        }
         position->scroll_top = scroll_top;
         return;
     }
     if (position != keyframes_.begin()) {
         const auto previous = std::prev(position);
         if (same_scroll_top(previous->scroll_top, scroll_top)) {
-            previous->scene = std::move(owned_scene);
+            if (*previous->scene != *scene) {
+                previous->scene = std::move(scene);
+            }
             previous->scroll_top = scroll_top;
             return;
         }
     }
-    keyframes_.insert(position, {.scene = std::move(owned_scene), .scroll_top = scroll_top});
+    keyframes_.insert(position, {.scene = std::move(scene), .scroll_top = scroll_top});
 }
 
 void ScrollSceneTimeline::retain_motion_range(float visual_scroll_top, float target_scroll_top) {

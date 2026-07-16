@@ -219,6 +219,21 @@ private:
     friend class SkiaPresenter;
 };
 
+struct SkiaPreparedScrollLayer {
+    std::shared_ptr<const ui::Scene> scene;
+    std::shared_ptr<const SkiaFrameLayout> layout;
+    float grid_offset_y = 0.0F;
+    float clip_top = 0.0F;
+    float clip_bottom = 0.0F;
+};
+
+// Frame-scoped animation input whose scroll-layer Scenes have already been
+// shaped and laid out. Painting and hit-testing consume these exact layouts.
+struct SkiaPreparedAnimationFrame {
+    std::vector<SkiaPreparedScrollLayer> scroll_layers;
+    SkiaViewPresentation view;
+};
+
 // Raster Skia presenter for the backend-independent cell Scene. The caller
 // owns an N32-premultiplied pixel buffer and decides how to put it on screen.
 // The Scene retains cell semantics for TUI parity; the prepared frame layout
@@ -248,6 +263,9 @@ public:
     ui::SceneVerticalMetrics vertical_metrics(float viewport_height) const;
     SkiaFrameLayout prepare_layout(const ui::Scene& scene, float viewport_width,
                                    float viewport_height) const;
+    SkiaPreparedAnimationFrame prepare_animation_frame(const SkiaAnimationFrame& animation,
+                                                       float viewport_width,
+                                                       float viewport_height) const;
     // Shows the faint revision segment at the modeline's right edge.
     void set_show_debug_status(bool show);
 
@@ -283,6 +301,9 @@ public:
                          int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
                          float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
     void render_animated(const SkiaFrameLayout& layout, const SkiaAnimationFrame& animation,
+                         int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
+                         float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
+    void render_animated(const SkiaFrameLayout& layout, const SkiaPreparedAnimationFrame& animation,
                          int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
                          float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);
 

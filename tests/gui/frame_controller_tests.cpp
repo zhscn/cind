@@ -6,6 +6,7 @@
 #include <fontconfig/fontconfig.h>
 #include <skia/core/SkGraphics.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -114,6 +115,20 @@ TEST_CASE("presented frame exposes the animated caret used for IME placement") {
     CHECK(moving.animation_state().cursor_rect->y == doctest::Approx(moving.view().cursor_rect->y));
 }
 
+TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    GuiFrameController controller(presenter);
+    const FrameClock::time_point start{};
+
+    PresentedFrame initial =
+        controller.build(request_for(presenter, frame_scene(1, 7), 0.0F, start, true));
+    PresentedFrame repeated = controller.build(
+        request_for(presenter, frame_scene(1, 7), 0.0F, start + std::chrono::milliseconds(1)));
+
+    CHECK(&initial.scene() == &repeated.scene());
+    CHECK(&initial.layout() == &repeated.layout());
+}
+
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {
     SkiaPresenter presenter("monospace", 16.0F);
     GuiFrameController controller(presenter);
@@ -129,19 +144,17 @@ TEST_CASE("presented frame hit testing follows the visible scroll layer") {
     PresentedFrame moving = controller.build(
         request_for(presenter, frame_scene(1, 101), 1.0F, start + std::chrono::milliseconds(101)));
     REQUIRE(moving.animation().scroll_layers.size() == 2);
-    const SkiaScrollLayer& visible = moving.animation().scroll_layers.back();
+    const SkiaPreparedScrollLayer& visible = moving.animation().scroll_layers.back();
     REQUIRE(visible.scene);
+    REQUIRE(visible.layout);
     REQUIRE(visible.grid_offset_y > 0.0F);
 
     const float y = static_cast<float>(presenter.cell_height()) + 1.0F;
     REQUIRE(y >= visible.clip_top);
     REQUIRE(y < visible.clip_bottom);
     const SkiaLogicalPoint point{.x = static_cast<float>(presenter.cell_width()), .y = y};
-    const SkiaFrameLayout visible_layout =
-        presenter.prepare_layout(*visible.scene, static_cast<float>(moving.output_width()),
-                                 static_cast<float>(moving.output_height()));
     const std::optional<ViewHit> visible_hit = presenter.hit_test_view(
-        visible_layout, {.x = point.x, .y = point.y - visible.grid_offset_y},
+        *visible.layout, {.x = point.x, .y = point.y - visible.grid_offset_y},
         SkiaHitTestScope::Grid);
     REQUIRE(visible_hit);
     const std::optional<HitTarget> expected = resolve_hit_target(*visible.scene, *visible_hit);
@@ -158,6 +171,34 @@ TEST_CASE("presented frame hit testing follows the visible scroll layer") {
     CHECK(actual->document_line == expected->document_line);
     CHECK(actual->display_column == expected->display_column);
     CHECK(actual->document_line != direct_target->document_line);
+}
+
+TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    GuiFrameController controller(presenter);
+    const FrameClock::time_point start{};
+
+    PresentedFrame initial =
+        controller.build(request_for(presenter, frame_scene(1, 20), 0.0F, start, true));
+    controller.did_present(initial);
+    PresentedFrame target = controller.build(
+        request_for(presenter, frame_scene(1, 21), 1.0F, start + std::chrono::milliseconds(1)));
+    controller.did_present(target);
+    PresentedFrame first = controller.build(
+        request_for(presenter, frame_scene(1, 21), 1.0F, start + std::chrono::milliseconds(20)));
+    PresentedFrame second = controller.build(
+        request_for(presenter, frame_scene(1, 21), 1.0F, start + std::chrono::milliseconds(30)));
+
+    REQUIRE(first.animation().scroll_layers.size() == 2);
+    REQUIRE(second.animation().scroll_layers.size() == 2);
+    for (const SkiaPreparedScrollLayer& first_layer : first.animation().scroll_layers) {
+        const auto second_layer = std::ranges::find_if(
+            second.animation().scroll_layers, [&](const SkiaPreparedScrollLayer& candidate) {
+                return candidate.scene == first_layer.scene;
+            });
+        REQUIRE(second_layer != second.animation().scroll_layers.end());
+        CHECK(second_layer->layout == first_layer.layout);
+    }
 }
 
 TEST_CASE("presented frame gives fixed overlays priority over animated document layers") {

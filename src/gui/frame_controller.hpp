@@ -101,7 +101,7 @@ public:
 
     const ui::Scene& scene() const { return *scene_; }
     const SkiaFrameLayout& layout() const { return *layout_; }
-    const SkiaAnimationFrame& animation() const { return animation_; }
+    const SkiaPreparedAnimationFrame& animation() const { return animation_; }
     const SkiaViewPresentation& view() const { return animation_.view; }
     const ui::SceneDamage& scene_damage() const { return scene_damage_; }
     const std::vector<SkiaLogicalRect>& logical_damage() const { return logical_damage_; }
@@ -118,14 +118,15 @@ public:
 
 private:
     PresentedFrame(std::shared_ptr<const ui::Scene> scene,
-                   std::shared_ptr<const SkiaFrameLayout> layout, SkiaAnimationFrame animation,
-                   ui::SceneDamage scene_damage, std::vector<SkiaLogicalRect> logical_damage,
-                   std::vector<FrameDamageRect> damage, FrameAnimationState animation_state,
-                   FrameLifecycle lifecycle, FrameOutputGeometry output);
+                   std::shared_ptr<const SkiaFrameLayout> layout,
+                   SkiaPreparedAnimationFrame animation, ui::SceneDamage scene_damage,
+                   std::vector<SkiaLogicalRect> logical_damage, std::vector<FrameDamageRect> damage,
+                   FrameAnimationState animation_state, FrameLifecycle lifecycle,
+                   FrameOutputGeometry output);
 
     std::shared_ptr<const ui::Scene> scene_;
     std::shared_ptr<const SkiaFrameLayout> layout_;
-    SkiaAnimationFrame animation_;
+    SkiaPreparedAnimationFrame animation_;
     ui::SceneDamage scene_damage_;
     std::vector<SkiaLogicalRect> logical_damage_;
     std::vector<FrameDamageRect> damage_;
@@ -162,6 +163,12 @@ private:
         SkiaViewPresentation target;
         FrameClock::time_point started;
     };
+    struct CachedLayout {
+        std::shared_ptr<const ui::Scene> scene;
+        std::shared_ptr<const SkiaFrameLayout> layout;
+        float viewport_width = 0.0F;
+        float viewport_height = 0.0F;
+    };
     struct AnimationPresentation;
 
     void update_animation_targets(const std::shared_ptr<const ui::Scene>& scene,
@@ -174,6 +181,13 @@ private:
     SpringState scroll_state(const ScrollAnimation& animation, FrameClock::time_point now) const;
     SkiaViewPresentation animated_view(const ViewAnimation& animation,
                                        FrameClock::time_point now) const;
+    std::shared_ptr<const SkiaFrameLayout>
+    prepared_layout(const std::shared_ptr<const ui::Scene>& scene, float viewport_width,
+                    float viewport_height);
+    SkiaPreparedAnimationFrame prepare_animation(const SkiaAnimationFrame& animation,
+                                                 float viewport_width, float viewport_height);
+    void retain_presented_layouts(const std::shared_ptr<const ui::Scene>& scene,
+                                  const SkiaPreparedAnimationFrame& animation);
 
     SkiaPresenter& presenter_;
     ui::SceneDamageTracker damage_tracker_;
@@ -184,6 +198,7 @@ private:
     std::optional<FrameIdentity> last_identity_;
     std::optional<SkiaViewPresentation> last_view_target_;
     std::optional<SkiaLogicalRect> presented_cursor_rect_;
+    std::vector<CachedLayout> layout_cache_;
 };
 
 } // namespace cind::gui

@@ -152,5 +152,5 @@ command. Interaction state includes prompt kind, input caret, provider, selectio
 errors, and candidates. Buffer state includes resource and lifecycle data; Window state identifies
 each Window's bound View and Buffer.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible
-item window, global item count and selection alongside its terminal-compatible primitives, cell
-geometry, surface, and overlay anchor.
+item window, global item count and selection alongside its cell geometry, surface, and overlay
+anchor. Each frontend projects this semantic content into its native layout.
