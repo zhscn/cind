@@ -85,7 +85,6 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
 
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
-    const CommandId save = define_command(runtime, "file.save");
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = {},
@@ -118,6 +117,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     BufferId resource_buffer;
     std::string resource_path;
     bool buffer_resource_set = false;
+    BufferId saved_buffer;
+    bool buffer_saved = false;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -158,10 +159,21 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              resource_path = std::move(path);
              buffer_resource_set = true;
              return {};
-         }});
+         },
+         .save_buffer =
+             [&](BufferId target_buffer) {
+                 saved_buffer = target_buffer;
+                 buffer_saved = true;
+             }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 16);
+    CHECK(*installed == 17);
+    const CommandId save = require_command(runtime, "file.save");
+
+    const CommandResult saved = runtime.commands().invoke(save, context);
+    REQUIRE(saved.has_value());
+    REQUIRE(buffer_saved);
+    CHECK(saved_buffer == buffer);
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -328,6 +340,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 16);
+    CHECK(snapshot.scripted_commands == 17);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

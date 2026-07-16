@@ -254,7 +254,7 @@ private:
     void after_edit();
     std::optional<std::string> store_kill(std::string text);
     std::optional<std::string> import_clipboard();
-    void save();
+    void save(BufferId buffer);
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
                                                std::optional<LinePosition> position);
     void finish_open(std::string resource, std::string contents, CppIndentStyle style,

@@ -58,6 +58,7 @@ The native module exports:
 (open-file! host window-id path)
 (start-project-search! host project-id window-id query)
 (set-buffer-resource! host buffer-id path)
+(save-buffer! host buffer-id)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -81,7 +82,8 @@ raise a Scheme condition when the ID or requested transition is invalid.
 `path-as-directory` expose platform filesystem syntax without embedding separator rules in Scheme.
 `set-buffer-resource!` normalizes a path, changes the buffer to file-backed storage, derives its
 display name and attaches the matching project. File commands use these primitives to keep prompt
-and save-as policy in Scheme.
+and save-as policy in Scheme. `save-buffer!` snapshots the identified buffer and schedules the
+native atomic-write pipeline without consulting frontend focus.
 
 `ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
 `open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the

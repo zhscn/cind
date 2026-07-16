@@ -113,7 +113,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
                }
-           }}),
+           },
+           .save_buffer = [this](BufferId buffer) { save(buffer); }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -1252,7 +1253,6 @@ void EditorApplication::register_commands() {
                                                                .previous = location_previous})
                               .mode;
 
-    define("file.save", [this](const CommandInvocation&) { save(); });
     define("application.quit", [this](const CommandInvocation&) { request_quit(); });
     define("application.force-quit", [this](const CommandInvocation&) { request_quit(true); });
     define("window.split-below",
@@ -1794,8 +1794,8 @@ std::optional<std::string> EditorApplication::import_clipboard() {
     return std::nullopt;
 }
 
-void EditorApplication::save() {
-    BufferState& state = active_buffer();
+void EditorApplication::save(BufferId buffer) {
+    BufferState& state = state_for(buffer);
     if (state.pending_save) {
         message_ = "save already in progress";
         return;
@@ -1809,7 +1809,6 @@ void EditorApplication::save() {
     const DocumentSnapshot snapshot = runtime_.buffers().get(state.buffer).snapshot();
     Text content = snapshot.content();
     std::string target_path = *resource;
-    const BufferId buffer = state.buffer;
     try {
         state.pending_save.emplace(PendingSave{.content = content, .task = {}});
         state.pending_save->task = async_runtime_.submit({

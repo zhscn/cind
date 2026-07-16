@@ -513,6 +513,26 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     return SCM_UNSPECIFIED;
 }
 
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM save_buffer(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "save-buffer!");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "save-buffer!", 2);
+    if (!host.services.save_buffer) {
+        scm_misc_error("save-buffer!", "buffer-save capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.save_buffer(buffer);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("save-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("save-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -543,10 +563,11 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(start_project_search));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_resource));
+    (void)scm_c_define_gsubr("save-buffer!", 2, 0, 0, reinterpret_cast<scm_t_subr>(save_buffer));
     scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "buffer-resource",
                  "path-parent", "directory-path?", "path-as-directory", "display-buffer!",
                  "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-                 "start-project-search!", "set-buffer-resource!", nullptr);
+                 "start-project-search!", "set-buffer-resource!", "save-buffer!", nullptr);
 }
 
 void initialize_guile() {

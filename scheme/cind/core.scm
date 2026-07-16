@@ -41,6 +41,10 @@
            (open-file! host (context-window context) path)
            (command-completed)))))
 
+(define (file-save host context invocation)
+  (save-buffer! host (context-buffer context))
+  (command-completed))
+
 (define (file-save-as host context invocation)
   (let ((resource (buffer-resource host (context-buffer context))))
     (interaction 'text "Write file: " (if resource resource "") "files" "" #t
@@ -177,6 +181,10 @@
         (list "file.open"
               (lambda (context invocation)
                 (file-open host context invocation))
+              #f)
+        (list "file.save"
+              (lambda (context invocation)
+                (file-save host context invocation))
               #f)
         (list "file.save-as.accept"
               (lambda (context invocation)
