@@ -9,7 +9,6 @@
 #include "ui/text_position.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <filesystem>
 #include <format>
 #include <initializer_list>
@@ -70,7 +69,24 @@ struct LoadedFileData {
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
-    : guile_(runtime_), interaction_(runtime_.interaction_providers()),
+    : guile_(runtime_,
+             {.display_buffer = [this](WindowId window,
+                                       BufferId buffer) -> std::expected<void, std::string> {
+                  try {
+                      if (!show_buffer(window, buffer)) {
+                          return std::unexpected("buffer cannot be displayed");
+                      }
+                      return {};
+                  } catch (const std::exception& exception) {
+                      return std::unexpected(exception.what());
+                  }
+              },
+              .move_caret_to_line =
+                  [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
+                      return move_caret_to_line(view, line, display_column);
+                  },
+              .set_message = [this](std::string message) { message_ = std::move(message); }}),
+      interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
           {.page_rows = [this] { return command_page_rows_; },
@@ -951,6 +967,27 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     return true;
 }
 
+std::expected<void, std::string>
+EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
+                                      std::uint32_t display_column) {
+    try {
+        EditSession& target = session_for(view);
+        const DocumentSnapshot snapshot = target.snapshot();
+        const std::uint32_t target_line = std::min(line, snapshot.content().line_count() - 1);
+        target.set_caret(ui::offset_at_display_column(
+            snapshot.content(),
+            {.line = target_line,
+             .column = static_cast<int>(std::min<std::uint32_t>(
+                 display_column, static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
+            target.style().tab_width));
+        basic_commands_.reset_preferred_column(view);
+        reveal_caret_ = true;
+        return {};
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
+    }
+}
+
 void EditorApplication::apply_position(WindowId window, LinePosition position) {
     if (runtime_.windows().try_get(window) == nullptr) {
         return;
@@ -1429,11 +1466,6 @@ void EditorApplication::register_commands() {
             return begin_save_as(context, invocation);
         });
 
-    switch_buffer_accept_ = runtime_.commands().define(
-        "buffer.switch.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_switch_buffer(context, invocation);
-        });
     define("buffer.next", [this](const CommandInvocation&) { switch_relative(1); });
     define("buffer.previous", [this](const CommandInvocation&) { switch_relative(-1); });
     runtime_.commands().define(
@@ -1449,11 +1481,6 @@ void EditorApplication::register_commands() {
                           : CommandResult{std::unexpected(CommandError{result.error()})};
         });
 
-    goto_line_accept_ = runtime_.commands().define(
-        "cursor.goto-line.accept",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept_goto_line(context, invocation);
-        });
     project_find_file_accept_ = runtime_.commands().define(
         "project.find-file.accept",
         [this](CommandContext& context, const CommandInvocation& invocation) {
@@ -1470,15 +1497,6 @@ void EditorApplication::register_commands() {
         "project.search.accept",
         [this](CommandContext& context, const CommandInvocation& invocation) {
             return accept_project_search(context, invocation);
-        });
-    help_keys_accept_ = runtime_.commands().define(
-        "help.keys.accept",
-        [this](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
-            const std::string* binding = submitted_string(invocation);
-            if (binding != nullptr) {
-                message_ = *binding;
-            }
-            return CommandCompleted{};
         });
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
@@ -1966,62 +1984,6 @@ CommandResult EditorApplication::accept_save_as(CommandContext& context,
         return std::unexpected(CommandError{exception.what()});
     }
     save();
-    return CommandCompleted{};
-}
-
-CommandResult EditorApplication::accept_switch_buffer(CommandContext&,
-                                                      const CommandInvocation& invocation) {
-    const std::string* name = submitted_string(invocation);
-    if (name == nullptr) {
-        return std::unexpected(CommandError{"switch buffer requires a buffer name"});
-    }
-    const std::optional<BufferId> buffer = runtime_.buffers().find_by_name(*name);
-    if (!buffer || !switch_buffer(*buffer)) {
-        return std::unexpected(CommandError{std::format("unknown buffer '{}'", *name)});
-    }
-    return CommandCompleted{};
-}
-
-CommandResult EditorApplication::accept_goto_line(CommandContext& context,
-                                                  const CommandInvocation& invocation) {
-    const std::string* input = submitted_string(invocation);
-    if (input == nullptr || input->empty()) {
-        return std::unexpected(CommandError{"line number is empty"});
-    }
-    std::string_view line_text = *input;
-    std::string_view column_text;
-    if (const std::size_t separator = line_text.find_first_of(":,");
-        separator != std::string_view::npos) {
-        column_text = line_text.substr(separator + 1);
-        line_text = line_text.substr(0, separator);
-    }
-    std::uint32_t line = 0;
-    const auto [line_end, line_error] =
-        std::from_chars(line_text.data(), line_text.data() + line_text.size(), line);
-    if (line_error != std::errc() || line_end != line_text.data() + line_text.size() || line == 0) {
-        return std::unexpected(CommandError{"invalid line number"});
-    }
-    std::uint32_t column = 1;
-    if (!column_text.empty()) {
-        const auto [column_end, column_error] =
-            std::from_chars(column_text.data(), column_text.data() + column_text.size(), column);
-        if (column_error != std::errc() || column_end != column_text.data() + column_text.size() ||
-            column == 0) {
-            return std::unexpected(CommandError{"invalid column number"});
-        }
-    }
-
-    EditSession& active = session_for(context.view_id());
-    const DocumentSnapshot snapshot = active.snapshot();
-    const std::uint32_t target_line = std::min(line - 1, snapshot.content().line_count() - 1);
-    active.set_caret(ui::offset_at_display_column(
-        snapshot.content(),
-        {.line = target_line,
-         .column = static_cast<int>(std::min<std::uint32_t>(
-             column - 1, static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
-        active.style().tab_width));
-    basic_commands_.reset_preferred_column(context.view_id());
-    reveal_caret_ = true;
     return CommandCompleted{};
 }
 

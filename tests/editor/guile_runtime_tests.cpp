@@ -4,8 +4,10 @@
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
+#include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 using namespace cind;
 
@@ -83,24 +85,45 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
-    (void)define_command(runtime, "buffer.switch.accept");
-    (void)define_command(runtime, "cursor.goto-line.accept");
     (void)define_command(runtime, "project.search.accept");
-    (void)define_command(runtime, "help.keys.accept");
-
-    GuileRuntime guile(runtime);
-    const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
-    REQUIRE(installed.has_value());
-    CHECK(*installed == 6);
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = {},
                                                       .kind = BufferKind::Scratch,
                                                       .resource_uri = std::nullopt,
                                                       .read_only = false});
+    const BufferId other = runtime.buffers().create({.name = "other",
+                                                     .initial_text = {},
+                                                     .kind = BufferKind::Scratch,
+                                                     .resource_uri = std::nullopt,
+                                                     .read_only = false});
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
+
+    std::pair<WindowId, BufferId> displayed;
+    bool buffer_displayed = false;
+    std::tuple<ViewId, std::uint32_t, std::uint32_t> moved;
+    bool caret_moved = false;
+    std::string message;
+    GuileRuntime guile(
+        runtime,
+        {.display_buffer = [&](WindowId target_window,
+                               BufferId target_buffer) -> std::expected<void, std::string> {
+             displayed = std::pair{target_window, target_buffer};
+             buffer_displayed = true;
+             return {};
+         },
+         .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
+                                   std::uint32_t column) -> std::expected<void, std::string> {
+             moved = std::tuple{target_view, line, column};
+             caret_moved = true;
+             return {};
+         },
+         .set_message = [&](std::string value) { message = std::move(value); }});
+    const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
+    REQUIRE(installed.has_value());
+    CHECK(*installed == 9);
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -124,6 +147,42 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(dispatch != nullptr);
     CHECK(dispatch->command == save);
 
+    const CommandResult switched = runtime.commands().invoke(
+        require_command(runtime, "buffer.switch.accept"), context,
+        CommandInvocation{.arguments = {std::string("other")}, .repeat_count = std::nullopt});
+    REQUIRE(switched.has_value());
+    REQUIRE(buffer_displayed);
+    CHECK(displayed.first == window);
+    CHECK(displayed.second == other);
+
+    const CommandResult unknown_buffer = runtime.commands().invoke(
+        require_command(runtime, "buffer.switch.accept"), context,
+        CommandInvocation{.arguments = {std::string("missing")}, .repeat_count = std::nullopt});
+    REQUIRE_FALSE(unknown_buffer.has_value());
+    CHECK(unknown_buffer.error().message == "unknown buffer 'missing'");
+
+    const CommandResult moved_to_line = runtime.commands().invoke(
+        require_command(runtime, "cursor.goto-line.accept"), context,
+        CommandInvocation{.arguments = {std::string("4:7")}, .repeat_count = std::nullopt});
+    REQUIRE(moved_to_line.has_value());
+    REQUIRE(caret_moved);
+    CHECK(std::get<0>(moved) == view);
+    CHECK(std::get<1>(moved) == 3);
+    CHECK(std::get<2>(moved) == 6);
+
+    const CommandResult invalid_line = runtime.commands().invoke(
+        require_command(runtime, "cursor.goto-line.accept"), context,
+        CommandInvocation{.arguments = {std::string("0")}, .repeat_count = std::nullopt});
+    REQUIRE_FALSE(invalid_line.has_value());
+    CHECK(invalid_line.error().message == "invalid line number");
+
+    const CommandResult help = runtime.commands().invoke(
+        require_command(runtime, "help.keys.accept"), context,
+        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")},
+                          .repeat_count = std::nullopt});
+    REQUIRE(help.has_value());
+    CHECK(message == "C-x C-s  file.save");
+
     const CommandId project_search = require_command(runtime, "project.search");
     CHECK_FALSE(runtime.commands().enabled(project_search, context));
     const ProjectId project =
@@ -133,6 +192,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 6);
+    CHECK(snapshot.scripted_commands == 9);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

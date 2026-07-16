@@ -432,6 +432,32 @@ TEST_CASE("which-key help and command palette use searchable interaction provide
               .name == "application.global");
 }
 
+TEST_CASE("scripted caret and message commands use application host capabilities") {
+    EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
+    EditorRuntime& runtime = application.runtime();
+    CommandContext context(runtime, application.window_id(), application.buffer_id(),
+                           application.view_id());
+
+    const CommandId goto_line =
+        runtime.commands().find("cursor.goto-line.accept").value_or(CommandId{});
+    REQUIRE(goto_line);
+    const CommandResult moved = runtime.commands().invoke(
+        goto_line, context,
+        CommandInvocation{.arguments = {std::string("2:2")}, .repeat_count = std::nullopt});
+    REQUIRE(moved.has_value());
+    CHECK(application.session().caret() == TextOffset{5});
+    CHECK(application.reveal_caret());
+
+    const CommandId help = runtime.commands().find("help.keys.accept").value_or(CommandId{});
+    REQUIRE(help);
+    const CommandResult explained = runtime.commands().invoke(
+        help, context,
+        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")},
+                          .repeat_count = std::nullopt});
+    REQUIRE(explained.has_value());
+    CHECK(application.message() == "C-x C-s  file.save");
+}
+
 TEST_CASE("interaction local keymap edits its own input") {
     EditorApplication application = make_application("sample.cc", "text");
     const TextOffset document_caret = application.session().caret();
@@ -691,7 +717,17 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     application.insert_text("B");
     application.session().view().viewport().left_column = 3;
 
-    REQUIRE(application.switch_buffer(first));
+    const CommandId switch_buffer =
+        application.runtime().commands().find("buffer.switch.accept").value_or(CommandId{});
+    REQUIRE(switch_buffer);
+    CommandContext switch_context(application.runtime(), application.window_id(),
+                                  application.buffer_id(), application.view_id());
+    const CommandResult switched = application.runtime().commands().invoke(
+        switch_buffer, switch_context,
+        CommandInvocation{.arguments = {application.runtime().buffers().get(first).name()},
+                          .repeat_count = std::nullopt});
+    INFO((switched ? std::string{} : switched.error().message));
+    REQUIRE(switched.has_value());
     CHECK(application.session().snapshot().content().to_string() == "Afirst");
     CHECK(application.session().caret().value == 1);
     CHECK(application.session().view().viewport().top_line_offset == doctest::Approx(0.25F));

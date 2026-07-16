@@ -225,6 +225,8 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
+    std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
+                                                        std::uint32_t display_column);
     void destroy_window(WindowId window);
     std::expected<void, std::string> start_project_search(ProjectId project, std::string query,
                                                           WindowId target_window);
@@ -267,8 +269,6 @@ private:
     CommandResult accept_open_file(CommandContext&, const CommandInvocation&);
     CommandResult begin_save_as(CommandContext&, const CommandInvocation&) const;
     CommandResult accept_save_as(CommandContext&, const CommandInvocation&);
-    CommandResult accept_switch_buffer(CommandContext&, const CommandInvocation&);
-    CommandResult accept_goto_line(CommandContext&, const CommandInvocation&);
     CommandResult begin_project_find_file(CommandContext&, const CommandInvocation&);
     CommandResult accept_project_find_file(CommandContext&, const CommandInvocation&);
     CommandResult accept_project_search(CommandContext&, const CommandInvocation&);
@@ -295,9 +295,6 @@ private:
     KeymapId interaction_picker_keymap_;
     CommandId open_file_accept_;
     CommandId save_as_accept_;
-    CommandId switch_buffer_accept_;
-    CommandId help_keys_accept_;
-    CommandId goto_line_accept_;
     CommandId project_find_file_accept_;
     CommandId project_search_accept_;
     ModeId cpp_mode_;

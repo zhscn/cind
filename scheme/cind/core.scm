@@ -4,11 +4,16 @@
   #:export (install-core-commands!
             install-default-keymaps!))
 
-(define (command-palette-accept context invocation)
+(define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
-    (if (and (> (vector-length arguments) 0)
-             (string? (vector-ref arguments (- (vector-length arguments) 1))))
-        (command-dispatch (vector-ref arguments (- (vector-length arguments) 1)))
+    (and (> (vector-length arguments) 0)
+         (let ((argument (vector-ref arguments (- (vector-length arguments) 1))))
+           (and (string? argument) argument)))))
+
+(define (command-palette-accept context invocation)
+  (let ((name (last-string-argument invocation)))
+    (if name
+        (command-dispatch name)
         (command-error "command palette requires a command name"))))
 
 (define (command-palette context invocation)
@@ -19,9 +24,65 @@
   (interaction 'picker "Switch buffer: " "" "buffers" "buffers" #f
                "buffer.switch.accept"))
 
+(define (buffer-switch-accept host context invocation)
+  (let ((name (last-string-argument invocation)))
+    (if (not name)
+        (command-error "switch buffer requires a buffer name")
+        (let ((buffer (buffer-id-by-name host name)))
+          (if buffer
+              (begin
+                (display-buffer! host (context-window context) buffer)
+                (command-completed))
+              (command-error (string-append "unknown buffer '" name "'")))))))
+
 (define (goto-line context invocation)
   (interaction 'text "Go to line: " "" "line-numbers" "" #t
                "cursor.goto-line.accept"))
+
+(define max-uint32 4294967295)
+
+(define (decimal-uint32 text)
+  (and (> (string-length text) 0)
+       (let loop ((index 0))
+         (if (= index (string-length text))
+             (let ((value (string->number text)))
+               (and value (<= value max-uint32) value))
+             (let ((character (string-ref text index)))
+               (and (char>=? character #\0)
+                    (char<=? character #\9)
+                    (loop (+ index 1))))))))
+
+(define (position-separator text)
+  (let loop ((index 0))
+    (if (= index (string-length text))
+        #f
+        (let ((character (string-ref text index)))
+          (if (or (char=? character #\:)
+                  (char=? character #\,))
+              index
+              (loop (+ index 1)))))))
+
+(define (goto-line-accept host context invocation)
+  (let ((input (last-string-argument invocation)))
+    (if (or (not input) (= (string-length input) 0))
+        (command-error "line number is empty")
+        (let* ((separator (position-separator input))
+               (line-text (if separator (substring input 0 separator) input))
+               (column-text (if separator
+                                (substring input (+ separator 1) (string-length input))
+                                ""))
+               (line (decimal-uint32 line-text))
+               (column (if (= (string-length column-text) 0)
+                           1
+                           (decimal-uint32 column-text))))
+          (cond ((or (not line) (= line 0))
+                 (command-error "invalid line number"))
+                ((or (not column) (= column 0))
+                 (command-error "invalid column number"))
+                (else
+                 (move-caret-to-line! host (context-view context)
+                                      (- line 1) (- column 1))
+                 (command-completed)))))))
 
 (define (project-search context invocation)
   (interaction 'text "Project search: " "" "project-search" "" #t
@@ -31,25 +92,44 @@
   (interaction 'picker "Key bindings: " "" "key-bindings" "key-bindings" #f
                "help.keys.accept"))
 
+(define (help-keys-accept host context invocation)
+  (let ((binding (last-string-argument invocation)))
+    (if binding
+        (set-message! host binding))
+    (command-completed)))
+
 (define (context-has-project? context)
   (and (context-project context) #t))
 
-(define core-commands
+(define (core-commands host)
   (list (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
+        (list "buffer.switch.accept"
+              (lambda (context invocation)
+                (buffer-switch-accept host context invocation))
+              #f)
         (list "buffer.switch" buffer-switch #f)
+        (list "cursor.goto-line.accept"
+              (lambda (context invocation)
+                (goto-line-accept host context invocation))
+              #f)
         (list "cursor.goto-line" goto-line #f)
         (list "project.search" project-search context-has-project?)
+        (list "help.keys.accept"
+              (lambda (context invocation)
+                (help-keys-accept host context invocation))
+              #f)
         (list "help.keys" help-keys #f)))
 
 (define (install-core-commands! host)
-  (for-each (lambda (definition)
-              (define-command! host
-                               (list-ref definition 0)
-                               (list-ref definition 1)
-                               (list-ref definition 2)))
-            core-commands)
-  (length core-commands))
+  (let ((commands (core-commands host)))
+    (for-each (lambda (definition)
+                (define-command! host
+                                 (list-ref definition 0)
+                                 (list-ref definition 1)
+                                 (list-ref definition 2)))
+              commands)
+    (length commands)))
 
 (define editor-bindings
   '(("C-x C-s" . "file.save")

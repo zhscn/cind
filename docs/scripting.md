@@ -46,6 +46,10 @@ The native module exports:
 ```scheme
 (define-command! host command-name execute enabled)
 (bind-key-if-command! host keymap-name key-sequence command-name)
+(buffer-id-by-name host name)
+(display-buffer! host window-id buffer-id)
+(move-caret-to-line! host view-id zero-based-line zero-based-display-column)
+(set-message! host message)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -57,6 +61,13 @@ with their owning application.
 command returns `#f`, which lets a policy describe bindings for optional application capabilities.
 An absent keymap or an invalid key sequence raises a Scheme condition. A successful binding returns
 `#t`.
+
+`buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
+that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
+moves a view caret using zero-based logical line and display-column coordinates, clamps the line to
+the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
+application message. Mutating capabilities execute synchronously on the owning editor thread and
+raise a Scheme condition when the ID or requested transition is invalid.
 
 ## Scripted commands
 
@@ -79,10 +90,10 @@ and accept commands are resolved through the invoking `EditorRuntime`; a script 
 foreign registry ID. Scheme conditions and bridge exceptions become `CommandError` values and are
 retained in `editor.scripting.last_error`.
 
-`(cind core)` defines the command palette and its dispatching accept command, buffer-switch prompt,
-goto-line prompt, project-search prompt and project-aware enabled predicate, and key-help prompt.
-Their accept commands use native adapters for filesystem, buffer, caret, project-search, and message
-mutation.
+`(cind core)` defines the command palette and its dispatching accept command, buffer switching and
+its accept command, goto-line parsing and movement, the project-search prompt and project-aware
+enabled predicate, and key-help selection and message presentation. Project-search acceptance is a
+native asynchronous adapter that starts filesystem work through the editor runtime.
 
 The `(cind core)` module also owns the default Emacs-style editor and application keymaps. C++
 creates the registries and focus hierarchy, then asks the Scheme policy to populate them.

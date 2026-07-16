@@ -1,8 +1,11 @@
 #pragma once
 
+#include "editor/ids.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -11,6 +14,13 @@
 namespace cind {
 
 class EditorRuntime;
+
+struct GuileHostServices {
+    std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
+    std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
+        move_caret_to_line;
+    std::function<void(std::string)> set_message;
+};
 
 struct GuileRuntimeSnapshot {
     std::string engine;
@@ -27,7 +37,7 @@ struct GuileRuntimeSnapshot {
 // explicit host capabilities and never a process-global current editor.
 class GuileRuntime {
 public:
-    explicit GuileRuntime(EditorRuntime& runtime);
+    explicit GuileRuntime(EditorRuntime& runtime, GuileHostServices services = {});
     ~GuileRuntime();
 
     GuileRuntime(const GuileRuntime&) = delete;

@@ -36,6 +36,7 @@ struct GuileState {
 struct HostLease {
     EditorRuntime* runtime = nullptr;
     std::shared_ptr<GuileState> state;
+    GuileHostServices services;
     std::size_t commands_installed = 0;
     std::size_t bindings_installed = 0;
 };
@@ -63,6 +64,37 @@ bool scheme_true(SCM value) {
 
 bool scheme_boolean(SCM value) {
     return (scm_is_bool)(value) != 0;
+}
+
+SCM entity_id(std::uint32_t slot, std::uint32_t generation) {
+    SCM result = scm_c_make_vector(2, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_uint32(slot));
+    scm_c_vector_set_x(result, 1, scm_from_uint32(generation));
+    return result;
+}
+
+template <typename Tag>
+EntityId<Tag> entity_id_from_scheme(SCM value, const char* caller, int position) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 2) {
+        scm_wrong_type_arg_msg(caller, position, value, "two-element entity ID vector");
+    }
+    const SCM slot = scm_c_vector_ref(value, 0);
+    const SCM generation = scm_c_vector_ref(value, 1);
+    if (scm_is_unsigned_integer(slot, 0, std::numeric_limits<std::uint32_t>::max()) == 0 ||
+        scm_is_unsigned_integer(generation, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "two-element entity ID vector");
+    }
+    const EntityId<Tag> result{.slot = scm_to_uint32(slot),
+                               .generation = scm_to_uint32(generation)};
+    if (!result.valid()) {
+        scm_misc_error(caller, "entity ID is invalid", SCM_EOL);
+    }
+    return result;
+}
+
+void raise_host_error(const char* caller, const std::string& message) {
+    scm_misc_error(caller, "host operation failed: ~A",
+                   scm_list_1(scm_from_utf8_string(message.c_str())));
 }
 
 void finalize_host(SCM object) {
@@ -190,6 +222,103 @@ SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM c
     return SCM_BOOL_F;
 }
 
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_id_by_name(SCM host_object, SCM name_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("buffer-id-by-name", 2, name_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "buffer-id-by-name");
+        const std::optional<BufferId> buffer =
+            host.runtime->buffers().find_by_name(scheme_string(name_value));
+        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-id-by-name", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-id-by-name", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "display-buffer!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "display-buffer!", 2);
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "display-buffer!", 3);
+    if (!host.services.display_buffer) {
+        scm_misc_error("display-buffer!", "display-buffer capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> displayed =
+            host.services.display_buffer(window, buffer);
+        if (!displayed) {
+            raise_host_error("display-buffer!", displayed.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("display-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("display-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM column_value) {
+    HostLease& host = require_host(host_object, "move-caret-to-line!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-to-line!", 2);
+    if (scm_is_unsigned_integer(line_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("move-caret-to-line!", 3, line_value, "unsigned 32-bit integer");
+    }
+    if (scm_is_unsigned_integer(column_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("move-caret-to-line!", 4, column_value, "unsigned 32-bit integer");
+    }
+    if (!host.services.move_caret_to_line) {
+        scm_misc_error("move-caret-to-line!", "caret capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> moved = host.services.move_caret_to_line(
+            view, scm_to_uint32(line_value), scm_to_uint32(column_value));
+        if (!moved) {
+            raise_host_error("move-caret-to-line!", moved.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("move-caret-to-line!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-caret-to-line!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
+// and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_message(SCM host_object, SCM message_value) {
+    if (!scm_is_string(message_value)) {
+        scm_wrong_type_arg_msg("set-message!", 2, message_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-message!");
+        if (!host.services.set_message) {
+            scm_misc_error("set-message!", "message capability is unavailable", SCM_EOL);
+        }
+        host.services.set_message(scheme_string(message_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-message!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-message!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -199,7 +328,15 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(define_command));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
-    scm_c_export("define-command!", "bind-key-if-command!", nullptr);
+    (void)scm_c_define_gsubr("buffer-id-by-name", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_id_by_name));
+    (void)scm_c_define_gsubr("display-buffer!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(display_buffer));
+    (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_caret_to_line));
+    (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
+    scm_c_export("define-command!", "bind-key-if-command!", "buffer-id-by-name", "display-buffer!",
+                 "move-caret-to-line!", "set-message!", nullptr);
 }
 
 void initialize_guile() {
@@ -229,13 +366,6 @@ struct GuileCall {
     std::exception_ptr cpp_failure;
     std::string error;
 };
-
-SCM entity_id(std::uint32_t slot, std::uint32_t generation) {
-    SCM result = scm_c_make_vector(2, SCM_UNSPECIFIED);
-    scm_c_vector_set_x(result, 0, scm_from_uint32(slot));
-    scm_c_vector_set_x(result, 1, scm_from_uint32(generation));
-    return result;
-}
 
 SCM command_context_value(const CommandContext& context) {
     const std::optional<ProjectId> project = context.project_id();
@@ -519,7 +649,8 @@ bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_
 
 class GuileRuntime::Impl {
 public:
-    explicit Impl(EditorRuntime& runtime) : state_(std::make_shared<GuileState>()) {
+    explicit Impl(EditorRuntime& runtime, GuileHostServices services)
+        : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module : {"command", "core"}) {
@@ -533,7 +664,8 @@ public:
             }
         }
         version_ = scheme_string(scm_version());
-        lease_ = new HostLease{.runtime = &runtime, .state = state_};
+        lease_ =
+            new HostLease{.runtime = &runtime, .state = state_, .services = std::move(services)};
         host_ = scm_make_foreign_object_1(host_type, lease_);
         (void)scm_gc_protect_object(host_);
     }
@@ -619,7 +751,8 @@ private:
     std::uint64_t binding_revision_ = 0;
 };
 
-GuileRuntime::GuileRuntime(EditorRuntime& runtime) : impl_(std::make_unique<Impl>(runtime)) {}
+GuileRuntime::GuileRuntime(EditorRuntime& runtime, GuileHostServices services)
+    : impl_(std::make_unique<Impl>(runtime, std::move(services))) {}
 
 GuileRuntime::~GuileRuntime() = default;
 
