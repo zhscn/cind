@@ -223,29 +223,21 @@ private:
         command_keep_message_ = false;
 
         if (key.kind == KeyKind::Char) {
-            const bool interaction_active = application_.interaction().active();
-            if (!interaction_active && !command_loop_.pending_sequence().empty() &&
-                key.text.size() == 1) {
-                char character = key.text.front();
+            if (!key.text.empty()) {
+                char32_t character = ui::decode_utf8(key.text).cp;
                 KeyModifiers modifiers;
-                if (character >= 'A' && character <= 'Z') {
-                    character =
-                        static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+                if (character >= U'A' && character <= U'Z') {
+                    character = U'a' + (character - U'A');
                     modifiers |= KeyModifier::Shift;
                 }
                 const bool handled = application_.handle_key(
-                    KeyStroke::character_key(static_cast<unsigned char>(character), modifiers),
-                    text_rows());
+                    KeyStroke::character_key(character, modifiers), text_rows());
+                if (!handled) {
+                    application_.insert_text(key.text);
+                }
                 command_keep_message_ =
-                    handled && (!message_.empty() || !command_loop_.pending_sequence().empty());
-            } else if (!interaction_active && !command_loop_.pending_sequence().empty()) {
-                message_ = std::format("undefined key: {} {}",
-                                       command_loop_.pending_sequence_text(), key.text);
-                command_loop_.cancel_pending();
-                command_keep_message_ = true;
-            } else {
-                application_.insert_text(key.text);
-                command_keep_message_ = interaction_active;
+                    application_.interaction().active() ||
+                    (handled && (!message_.empty() || !command_loop_.pending_sequence().empty()));
             }
         } else if (key.kind == KeyKind::Eof) {
             application_.request_quit(true);

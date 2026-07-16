@@ -390,13 +390,18 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
         }
     }
     CommandContext context = command_context();
-    const bool interaction_focus = interaction_.active();
     const bool consumed = handle_loop_result(command_loop_.dispatch(key, context));
     sync_keymaps();
-    // An interaction is a capturing input focus. Unbound modified keys do
-    // not fall through to the window, while printable text still arrives on
-    // the frontend's text-input channel.
-    return consumed || interaction_focus;
+    return consumed;
+}
+
+TextInputPolicy EditorApplication::text_input_policy() const {
+    if (interaction_.active()) {
+        return TextInputPolicy::Accept;
+    }
+    const View& active_view = runtime_.views().get(view_id());
+    const std::optional<InputStateId> state = active_view.input_states().top();
+    return state ? runtime_.input_states().definition(*state).text_input : TextInputPolicy::Accept;
 }
 
 void EditorApplication::insert_text(std::string_view text) {
@@ -407,6 +412,9 @@ void EditorApplication::insert_text(std::string_view text) {
         CommandContext context = command_context();
         interaction_.insert(text, context);
         last_key_ = "text";
+        return;
+    }
+    if (text_input_policy() == TextInputPolicy::Ignore) {
         return;
     }
     if (session().buffer().read_only()) {

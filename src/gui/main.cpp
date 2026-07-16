@@ -142,6 +142,22 @@ std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers)
         return punctuation(U'-', U'_');
     case SDL_SCANCODE_EQUALS:
         return punctuation(U'=', U'+');
+    case SDL_SCANCODE_LEFTBRACKET:
+        return punctuation(U'[', U'{');
+    case SDL_SCANCODE_RIGHTBRACKET:
+        return punctuation(U']', U'}');
+    case SDL_SCANCODE_BACKSLASH:
+        return punctuation(U'\\', U'|');
+    case SDL_SCANCODE_SEMICOLON:
+        return punctuation(U';', U':');
+    case SDL_SCANCODE_APOSTROPHE:
+        return punctuation(U'\'', U'"');
+    case SDL_SCANCODE_GRAVE:
+        return punctuation(U'`', U'~');
+    case SDL_SCANCODE_COMMA:
+        return punctuation(U',', U'<');
+    case SDL_SCANCODE_PERIOD:
+        return punctuation(U'.', U'>');
     case SDL_SCANCODE_0:
         return punctuation(U'0', U')');
     case SDL_SCANCODE_1:
@@ -329,13 +345,11 @@ private:
             return {true, true};
         case SDL_EVENT_KEY_DOWN: {
             suppress_text_input_ = false;
-            const bool continued_sequence = editor_.has_pending_key_sequence();
             const std::optional<KeyStroke> key = editor_key(event.key.scancode, event.key.mod);
             const bool handled = key && editor_.handle_key(*key, page_rows_);
-            constexpr SDL_Keymod command_modifiers = static_cast<SDL_Keymod>(
-                SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI);
-            suppress_text_input_ = handled && continued_sequence && key &&
-                                   key->code == KeyCode::Character &&
+            constexpr SDL_Keymod command_modifiers =
+                static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI);
+            suppress_text_input_ = handled && key && key->code == KeyCode::Character &&
                                    (event.key.mod & command_modifiers) == 0;
             return {handled, handled};
         }
@@ -903,12 +917,8 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
                 std::format("--screenshot-keys could not parse '{}'", key_notation));
         }
         for (const KeyStroke& key : *keys) {
-            // Mirror the interactive routing: a plain character also arrives
-            // as text input unless a pending key sequence consumed it.
-            const bool continued_sequence = editor.has_pending_key_sequence();
             const bool handled = editor.handle_key(key, rows - 2);
-            if (key.code == KeyCode::Character && key.modifiers.bits == 0 &&
-                !(handled && continued_sequence)) {
+            if (key.code == KeyCode::Character && key.modifiers.bits == 0 && !handled) {
                 std::string utf8;
                 const char32_t point = key.character;
                 if (point < 0x80) {

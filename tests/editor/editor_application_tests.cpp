@@ -150,6 +150,45 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     CHECK(selected == 1);
 }
 
+TEST_CASE("text input follows the focused input state policy") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    int invoked = 0;
+    const CommandId command = runtime.commands().define(
+        "test.normal.x", [&](CommandContext&, const CommandInvocation&) -> CommandResult {
+            ++invoked;
+            return CommandCompleted{};
+        });
+    const KeymapId keymap = runtime.keymaps().define("test.normal.map");
+    runtime.keymaps().bind(keymap, "x", command);
+    const InputStateId normal =
+        runtime.input_states().define({.name = "test-normal",
+                                       .keymaps = {keymap},
+                                       .text_input = TextInputPolicy::Ignore,
+                                       .cursor = InputCursorShape::Block,
+                                       .indicator = "N",
+                                       .handler = {}});
+    runtime.views().set_base_input_state(application.view_id(), normal);
+
+    CHECK(application.text_input_policy() == TextInputPolicy::Ignore);
+    CHECK(application.handle_key(KeyStroke::character_key(U'x'), 10));
+    application.insert_text("x");
+    CHECK(invoked == 1);
+    CHECK(application.session().snapshot().content().to_string() == "text");
+
+    CHECK_FALSE(application.handle_key(KeyStroke::character_key(U'z'), 10));
+    application.insert_text("z");
+    CHECK(application.session().snapshot().content().to_string() == "text");
+
+    send_keys(application, "M-x");
+    REQUIRE(application.interaction().active());
+    CHECK(application.text_input_policy() == TextInputPolicy::Accept);
+    CHECK_FALSE(application.handle_key(KeyStroke::character_key(U'z'), 10));
+    application.insert_text("z");
+    CHECK(application.interaction().state()->input.text() == "z");
+    CHECK(application.session().snapshot().content().to_string() == "text");
+}
+
 TEST_CASE("background saving is independent of a graphical event loop") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /

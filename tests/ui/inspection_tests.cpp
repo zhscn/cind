@@ -50,6 +50,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .active_window_slot = 0,
         .active_window_generation = 1,
         .input_focus = "interaction",
+        .text_input_policy = "accept",
         .command_loop =
             {.keymaps = {"interaction.picker", "application.global"},
              .layers = {{.name = "interaction.picker",

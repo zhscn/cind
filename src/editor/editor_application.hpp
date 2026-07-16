@@ -113,6 +113,7 @@ public:
     void refresh_default_keymap();
 
     bool handle_key(KeyStroke key, int page_rows);
+    TextInputPolicy text_input_policy() const;
     void insert_text(std::string_view text);
     void reset_preferred_column();
 

@@ -74,6 +74,14 @@ runs before layered lookup and returns pass, consume, dispatch-command or an err
 the state layers and continues through the command loop. Consuming and errors clear pending chords;
 dispatch-command enters the same checked command execution path as keymap lookup.
 
+Every normalized keystroke enters this dispatch path, including printable characters. A consumed
+character ends at the command loop; a graphical frontend discards its paired text-input event. An
+unconsumed character may subsequently arrive as UTF-8 text, and `EditorApplication::insert_text`
+consults the focused input state's `accept` or `ignore` text policy before editing. TUI input applies
+the same contract in one step by inserting the decoded character only after dispatch leaves it
+unconsumed. Text input remains accepted while an interaction owns focus, independently of the
+obscured document's state.
+
 An interaction uses its local map followed by `application.global`; picker maps inherit the common
 interaction text map. Window, View, state, Buffer, and mode maps belonging to the obscured document
 are not active while the interaction owns focus, and document input-state handlers are bypassed, so

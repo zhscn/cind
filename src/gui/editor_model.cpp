@@ -274,7 +274,9 @@ void EditorModel::insert_text(std::string_view text) {
 }
 
 void EditorModel::set_preedit(std::string_view text) {
-    preedit_ = text.empty() ? std::string() : std::format("IME · {}", text);
+    preedit_ = text.empty() || application_.text_input_policy() == TextInputPolicy::Ignore
+                   ? std::string()
+                   : std::format("IME · {}", text);
 }
 
 void EditorModel::click(const ui::HitTarget& target) {
@@ -471,6 +473,8 @@ EditorStateSnapshot EditorModel::inspect() {
             .active_window_slot = active_window.slot,
             .active_window_generation = active_window.generation,
             .input_focus = std::string(application_.input_focus()),
+            .text_input_policy =
+                application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
             .command_loop = std::move(command_state),
             .scripting = std::move(scripting_state),
             .interaction = std::move(interaction_state),

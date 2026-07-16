@@ -445,6 +445,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += std::format(",\"active_window\":{{\"slot\":{},\"generation\":{}}},\"input_focus\":",
                           editor.active_window_slot, editor.active_window_generation);
     append_json_string(output, editor.input_focus);
+    output += ",\"text_input_policy\":";
+    append_json_string(output, editor.text_input_policy);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
     output += ",\"scripting\":";
@@ -2206,6 +2208,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << frame.editor.viewport.top_line_offset
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
     output << "    focus=" << printable(frame.editor.input_focus)
+           << " text-input=" << printable(frame.editor.text_input_policy)
            << " window:" << frame.editor.active_window_slot << ':'
            << frame.editor.active_window_generation << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""

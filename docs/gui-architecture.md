@@ -38,6 +38,12 @@ buffer lifecycle, view state, window bindings, command loop and active interacti
 frontends translate native events into `KeyStroke`, UTF-8 text input, scroll deltas and semantic
 pointer targets. Editing commands do not inspect SDL events or rendering geometry.
 
+Keyboard events always enter `EditorApplication::handle_key` before any paired text input is
+committed. A consumed printable key suppresses its paired SDL text event. Unconsumed UTF-8 text,
+IME commits and paste data enter `EditorApplication::insert_text`, which applies the focused input
+state's text policy. Interaction text is accepted through the same entry point while the interaction
+owns focus.
+
 `EditorModel` adapts the application state to the standard editor scene. It owns only presentation
 state that belongs to this frontend composition, such as the popup list viewport and line-sign
 cache. The document caret, selection, viewport and interaction input remain owned by their editor
