@@ -43,7 +43,12 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .message = "",
         .preedit = "",
         .last_key = "text",
+        .active_window_slot = 0,
+        .active_window_generation = 1,
+        .input_focus = "interaction",
         .command_loop = {.keymaps = {"editor.default"},
+                         .layers = {{.name = "interaction.picker", .scope = "interaction"}},
+                         .override_keymaps = {"editor.system"},
                          .pending_keys = "C-x",
                          .pending_keymap = "editor.default",
                          .repeat_count = 4,
@@ -62,11 +67,19 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .candidates = {{.value = "file.save", .label = "file.save", .detail = "command"}}},
         .buffers = {{.buffer_slot = 0,
                      .buffer_generation = 1,
+                     .view_present = true,
                      .view_slot = 0,
                      .view_generation = 1,
                      .name = "sample.cc",
                      .resource = "/tmp/sample.cc",
                      .modified = true,
+                     .active = true}},
+        .windows = {{.window_slot = 0,
+                     .window_generation = 1,
+                     .view_slot = 0,
+                     .view_generation = 1,
+                     .buffer_slot = 0,
+                     .buffer_generation = 1,
                      .active = true}},
     };
     Scene scene;
@@ -157,7 +170,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":11") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":12") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);
@@ -181,6 +194,9 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");
     REQUIRE(command_loop.ok);
     CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
+    CHECK(command_loop.payload.find("\"scope\":\"interaction\"") != std::string::npos);
+    CHECK(command_loop.payload.find("\"override_keymaps\":[\"editor.system\"]") !=
+          std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);
@@ -189,6 +205,14 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse buffers = run_inspection_query(hub, "get editor.buffers");
     REQUIRE(buffers.ok);
     CHECK(buffers.payload.find("\"name\":\"sample.cc\"") != std::string::npos);
+
+    const InspectionResponse windows = run_inspection_query(hub, "get editor.windows");
+    REQUIRE(windows.ok);
+    CHECK(windows.payload.find("\"active\":true") != std::string::npos);
+
+    const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
+    REQUIRE(focus.ok);
+    CHECK(focus.payload.find("\"target\":\"interaction\"") != std::string::npos);
 
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);

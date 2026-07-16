@@ -26,11 +26,19 @@ BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text)
 EditSession::EditSession(std::string initial_text, CppIndentStyle style)
     : owned_runtime_(std::make_unique<EditorRuntime>()), runtime_(owned_runtime_.get()),
       buffer_id_(create_session_buffer(*runtime_, std::move(initial_text))),
-      view_id_(runtime_->views().create(buffer_id_)), style_(style) {}
+      view_id_(runtime_->views().create(buffer_id_)),
+      style_(std::make_shared<CppIndentStyle>(style)) {}
 
 EditSession::EditSession(EditorRuntime& runtime, BufferId buffer_id, ViewId view_id,
                          CppIndentStyle style)
-    : runtime_(&runtime), buffer_id_(buffer_id), view_id_(view_id), style_(style) {
+    : EditSession(runtime, buffer_id, view_id, std::make_shared<CppIndentStyle>(style)) {}
+
+EditSession::EditSession(EditorRuntime& runtime, BufferId buffer_id, ViewId view_id,
+                         std::shared_ptr<CppIndentStyle> style)
+    : runtime_(&runtime), buffer_id_(buffer_id), view_id_(view_id), style_(std::move(style)) {
+    if (!style_) {
+        throw std::invalid_argument("EditSession: style must not be null");
+    }
     if (runtime_->views().get(view_id_).buffer_id() != buffer_id_) {
         throw std::invalid_argument("EditSession: view does not display the buffer");
     }
@@ -59,7 +67,7 @@ void EditSession::type_text(std::string_view text) {
     // an editor delivering keystrokes; each character is one undo unit.
     for (char ch : text) {
         const TextOffset before = caret();
-        TypeCharResult result = type_char(mutable_document(), before, ch, style_, analyzer_);
+        TypeCharResult result = type_char(mutable_document(), before, ch, *style_, analyzer_);
         set_caret(result.caret);
         record_caret(before);
     }
@@ -80,7 +88,7 @@ void EditSession::insert_text(std::string_view text) {
 
 EnterResult EditSession::enter() {
     const TextOffset before = caret();
-    EnterResult result = press_enter(mutable_document(), before, style_, analyzer_);
+    EnterResult result = press_enter(mutable_document(), before, *style_, analyzer_);
     set_caret(result.caret);
     record_caret(before);
     return result;
@@ -114,7 +122,7 @@ IndentDecision EditSession::indent() {
     const TextOffset before = caret_before;
     Document& document = mutable_document();
     const RevisionId revision_before = document.revision();
-    IndentDecision decision = indent_line(document, line, style_, analyzer_);
+    IndentDecision decision = indent_line(document, line, *style_, analyzer_);
     if (document.revision() != revision_before) {
         const auto new_len = static_cast<std::uint32_t>(decision.indentation_text.size());
         if (caret_before.value >= line_start.value + old_len) {
@@ -171,7 +179,7 @@ void EditSession::clamp_caret() {
 IndentDecision EditSession::explain() const {
     DocumentSnapshot snap = snapshot();
     return compute_line_indent(snap, analysis().tree, snap.content().position(caret()).line,
-                               style_);
+                               *style_);
 }
 
 std::string EditSession::render_with_caret() const {

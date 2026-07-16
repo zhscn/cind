@@ -41,6 +41,8 @@ public:
 
     void set_keymaps(std::vector<KeymapId> keymaps);
     std::span<const KeymapId> keymaps() const { return keymaps_; }
+    void set_override_keymaps(std::vector<KeymapId> keymaps);
+    std::span<const KeymapId> override_keymaps() const { return override_keymaps_; }
 
     CommandLoopResult dispatch(KeyStroke key, CommandContext& context);
     CommandLoopResult execute(CommandId command, CommandContext& context,
@@ -59,6 +61,7 @@ private:
     CommandLoopResult finish(CommandId command, CommandResult result, std::string key_sequence);
 
     EditorRuntime* runtime_;
+    std::vector<KeymapId> override_keymaps_;
     std::vector<KeymapId> keymaps_;
     KeySequence pending_;
     std::optional<KeymapId> pending_keymap_;

@@ -14,6 +14,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -38,12 +39,24 @@ struct EditorApplicationSpec {
 
 struct OpenBufferSnapshot {
     BufferId buffer;
-    ViewId view;
+    std::optional<ViewId> view;
     std::string name;
     std::optional<std::string> resource;
     bool modified = false;
     bool active = false;
     bool saving = false;
+};
+
+struct OpenWindowSnapshot {
+    WindowId window;
+    ViewId view;
+    BufferId buffer;
+    bool active = false;
+};
+
+struct ActiveKeymapLayer {
+    KeymapId keymap;
+    std::string scope;
 };
 
 struct KeyBindingHint {
@@ -63,6 +76,7 @@ public:
     const EditorRuntime& runtime() const { return runtime_; }
     BufferId buffer_id() const;
     ViewId view_id() const;
+    WindowId window_id() const { return active_window_; }
     EditSession& session();
     const EditSession& session() const;
     SearchCommands& search_commands() { return search_commands_; }
@@ -83,6 +97,13 @@ public:
     bool switch_buffer(BufferId buffer);
     std::expected<void, std::string> kill_buffer(BufferId buffer, bool force = false);
     std::vector<OpenBufferSnapshot> open_buffers() const;
+    std::vector<OpenWindowSnapshot> open_windows() const;
+    std::span<const ActiveKeymapLayer> active_keymap_layers() const {
+        return active_keymap_layers_;
+    }
+    std::string_view input_focus() const {
+        return interaction_.active() ? std::string_view("interaction") : std::string_view("window");
+    }
     std::vector<KeyBindingHint> pending_key_hints() const;
     std::size_t buffer_count() const { return buffers_.size(); }
 
@@ -118,11 +139,17 @@ private:
 
     struct BufferState {
         BufferId buffer;
-        ViewId view;
-        std::unique_ptr<EditSession> session;
+        std::shared_ptr<CppIndentStyle> style;
         std::string style_origin;
         std::uint32_t save_generation = 0;
         std::optional<PendingSave> pending_save;
+    };
+
+    struct ViewState {
+        WindowId window;
+        BufferId buffer;
+        ViewId view;
+        std::unique_ptr<EditSession> session;
         std::vector<TextRange> selection_history;
     };
 
@@ -130,14 +157,25 @@ private:
     const BufferState& active_buffer() const;
     BufferState& state_for(BufferId buffer);
     const BufferState& state_for(BufferId buffer) const;
+    ViewState& active_view();
+    const ViewState& active_view() const;
+    ViewState& view_state_for(ViewId view);
+    const ViewState& view_state_for(ViewId view) const;
+    ViewState* find_view(WindowId window, BufferId buffer);
+    const ViewState* find_view(WindowId window, BufferId buffer) const;
     EditSession& session_for(ViewId view);
     const EditSession& session_for(ViewId view) const;
     BufferId create_buffer(BufferSpec spec, CppIndentStyle style, std::string style_origin,
                            TextOffset caret = {});
+    ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
+    bool show_buffer(WindowId window, BufferId buffer);
 
     void register_commands();
     void register_interaction_providers();
+    void register_keymaps();
+    void sync_keymaps();
+    std::vector<ActiveKeymapLayer> window_keymap_layers() const;
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();
@@ -160,12 +198,17 @@ private:
 
     EditorRuntime runtime_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
-    std::size_t active_buffer_index_ = 0;
+    std::vector<std::unique_ptr<ViewState>> views_;
+    WindowId active_window_;
     InteractionController interaction_;
     BasicEditorCommands basic_commands_;
     SearchCommands search_commands_;
     CommandLoop command_loop_;
     KeymapId keymap_;
+    KeymapId system_keymap_;
+    KeymapId interaction_text_keymap_;
+    KeymapId interaction_picker_keymap_;
+    std::vector<ActiveKeymapLayer> active_keymap_layers_;
     CommandId command_palette_accept_;
     CommandId open_file_accept_;
     CommandId save_as_accept_;

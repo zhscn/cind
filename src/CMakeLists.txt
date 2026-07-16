@@ -56,6 +56,7 @@ add_library(cind_application STATIC
   editor/runtime.cpp
   editor/settings.cpp
   editor/view.cpp
+  editor/window.cpp
 )
 target_link_libraries(cind_application PUBLIC cind_document)
 

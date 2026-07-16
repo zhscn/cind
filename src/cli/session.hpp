@@ -18,6 +18,8 @@ class EditSession {
 public:
     explicit EditSession(std::string initial_text, CppIndentStyle style = {});
     EditSession(EditorRuntime& runtime, BufferId buffer, ViewId view, CppIndentStyle style = {});
+    EditSession(EditorRuntime& runtime, BufferId buffer, ViewId view,
+                std::shared_ptr<CppIndentStyle> style);
 
     const DocumentSnapshot snapshot() const { return buffer().snapshot(); }
     TextOffset caret() const { return runtime_->views().caret(view_id_); }
@@ -34,8 +36,8 @@ public:
     const Buffer& buffer() const { return runtime_->buffers().get(buffer_id_); }
     View& view() { return runtime_->views().get(view_id_); }
     const View& view() const { return runtime_->views().get(view_id_); }
-    CppIndentStyle& style() { return style_; }
-    const CppIndentStyle& style() const { return style_; }
+    CppIndentStyle& style() { return *style_; }
+    const CppIndentStyle& style() const { return *style_; }
 
     void type_text(std::string_view text);
     // One-transaction insert at the caret, bypassing the typed-char pipeline.
@@ -73,7 +75,7 @@ private:
     EditorRuntime* runtime_ = nullptr;
     BufferId buffer_id_;
     ViewId view_id_;
-    CppIndentStyle style_;
+    std::shared_ptr<CppIndentStyle> style_;
     std::map<UndoNodeId, CaretPair> undo_carets_;
     mutable Analyzer analyzer_; // memo of a pure function — const-safe
 };

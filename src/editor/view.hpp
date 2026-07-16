@@ -35,9 +35,13 @@ public:
     const ViewportState& viewport() const { return viewport_; }
     SettingsLayer& settings() { return settings_; }
     const SettingsLayer& settings() const { return settings_; }
+    std::vector<KeymapId>& keymaps() { return keymaps_; }
+    const std::vector<KeymapId>& keymaps() const { return keymaps_; }
+    std::uint32_t attached_window_count() const { return attached_windows_; }
 
 private:
     friend class ViewRegistry;
+    friend class WindowRegistry;
 
     View(ViewId id, BufferId buffer_id, AnchorId caret, const SettingRegistry& settings)
         : id_(id), buffer_id_(buffer_id), caret_(caret), settings_(settings, SettingScope::View) {}
@@ -48,6 +52,8 @@ private:
     std::optional<AnchorId> mark_;
     ViewportState viewport_;
     SettingsLayer settings_;
+    std::vector<KeymapId> keymaps_;
+    std::uint32_t attached_windows_ = 0;
 };
 
 class ViewRegistry {

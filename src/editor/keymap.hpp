@@ -84,15 +84,6 @@ std::expected<KeySequence, KeyParseError> parse_key_sequence(std::string_view no
 std::string format_key_stroke(KeyStroke key);
 std::string format_key_sequence(std::span<const KeyStroke> sequence);
 
-struct KeymapId {
-    static constexpr std::uint32_t invalid = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t value = invalid;
-
-    constexpr bool valid() const { return value != invalid; }
-    explicit constexpr operator bool() const { return valid(); }
-    friend constexpr auto operator<=>(KeymapId, KeymapId) = default;
-};
-
 enum class KeymapMatchKind : std::uint8_t { None, Prefix, Command };
 
 struct KeymapMatch {

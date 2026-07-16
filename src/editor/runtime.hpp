@@ -8,6 +8,7 @@
 #include "editor/project.hpp"
 #include "editor/settings.hpp"
 #include "editor/view.hpp"
+#include "editor/window.hpp"
 
 namespace cind {
 
@@ -32,6 +33,8 @@ public:
     const ProjectRegistry& projects() const { return projects_; }
     ViewRegistry& views() { return views_; }
     const ViewRegistry& views() const { return views_; }
+    WindowRegistry& windows() { return windows_; }
+    const WindowRegistry& windows() const { return windows_; }
     CommandRegistry& commands() { return commands_; }
     const CommandRegistry& commands() const { return commands_; }
     KeymapRegistry& keymaps() { return keymaps_; }
@@ -58,6 +61,7 @@ private:
     BufferRegistry buffers_;
     ProjectRegistry projects_;
     ViewRegistry views_;
+    WindowRegistry windows_;
     CommandRegistry commands_;
     KeymapRegistry keymaps_;
     InteractionProviderRegistry interaction_providers_;

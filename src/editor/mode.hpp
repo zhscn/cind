@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/ids.hpp"
 #include "editor/language.hpp"
 #include "editor/settings.hpp"
 
@@ -42,6 +43,7 @@ public:
         ModeKind kind;
         std::optional<LanguageProfileId> language;
         SettingsLayer defaults;
+        std::vector<KeymapId> keymaps;
     };
 
     ModeRegistry(const SettingRegistry& settings, const LanguageRegistry& languages)

@@ -21,9 +21,20 @@ template <typename Tag> struct EntityId {
 struct BufferTag;
 struct ProjectTag;
 struct ViewTag;
+struct WindowTag;
 
 using BufferId = EntityId<BufferTag>;
 using ProjectId = EntityId<ProjectTag>;
 using ViewId = EntityId<ViewTag>;
+using WindowId = EntityId<WindowTag>;
+
+struct KeymapId {
+    static constexpr std::uint32_t invalid = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t value = invalid;
+
+    constexpr bool valid() const { return value != invalid; }
+    explicit constexpr operator bool() const { return valid(); }
+    friend constexpr auto operator<=>(KeymapId, KeymapId) = default;
+};
 
 } // namespace cind

@@ -2,6 +2,7 @@
 
 #include "editor/runtime.hpp"
 
+#include <stdexcept>
 #include <utility>
 
 namespace cind {
@@ -14,7 +15,30 @@ void CommandLoop::set_keymaps(std::vector<KeymapId> keymaps) {
     cancel_pending();
 }
 
+void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
+    for (const KeymapId keymap : keymaps) {
+        (void)runtime_->keymaps().definition(keymap);
+        for (const KeymapBinding& binding : runtime_->keymaps().bindings(keymap)) {
+            if (binding.sequence.size() != 1) {
+                throw std::invalid_argument("override keymaps require single-key bindings");
+            }
+        }
+    }
+    override_keymaps_ = std::move(keymaps);
+    cancel_pending();
+}
+
 CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) {
+    const KeySequence single{key};
+    for (const KeymapId keymap : override_keymaps_) {
+        const KeymapMatch override = runtime_->keymaps().resolve(keymap, single);
+        if (override.kind == KeymapMatchKind::Command) {
+            const std::string sequence_text = format_key_stroke(key);
+            cancel_pending();
+            return invoke(override.command, context, {}, sequence_text);
+        }
+    }
+
     const bool continued_sequence = !pending_.empty();
     pending_.push_back(key);
     const std::string sequence_text = format_key_sequence(pending_);
@@ -76,15 +100,35 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                                       const CommandInvocation& invocation,
                                       std::string key_sequence) {
     const CommandRegistry& commands = runtime_->commands();
-    if (!commands.enabled(command, context)) {
-        return {.status = CommandLoopStatus::Disabled,
-                .consumed = true,
-                .command = command,
-                .key_sequence = std::move(key_sequence),
-                .message = "command is disabled in this context",
-                .interaction = std::nullopt};
+    CommandId current = command;
+    CommandInvocation current_invocation = invocation;
+    constexpr int maximum_dispatch_depth = 32;
+    for (int depth = 0; depth < maximum_dispatch_depth; ++depth) {
+        if (!commands.enabled(current, context)) {
+            return {.status = CommandLoopStatus::Disabled,
+                    .consumed = true,
+                    .command = current,
+                    .key_sequence = std::move(key_sequence),
+                    .message = "command is disabled in this context",
+                    .interaction = std::nullopt};
+        }
+        CommandResult result = commands.invoke(current, context, current_invocation);
+        if (!result) {
+            return finish(current, std::move(result), std::move(key_sequence));
+        }
+        if (CommandDispatch* dispatch = std::get_if<CommandDispatch>(&*result)) {
+            current = dispatch->command;
+            current_invocation = std::move(dispatch->invocation);
+            continue;
+        }
+        return finish(current, std::move(result), std::move(key_sequence));
     }
-    return finish(command, commands.invoke(command, context, invocation), std::move(key_sequence));
+    return {.status = CommandLoopStatus::Error,
+            .consumed = true,
+            .command = current,
+            .key_sequence = std::move(key_sequence),
+            .message = "command dispatch depth exceeded",
+            .interaction = std::nullopt};
 }
 
 CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,

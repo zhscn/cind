@@ -58,6 +58,8 @@ public:
     const SettingsLayer& settings() const { return settings_; }
     BufferModes& modes() { return modes_; }
     const BufferModes& modes() const { return modes_; }
+    std::vector<KeymapId>& keymaps() { return keymaps_; }
+    const std::vector<KeymapId>& keymaps() const { return keymaps_; }
     std::uint32_t attached_view_count() const { return attached_views_; }
 
 private:
@@ -79,6 +81,7 @@ private:
     Text save_point_;
     SettingsLayer settings_;
     BufferModes modes_;
+    std::vector<KeymapId> keymaps_;
     std::uint32_t attached_views_ = 0;
 };
 

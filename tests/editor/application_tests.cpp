@@ -175,6 +175,35 @@ TEST_CASE("views keep independent positions backed by document anchors") {
     CHECK_FALSE(runtime.views().selection(right).has_value());
 }
 
+TEST_CASE("windows bind views without merging buffer-relative display state") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "shared",
+                                                      .initial_text = "first\nsecond\n",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId first = runtime.views().create(buffer, TextOffset{0});
+    const ViewId second = runtime.views().create(buffer, TextOffset{6});
+    runtime.views().get(first).viewport().top_line_offset = 0.25F;
+    runtime.views().get(second).viewport().top_line = 1;
+
+    const WindowId window = runtime.windows().create(first);
+    CHECK(runtime.windows().get(window).view_id() == first);
+    runtime.windows().set_view(window, second);
+    CHECK(runtime.windows().get(window).view_id() == second);
+    CHECK(runtime.views().get(first).attached_window_count() == 0);
+    CHECK(runtime.views().get(second).attached_window_count() == 1);
+    CHECK_FALSE(runtime.views().erase(second));
+    CHECK(runtime.views().caret(first).value == 0);
+    CHECK(runtime.views().caret(second).value == 6);
+    CHECK(runtime.views().get(first).viewport().top_line_offset == doctest::Approx(0.25F));
+    CHECK(runtime.views().get(second).viewport().top_line == 1);
+
+    CHECK(runtime.windows().erase(window));
+    CHECK(runtime.views().try_get(first) != nullptr);
+    CHECK(runtime.views().try_get(second) != nullptr);
+}
+
 TEST_CASE("projects own tooling scope without owning editor windows") {
     EditorRuntime runtime;
     const SettingId server = runtime.setting_definitions().define(
@@ -226,7 +255,10 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
             return CommandCompleted{};
         });
 
-    CommandContext context(runtime, buffer, first);
+    const WindowId window = runtime.windows().create(first);
+    CommandContext context(runtime, window, buffer, first);
+    CHECK_THROWS_AS([&] { (void)CommandContext(runtime, window, buffer, second); }(),
+                    std::invalid_argument);
     CommandResult result = runtime.commands().invoke(
         insert, context,
         CommandInvocation{.arguments = {std::string("X")}, .repeat_count = std::nullopt});
@@ -254,7 +286,8 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
                                                       .resource_uri = std::nullopt,
                                                       .read_only = false});
     const ViewId view = runtime.views().create(buffer);
-    CommandContext context(runtime, buffer, view);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
 
     int base_calls = 0;
     std::optional<std::int64_t> received_repeat;
@@ -319,7 +352,8 @@ TEST_CASE("interaction controller owns non-blocking command input") {
                                                       .resource_uri = std::nullopt,
                                                       .read_only = false});
     const ViewId view = runtime.views().create(buffer);
-    CommandContext context(runtime, buffer, view);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
 
     std::string submitted;
     const CommandId accept = runtime.commands().define(

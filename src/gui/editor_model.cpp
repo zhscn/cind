@@ -161,12 +161,21 @@ EditorStateSnapshot EditorModel::inspect() {
     const CommandLoop& command_loop = application_.command_loop();
     const EditorRuntime& runtime = application_.runtime();
     CommandLoopStateSnapshot command_state{.keymaps = {},
+                                           .layers = {},
+                                           .override_keymaps = {},
                                            .pending_keys = command_loop.pending_sequence_text(),
                                            .pending_keymap = {},
                                            .repeat_count = command_loop.repeat_count(),
                                            .last_command = application_.last_command()};
     for (const KeymapId keymap : command_loop.keymaps()) {
         command_state.keymaps.push_back(runtime.keymaps().definition(keymap).name);
+    }
+    for (const ActiveKeymapLayer& layer : application_.active_keymap_layers()) {
+        command_state.layers.push_back(
+            {.name = runtime.keymaps().definition(layer.keymap).name, .scope = layer.scope});
+    }
+    for (const KeymapId keymap : command_loop.override_keymaps()) {
+        command_state.override_keymaps.push_back(runtime.keymaps().definition(keymap).name);
     }
     if (const std::optional<KeymapId> keymap = command_loop.pending_keymap()) {
         command_state.pending_keymap = runtime.keymaps().definition(*keymap).name;
@@ -195,14 +204,26 @@ EditorStateSnapshot EditorModel::inspect() {
     for (const OpenBufferSnapshot& buffer : application_.open_buffers()) {
         buffers.push_back({.buffer_slot = buffer.buffer.slot,
                            .buffer_generation = buffer.buffer.generation,
-                           .view_slot = buffer.view.slot,
-                           .view_generation = buffer.view.generation,
+                           .view_present = buffer.view.has_value(),
+                           .view_slot = buffer.view ? buffer.view->slot : 0,
+                           .view_generation = buffer.view ? buffer.view->generation : 0,
                            .name = buffer.name,
                            .resource = buffer.resource.value_or(std::string()),
                            .modified = buffer.modified,
                            .active = buffer.active,
                            .saving = buffer.saving});
     }
+    std::vector<OpenWindowStateSnapshot> windows;
+    for (const OpenWindowSnapshot& window : application_.open_windows()) {
+        windows.push_back({.window_slot = window.window.slot,
+                           .window_generation = window.window.generation,
+                           .view_slot = window.view.slot,
+                           .view_generation = window.view.generation,
+                           .buffer_slot = window.buffer.slot,
+                           .buffer_generation = window.buffer.generation,
+                           .active = window.active});
+    }
+    const WindowId active_window = application_.window_id();
     return {.path = application_.path(),
             .revision = snapshot.revision(),
             .document_bytes = text.size_bytes(),
@@ -220,9 +241,13 @@ EditorStateSnapshot EditorModel::inspect() {
             .message = application_.message(),
             .preedit = preedit_,
             .last_key = application_.last_key(),
+            .active_window_slot = active_window.slot,
+            .active_window_generation = active_window.generation,
+            .input_focus = std::string(application_.input_focus()),
             .command_loop = std::move(command_state),
             .interaction = std::move(interaction_state),
             .buffers = std::move(buffers),
+            .windows = std::move(windows),
             .quit_armed = application_.quit_armed(),
             .quit = application_.should_quit()};
 }

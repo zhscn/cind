@@ -8,6 +8,17 @@
 
 namespace cind {
 
+CommandContext::CommandContext(EditorRuntime& runtime, WindowId window, BufferId buffer,
+                               ViewId view)
+    : runtime_(&runtime), window_id_(window), buffer_id_(buffer), view_id_(view) {
+    if (runtime.windows().get(window).view_id() != view) {
+        throw std::invalid_argument("command context view is not displayed by its window");
+    }
+    if (runtime.views().get(view).buffer_id() != buffer) {
+        throw std::invalid_argument("command context buffer is not displayed by its view");
+    }
+}
+
 Buffer& CommandContext::buffer() const {
     return runtime_->buffers().get(buffer_id_);
 }
@@ -23,6 +34,10 @@ Project* CommandContext::project() const {
 
 View& CommandContext::view() const {
     return runtime_->views().get(view_id_);
+}
+
+Window& CommandContext::window() const {
+    return runtime_->windows().get(window_id_);
 }
 
 SettingsResolver CommandContext::settings() const {

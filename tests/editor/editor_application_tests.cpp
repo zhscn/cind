@@ -142,9 +142,83 @@ TEST_CASE("which-key help and command palette use searchable interaction provide
     send_keys(application, "M-x");
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(application.interaction().state()->request.provider == "commands");
+    REQUIRE(application.interaction().state()->candidates.size() > 2);
+    CHECK(application.input_focus() == "interaction");
+    REQUIRE(application.active_keymap_layers().size() == 1);
+    CHECK(application.runtime()
+              .keymaps()
+              .definition(application.active_keymap_layers().front().keymap)
+              .name == "interaction.picker");
+
+    send_keys(application, "C-n");
+    CHECK(application.interaction().state()->selected == 1);
+    CHECK(application.last_command() == "interaction.next-candidate");
+    send_keys(application, "C-p");
+    CHECK(application.interaction().state()->selected == 0);
+    send_keys(application, "Down");
+    CHECK(application.interaction().state()->selected == 1);
+    send_keys(application, "Up");
+    CHECK(application.interaction().state()->selected == 0);
+
     application.insert_text("buffer next");
     REQUIRE_FALSE(application.interaction().state()->candidates.empty());
     CHECK(application.interaction().state()->candidates.front().value == "buffer.next");
+    send_keys(application, "C-g");
+    CHECK_FALSE(application.interaction().active());
+    CHECK(application.input_focus() == "window");
+    CHECK(application.runtime()
+              .keymaps()
+              .definition(application.active_keymap_layers().back().keymap)
+              .name == "editor.default");
+}
+
+TEST_CASE("active window assembles explicit window view buffer mode and global keymaps") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    int selected_layer = 0;
+    struct Layer {
+        KeymapId keymap;
+        CommandId command;
+    };
+    const auto define_layer = [&](std::string name, int value) {
+        const CommandId command = runtime.commands().define(
+            std::move(name),
+            [&, value](CommandContext&, const CommandInvocation&) -> CommandResult {
+                selected_layer = value;
+                return CommandCompleted{};
+            });
+        const KeymapId map = runtime.keymaps().define(std::format("test.layer.{}", value));
+        runtime.keymaps().bind(map, "C-z", command);
+        return Layer{.keymap = map, .command = command};
+    };
+
+    const Layer global = define_layer("test.global", 1);
+    const Layer mode = define_layer("test.mode", 2);
+    const Layer buffer = define_layer("test.buffer", 3);
+    const Layer view = define_layer("test.view", 4);
+    const Layer window = define_layer("test.window", 5);
+    runtime.keymaps().bind(application.default_keymap(), "C-z", global.command);
+    const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
+    REQUIRE(major);
+    runtime.modes().definition_for_configuration(major).keymaps.push_back(mode.keymap);
+    application.session().buffer().keymaps().push_back(buffer.keymap);
+    application.session().view().keymaps().push_back(view.keymap);
+    runtime.windows().get(application.window_id()).keymaps().push_back(window.keymap);
+
+    send_keys(application, "C-z");
+    CHECK(selected_layer == 5);
+    runtime.windows().get(application.window_id()).keymaps().clear();
+    send_keys(application, "C-z");
+    CHECK(selected_layer == 4);
+    application.session().view().keymaps().clear();
+    send_keys(application, "C-z");
+    CHECK(selected_layer == 3);
+    application.session().buffer().keymaps().clear();
+    send_keys(application, "C-z");
+    CHECK(selected_layer == 2);
+    runtime.modes().definition_for_configuration(major).keymaps.clear();
+    send_keys(application, "C-z");
+    CHECK(selected_layer == 1);
 }
 
 TEST_CASE("Emacs mark kill yank and structural commands are frontend independent") {

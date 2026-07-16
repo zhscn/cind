@@ -34,6 +34,7 @@ struct InteractionStateSnapshot {
 struct OpenBufferStateSnapshot {
     std::uint32_t buffer_slot = 0;
     std::uint32_t buffer_generation = 0;
+    bool view_present = false;
     std::uint32_t view_slot = 0;
     std::uint32_t view_generation = 0;
     std::string name;
@@ -43,8 +44,25 @@ struct OpenBufferStateSnapshot {
     bool saving = false;
 };
 
+struct OpenWindowStateSnapshot {
+    std::uint32_t window_slot = 0;
+    std::uint32_t window_generation = 0;
+    std::uint32_t view_slot = 0;
+    std::uint32_t view_generation = 0;
+    std::uint32_t buffer_slot = 0;
+    std::uint32_t buffer_generation = 0;
+    bool active = false;
+};
+
+struct KeymapLayerStateSnapshot {
+    std::string name;
+    std::string scope;
+};
+
 struct CommandLoopStateSnapshot {
     std::vector<std::string> keymaps;
+    std::vector<KeymapLayerStateSnapshot> layers;
+    std::vector<std::string> override_keymaps;
     std::string pending_keys;
     std::string pending_keymap;
     std::optional<std::int64_t> repeat_count;
@@ -67,9 +85,13 @@ struct EditorStateSnapshot {
     std::string message;
     std::string preedit;
     std::string last_key;
+    std::uint32_t active_window_slot = 0;
+    std::uint32_t active_window_generation = 0;
+    std::string input_focus;
     CommandLoopStateSnapshot command_loop;
     InteractionStateSnapshot interaction;
     std::vector<OpenBufferStateSnapshot> buffers;
+    std::vector<OpenWindowStateSnapshot> windows;
     bool quit_armed = false;
     bool quit = false;
 };

@@ -107,9 +107,11 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.caret` | caret 的 byte、line 和 column |
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
-| `editor.command_loop` | active keymap、pending key sequence、repeat 和 last command |
+| `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、repeat 和 last command |
 | `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation 和错误 |
-| `editor.buffers` | 所有打开 buffer 的资源、buffer/view ID、modified、saving 和 active 状态 |
+| `editor.buffers` | 所有打开 buffer 的资源、当前 window 缓存的 view ID、modified、saving 和 active 状态 |
+| `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
+| `editor.focus` | active window 和当前输入目标（window 或 interaction） |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor |
 | `scene.region.<role>` | 指定 region，例如 `scene.region.line-numbers` |
@@ -128,6 +130,8 @@ cmk run -p gui cind-ui-inspect -- get scene.region.line-numbers
 cmk run -p gui cind-ui-inspect -- get editor.command_loop
 cmk run -p gui cind-ui-inspect -- get editor.interaction
 cmk run -p gui cind-ui-inspect -- get editor.buffers
+cmk run -p gui cind-ui-inspect -- get editor.windows
+cmk run -p gui cind-ui-inspect -- get editor.focus
 cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
 cmk run -p gui cind-ui-inspect -- get render.damage
@@ -140,8 +144,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 完整快照使用带版本号的 JSON schema。顶层包含：
 
 - `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的
-  viewport、line signs、tab width、style 来源、消息、最近按键、command loop、交互状态
-  和打开的 buffer 列表。
+  viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
+  command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
+  名称和 window/view/buffer/mode/global/interaction 作用域。
 - `scene`：cell 网格、cursor、活动文本行、region 几何和 display primitives。Scene
   region 使用 0-based cell 坐标并声明 vertical anchor；`grid_offset_rows` 表示顶部行的
   分数偏移；scene cursor 使用 1-based 坐标。Popup region 还携带结构化 title、input、
@@ -321,6 +326,7 @@ response。
 ## 约束
 
 - Frame 只在完成绘制后发布；没有重绘时，模型的中间状态不会成为 inspector frame。
+- Window 列表包含且仅包含一个 active window，其 ID 与 `editor.active_window` 一致。
 - Event ring 固定保留 256 条记录。请求早于可用范围时，事件批次使用 `gap: true`
   表示缺口。
 - `paint_bounds` 通过比较 primitive 绘制前后的像素得到。与已有像素完全同色的重复

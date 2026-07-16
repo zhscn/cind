@@ -68,6 +68,9 @@ bool ViewRegistry::erase(ViewId id) {
     if (view == nullptr) {
         return false;
     }
+    if (view->attached_windows_ != 0) {
+        return false;
+    }
     remove_anchors(*view);
     Slot& slot = slots_[id.slot];
     slot.value.reset();

@@ -57,6 +57,8 @@ void append_bool(std::string& output, bool value) {
     output += value ? "true" : "false";
 }
 
+void append_strings(std::string& output, const std::vector<std::string>& values);
+
 std::string_view surface_class_name(ui::SurfaceClass surface) {
     switch (surface) {
     case ui::SurfaceClass::Editor:
@@ -133,7 +135,20 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
         }
         append_json_string(output, command_loop.keymaps[index]);
     }
-    output += "],\"pending_keys\":";
+    output += "],\"layers\":[";
+    for (std::size_t index = 0; index < command_loop.layers.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"name\":";
+        append_json_string(output, command_loop.layers[index].name);
+        output += ",\"scope\":";
+        append_json_string(output, command_loop.layers[index].scope);
+        output.push_back('}');
+    }
+    output += "],\"override_keymaps\":";
+    append_strings(output, command_loop.override_keymaps);
+    output += ",\"pending_keys\":";
     append_json_string(output, command_loop.pending_keys);
     output += ",\"pending_keymap\":";
     append_json_string(output, command_loop.pending_keymap);
@@ -190,10 +205,15 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
             output.push_back(',');
         }
         const OpenBufferStateSnapshot& buffer = buffers[index];
-        output += std::format("{{\"buffer\":{{\"slot\":{},\"generation\":{}}},"
-                              "\"view\":{{\"slot\":{},\"generation\":{}}},\"name\":",
-                              buffer.buffer_slot, buffer.buffer_generation, buffer.view_slot,
-                              buffer.view_generation);
+        output += std::format("{{\"buffer\":{{\"slot\":{},\"generation\":{}}},\"view\":",
+                              buffer.buffer_slot, buffer.buffer_generation);
+        if (buffer.view_present) {
+            output += std::format("{{\"slot\":{},\"generation\":{}}}", buffer.view_slot,
+                                  buffer.view_generation);
+        } else {
+            output += "null";
+        }
+        output += ",\"name\":";
         append_json_string(output, buffer.name);
         output += ",\"resource\":";
         append_json_string(output, buffer.resource);
@@ -203,6 +223,24 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
         append_bool(output, buffer.active);
         output += ",\"saving\":";
         append_bool(output, buffer.saving);
+        output.push_back('}');
+    }
+    output.push_back(']');
+}
+
+void append_windows(std::string& output, const std::vector<OpenWindowStateSnapshot>& windows) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < windows.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const OpenWindowStateSnapshot& window = windows[index];
+        output += std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},"
+                              "\"view\":{{\"slot\":{},\"generation\":{}}},"
+                              "\"buffer\":{{\"slot\":{},\"generation\":{}}},\"active\":",
+                              window.window_slot, window.window_generation, window.view_slot,
+                              window.view_generation, window.buffer_slot, window.buffer_generation);
+        append_bool(output, window.active);
         output.push_back('}');
     }
     output.push_back(']');
@@ -231,12 +269,17 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.preedit);
     output += ",\"last_key\":";
     append_json_string(output, editor.last_key);
+    output += std::format(",\"active_window\":{{\"slot\":{},\"generation\":{}}},\"input_focus\":",
+                          editor.active_window_slot, editor.active_window_generation);
+    append_json_string(output, editor.input_focus);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
     output += ",\"interaction\":";
     append_interaction(output, editor.interaction);
     output += ",\"buffers\":";
     append_buffers(output, editor.buffers);
+    output += ",\"windows\":";
+    append_windows(output, editor.windows);
     output += ",\"quit_armed\":";
     append_bool(output, editor.quit_armed);
     output += ",\"quit\":";
@@ -582,6 +625,49 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         frame.editor.viewport.top_line_offset >= 1.0F) {
         violations.emplace_back("editor viewport line offset is outside [0, 1)");
     }
+    const std::size_t active_windows = static_cast<std::size_t>(std::ranges::count_if(
+        frame.editor.windows, [](const OpenWindowStateSnapshot& window) { return window.active; }));
+    const OpenWindowStateSnapshot* active_window = nullptr;
+    if (frame.editor.windows.empty() || active_windows != 1) {
+        violations.emplace_back("editor must have exactly one active window");
+    } else {
+        const auto active =
+            std::ranges::find_if(frame.editor.windows, [](const OpenWindowStateSnapshot& window) {
+                return window.active;
+            });
+        active_window = &*active;
+        if (active->window_slot != frame.editor.active_window_slot ||
+            active->window_generation != frame.editor.active_window_generation) {
+            violations.emplace_back("editor active window identity does not match window state");
+        }
+    }
+    const std::size_t active_buffers = static_cast<std::size_t>(std::ranges::count_if(
+        frame.editor.buffers, [](const OpenBufferStateSnapshot& buffer) { return buffer.active; }));
+    if (frame.editor.buffers.empty() || active_buffers != 1) {
+        violations.emplace_back("editor must have exactly one active buffer");
+    } else if (active_window != nullptr) {
+        const auto active_buffer =
+            std::ranges::find_if(frame.editor.buffers, [](const OpenBufferStateSnapshot& buffer) {
+                return buffer.active;
+            });
+        if (active_buffer->buffer_slot != active_window->buffer_slot ||
+            active_buffer->buffer_generation != active_window->buffer_generation ||
+            !active_buffer->view_present || active_buffer->view_slot != active_window->view_slot ||
+            active_buffer->view_generation != active_window->view_generation) {
+            violations.emplace_back("active window, view, and buffer bindings do not agree");
+        }
+    }
+    const std::string_view expected_focus = frame.editor.interaction.active
+                                                ? std::string_view("interaction")
+                                                : std::string_view("window");
+    if (frame.editor.input_focus != expected_focus) {
+        violations.emplace_back("editor input focus does not match interaction state");
+    }
+    if (frame.editor.command_loop.layers.empty() ||
+        (expected_focus == "interaction") !=
+            (frame.editor.command_loop.layers.front().scope == "interaction")) {
+        violations.emplace_back("command keymap layers do not match input focus");
+    }
     if (frame.scene.rows <= 0 || frame.scene.cols <= 0) {
         violations.emplace_back("scene geometry must be positive");
     }
@@ -778,6 +864,14 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_interaction(output, frame.editor.interaction);
     } else if (path == "editor.buffers") {
         append_buffers(output, frame.editor.buffers);
+    } else if (path == "editor.windows") {
+        append_windows(output, frame.editor.windows);
+    } else if (path == "editor.focus") {
+        output =
+            std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",
+                        frame.editor.active_window_slot, frame.editor.active_window_generation);
+        append_json_string(output, frame.editor.input_focus);
+        output.push_back('}');
     } else if (path == "scene") {
         append_scene(output, frame.scene);
     } else if (path == "scene.cursor") {
@@ -1113,6 +1207,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    viewport=" << frame.editor.viewport.top_line << '+'
            << frame.editor.viewport.top_line_offset
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
+    output << "    focus=" << printable(frame.editor.input_focus)
+           << " window:" << frame.editor.active_window_slot << ':'
+           << frame.editor.active_window_generation << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
@@ -1127,6 +1224,13 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                << (buffer.active ? " active" : "") << (buffer.modified ? " modified" : "")
                << " name=\"" << printable(buffer.name) << "\" resource=\""
                << printable(buffer.resource) << "\"\n";
+    }
+    output << "    windows=" << frame.editor.windows.size() << '\n';
+    for (const OpenWindowStateSnapshot& window : frame.editor.windows) {
+        output << "      window:" << window.window_slot << ':' << window.window_generation
+               << (window.active ? " active" : "") << " view:" << window.view_slot << ':'
+               << window.view_generation << " buffer:" << window.buffer_slot << ':'
+               << window.buffer_generation << '\n';
     }
     output << "  scene " << frame.scene.cols << 'x' << frame.scene.rows << " cursor=";
     if (frame.scene.cursor_visible) {

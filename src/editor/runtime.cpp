@@ -9,7 +9,7 @@ EditorRuntime::EditorRuntime()
     : application_settings_(setting_definitions_, SettingScope::Application),
       languages_(setting_definitions_), modes_(setting_definitions_, languages_),
       buffers_(setting_definitions_), projects_(buffers_, setting_definitions_),
-      views_(buffers_, setting_definitions_) {}
+      views_(buffers_, setting_definitions_), windows_(views_) {}
 
 void EditorRuntime::seal_extensions() {
     if (extensions_sealed_) {

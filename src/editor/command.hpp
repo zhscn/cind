@@ -21,6 +21,7 @@ class Buffer;
 class EditorRuntime;
 class Project;
 class View;
+class Window;
 
 struct CommandId {
     static constexpr std::uint32_t invalid = std::numeric_limits<std::uint32_t>::max();
@@ -44,6 +45,15 @@ struct CommandCompleted {
     std::optional<SettingValue> value = std::nullopt;
 };
 
+// Requests another named command without retaining a callback continuation.
+// CommandLoop follows the dispatch and reports the final command as the one
+// that executed, which keeps interaction submission and scripted command
+// composition inside the same observable command pipeline.
+struct CommandDispatch {
+    CommandId command;
+    CommandInvocation invocation;
+};
+
 enum class InteractionKind : std::uint8_t {
     Text,
     Picker,
@@ -64,25 +74,27 @@ struct InteractionRequest {
     std::vector<SettingValue> arguments;
 };
 
-using CommandAction = std::variant<CommandCompleted, InteractionRequest>;
+using CommandAction = std::variant<CommandCompleted, InteractionRequest, CommandDispatch>;
 using CommandResult = std::expected<CommandAction, CommandError>;
 
 class CommandContext {
 public:
-    CommandContext(EditorRuntime& runtime, BufferId buffer, ViewId view)
-        : runtime_(&runtime), buffer_id_(buffer), view_id_(view) {}
+    CommandContext(EditorRuntime& runtime, WindowId window, BufferId buffer, ViewId view);
 
     EditorRuntime& runtime() const { return *runtime_; }
+    WindowId window_id() const { return window_id_; }
     BufferId buffer_id() const { return buffer_id_; }
     ViewId view_id() const { return view_id_; }
     std::optional<ProjectId> project_id() const;
     Buffer& buffer() const;
     Project* project() const;
     View& view() const;
+    Window& window() const;
     SettingsResolver settings() const;
 
 private:
     EditorRuntime* runtime_;
+    WindowId window_id_;
     BufferId buffer_id_;
     ViewId view_id_;
 };

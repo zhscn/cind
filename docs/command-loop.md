@@ -5,14 +5,14 @@ normalize input and render the shared scene; editing behavior lives in named com
 runtime, buffer, and view state.
 
 ```text
-terminal bytes ─┐
-                ├─> KeyStroke ─> layered Keymap ─> CommandLoop ─> CommandRegistry
-SDL key events ─┘                                      │                 │
-                                                       │                 ├─> EditSession
-terminal UTF-8 ─┐                                      │                 ├─> buffer/view/runtime
-SDL text/IME ───┴─> active text target ────────────────┘                 └─> InteractionRequest
-                         │                                                  │
-                         └────────────> InteractionController <─────────────┘
+terminal bytes ─┐                    active Window/View/Buffer/Mode
+                ├─> KeyStroke ───────────────┬─> scoped Keymap stack ─> CommandLoop
+SDL key events ─┘                            │                              │
+                                             │                              └─> CommandRegistry
+terminal UTF-8 ─┐                            │                                      │
+SDL text/IME ───┴─> focused text target ─────┘                                      ├─> EditSession
+                         │                                                           ├─> runtime state
+                         └────────────> InteractionController <──────────────────────└─> InteractionRequest
                                               │
                                               └─> named candidate provider
 
@@ -20,10 +20,16 @@ Editor state ─> ui::Scene ─┬─> ANSI renderer
                            └─> Skia renderer
 ```
 
-`EditorRuntime` owns command, keymap, and interaction-provider registries. Each open buffer has its
-own `View` and `EditSession`, including caret, selection, viewport, undo history, incremental syntax
-state, style, and save state. `EditorApplication` owns the open-buffer list and selects the active
-buffer/view context for each command invocation.
+`EditorRuntime` owns command, keymap, interaction-provider, buffer, view, and window registries. A
+`Buffer` owns text, revision history, modes, buffer-local settings, and buffer-local keymaps. A
+`View` refers to one buffer and owns caret, selection, viewport, view-local settings, and view-local
+keymaps. A `Window` is a focus and display target that binds one View and may contribute
+window-local keymaps. Multiple Views can refer to the same Buffer without sharing display state.
+
+`EditorApplication` owns buffer save state and the EditSession associated with each window-buffer
+view. Switching buffers changes the active Window's View binding; returning to a buffer restores
+that Window's cached View. Editing style is shared at buffer scope, so separate Views of a Buffer
+use the same language-editing policy.
 
 ## Normalized input
 
@@ -43,10 +49,15 @@ A keymap is a named trie from key sequences to command IDs. A trie node is eithe
 or a prefix; binding a command where a prefix exists, or extending an existing command binding,
 fails during configuration. An exact binding may be replaced before the registry is sealed.
 
-Each input focus supplies an ordered keymap stack from most specific to least specific. The first
-layer that recognizes the current sequence owns it. A prefix in a more specific layer masks a
-complete binding in a less specific layer. This supports mode, transient, interaction, and user
-overrides without keymap inheritance or dynamically bound ambient state.
+The active Window supplies an ordered keymap stack from most specific to least specific: Window,
+View, Buffer, enabled minor modes, major mode, and the application-global map. The first layer that
+recognizes the current sequence owns it. A prefix in a more specific layer masks a complete binding
+in a less specific layer. A focused interaction replaces this stack with its transient map, making
+prompt behavior modal without branching in the frontend or application key dispatcher.
+
+Always-active override maps are resolved before a pending sequence. The built-in system override
+binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix or focused interaction through the
+same command path. Override maps contain complete bindings rather than prefix trees.
 
 The default keymap follows Emacs conventions:
 
@@ -64,35 +75,37 @@ capabilities can therefore join the shared TUI and GUI keymap without duplicatin
 
 ## Command loop and prefix help
 
-One `CommandLoop` belongs to one input focus. It owns the ordered keymap stack, a pending multi-key
-sequence, its owning keymap, and an optional repeat count. Dispatch returns a structured status:
+One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap
+stack, always-active override maps, a pending multi-key sequence, its owning keymap, and an optional
+repeat count. Dispatch returns a structured status:
 not handled, prefix, executed, awaiting input, disabled, cancelled, or error.
 
 An undefined key after a recognized prefix consumes the sequence and clears pending and repeat
-state. A single unbound key remains available to the platform text-input path. `C-g` cancels either
-a pending sequence or the active interaction.
+state. A single unbound key remains available to the platform text-input path. `C-g` invokes
+`keyboard.quit` from the system override map.
 
 The keymap registry enumerates the immediate continuations of any trie prefix. While a sequence is
 pending, the scene contains a popup listing the next keys and their command names. This is the
 which-key view. It derives its contents from the active keymap, so runtime and user bindings appear
 without a separate help table.
 
-Commands receive `CommandContext`, which names the runtime, buffer, and view explicitly. Settings
-resolution follows the same context. Command callbacks do not depend on process-global editor
-state.
+Commands receive `CommandContext`, which names the runtime, window, buffer, and view explicitly.
+Settings resolution follows the same context. Command callbacks do not depend on process-global
+editor state.
 
 ## Interaction protocol
 
-A command returns either `CommandCompleted` or `InteractionRequest`. A request describes a text
-prompt or candidate picker using prompt text, initial input, a history name, a candidate-provider
-name, an accept command ID, and typed arguments. The command loop returns the request to
+A command returns `CommandCompleted`, `InteractionRequest`, or a named `CommandDispatch`. A request
+describes a text prompt or candidate picker using prompt text, initial input, a history name, a
+candidate-provider name, an accept command ID, and typed arguments. The command loop returns the request to
 `EditorApplication`; `InteractionController` owns the active state while the frontend continues its
 normal event loop.
 
-Text input appends to the interaction input. Backspace removes one UTF-8 code point. Up, Down, and
-Tab navigate picker candidates. Enter invokes the accept command with the selected candidate or
-submitted string appended to its arguments. Escape and `C-g` cancel. An accept command may return
-another request, which supports multi-step interactions without retaining a C++ closure.
+Text input appends to the interaction input. Interaction keymaps bind Backspace to code-point
+deletion, `C-n`/Down/Tab and `C-p`/Up to picker navigation, Enter to submission, and Escape to
+cancel. Submission returns a named command dispatch that the command loop follows, so the accepted
+command remains visible as the executed command. An accept command may return another request,
+which supports multi-step interactions without retaining a C++ closure.
 
 Candidate providers return semantic values, labels, details, and filter text. The controller applies
 case-insensitive, whitespace-separated orderless filtering and stable ranking. Command, key-binding,
@@ -105,10 +118,11 @@ the same structured popup content in a bottom-aligned overlay.
 ## Extension boundary
 
 Command names, keymap names, IDs, `SettingValue` arguments, `CommandContext`, interaction requests,
-and named providers form the scripting host boundary. An extension language can define commands,
-bind sequences, and register providers during startup without receiving pointers to frontend or C++
-model objects. Definitions are sealed after configuration; buffer, view, project, and application
-values remain mutable through explicit runtime APIs.
+and named providers form the scripting host boundary. `CommandContext` explicitly identifies the
+Window, View, Buffer, Project, and Runtime involved in an invocation. An extension language can
+define commands, bind sequences, and register providers during startup without receiving pointers
+to frontend or C++ model objects. Definitions are sealed after configuration; window, buffer, view,
+project, and application values remain mutable through explicit runtime APIs.
 
 The host contract does not depend on a particular scripting language. A language binding translates
 its callable value to a registry command and translates command actions back to the data structures
@@ -117,10 +131,11 @@ the input and editor-state model.
 
 ## Inspection
 
-The GUI inspector exposes `editor.command_loop`, `editor.interaction`, and `editor.buffers`.
-Command-loop state includes active keymaps, pending keys, the owning keymap, repeat count, and last
-command. Interaction state includes prompt kind, input, provider, selection, generation, errors, and
-candidates. Buffer state includes buffer/view IDs, names, resources, modified and saving flags, and
-the active buffer. The popup is also represented as `scene.region.popup`, including structured
-title, input and item metadata alongside its terminal-compatible primitives, selection, cell
-geometry, surface, and overlay anchor.
+The GUI inspector exposes `editor.command_loop`, `editor.interaction`, `editor.buffers`,
+`editor.windows`, and `editor.focus`. Command-loop state includes keymap names with their scopes,
+override maps, pending keys, the owning keymap, repeat count, and last command. Interaction state
+includes prompt kind, input, provider, selection, generation, errors, and candidates. Buffer state
+includes resource and lifecycle data; Window state identifies each Window's bound View and Buffer.
+The popup is also represented as `scene.region.popup`, including structured title, input and item
+metadata alongside its terminal-compatible primitives, selection, cell geometry, surface, and
+overlay anchor.

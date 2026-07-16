@@ -57,7 +57,7 @@ std::string directory_input(const fs::path& path) {
 }
 
 bool internal_command(std::string_view name) {
-    return name.ends_with(".accept");
+    return name.ends_with(".accept") || name.starts_with("interaction.");
 }
 
 } // namespace
@@ -94,7 +94,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     }
     const BufferId initial =
         create_buffer(std::move(initial_buffer), spec.style, std::move(spec.style_origin));
-    switch_buffer(initial);
+    const ViewId initial_view = create_view({}, initial);
+    active_window_ = runtime_.windows().create(initial_view);
+    view_state_for(initial_view).window = active_window_;
     if (spec.initial_line > 0) {
         const DocumentSnapshot snapshot = session().snapshot();
         const std::uint32_t line =
@@ -102,25 +104,24 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         session().set_caret(snapshot.content().line_start(line));
     }
 
-    keymap_ = runtime_.keymaps().define("editor.default");
-    refresh_default_keymap();
-    command_loop_.set_keymaps({keymap_});
+    register_keymaps();
+    sync_keymaps();
 }
 
 BufferId EditorApplication::buffer_id() const {
-    return active_buffer().buffer;
+    return runtime_.views().get(view_id()).buffer_id();
 }
 
 ViewId EditorApplication::view_id() const {
-    return active_buffer().view;
+    return runtime_.windows().get(active_window_).view_id();
 }
 
 EditSession& EditorApplication::session() {
-    return *active_buffer().session;
+    return *active_view().session;
 }
 
 const EditSession& EditorApplication::session() const {
-    return *active_buffer().session;
+    return *active_view().session;
 }
 
 void EditorApplication::refresh_default_keymap() {
@@ -130,47 +131,15 @@ void EditorApplication::refresh_default_keymap() {
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     command_page_rows_ = std::max(1, page_rows);
     last_key_ = format_key_stroke(key);
+    sync_keymaps();
     CommandContext context = command_context();
-
-    if (interaction_.active()) {
-        if (key.code == KeyCode::Enter && key.modifiers == KeyModifier::None) {
-            std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
-            if (!submission) {
-                message_ = submission.error();
-                return true;
-            }
-            return handle_loop_result(
-                command_loop_.execute(submission->accept_command, context, submission->invocation));
-        }
-        if (key.code == KeyCode::Backspace && key.modifiers == KeyModifier::None) {
-            (void)interaction_.erase_backward(context);
-            return true;
-        }
-        if ((key.code == KeyCode::Escape && key.modifiers == KeyModifier::None) ||
-            key == KeyStroke::character_key(U'g', KeyModifier::Control)) {
-            (void)interaction_.cancel();
-            message_ = "cancelled";
-            return true;
-        }
-        if (key.code == KeyCode::Down || key.code == KeyCode::Tab) {
-            (void)interaction_.move_selection(1);
-            return true;
-        }
-        if (key.code == KeyCode::Up) {
-            (void)interaction_.move_selection(-1);
-            return true;
-        }
-        return true;
-    }
-
-    if (key == KeyStroke::character_key(U'g', KeyModifier::Control) &&
-        !command_loop_.pending_sequence().empty()) {
-        command_loop_.cancel_pending();
-        message_ = "cancelled";
-        return true;
-    }
-
-    return handle_loop_result(command_loop_.dispatch(key, context));
+    const bool interaction_focus = interaction_.active();
+    const bool consumed = handle_loop_result(command_loop_.dispatch(key, context));
+    sync_keymaps();
+    // An interaction is a capturing input focus. Unbound modified keys do
+    // not fall through to the window, while printable text still arrives on
+    // the frontend's text-input channel.
+    return consumed || interaction_focus;
 }
 
 void EditorApplication::insert_text(std::string_view text) {
@@ -247,16 +216,7 @@ std::expected<BufferId, std::string> EditorApplication::open_file(std::string_vi
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
-    for (std::size_t index = 0; index < buffers_.size(); ++index) {
-        if (buffers_[index]->buffer != buffer) {
-            continue;
-        }
-        active_buffer_index_ = index;
-        reveal_caret_ = true;
-        quit_armed_ = false;
-        return true;
-    }
-    return false;
+    return show_buffer(active_window_, buffer);
 }
 
 std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer, bool force) {
@@ -267,50 +227,85 @@ std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer,
     if (found == buffers_.end()) {
         return std::unexpected("unknown buffer");
     }
-    const std::size_t index = static_cast<std::size_t>(found - buffers_.begin());
     BufferState& target = **found;
     if (target.pending_save) {
         return std::unexpected("buffer has a save in progress");
     }
-    if (target.session->buffer().modified() && !force) {
+    if (runtime_.buffers().get(buffer).modified() && !force) {
         return std::unexpected("buffer has unsaved changes");
     }
 
-    std::unique_ptr<BufferState> removed = std::move(buffers_[index]);
-    buffers_.erase(buffers_.begin() + static_cast<std::ptrdiff_t>(index));
-    if (!buffers_.empty() && active_buffer_index_ > index) {
-        --active_buffer_index_;
-    } else if (!buffers_.empty() && active_buffer_index_ == index) {
-        active_buffer_index_ = std::min(index, buffers_.size() - 1);
+    if (buffers_.size() == 1) {
+        (void)create_scratch_buffer();
+        found = std::ranges::find_if(
+            buffers_, [buffer](const auto& state) { return state->buffer == buffer; });
     }
-    const ViewId view = removed->view;
-    const BufferId removed_buffer = removed->buffer;
-    removed.reset();
-    if (!runtime_.views().erase(view) || !runtime_.buffers().erase(removed_buffer)) {
-        throw std::logic_error("buffer lifecycle registries are inconsistent");
+    const BufferId replacement = (*std::ranges::find_if(buffers_, [buffer](const auto& state) {
+                                     return state->buffer != buffer;
+                                 }))->buffer;
+    std::vector<WindowId> affected_windows;
+    for (const std::unique_ptr<ViewState>& view : views_) {
+        if (view->buffer == buffer) {
+            affected_windows.push_back(view->window);
+        }
     }
-    if (buffers_.empty()) {
-        const BufferId scratch = create_scratch_buffer();
-        (void)switch_buffer(scratch);
+    std::ranges::sort(affected_windows);
+    const auto unique_end = std::ranges::unique(affected_windows).begin();
+    affected_windows.erase(unique_end, affected_windows.end());
+    for (const WindowId window : affected_windows) {
+        if (window && runtime_.windows().try_get(window) != nullptr &&
+            runtime_.views().get(runtime_.windows().get(window).view_id()).buffer_id() == buffer) {
+            (void)show_buffer(window, replacement);
+        }
+    }
+
+    for (auto it = views_.begin(); it != views_.end();) {
+        if ((*it)->buffer != buffer) {
+            ++it;
+            continue;
+        }
+        const ViewId view = (*it)->view;
+        it = views_.erase(it);
+        if (!runtime_.views().erase(view)) {
+            throw std::logic_error("view lifecycle registry is inconsistent");
+        }
+    }
+    buffers_.erase(found);
+    if (!runtime_.buffers().erase(buffer)) {
+        throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
     reveal_caret_ = true;
     quit_armed_ = false;
+    sync_keymaps();
     return {};
 }
 
 std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
     std::vector<OpenBufferSnapshot> result;
     result.reserve(buffers_.size());
-    for (std::size_t index = 0; index < buffers_.size(); ++index) {
-        const BufferState& state = *buffers_[index];
+    for (const std::unique_ptr<BufferState>& entry : buffers_) {
+        const BufferState& state = *entry;
         const Buffer& buffer = runtime_.buffers().get(state.buffer);
+        const ViewState* view = find_view(active_window_, state.buffer);
         result.push_back({.buffer = state.buffer,
-                          .view = state.view,
+                          .view = view != nullptr ? std::optional(view->view) : std::nullopt,
                           .name = buffer.name(),
                           .resource = buffer.resource_uri(),
                           .modified = buffer.modified(),
-                          .active = index == active_buffer_index_,
+                          .active = state.buffer == buffer_id(),
                           .saving = state.pending_save.has_value()});
+    }
+    return result;
+}
+
+std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
+    std::vector<OpenWindowSnapshot> result;
+    for (const WindowId window : runtime_.windows().all()) {
+        const ViewId view = runtime_.windows().get(window).view_id();
+        result.push_back({.window = window,
+                          .view = view,
+                          .buffer = runtime_.views().get(view).buffer_id(),
+                          .active = window == active_window_});
     }
     return result;
 }
@@ -376,9 +371,8 @@ bool EditorApplication::poll_background_work() {
             message_ = std::format("save failed: {}", error.message());
         } else {
             mark_saved(state->buffer, std::move(state->pending_save->content));
-            message_ = state->session->buffer().modified()
-                           ? std::format("saved {} · newer edits remain", display)
-                           : std::format("saved {}", display);
+            message_ = buffer.modified() ? std::format("saved {} · newer edits remain", display)
+                                         : std::format("saved {}", display);
         }
         state->pending_save.reset();
         changed = true;
@@ -388,8 +382,8 @@ bool EditorApplication::poll_background_work() {
 
 void EditorApplication::request_quit(bool force) {
     const std::size_t modified = static_cast<std::size_t>(
-        std::ranges::count_if(buffers_, [](const std::unique_ptr<BufferState>& state) {
-            return state->session->buffer().modified();
+        std::ranges::count_if(buffers_, [this](const std::unique_ptr<BufferState>& state) {
+            return runtime_.buffers().get(state->buffer).modified();
         }));
     if (modified == 0 || force || quit_armed_) {
         quit_ = true;
@@ -406,10 +400,7 @@ void EditorApplication::mark_saved(Text content) {
 }
 
 EditorApplication::BufferState& EditorApplication::active_buffer() {
-    if (buffers_.empty() || active_buffer_index_ >= buffers_.size()) {
-        throw std::logic_error("editor application has no active buffer");
-    }
-    return *buffers_[active_buffer_index_];
+    return state_for(buffer_id());
 }
 
 const EditorApplication::BufferState& EditorApplication::active_buffer() const {
@@ -431,15 +422,41 @@ const EditorApplication::BufferState& EditorApplication::state_for(BufferId buff
     return const_cast<EditorApplication*>(this)->state_for(buffer);
 }
 
-EditSession& EditorApplication::session_for(ViewId view) {
-    const auto found =
-        std::ranges::find_if(buffers_, [view](const std::unique_ptr<BufferState>& state) {
-            return state->view == view;
-        });
-    if (found == buffers_.end()) {
-        throw std::out_of_range("view has no edit session");
+EditorApplication::ViewState& EditorApplication::active_view() {
+    return view_state_for(view_id());
+}
+
+const EditorApplication::ViewState& EditorApplication::active_view() const {
+    return const_cast<EditorApplication*>(this)->active_view();
+}
+
+EditorApplication::ViewState& EditorApplication::view_state_for(ViewId view) {
+    const auto found = std::ranges::find_if(
+        views_, [view](const std::unique_ptr<ViewState>& state) { return state->view == view; });
+    if (found == views_.end()) {
+        throw std::out_of_range("view has no editor session");
     }
-    return *(*found)->session;
+    return **found;
+}
+
+const EditorApplication::ViewState& EditorApplication::view_state_for(ViewId view) const {
+    return const_cast<EditorApplication*>(this)->view_state_for(view);
+}
+
+EditorApplication::ViewState* EditorApplication::find_view(WindowId window, BufferId buffer) {
+    const auto found = std::ranges::find_if(views_, [&](const std::unique_ptr<ViewState>& state) {
+        return state->window == window && state->buffer == buffer;
+    });
+    return found == views_.end() ? nullptr : found->get();
+}
+
+const EditorApplication::ViewState* EditorApplication::find_view(WindowId window,
+                                                                 BufferId buffer) const {
+    return const_cast<EditorApplication*>(this)->find_view(window, buffer);
+}
+
+EditSession& EditorApplication::session_for(ViewId view) {
+    return *view_state_for(view).session;
 }
 
 const EditSession& EditorApplication::session_for(ViewId view) const {
@@ -448,26 +465,57 @@ const EditSession& EditorApplication::session_for(ViewId view) const {
 
 BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
                                           std::string style_origin, TextOffset caret) {
+    (void)caret;
     const CppModeRegistration cpp = ensure_cpp_mode(runtime_);
     const BufferId buffer = runtime_.buffers().create(std::move(spec));
-    ViewId view;
     try {
         runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(), cpp.mode);
-        view = runtime_.views().create(buffer, caret);
         auto state = std::make_unique<BufferState>();
         state->buffer = buffer;
-        state->view = view;
-        state->session = std::make_unique<EditSession>(runtime_, buffer, view, style);
+        state->style = std::make_shared<CppIndentStyle>(style);
         state->style_origin = std::move(style_origin);
         buffers_.push_back(std::move(state));
     } catch (...) {
-        if (view) {
-            (void)runtime_.views().erase(view);
-        }
         (void)runtime_.buffers().erase(buffer);
         throw;
     }
     return buffer;
+}
+
+ViewId EditorApplication::create_view(WindowId window, BufferId buffer, TextOffset caret) {
+    BufferState& buffer_state = state_for(buffer);
+    const ViewId view = runtime_.views().create(buffer, caret);
+    try {
+        auto state = std::make_unique<ViewState>();
+        state->window = window;
+        state->buffer = buffer;
+        state->view = view;
+        state->session = std::make_unique<EditSession>(runtime_, buffer, view, buffer_state.style);
+        views_.push_back(std::move(state));
+    } catch (...) {
+        (void)runtime_.views().erase(view);
+        throw;
+    }
+    return view;
+}
+
+bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
+    if (runtime_.windows().try_get(window) == nullptr ||
+        runtime_.buffers().try_get(buffer) == nullptr) {
+        return false;
+    }
+    ViewState* view = find_view(window, buffer);
+    if (view == nullptr) {
+        const ViewId created = create_view(window, buffer);
+        view = &view_state_for(created);
+    }
+    runtime_.windows().set_view(window, view->view);
+    reveal_caret_ = true;
+    quit_armed_ = false;
+    if (window == active_window_) {
+        sync_keymaps();
+    }
+    return true;
 }
 
 BufferId EditorApplication::create_scratch_buffer() {
@@ -493,10 +541,55 @@ void EditorApplication::register_commands() {
     define("application.quit", [this](const CommandInvocation&) { request_quit(); });
     define("application.force-quit", [this](const CommandInvocation&) { request_quit(true); });
     define("keyboard.quit", [this](const CommandInvocation&) {
+        if (interaction_.cancel()) {
+            message_ = "cancelled";
+            return;
+        }
         session().clear_selection();
-        active_buffer().selection_history.clear();
+        active_view().selection_history.clear();
         message_ = "cancelled";
     });
+    const auto interaction_enabled = [this](const CommandContext&) {
+        return interaction_.active();
+    };
+    runtime_.commands().define(
+        "interaction.submit",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
+            if (!submission) {
+                return std::unexpected(CommandError{std::move(submission.error())});
+            }
+            return CommandDispatch{.command = submission->accept_command,
+                                   .invocation = std::move(submission->invocation)};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.erase-backward",
+        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.erase_backward(context);
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.next-candidate",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_selection(1);
+            return CommandCompleted{};
+        },
+        [this](const CommandContext&) {
+            const InteractionState* state = interaction_.state();
+            return state != nullptr && state->request.kind == InteractionKind::Picker;
+        });
+    runtime_.commands().define(
+        "interaction.previous-candidate",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_selection(-1);
+            return CommandCompleted{};
+        },
+        [this](const CommandContext&) {
+            const InteractionState* state = interaction_.state();
+            return state != nullptr && state->request.kind == InteractionKind::Picker;
+        });
     define("editor.redraw", [this](const CommandInvocation&) { reveal_caret_ = true; });
     define("editor.position", [this](const CommandInvocation&) {
         const DocumentSnapshot snapshot = session().snapshot();
@@ -513,7 +606,7 @@ void EditorApplication::register_commands() {
             message_ = "mark cleared";
         } else {
             session().set_selection({.anchor = session().caret(), .head = session().caret()});
-            active_buffer().selection_history.clear();
+            active_view().selection_history.clear();
             message_ = "mark set";
         }
     });
@@ -526,7 +619,7 @@ void EditorApplication::register_commands() {
         const std::optional<std::string> clipboard_error =
             store_kill(session().snapshot().substring(*selection));
         session().erase(*selection);
-        active_buffer().selection_history.clear();
+        active_view().selection_history.clear();
         after_edit();
         if (clipboard_error) {
             message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
@@ -541,7 +634,7 @@ void EditorApplication::register_commands() {
         }
         const std::optional<std::string> clipboard_error = store_kill(snapshot.substring(range));
         session().erase(range);
-        active_buffer().selection_history.clear();
+        active_view().selection_history.clear();
         after_edit();
         if (clipboard_error) {
             message_ = std::format("killed internally; clipboard: {}", *clipboard_error);
@@ -610,13 +703,13 @@ void EditorApplication::register_commands() {
         if (const std::optional<TextRange> next =
                 expand_selection(session().analysis().tree, current)) {
             if (session().selection()) {
-                active_buffer().selection_history.push_back(current);
+                active_view().selection_history.push_back(current);
             }
             session().set_selection({.anchor = next->start, .head = next->end});
         }
     });
     define("selection.contract", [this](const CommandInvocation&) {
-        std::vector<TextRange>& history = active_buffer().selection_history;
+        std::vector<TextRange>& history = active_view().selection_history;
         if (history.empty()) {
             session().clear_selection();
             return;
@@ -813,6 +906,98 @@ void EditorApplication::register_interaction_providers() {
     });
 }
 
+void EditorApplication::register_keymaps() {
+    keymap_ = runtime_.keymaps().define("editor.default");
+    system_keymap_ = runtime_.keymaps().define("editor.system");
+    interaction_text_keymap_ = runtime_.keymaps().define("interaction.text");
+    interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
+    refresh_default_keymap();
+
+    const auto command = [this](std::string_view name) {
+        const std::optional<CommandId> id = runtime_.commands().find(name);
+        if (!id) {
+            throw std::logic_error(std::format("missing built-in command '{}'", name));
+        }
+        return *id;
+    };
+    runtime_.keymaps().bind(system_keymap_, "C-g", command("keyboard.quit"));
+    for (const KeymapId map : {interaction_text_keymap_, interaction_picker_keymap_}) {
+        runtime_.keymaps().bind(map, "RET", command("interaction.submit"));
+        runtime_.keymaps().bind(map, "Backspace", command("interaction.erase-backward"));
+        runtime_.keymaps().bind(map, "ESC", command("keyboard.quit"));
+    }
+    for (std::string_view keys : {"C-n", "Down", "TAB"}) {
+        runtime_.keymaps().bind(interaction_picker_keymap_, keys,
+                                command("interaction.next-candidate"));
+    }
+    for (std::string_view keys : {"C-p", "Up"}) {
+        runtime_.keymaps().bind(interaction_picker_keymap_, keys,
+                                command("interaction.previous-candidate"));
+    }
+    command_loop_.set_override_keymaps({system_keymap_});
+}
+
+std::vector<ActiveKeymapLayer> EditorApplication::window_keymap_layers() const {
+    std::vector<ActiveKeymapLayer> layers;
+    const auto append = [&](std::span<const KeymapId> maps, std::string_view scope) {
+        for (const KeymapId map : maps) {
+            if (std::ranges::any_of(layers, [map](const ActiveKeymapLayer& layer) {
+                    return layer.keymap == map;
+                })) {
+                continue;
+            }
+            layers.push_back({.keymap = map, .scope = std::string(scope)});
+        }
+    };
+
+    const Window& window = runtime_.windows().get(active_window_);
+    const View& view = runtime_.views().get(window.view_id());
+    const Buffer& buffer = runtime_.buffers().get(view.buffer_id());
+    append(window.keymaps(), "window");
+    append(view.keymaps(), "view");
+    append(buffer.keymaps(), "buffer");
+    for (auto mode = buffer.modes().minors().rbegin(); mode != buffer.modes().minors().rend();
+         ++mode) {
+        const ModeRegistry::Definition& definition = runtime_.modes().definition(*mode);
+        append(definition.keymaps, std::format("minor-mode:{}", definition.name));
+    }
+    if (buffer.modes().major()) {
+        const ModeRegistry::Definition& definition =
+            runtime_.modes().definition(*buffer.modes().major());
+        append(definition.keymaps, std::format("major-mode:{}", definition.name));
+    }
+    append(std::span(&keymap_, 1), "global");
+    return layers;
+}
+
+void EditorApplication::sync_keymaps() {
+    std::vector<ActiveKeymapLayer> layers;
+    if (const InteractionState* interaction = interaction_.state()) {
+        layers.push_back({.keymap = interaction->request.kind == InteractionKind::Picker
+                                        ? interaction_picker_keymap_
+                                        : interaction_text_keymap_,
+                          .scope = "interaction"});
+    } else {
+        layers = window_keymap_layers();
+    }
+    const bool changed =
+        layers.size() != active_keymap_layers_.size() ||
+        !std::ranges::equal(layers, active_keymap_layers_,
+                            [](const ActiveKeymapLayer& left, const ActiveKeymapLayer& right) {
+                                return left.keymap == right.keymap && left.scope == right.scope;
+                            });
+    if (!changed) {
+        return;
+    }
+    active_keymap_layers_ = std::move(layers);
+    std::vector<KeymapId> keymaps;
+    keymaps.reserve(active_keymap_layers_.size());
+    for (const ActiveKeymapLayer& layer : active_keymap_layers_) {
+        keymaps.push_back(layer.keymap);
+    }
+    command_loop_.set_keymaps(std::move(keymaps));
+}
+
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {
     if (result.command) {
         last_command_ = runtime_.commands().definition(*result.command).name;
@@ -837,12 +1022,12 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
 }
 
 CommandContext EditorApplication::command_context() {
-    return CommandContext(runtime_, buffer_id(), view_id());
+    return CommandContext(runtime_, active_window_, buffer_id(), view_id());
 }
 
 void EditorApplication::after_edit() {
     session().clear_selection();
-    active_buffer().selection_history.clear();
+    active_view().selection_history.clear();
     quit_armed_ = false;
     message_.clear();
     reveal_caret_ = true;
@@ -878,12 +1063,13 @@ void EditorApplication::save() {
         message_ = "save already in progress";
         return;
     }
-    const std::optional<std::string>& resource = state.session->buffer().resource_uri();
+    const std::optional<std::string>& resource =
+        runtime_.buffers().get(state.buffer).resource_uri();
     if (!resource) {
         message_ = "buffer has no file path";
         return;
     }
-    const DocumentSnapshot snapshot = state.session->snapshot();
+    const DocumentSnapshot snapshot = runtime_.buffers().get(state.buffer).snapshot();
     Text content = snapshot.content();
     std::string target_path = *resource;
     try {
@@ -910,7 +1096,7 @@ void EditorApplication::save() {
 
 void EditorApplication::mark_saved(BufferId buffer, Text content) {
     BufferState& state = state_for(buffer);
-    state.session->buffer().mark_saved(std::move(content));
+    runtime_.buffers().get(buffer).mark_saved(std::move(content));
     ++state.save_generation;
     quit_armed_ = false;
 }
@@ -919,15 +1105,21 @@ void EditorApplication::switch_relative(int delta) {
     if (buffers_.size() < 2 || delta == 0) {
         return;
     }
+    const auto active =
+        std::ranges::find_if(buffers_, [this](const std::unique_ptr<BufferState>& state) {
+            return state->buffer == buffer_id();
+        });
+    if (active == buffers_.end()) {
+        throw std::logic_error("active window displays an untracked buffer");
+    }
     const std::int64_t size = static_cast<std::int64_t>(buffers_.size());
     std::int64_t next =
-        (static_cast<std::int64_t>(active_buffer_index_) + static_cast<std::int64_t>(delta)) % size;
+        (static_cast<std::int64_t>(active - buffers_.begin()) + static_cast<std::int64_t>(delta)) %
+        size;
     if (next < 0) {
         next += size;
     }
-    active_buffer_index_ = static_cast<std::size_t>(next);
-    reveal_caret_ = true;
-    quit_armed_ = false;
+    (void)switch_buffer(buffers_[static_cast<std::size_t>(next)]->buffer);
 }
 
 CommandResult EditorApplication::begin_command_palette(CommandContext&,
