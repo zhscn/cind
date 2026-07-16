@@ -217,6 +217,18 @@ void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui
                                                   float scroll_top, const FrameIdentity& identity,
                                                   bool geometry_changed,
                                                   FrameClock::time_point now) {
+    // A workspace contains independently scrolling pane grids; the scalar
+    // scroll timeline represents a single grid only. Composite frames use
+    // direct presentation and retain normal scene damage tracking.
+    if (!scene->panes.empty()) {
+        scroll_animation_.reset();
+        view_animation_.reset();
+        last_scene_ = scene;
+        last_scroll_top_ = scroll_top;
+        last_identity_ = identity;
+        last_view_target_ = target_view;
+        return;
+    }
     if (geometry_changed || !last_scene_ || !last_scroll_top_ || !last_identity_ ||
         *last_identity_ != identity) {
         scroll_animation_.reset();

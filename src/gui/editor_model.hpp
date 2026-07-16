@@ -8,8 +8,10 @@
 #include "ui/view_tree.hpp"
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cind::gui {
 
@@ -38,13 +40,18 @@ public:
     EditorStateSnapshot inspect();
 
 private:
-    const ui::LineSigns& signs();
+    struct SignCache {
+        BufferId buffer;
+        RevisionId revision = static_cast<RevisionId>(-1);
+        std::uint32_t generation = static_cast<std::uint32_t>(-1);
+        ui::LineSigns signs;
+    };
+
+    const ui::LineSigns& signs(WindowId window);
+    static std::string pane_id(WindowId window);
 
     EditorApplication application_;
-    ui::LineSigns signs_;
-    BufferId sign_buffer_;
-    RevisionId sign_revision_ = static_cast<RevisionId>(-1);
-    std::uint32_t sign_generation_ = static_cast<std::uint32_t>(-1);
+    std::deque<SignCache> sign_caches_;
     ui::ListViewport popup_viewport_;
     int last_rows_ = 24;
     std::string preedit_;

@@ -121,8 +121,26 @@ std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers)
         return punctuation(U'-', U'_');
     case SDL_SCANCODE_EQUALS:
         return punctuation(U'=', U'+');
+    case SDL_SCANCODE_0:
+        return punctuation(U'0', U')');
+    case SDL_SCANCODE_1:
+        return punctuation(U'1', U'!');
+    case SDL_SCANCODE_2:
+        return punctuation(U'2', U'@');
+    case SDL_SCANCODE_3:
+        return punctuation(U'3', U'#');
+    case SDL_SCANCODE_4:
+        return punctuation(U'4', U'$');
     case SDL_SCANCODE_5:
         return punctuation(U'5', U'%');
+    case SDL_SCANCODE_6:
+        return punctuation(U'6', U'^');
+    case SDL_SCANCODE_7:
+        return punctuation(U'7', U'&');
+    case SDL_SCANCODE_8:
+        return punctuation(U'8', U'*');
+    case SDL_SCANCODE_9:
+        return punctuation(U'9', U'(');
     default:
         return std::nullopt;
     }
@@ -714,13 +732,16 @@ private:
                              .baseline_from_row_top = diagnostics.baseline_from_row_top},
             .theme = {.canvas = theme.canvas,
                       .surface = theme.surface,
+                      .inactive_surface = theme.inactive_surface,
                       .raised = theme.raised,
                       .hairline = theme.hairline,
                       .active_line = theme.active_line,
                       .selection = theme.selection,
                       .text = theme.text,
                       .strong = theme.strong,
+                      .inactive_strong = theme.inactive_strong,
                       .muted = theme.muted,
+                      .inactive_muted = theme.inactive_muted,
                       .faint = theme.faint,
                       .accent = theme.accent,
                       .cursor = theme.cursor,

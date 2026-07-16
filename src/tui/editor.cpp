@@ -389,6 +389,127 @@ private:
                 popup_items.push_back({.label = hint.key, .detail = detail});
             }
         }
+        if (application_.window_layout().leaves().size() > 1) {
+            const WindowPartition partition =
+                application_.window_layout().partition(size.rows - 1, size.cols);
+            std::vector<ui::EditorPaneScene> panes;
+            panes.reserve(partition.windows.size());
+            for (const WindowPlacement& placement : partition.windows) {
+                EditSession& pane_session = application_.session(placement.window);
+                const DocumentSnapshot pane_snapshot = pane_session.snapshot();
+                ViewportState& pane_state = pane_session.view().viewport();
+                ui::EditorSceneViewState pane_view{
+                    .viewport = {.top_line = pane_state.top_line,
+                                 .top_line_offset = pane_state.top_line_offset,
+                                 .left_column = pane_state.left_column},
+                    .popup = {},
+                };
+                pane_view = ui::layout_editor_scene(
+                    {.text = pane_snapshot.content(),
+                     .caret = pane_session.caret(),
+                     .rows = std::max(3, placement.rect.rows + 1),
+                     .cols = std::max(1, placement.rect.columns),
+                     .tab_width = pane_session.style().tab_width,
+                     .reveal_caret = placement.window == application_.window_id(),
+                     .popup_item_count = 0,
+                     .popup_selection = std::nullopt},
+                    pane_view);
+                pane_state.top_line = pane_view.viewport.top_line;
+                pane_state.top_line_offset = pane_view.viewport.top_line_offset;
+                pane_state.left_column = pane_view.viewport.left_column;
+                const ui::LineSigns pane_signs =
+                    ui::line_signs(pane_session.buffer().save_point(), pane_snapshot.content());
+                const bool active = placement.window == application_.window_id();
+                ui::Scene pane_scene = ui::compose_editor_scene(
+                    {.text = pane_snapshot.content(),
+                     .tokens = pane_session.analysis().tree.tokens(),
+                     .signs = pane_signs,
+                     .caret = pane_session.caret(),
+                     .selection = pane_session.selection(),
+                     .rows = std::max(3, placement.rect.rows + 1),
+                     .cols = std::max(1, placement.rect.columns),
+                     .tab_width = pane_session.style().tab_width,
+                     .path = application_.path(placement.window),
+                     .dirty = application_.dirty(placement.window),
+                     .revision = pane_snapshot.revision(),
+                     .style_origin = application_.style_origin(placement.window),
+                     .last_key =
+                         active ? std::string_view(application_.last_key()) : std::string_view(),
+                     .echo = {},
+                     .echo_cursor_column = std::nullopt,
+                     .echo_cursor_byte = std::nullopt,
+                     .popup_title = {},
+                     .popup_items = {},
+                     .popup_selection = std::nullopt,
+                     .popup_input = std::nullopt,
+                     .popup_input_cursor = std::nullopt},
+                    pane_view);
+                panes.push_back({.id = std::format("window:{}:{}", placement.window.slot,
+                                                   placement.window.generation),
+                                 .rect = {.row = placement.rect.row,
+                                          .col = placement.rect.column,
+                                          .rows = placement.rect.rows,
+                                          .cols = placement.rect.columns},
+                                 .active = active,
+                                 .scene = std::move(pane_scene)});
+            }
+            std::vector<ui::SceneDivider> dividers;
+            dividers.reserve(partition.dividers.size());
+            for (std::size_t index = 0; index < partition.dividers.size(); ++index) {
+                const WindowDivider& divider = partition.dividers[index];
+                dividers.push_back({.id = std::format("workspace/divider/{}", index),
+                                    .axis = divider.axis == WindowSplitAxis::Rows
+                                                ? ui::DividerAxis::Horizontal
+                                                : ui::DividerAxis::Vertical,
+                                    .position = divider.position,
+                                    .start = divider.start,
+                                    .length = divider.length});
+            }
+
+            ViewportState& active_state = session().view().viewport();
+            ui::EditorSceneViewState chrome_view{
+                .viewport = {.top_line = active_state.top_line,
+                             .top_line_offset = active_state.top_line_offset,
+                             .left_column = active_state.left_column},
+                .popup = popup_viewport_,
+            };
+            chrome_view = ui::layout_editor_scene({.text = snap.content(),
+                                                   .caret = session().caret(),
+                                                   .rows = size.rows,
+                                                   .cols = size.cols,
+                                                   .tab_width = tab_width(),
+                                                   .reveal_caret = false,
+                                                   .popup_item_count = popup_items.size(),
+                                                   .popup_selection = popup_selection},
+                                                  chrome_view);
+            popup_viewport_ = chrome_view.popup;
+            ui::Scene chrome =
+                ui::compose_editor_scene({.text = snap.content(),
+                                          .tokens = tokens(),
+                                          .signs = signs(),
+                                          .caret = session().caret(),
+                                          .selection = selection(),
+                                          .rows = size.rows,
+                                          .cols = size.cols,
+                                          .tab_width = tab_width(),
+                                          .path = path(),
+                                          .dirty = dirty(),
+                                          .revision = snap.revision(),
+                                          .style_origin = application_.style_origin(),
+                                          .last_key = application_.last_key(),
+                                          .echo = echo_text,
+                                          .echo_cursor_column = echo_cursor,
+                                          .echo_cursor_byte = echo_cursor_byte,
+                                          .popup_title = popup_title,
+                                          .popup_items = popup_items,
+                                          .popup_selection = popup_selection,
+                                          .popup_input = popup_input,
+                                          .popup_input_cursor = popup_input_cursor},
+                                         chrome_view);
+            return ui::compose_editor_workspace({.rows = size.rows, .cols = size.cols},
+                                                std::move(panes), std::move(dividers),
+                                                std::move(chrome));
+        }
         ViewportState& state = session().view().viewport();
         ui::EditorSceneViewState view{
             .viewport = {.top_line = state.top_line,

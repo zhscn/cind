@@ -264,6 +264,7 @@ TEST_CASE("semantic pointer targets edit document positions without viewport rec
     EditorModel model("sample.cc", "zero\none\ntwo\n", CppIndentStyle{}, "test", 1);
     model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentText,
                               .view_id = "editor/document",
+                              .pane_id = {},
                               .region_index = 0,
                               .role = ui::RegionRole::TextArea,
                               .scene_cell = std::nullopt,
@@ -277,6 +278,7 @@ TEST_CASE("semantic pointer targets edit document positions without viewport rec
 
     model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentGutter,
                               .view_id = "editor/gutter/line-numbers",
+                              .pane_id = {},
                               .region_index = 1,
                               .role = ui::RegionRole::LineNumbers,
                               .scene_cell = std::nullopt,
@@ -287,6 +289,65 @@ TEST_CASE("semantic pointer targets edit document positions without viewport rec
     state = model.inspect();
     CHECK(state.caret_position.line == 2);
     CHECK(state.caret_display_column == 0);
+}
+
+TEST_CASE("window splits compose pane-owned regions with active theme state") {
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", CppIndentStyle{}, "test", 1);
+
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 8));
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'3'), 8));
+    ui::Scene scene = compose_frame(model, 12, 80);
+    REQUIRE(scene.panes.size() == 2);
+    REQUIRE(scene.dividers.size() == 1);
+    CHECK(scene.dividers.front().axis == ui::DividerAxis::Vertical);
+    CHECK(std::ranges::count_if(scene.panes,
+                                [](const ui::ScenePane& pane) { return pane.active; }) == 1);
+    CHECK(std::ranges::count_if(scene.regions, [](const ui::Region& region) {
+              return region.role == ui::RegionRole::StatusBar && region.active;
+          }) == 1);
+    CHECK(std::ranges::count_if(scene.regions, [](const ui::Region& region) {
+              return region.role == ui::RegionRole::StatusBar && !region.active;
+          }) == 1);
+    CHECK(std::ranges::all_of(scene.regions, [](const ui::Region& region) {
+        return region.pane_id.empty() ||
+               (region.role == ui::RegionRole::StatusBar
+                    ? region.vertical_anchor == ui::VerticalAnchor::Cell
+                    : region.vertical_anchor == ui::VerticalAnchor::PaneGrid);
+    }));
+
+    const std::string first_active =
+        std::ranges::find_if(scene.panes, [](const ui::ScenePane& pane) {
+            return pane.active;
+        })->id;
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 8));
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'o'), 8));
+    scene = compose_frame(model, 12, 80);
+    const std::string second_active =
+        std::ranges::find_if(scene.panes, [](const ui::ScenePane& pane) {
+            return pane.active;
+        })->id;
+    CHECK(second_active != first_active);
+
+    const auto inactive_document =
+        std::ranges::find_if(scene.regions, [](const ui::Region& region) {
+            return region.role == ui::RegionRole::TextArea && !region.active;
+        });
+    REQUIRE(inactive_document != scene.regions.end());
+    model.click({.kind = ui::HitTargetKind::DocumentText,
+                 .view_id = inactive_document->id,
+                 .pane_id = inactive_document->pane_id,
+                 .region_index = static_cast<std::size_t>(
+                     std::distance(scene.regions.begin(), inactive_document)),
+                 .role = ui::RegionRole::TextArea,
+                 .scene_cell = std::nullopt,
+                 .local_cell = std::nullopt,
+                 .document_line = 0,
+                 .display_column = 0,
+                 .popup_item = std::nullopt});
+    scene = compose_frame(model, 12, 80);
+    CHECK(std::ranges::find_if(scene.panes, [](const ui::ScenePane& pane) {
+              return pane.active;
+          })->id == first_active);
 }
 
 TEST_CASE("command palette retains a global selection and stable list viewport") {

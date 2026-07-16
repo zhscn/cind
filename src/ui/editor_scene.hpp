@@ -75,6 +75,18 @@ struct EditorSceneInput {
     std::optional<std::size_t> popup_input_cursor;
 };
 
+struct EditorPaneScene {
+    std::string id;
+    Rect rect;
+    bool active = false;
+    Scene scene;
+};
+
+struct EditorWorkspaceGeometry {
+    int rows = 0;
+    int cols = 0;
+};
+
 // Resolves caret reveal and popup selection into retained view state. The
 // operation is pure: callers explicitly apply the returned state before
 // composing one or more frontend frames from it.
@@ -85,5 +97,11 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
 // view state. Fractional vertical scroll is represented as a negative grid
 // offset, allowing either edge to contain a partial row.
 Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewState& view);
+
+// Projects independently composed editor views into one workspace. Pane
+// document regions remain independently scrollable inside fixed rectangles;
+// the echo area and overlays are taken from the full-frame chrome Scene.
+Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<EditorPaneScene> panes,
+                               std::vector<SceneDivider> dividers, Scene chrome);
 
 } // namespace cind::ui

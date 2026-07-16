@@ -30,6 +30,37 @@ struct WindowLayoutNode {
     bool leaf() const { return window.valid(); }
 };
 
+struct WindowLayoutRect {
+    int row = 0;
+    int column = 0;
+    int rows = 0;
+    int columns = 0;
+};
+
+struct WindowPlacement {
+    WindowId window;
+    WindowLayoutRect rect;
+};
+
+struct WindowDivider {
+    WindowSplitAxis axis = WindowSplitAxis::Rows;
+    int position = 0;
+    int start = 0;
+    int length = 0;
+};
+
+struct WindowPartition {
+    std::vector<WindowPlacement> windows;
+    std::vector<WindowDivider> dividers;
+};
+
+struct WindowSplitSpec {
+    WindowId target;
+    WindowId new_window;
+    WindowSplitAxis axis = WindowSplitAxis::Rows;
+    float ratio = 0.5F;
+};
+
 class WindowLayout {
 public:
     WindowLayout() = default;
@@ -39,10 +70,11 @@ public:
     std::span<const WindowId> leaves() const { return leaves_; }
     bool contains(WindowId window) const;
 
-    bool split(WindowId window, WindowId new_window, WindowSplitAxis axis, float ratio = 0.5F);
+    bool split(const WindowSplitSpec& spec);
     bool erase(WindowId window);
     bool retain(WindowId window);
     std::optional<WindowId> next(WindowId window, int delta = 1) const;
+    WindowPartition partition(int rows, int columns) const;
 
 private:
     void rebuild_leaves();

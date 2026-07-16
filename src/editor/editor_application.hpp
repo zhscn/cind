@@ -113,10 +113,15 @@ public:
     std::size_t buffer_count() const { return buffers_.size(); }
 
     RevisionId revision() const { return session().snapshot().revision(); }
+    RevisionId revision(WindowId window) const { return session(window).snapshot().revision(); }
     bool dirty() const { return session().buffer().modified(); }
+    bool dirty(WindowId window) const { return session(window).buffer().modified(); }
     const std::string& path() const;
+    const std::string& path(WindowId window) const;
     const std::string& style_origin() const;
+    const std::string& style_origin(WindowId window) const;
     std::uint32_t save_generation() const;
+    std::uint32_t save_generation(WindowId window) const;
 
     const std::string& message() const { return message_; }
     std::string& message() { return message_; }

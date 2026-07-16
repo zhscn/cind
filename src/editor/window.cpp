@@ -57,6 +57,67 @@ bool erase_leaf(std::unique_ptr<WindowLayoutNode>& node, WindowId window) {
     return erase_leaf(node->first, window) || erase_leaf(node->second, window);
 }
 
+struct SplitExtentSpec {
+    int extent = 0;
+    float ratio = 0.5F;
+    int separator = 0;
+};
+
+int split_extent(const SplitExtentSpec& spec) {
+    const int available = std::max(0, spec.extent - spec.separator);
+    if (available <= 1) {
+        return available;
+    }
+    const int minimum = available >= 4 ? 2 : 1;
+    return std::clamp(static_cast<int>(std::lround(static_cast<float>(available) * spec.ratio)),
+                      minimum, available - minimum);
+}
+
+void partition_node(const WindowLayoutNode* node, WindowLayoutRect rect, WindowPartition& output) {
+    if (node == nullptr) {
+        return;
+    }
+    if (node->leaf()) {
+        output.windows.push_back({.window = node->window, .rect = rect});
+        return;
+    }
+    if (node->axis == WindowSplitAxis::Rows) {
+        const int first_rows =
+            split_extent({.extent = rect.rows, .ratio = node->ratio, .separator = 0});
+        partition_node(
+            node->first.get(),
+            {.row = rect.row, .column = rect.column, .rows = first_rows, .columns = rect.columns},
+            output);
+        partition_node(node->second.get(),
+                       {.row = rect.row + first_rows,
+                        .column = rect.column,
+                        .rows = std::max(0, rect.rows - first_rows),
+                        .columns = rect.columns},
+                       output);
+        output.dividers.push_back({.axis = node->axis,
+                                   .position = rect.row + first_rows,
+                                   .start = rect.column,
+                                   .length = rect.columns});
+        return;
+    }
+    const int separator = rect.columns >= 3 ? 1 : 0;
+    const int first_columns =
+        split_extent({.extent = rect.columns, .ratio = node->ratio, .separator = separator});
+    const int divider_column = rect.column + first_columns;
+    partition_node(
+        node->first.get(),
+        {.row = rect.row, .column = rect.column, .rows = rect.rows, .columns = first_columns},
+        output);
+    partition_node(node->second.get(),
+                   {.row = rect.row,
+                    .column = divider_column + separator,
+                    .rows = rect.rows,
+                    .columns = std::max(0, rect.columns - first_columns - separator)},
+                   output);
+    output.dividers.push_back(
+        {.axis = node->axis, .position = divider_column, .start = rect.row, .length = rect.rows});
+}
+
 } // namespace
 
 WindowLayout::WindowLayout(WindowId root) : root_(make_leaf(root)), leaves_{root} {
@@ -69,20 +130,20 @@ bool WindowLayout::contains(WindowId window) const {
     return std::ranges::find(leaves_, window) != leaves_.end();
 }
 
-bool WindowLayout::split(WindowId window, WindowId new_window, WindowSplitAxis axis, float ratio) {
-    if (!new_window.valid() || contains(new_window) || !std::isfinite(ratio) || ratio <= 0.0F ||
-        ratio >= 1.0F) {
+bool WindowLayout::split(const WindowSplitSpec& spec) {
+    if (!spec.new_window.valid() || contains(spec.new_window) || !std::isfinite(spec.ratio) ||
+        spec.ratio <= 0.0F || spec.ratio >= 1.0F) {
         return false;
     }
-    std::unique_ptr<WindowLayoutNode>* target = find_leaf(root_, window);
+    std::unique_ptr<WindowLayoutNode>* target = find_leaf(root_, spec.target);
     if (target == nullptr) {
         return false;
     }
     auto branch = std::make_unique<WindowLayoutNode>();
-    branch->axis = axis;
-    branch->ratio = ratio;
+    branch->axis = spec.axis;
+    branch->ratio = spec.ratio;
     branch->first = std::move(*target);
-    branch->second = make_leaf(new_window);
+    branch->second = make_leaf(spec.new_window);
     *target = std::move(branch);
     rebuild_leaves();
     return true;
@@ -117,6 +178,17 @@ std::optional<WindowId> WindowLayout::next(WindowId window, int delta) const {
     const auto index = std::distance(leaves_.begin(), found);
     const auto wrapped = ((index + static_cast<std::ptrdiff_t>(delta)) % size + size) % size;
     return leaves_[static_cast<std::size_t>(wrapped)];
+}
+
+WindowPartition WindowLayout::partition(int rows, int columns) const {
+    WindowPartition result;
+    result.windows.reserve(leaves_.size());
+    result.dividers.reserve(leaves_.empty() ? 0 : leaves_.size() - 1);
+    partition_node(
+        root_.get(),
+        {.row = 0, .column = 0, .rows = std::max(0, rows), .columns = std::max(0, columns)},
+        result);
+    return result;
 }
 
 void WindowLayout::rebuild_leaves() {

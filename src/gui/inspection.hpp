@@ -20,13 +20,16 @@ namespace cind::gui {
 struct ThemeInspection {
     std::uint32_t canvas = 0;
     std::uint32_t surface = 0;
+    std::uint32_t inactive_surface = 0;
     std::uint32_t raised = 0;
     std::uint32_t hairline = 0;
     std::uint32_t active_line = 0;
     std::uint32_t selection = 0;
     std::uint32_t text = 0;
     std::uint32_t strong = 0;
+    std::uint32_t inactive_strong = 0;
     std::uint32_t muted = 0;
+    std::uint32_t inactive_muted = 0;
     std::uint32_t faint = 0;
     std::uint32_t accent = 0;
     std::uint32_t cursor = 0;
@@ -200,7 +203,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 22;
+    static constexpr int schema_version = 23;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

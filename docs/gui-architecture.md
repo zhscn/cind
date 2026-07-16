@@ -10,13 +10,13 @@ SDL event
     ├─> normalized key / text / pointer
     │          │
     │          v
-    │   EditorApplication ──> Buffer / View / Window / Interaction
+    │   EditorApplication ──> Buffer / View / WindowLayout / Interaction
     │          │
     │          v
     │   layout_editor_scene (pure view-state transition)
     │          │
     │          v
-    │   compose_editor_scene ──> semantic Scene ──> ViewTree
+    │   compose_editor_workspace ──> semantic Scene ──> ViewTree
     │                                      │
     │                                      v
     │                             GuiFrameController
@@ -43,6 +43,12 @@ state that belongs to this frontend composition, such as the popup list viewport
 cache. The document caret, selection, viewport and interaction input remain owned by their editor
 objects.
 
+`WindowLayout` is the persistent split tree. Its leaves are `WindowId` values and its branches
+carry row/column orientation plus a normalized ratio. Splitting creates a new View for the same
+Buffer, so caret, selection and viewport can diverge without duplicating document state. Deleting
+a pane removes its cached views through the same registry lifecycle. The tree partitions a display
+extent into window rectangles and divider lines for both frontends.
+
 The keymap stack follows the focused target. Window, view, buffer and mode maps describe document
 focus; interaction maps describe popup and minibuffer focus; application-global and system
 override maps remain available at both targets. This keeps input routing data-driven and prevents
@@ -52,15 +58,20 @@ widgets from implementing special key paths.
 
 `layout_editor_scene` is a pure reducer from immutable model input and retained view state to a new
 `EditorSceneViewState`. It resolves caret reveal and list selection without drawing or mutating the
-editor model. `compose_editor_scene` converts that resolved state into an immutable `ui::Scene`.
+editor model. `compose_editor_scene` converts one resolved view into an immutable local Scene;
+`compose_editor_workspace` projects those local Scenes into the window layout and adds global
+overlay and echo chrome.
 
 A Scene describes one frame in backend-independent terms:
 
 - document and gutter regions contain local cell primitives and document-coordinate mappings;
 - status, echo and popup regions contain semantic content, including text input byte offsets and
   list selection;
-- each region declares a stable ID, role, surface class and vertical anchor;
-- the Scene carries the document grid offset and the logical caret state.
+- pane metadata records stable owner IDs, rectangles and active state, while divider metadata
+  records orientation and span;
+- each pane-owned region declares its pane ID, active state and independent content offset;
+- the Scene carries the active document grid offset and logical caret state; overlay and echo
+  remain global workspace layers.
 
 Every region has exactly one content variant. Backends project semantic chrome into their native
 layout instead of receiving both semantic data and a second mirrored display list.
@@ -72,8 +83,15 @@ does not depend on the storage order of `Scene::regions`.
 ## Pixel layout and frame ownership
 
 `SkiaFrameLayout` is the immutable pixel layout of one stable Scene at one logical viewport size.
-It owns the shaped document runs, popup layout, echo layout, cursor geometry and semantic view tree
-used by a Skia presenter. Its source Scene outlives the layout and remains unchanged.
+It owns shaped document runs for every TextArea, popup layout, echo layout, cursor geometry and the
+semantic view tree used by a Skia presenter. Its source Scene outlives the layout and remains
+unchanged.
+
+Workspace rows partition the logical pixel area above the global echo strip. Each pane derives one
+pixel rectangle from that partition; its modeline is bottom-aligned at the standard modeline
+height, and its document and gutter regions share the remaining clipped body rectangle. Document
+baselines, divider positions, pointer hits and damage projection all consume this mapping, so
+fractional resize space belongs to pane content instead of overlapping pane-local chrome.
 
 `GuiFrameController` turns a composed Scene into a `PresentedFrame`. A presented frame owns:
 
@@ -114,6 +132,12 @@ non-overlapping vertical band, with an ink guard at the seam for glyph overhang.
 active-line fill and active line number use one `SkiaViewPresentation`, so they share one animation
 sample.
 
+A workspace contains independently scrolling pane grids and therefore uses direct presentation
+with normal scene damage. A single-grid Scene uses the scalar scroll timeline and caret animation.
+Active and inactive panes remain Scene semantics: the presenter selects dedicated theme tokens for
+modeline surfaces and text emphasis, and paints every split from the same hairline token used by
+the rest of the chrome.
+
 ## Input hit path
 
 Pointer input is resolved from the frame that was actually displayed:
@@ -128,10 +152,10 @@ logical pixel
     ─> editor command/state transition
 ```
 
-`ViewHit` records scene-local geometry. `resolve_hit_target` adds stable view identity and semantic
+`ViewHit` records scene-local geometry. `resolve_hit_target` adds stable view and pane identity and semantic
 meaning such as document line/display column, popup item, status or echo. `EditorModel::click`
-consumes this semantic target and does not derive document positions from gutter widths or viewport
-offsets.
+focuses the owning Window before applying a document position. It does not derive document
+positions from gutter widths or viewport offsets.
 
 ## Backend boundary
 
@@ -168,6 +192,8 @@ The following contracts prevent local rendering fixes from becoming alternate ar
    the editor core.
 10. Inspector data describes the same objects used for presentation and input, rather than a
     separately reconstructed debug model.
+11. Pane geometry, focus and active styling originate in the WindowLayout and Scene; presenters do
+    not maintain an alternate split tree.
 
 New GUI features join these boundaries by adding semantic Scene content, ViewTree structure or a
 prepared-layout type. A feature that needs separate geometry in paint, hit testing and inspection

@@ -33,7 +33,9 @@ std::string_view role_name(RegionRole role) {
 ViewLayer view_layer(VerticalAnchor anchor) {
     switch (anchor) {
     case VerticalAnchor::Grid:
+    case VerticalAnchor::PaneGrid:
         return ViewLayer::Grid;
+    case VerticalAnchor::Cell:
     case VerticalAnchor::Bottom:
         return ViewLayer::Chrome;
     case VerticalAnchor::Overlay:
@@ -95,6 +97,7 @@ std::optional<HitTarget> resolve_hit_target(const Scene& scene, const ViewHit& h
     HitTarget target{
         .kind = HitTargetKind::Region,
         .view_id = region_view_id(region),
+        .pane_id = region.pane_id,
         .region_index = hit.region_index,
         .role = region.role,
         .scene_cell = hit.scene_cell,

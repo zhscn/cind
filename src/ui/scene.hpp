@@ -82,8 +82,33 @@ enum class RegionRole : std::uint8_t {
 
 enum class VerticalAnchor : std::uint8_t {
     Grid,
+    PaneGrid,
+    Cell,
     Bottom,
     Overlay,
+};
+
+struct ScenePane {
+    std::string id;
+    Rect rect;
+    bool active = false;
+
+    bool operator==(const ScenePane&) const = default;
+};
+
+enum class DividerAxis : std::uint8_t {
+    Horizontal,
+    Vertical,
+};
+
+struct SceneDivider {
+    std::string id;
+    DividerAxis axis = DividerAxis::Vertical;
+    int position = 0;
+    int start = 0;
+    int length = 0;
+
+    bool operator==(const SceneDivider&) const = default;
 };
 
 struct Region {
@@ -153,6 +178,11 @@ struct Region {
     SurfaceClass surface = SurfaceClass::Editor;
     VerticalAnchor vertical_anchor = VerticalAnchor::Grid;
     std::string id;
+    std::string pane_id;
+    bool active = true;
+    // Pane-grid content moves inside the fixed Region rectangle while the
+    // rectangle remains the clipping and hit-test boundary.
+    float content_offset_rows = 0.0F;
     std::uint64_t revision = 0;
     Content content = PrimitiveContent{};
 
@@ -212,6 +242,8 @@ struct Scene {
     std::optional<int> active_text_row;
 
     std::vector<Region> regions;
+    std::vector<ScenePane> panes;
+    std::vector<SceneDivider> dividers;
 
     // Terminal cursor, 1-based scene coordinates; compose computes it
     // (text caret or prompt input point).

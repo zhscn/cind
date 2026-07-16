@@ -3,6 +3,7 @@
 #include "ui/char_width.hpp"
 #include "ui/view_tree.hpp"
 
+#include <cmath>
 #include <format>
 
 namespace cind::ui {
@@ -52,9 +53,14 @@ std::string render_ansi(const Scene& scene) {
     out += "\x1b[?25l\x1b[H\x1b[2J"; // hide cursor, home, clear
 
     const auto paint_primitive = [&](const Region& region, const Prim& prim) {
-        out += std::format("\x1b[{};{}H", region.rect.row + prim.row + 1,
+        const int content_row = region.vertical_anchor == VerticalAnchor::PaneGrid
+                                    ? static_cast<int>(std::floor(region.content_offset_rows))
+                                    : 0;
+        out += std::format("\x1b[{};{}H", region.rect.row + prim.row + content_row + 1,
                            region.rect.col + prim.col + 1);
-        const std::string_view sgr = sgr_of(prim.style);
+        const std::string_view sgr = prim.style == StyleClass::StatusBar && !region.active
+                                         ? std::string_view("\x1b[48;5;236m\x1b[90m")
+                                         : sgr_of(prim.style);
         out += sgr;
         if (prim.selected) {
             out += "\x1b[7m";
@@ -115,6 +121,15 @@ std::string render_ansi(const Scene& scene) {
                                  popup->selected_item == popup->first_item + offset, PrimKind::Text,
                                  std::format("popup:item:{}", popup->first_item + offset)});
                 }
+            }
+        }
+    }
+
+    for (const SceneDivider& divider : scene.dividers) {
+        if (divider.axis == DividerAxis::Vertical) {
+            for (int offset = 0; offset < divider.length; ++offset) {
+                out += std::format("\x1b[{};{}H\x1b[90m│\x1b[0m", divider.start + offset + 1,
+                                   divider.position + 1);
             }
         }
     }

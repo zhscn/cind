@@ -1038,6 +1038,179 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
     CHECK(retained == reference);
 }
 
+TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    Scene scene;
+    scene.rows = 4;
+    scene.cols = 21;
+    scene.cursor_visible = false;
+    scene.panes = {{.id = "window:0:1", .rect = {0, 0, 3, 10}, .active = true},
+                   {.id = "window:1:1", .rect = {0, 11, 3, 10}, .active = false}};
+    scene.dividers = {{.id = "workspace/divider/0",
+                       .axis = DividerAxis::Vertical,
+                       .position = 10,
+                       .start = 0,
+                       .length = 3}};
+
+    const auto pane_region = [](RegionRole role, Rect rect, std::string id, std::string pane,
+                                bool active) {
+        Region region{role,
+                      rect,
+                      {},
+                      role == RegionRole::StatusBar ? SurfaceClass::Status : SurfaceClass::Editor,
+                      role == RegionRole::StatusBar ? VerticalAnchor::Cell
+                                                    : VerticalAnchor::PaneGrid,
+                      std::move(id)};
+        region.pane_id = std::move(pane);
+        region.active = active;
+        return region;
+    };
+    Region active_body =
+        pane_region(RegionRole::TextArea, {0, 0, 2, 10}, "active/document", "window:0:1", true);
+    active_body.set_document_mapping({.first_line = 0, .first_display_column = 0});
+    active_body.primitives().push_back({0, 0, "active", StyleClass::Text, false});
+    Region inactive_body =
+        pane_region(RegionRole::TextArea, {0, 11, 2, 10}, "inactive/document", "window:1:1", false);
+    inactive_body.set_document_mapping({.first_line = 0, .first_display_column = 0});
+    inactive_body.primitives().push_back({0, 0, "idle", StyleClass::Text, false});
+    Region active_status =
+        pane_region(RegionRole::StatusBar, {2, 0, 1, 10}, "active/modeline", "window:0:1", true);
+    active_status.set_status({.path = "active.cc",
+                              .dirty = false,
+                              .line = 1,
+                              .column = 1,
+                              .line_count = 1,
+                              .revision = 0,
+                              .style_origin = {},
+                              .key = {}});
+    Region inactive_status = pane_region(RegionRole::StatusBar, {2, 11, 1, 10}, "inactive/modeline",
+                                         "window:1:1", false);
+    inactive_status.set_status({.path = "idle.cc",
+                                .dirty = false,
+                                .line = 1,
+                                .column = 1,
+                                .line_count = 1,
+                                .revision = 0,
+                                .style_origin = {},
+                                .key = {}});
+    Region echo{RegionRole::EchoArea, {3, 0, 1, scene.cols},  {},
+                SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
+    echo.set_echo({.text = "window split right", .cursor_byte = std::nullopt});
+    scene.regions = {std::move(active_body), std::move(inactive_body), std::move(active_status),
+                     std::move(inactive_status), std::move(echo)};
+
+    SceneDamageTracker tracker;
+    REQUIRE(tracker.update(scene).full_repaint);
+    const int width = presenter.cell_width() * scene.cols;
+    const int height =
+        presenter.cell_height() * 2 + presenter.cell_height() / 2 +
+        static_cast<int>(presenter.status_bar_height() + presenter.echo_area_height());
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    presenter.render(scene, width, height, pixels.data(),
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t));
+    const auto pixel = [&](int x, int y) {
+        return pixels[static_cast<std::size_t>(y * width + x)];
+    };
+    const int workspace_bottom = height - static_cast<int>(presenter.echo_area_height());
+    const int modeline_y = workspace_bottom - 2;
+    CHECK(pixel(presenter.cell_width() * 9, modeline_y) == theme.surface);
+    CHECK(pixel(presenter.cell_width() * 20, modeline_y) == theme.inactive_surface);
+    const int divider_x = presenter.cell_width() * 10 + presenter.cell_width() / 2;
+    CHECK(pixel(divider_x, presenter.cell_height() / 2) != theme.canvas);
+
+    const SkiaFrameLayout layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::optional<ViewHit> hit =
+        presenter.hit_test_view(layout, {.x = static_cast<float>(presenter.cell_width() * 12),
+                                         .y = static_cast<float>(presenter.cell_height() / 2)});
+    REQUIRE(hit);
+    const std::optional<HitTarget> target = resolve_hit_target(scene, *hit);
+    REQUIRE(target);
+    CHECK(target->pane_id == "window:1:1");
+
+    scene.regions[0].primitives()[0].text = "changed";
+    Region::StatusContent* status = scene.regions[2].status();
+    REQUIRE(status != nullptr);
+    status->key = "C-x";
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
+        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE_FALSE(rectangles.empty());
+    std::vector<std::uint32_t> reference(pixels.size());
+    presenter.render_damage(scene, width, height, pixels.data(),
+                            static_cast<std::size_t>(width) * sizeof(std::uint32_t), rectangles);
+    presenter.render(scene, width, height, reference.data(),
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t));
+    CHECK(pixels == reference);
+}
+
+TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    Scene scene;
+    scene.rows = 7;
+    scene.cols = 10;
+    scene.cursor_visible = false;
+    scene.panes = {{.id = "window:0:1", .rect = {0, 0, 3, 10}, .active = true},
+                   {.id = "window:1:1", .rect = {3, 0, 3, 10}, .active = false}};
+    scene.dividers = {{.id = "workspace/divider/0",
+                       .axis = DividerAxis::Horizontal,
+                       .position = 3,
+                       .start = 0,
+                       .length = 10}};
+
+    const auto status_region = [](Rect rect, std::string id, std::string pane, bool active) {
+        Region region{RegionRole::StatusBar, rect,         {}, SurfaceClass::Status,
+                      VerticalAnchor::Cell,  std::move(id)};
+        region.pane_id = std::move(pane);
+        region.active = active;
+        region.set_status({.path = active ? "active.cc" : "idle.cc",
+                           .dirty = false,
+                           .line = 1,
+                           .column = 1,
+                           .line_count = 1,
+                           .revision = 0,
+                           .style_origin = {},
+                           .key = {}});
+        return region;
+    };
+    Region active_status = status_region({2, 0, 1, 10}, "active/modeline", "window:0:1", true);
+    Region inactive_status = status_region({5, 0, 1, 10}, "inactive/modeline", "window:1:1", false);
+    Region echo{RegionRole::EchoArea, {6, 0, 1, scene.cols},  {},
+                SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
+    echo.set_echo({.text = "window split below", .cursor_byte = std::nullopt});
+    scene.regions = {std::move(active_status), std::move(inactive_status), std::move(echo)};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height =
+        presenter.cell_height() * 4 + presenter.cell_height() / 2 +
+        static_cast<int>(presenter.status_bar_height() * 2.0F + presenter.echo_area_height());
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    presenter.render(scene, width, height, pixels.data(),
+                     static_cast<std::size_t>(width) * sizeof(std::uint32_t));
+    const auto pixel = [&](int x, int y) {
+        return pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                      static_cast<std::size_t>(x)];
+    };
+    const int workspace_bottom = height - static_cast<int>(presenter.echo_area_height());
+    const int split_y = workspace_bottom / 2;
+    const int sample_x = width - 2;
+    CHECK(pixel(sample_x, split_y - 2) == theme.surface);
+    CHECK(pixel(sample_x, workspace_bottom - 2) == theme.inactive_surface);
+
+    const SkiaFrameLayout layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    const std::optional<ViewHit> hit = presenter.hit_test_view(
+        layout, {.x = static_cast<float>(sample_x),
+                 .y = static_cast<float>(workspace_bottom) - presenter.status_bar_height() * 0.5F});
+    REQUIRE(hit);
+    const std::optional<HitTarget> target = resolve_hit_target(scene, hit.value_or(ViewHit{}));
+    REQUIRE(target);
+    CHECK(target.value_or(HitTarget{}).pane_id == "window:1:1");
+}
+
 TEST_CASE("Skia partial rendering clears a cancelled cursor animation position") {
     SkiaPresenter presenter("monospace", 16.0F);
     SceneDamageTracker tracker;

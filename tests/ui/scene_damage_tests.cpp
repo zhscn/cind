@@ -256,3 +256,51 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
         CHECK(chrome.row_at(59.0F) == 3);
     }
 }
+
+TEST_CASE("scene pixel layout reserves pane-local modelines above global chrome") {
+    Scene scene;
+    scene.rows = 7;
+    scene.cols = 10;
+    scene.panes = {{.id = "top", .rect = {0, 0, 3, 10}, .active = true},
+                   {.id = "bottom", .rect = {3, 0, 3, 10}, .active = false}};
+    Region top_body{
+        RegionRole::TextArea, {0, 0, 2, 10}, {}, SurfaceClass::Editor, VerticalAnchor::PaneGrid};
+    top_body.pane_id = "top";
+    Region top_status{
+        RegionRole::StatusBar, {2, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Cell};
+    top_status.pane_id = "top";
+    Region bottom_body{
+        RegionRole::TextArea, {3, 0, 2, 10}, {}, SurfaceClass::Editor, VerticalAnchor::PaneGrid};
+    bottom_body.pane_id = "bottom";
+    Region bottom_status{
+        RegionRole::StatusBar, {5, 0, 1, 10}, {}, SurfaceClass::Status, VerticalAnchor::Cell};
+    bottom_status.pane_id = "bottom";
+    Region echo{
+        RegionRole::EchoArea, {6, 0, 1, 10}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    scene.regions = {std::move(top_body), std::move(top_status), std::move(bottom_body),
+                     std::move(bottom_status), std::move(echo)};
+
+    const ScenePixelLayout layout(scene,
+                                  {.cell_height = 10.0F,
+                                   .viewport_height = 91.0F,
+                                   .footer_heights = editor_footer_heights(10.0F)},
+                                  8.0F);
+    const ScenePixelRect top_body_bounds = layout.region_rect(scene.regions[0]);
+    const ScenePixelRect top_status_bounds = layout.region_rect(scene.regions[1]);
+    const ScenePixelRect bottom_body_bounds = layout.region_rect(scene.regions[2]);
+    const ScenePixelRect bottom_status_bounds = layout.region_rect(scene.regions[3]);
+    const ScenePixelRect echo_bounds = layout.region_rect(scene.regions[4]);
+
+    CHECK(layout.vertical().grid_clip_bottom() == doctest::Approx(73.0F));
+    CHECK(layout.workspace_row_y(3) == doctest::Approx(36.5F));
+    CHECK(top_body_bounds.y == doctest::Approx(0.0F));
+    CHECK(top_body_bounds.bottom() == doctest::Approx(14.5F));
+    CHECK(top_status_bounds.y == doctest::Approx(14.5F));
+    CHECK(top_status_bounds.height == doctest::Approx(22.0F));
+    CHECK(bottom_body_bounds.y == doctest::Approx(36.5F));
+    CHECK(bottom_body_bounds.bottom() == doctest::Approx(51.0F));
+    CHECK(bottom_status_bounds.y == doctest::Approx(51.0F));
+    CHECK(bottom_status_bounds.bottom() == doctest::Approx(73.0F));
+    CHECK(echo_bounds.y == doctest::Approx(73.0F));
+    CHECK(echo_bounds.bottom() == doctest::Approx(91.0F));
+}

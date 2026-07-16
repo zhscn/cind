@@ -317,7 +317,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":22") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":23") != std::string::npos);
+    CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"content_type\":\"popup\"") != std::string::npos);
@@ -389,6 +390,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(view_tree.ok);
     CHECK(view_tree.payload.find("\"id\":\"editor/document\"") != std::string::npos);
     CHECK(view_tree.payload.find("\"layer\":\"overlay\"") != std::string::npos);
+
+    const InspectionResponse panes = run_inspection_query(hub, "get scene.panes");
+    REQUIRE(panes.ok);
+    CHECK(panes.payload == "[]");
 
     const InspectionResponse pick = run_inspection_query(hub, "pick 20 10");
     REQUIRE(pick.ok);

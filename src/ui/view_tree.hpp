@@ -68,6 +68,7 @@ enum class HitTargetKind : std::uint8_t {
 struct HitTarget {
     HitTargetKind kind = HitTargetKind::Region;
     std::string view_id;
+    std::string pane_id;
     std::size_t region_index = 0;
     RegionRole role = RegionRole::TextArea;
     std::optional<CellPoint> scene_cell;

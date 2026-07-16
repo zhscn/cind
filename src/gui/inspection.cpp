@@ -79,6 +79,10 @@ std::string_view vertical_anchor_name(ui::VerticalAnchor anchor) {
     switch (anchor) {
     case ui::VerticalAnchor::Grid:
         return "grid";
+    case ui::VerticalAnchor::PaneGrid:
+        return "pane-grid";
+    case ui::VerticalAnchor::Cell:
+        return "cell";
     case ui::VerticalAnchor::Bottom:
         return "bottom";
     case ui::VerticalAnchor::Overlay:
@@ -396,6 +400,8 @@ void append_hit_target(std::string& output, const ui::HitTarget& target) {
     append_json_string(output, ui::hit_target_kind_name(target.kind));
     output += ",\"view_id\":";
     append_json_string(output, target.view_id);
+    output += ",\"pane_id\":";
+    append_json_string(output, target.pane_id);
     output += std::format(",\"region_index\":{},\"role\":", target.region_index);
     append_json_string(output, region_role_name(target.role));
     output += ",\"document_line\":";
@@ -428,7 +434,12 @@ void append_region(std::string& output, const ui::Region& region) {
     append_json_string(output, surface_class_name(region.surface));
     output += ",\"vertical_anchor\":";
     append_json_string(output, vertical_anchor_name(region.vertical_anchor));
-    output += std::format(",\"revision\":{}", region.revision);
+    output += ",\"pane_id\":";
+    append_json_string(output, region.pane_id);
+    output += ",\"active\":";
+    append_bool(output, region.active);
+    output += std::format(",\"content_offset_rows\":{},\"revision\":{}", region.content_offset_rows,
+                          region.revision);
     output += ",\"content_type\":";
     append_json_string(output, region_content_name(region));
     output += ",\"document_mapping\":";
@@ -568,7 +579,35 @@ void append_scene(std::string& output, const ui::Scene& scene) {
     append_bool(output, scene.cursor_visible);
     output += "},\"view_tree\":";
     append_view_tree(output, scene);
-    output += ",\"regions\":[";
+    output += ",\"panes\":[";
+    for (std::size_t index = 0; index < scene.panes.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const ui::ScenePane& pane = scene.panes[index];
+        output += "{\"id\":";
+        append_json_string(output, pane.id);
+        output += ",\"rect\":";
+        append_rect(output, pane.rect);
+        output += ",\"active\":";
+        append_bool(output, pane.active);
+        output.push_back('}');
+    }
+    output += "],\"dividers\":[";
+    for (std::size_t index = 0; index < scene.dividers.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const ui::SceneDivider& divider = scene.dividers[index];
+        output += "{\"id\":";
+        append_json_string(output, divider.id);
+        output += ",\"axis\":";
+        append_json_string(output,
+                           divider.axis == ui::DividerAxis::Horizontal ? "horizontal" : "vertical");
+        output += std::format(",\"position\":{},\"start\":{},\"length\":{}}}", divider.position,
+                              divider.start, divider.length);
+    }
+    output += "],\"regions\":[";
     for (std::size_t index = 0; index < scene.regions.size(); ++index) {
         if (index != 0) {
             output.push_back(',');
@@ -827,6 +866,8 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.canvas);
     output += ",\"surface\":";
     append_color(output, render.theme.surface);
+    output += ",\"inactive_surface\":";
+    append_color(output, render.theme.inactive_surface);
     output += ",\"raised\":";
     append_color(output, render.theme.raised);
     output += ",\"hairline\":";
@@ -839,8 +880,12 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.text);
     output += ",\"strong\":";
     append_color(output, render.theme.strong);
+    output += ",\"inactive_strong\":";
+    append_color(output, render.theme.inactive_strong);
     output += ",\"muted\":";
     append_color(output, render.theme.muted);
+    output += ",\"inactive_muted\":";
+    append_color(output, render.theme.inactive_muted);
     output += ",\"faint\":";
     append_color(output, render.theme.faint);
     output += ",\"accent\":";
@@ -1021,8 +1066,27 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         frame.scene.grid_offset_rows <= -1.0F) {
         violations.emplace_back("scene grid offset is outside (-1, 0]");
     }
-    if (std::abs(frame.scene.grid_offset_rows + frame.editor.viewport.top_line_offset) > 0.0001F) {
-        violations.emplace_back("scene grid offset does not match editor viewport");
+    const ui::Region* active_text_area = nullptr;
+    for (const ui::Region& region : frame.scene.regions) {
+        if (region.active && region.role == ui::RegionRole::TextArea) {
+            active_text_area = &region;
+            break;
+        }
+    }
+    const float active_grid_offset =
+        active_text_area != nullptr &&
+                active_text_area->vertical_anchor == ui::VerticalAnchor::PaneGrid
+            ? active_text_area->content_offset_rows
+            : frame.scene.grid_offset_rows;
+    if (std::abs(active_grid_offset + frame.editor.viewport.top_line_offset) > 0.0001F) {
+        violations.emplace_back("active scene grid offset does not match editor viewport");
+    }
+    if (!frame.scene.panes.empty()) {
+        const std::size_t active_panes = static_cast<std::size_t>(std::ranges::count_if(
+            frame.scene.panes, [](const ui::ScenePane& pane) { return pane.active; }));
+        if (active_panes != 1) {
+            violations.emplace_back("workspace must have exactly one active pane");
+        }
     }
     if (frame.scene.cursor_visible &&
         (frame.scene.cursor_row < 1 || frame.scene.cursor_row > frame.scene.rows ||
@@ -1044,6 +1108,24 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             violations.push_back(
                 std::format("region:{} is outside the scene", region_role_name(region.role)));
         }
+        if (!std::isfinite(region.content_offset_rows) || region.content_offset_rows > 0.0F ||
+            region.content_offset_rows <= -1.0F) {
+            violations.push_back(std::format("region:{} has an invalid content offset",
+                                             region_role_name(region.role)));
+        }
+        if (!region.pane_id.empty()) {
+            const auto pane =
+                std::ranges::find_if(frame.scene.panes, [&](const ui::ScenePane& candidate) {
+                    return candidate.id == region.pane_id;
+                });
+            if (pane == frame.scene.panes.end()) {
+                violations.push_back(
+                    std::format("region:{} names an unknown pane", region_role_name(region.role)));
+            } else if (pane->active != region.active) {
+                violations.push_back(std::format("region:{} active state differs from its pane",
+                                                 region_role_name(region.role)));
+            }
+        }
         for (std::size_t index = 0; index < region.primitives().size(); ++index) {
             const ui::Prim& prim = region.primitives()[index];
             if (prim.row < 0 || prim.row >= region.rect.rows || prim.col < 0 ||
@@ -1062,7 +1144,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 violations.emplace_back("document mapping starts before display column zero");
             }
         }
-        if (region.role == ui::RegionRole::TextArea) {
+        if (region.role == ui::RegionRole::TextArea && region.active) {
             const ui::Region::DocumentMapping* mapping = region.document_mapping();
             if (mapping == nullptr || !mapping->first_display_column) {
                 violations.emplace_back("scene text area has no document coordinate mapping");
@@ -1305,14 +1387,21 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             frame.render.display_scale > 0.0F && frame.render.cell_height > 0) {
             const float logical_height =
                 static_cast<float>(frame.render.output_height) / frame.render.display_scale;
-            const ui::SceneVerticalLayout layout(
-                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                              .viewport_height = logical_height,
-                              .footer_heights = ui::editor_footer_heights(
-                                  static_cast<float>(frame.render.cell_height))});
-            const float top = layout.row_top(cursor_row);
+            const ui::ScenePixelLayout layout(
+                frame.scene,
+                {.cell_height = static_cast<float>(frame.render.cell_height),
+                 .viewport_height = logical_height,
+                 .footer_heights =
+                     ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))},
+                static_cast<float>(frame.render.cell_width));
+            const ui::ScenePixelRect text_bounds = layout.region_rect(*text_area);
+            const float top =
+                text_bounds.y +
+                static_cast<float>(cursor_row - text_area->rect.row) *
+                    static_cast<float>(frame.render.cell_height) +
+                text_area->content_offset_rows * static_cast<float>(frame.render.cell_height);
             const float bottom = top + static_cast<float>(frame.render.cell_height);
-            if (top < -0.01F || bottom > layout.grid_clip_bottom() + 0.01F) {
+            if (top < text_bounds.y - 0.01F || bottom > text_bounds.bottom() + 0.01F) {
                 violations.emplace_back("rendered text cursor row is clipped");
             }
         }
@@ -1604,6 +1693,38 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
     } else if (path == "scene.cursor") {
         output = std::format("{{\"row\":{},\"col\":{},\"visible\":{}}}", frame.scene.cursor_row,
                              frame.scene.cursor_col, frame.scene.cursor_visible);
+    } else if (path == "scene.panes") {
+        output.push_back('[');
+        for (std::size_t index = 0; index < frame.scene.panes.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const ui::ScenePane& pane = frame.scene.panes[index];
+            output += "{\"id\":";
+            append_json_string(output, pane.id);
+            output += ",\"rect\":";
+            append_rect(output, pane.rect);
+            output += ",\"active\":";
+            append_bool(output, pane.active);
+            output.push_back('}');
+        }
+        output.push_back(']');
+    } else if (path == "scene.dividers") {
+        output.push_back('[');
+        for (std::size_t index = 0; index < frame.scene.dividers.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const ui::SceneDivider& divider = frame.scene.dividers[index];
+            output += "{\"id\":";
+            append_json_string(output, divider.id);
+            output += ",\"axis\":";
+            append_json_string(output, divider.axis == ui::DividerAxis::Horizontal ? "horizontal"
+                                                                                   : "vertical");
+            output += std::format(",\"position\":{},\"start\":{},\"length\":{}}}", divider.position,
+                                  divider.start, divider.length);
+        }
+        output.push_back(']');
     } else if (path == "scene.view_tree") {
         append_view_tree(output, frame.scene);
     } else if (path == "render") {
@@ -1670,25 +1791,43 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         window_y / static_cast<float>(frame.render.window_height) * logical_height;
     const int cell_col =
         static_cast<int>(std::floor(logical_x / static_cast<float>(frame.render.cell_width)));
-    const ui::SceneVerticalLayout vertical_layout(
-        frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                      .viewport_height = logical_height,
-                      .footer_heights =
-                          ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))});
+    const ui::ScenePixelLayout pixel_layout(
+        frame.scene,
+        {.cell_height = static_cast<float>(frame.render.cell_height),
+         .viewport_height = logical_height,
+         .footer_heights = ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))},
+        static_cast<float>(frame.render.cell_width));
+    const ui::SceneVerticalLayout& vertical_layout = pixel_layout.vertical();
     int cell_row = vertical_layout.row_at(logical_y);
-    const int overlay_row =
-        static_cast<int>(std::floor(logical_y / static_cast<float>(frame.render.cell_height)));
     const ui::ViewTree view_tree(frame.scene);
-    const ui::ViewLayerNode& overlays = view_tree.layer(ui::ViewLayer::Overlay);
-    for (auto iterator = overlays.children.rbegin(); iterator != overlays.children.rend();
-         ++iterator) {
-        if (overlay_row >= iterator->rect.row &&
-            overlay_row < iterator->rect.row + iterator->rect.rows &&
-            cell_col >= iterator->rect.col && cell_col < iterator->rect.col + iterator->rect.cols) {
-            cell_row = overlay_row;
-            break;
+    const auto map_layer_row = [&](ui::ViewLayer layer) {
+        const ui::ViewLayerNode& nodes = view_tree.layer(layer);
+        for (auto iterator = nodes.children.rbegin(); iterator != nodes.children.rend();
+             ++iterator) {
+            const ui::Region& region = frame.scene.regions[iterator->region_index];
+            const ui::ScenePixelRect bounds = pixel_layout.region_rect(region);
+            if (!bounds.contains(logical_x, logical_y)) {
+                continue;
+            }
+            if (region.vertical_anchor == ui::VerticalAnchor::PaneGrid) {
+                const float local_y =
+                    (logical_y - bounds.y) / static_cast<float>(frame.render.cell_height) -
+                    region.content_offset_rows;
+                const int local_row = std::clamp(static_cast<int>(std::floor(local_y)), 0,
+                                                 std::max(0, region.rect.rows - 1));
+                cell_row = region.rect.row + local_row;
+            } else if (region.vertical_anchor == ui::VerticalAnchor::Cell) {
+                cell_row = region.rect.row;
+            } else if (region.vertical_anchor == ui::VerticalAnchor::Overlay) {
+                cell_row = static_cast<int>(
+                    std::floor(logical_y / static_cast<float>(frame.render.cell_height)));
+            }
+            return true;
         }
-    }
+        return false;
+    };
+    (void)(map_layer_row(ui::ViewLayer::Overlay) || map_layer_row(ui::ViewLayer::Chrome) ||
+           map_layer_row(ui::ViewLayer::Grid));
 
     std::string output =
         std::format("{{\"window\":{{\"x\":{},\"y\":{}}},\"cell\":{{\"row\":{},\"col\":{}}}",
@@ -2018,6 +2157,11 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << "hidden";
     }
     output << '\n';
+    for (const ui::ScenePane& pane : frame.scene.panes) {
+        output << "    pane " << printable(pane.id) << (pane.active ? " active" : " inactive")
+               << " rect=(" << pane.rect.row << ',' << pane.rect.col << ' ' << pane.rect.rows << 'x'
+               << pane.rect.cols << ")\n";
+    }
     const ui::ViewTree view_tree(frame.scene);
     for (const ui::ViewLayerNode& layer : view_tree.layers()) {
         output << "    " << layer.id << " layer=" << view_layer_name(layer.layer) << '\n';
@@ -2027,6 +2171,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                    << " rev=" << region.revision << " rect=(" << region.rect.row << ','
                    << region.rect.col << ' ' << region.rect.rows << 'x' << region.rect.cols
                    << ") anchor=" << vertical_anchor_name(region.vertical_anchor)
+                   << " pane=" << printable(region.pane_id)
+                   << (region.active ? " active" : " inactive")
+                   << " content-offset=" << region.content_offset_rows
                    << " items=" << region.item_count() << '\n';
             if (const ui::Region::PopupContent* popup = region.popup()) {
                 output << "      list first=" << popup->first_item

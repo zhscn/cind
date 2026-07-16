@@ -42,13 +42,16 @@ SkiaFontSmoothing parse_font_smoothing(std::string_view name);
 struct SkiaTheme {
     std::uint32_t canvas = 0xFF1B1D22;
     std::uint32_t surface = 0xFF24262C;
+    std::uint32_t inactive_surface = 0xFF202228;
     std::uint32_t raised = 0xFF2F333B;
     std::uint32_t hairline = 0x14FFFFFF;
     std::uint32_t active_line = 0xFF22242A;
     std::uint32_t selection = 0xFF2C4568;
     std::uint32_t text = 0xFFD7DAE0;
     std::uint32_t strong = 0xFFF2F4F8;
+    std::uint32_t inactive_strong = 0xFFB7BBC4;
     std::uint32_t muted = 0xFF8A919C;
+    std::uint32_t inactive_muted = 0xFF686E78;
     std::uint32_t faint = 0xFF555B66;
     std::uint32_t accent = 0xFF7AA8F5;
     std::uint32_t cursor = 0xFFE8EAEE;

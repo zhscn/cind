@@ -270,4 +270,80 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     return scene;
 }
 
+Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<EditorPaneScene> panes,
+                               std::vector<SceneDivider> dividers, Scene chrome) {
+    Scene workspace;
+    workspace.rows = geometry.rows;
+    workspace.cols = geometry.cols;
+    workspace.dividers = std::move(dividers);
+    workspace.cursor_visible = false;
+
+    workspace.panes.reserve(panes.size());
+    for (const EditorPaneScene& pane : panes) {
+        workspace.panes.push_back({.id = pane.id, .rect = pane.rect, .active = pane.active});
+    }
+
+    // The active document is first in region order so existing single-caret
+    // presenter fast paths continue to select the focused shaped layout.
+    std::ranges::stable_sort(panes, [](const EditorPaneScene& left, const EditorPaneScene& right) {
+        return left.active && !right.active;
+    });
+    for (EditorPaneScene& pane : panes) {
+        if (pane.rect.rows <= 0 || pane.rect.cols <= 0) {
+            continue;
+        }
+        const int text_rows = std::max(1, pane.rect.rows - 1);
+        for (Region& region : pane.scene.regions) {
+            if (region.role == RegionRole::EchoArea || region.role == RegionRole::Popup) {
+                continue;
+            }
+            region.rect.row += pane.rect.row;
+            region.rect.col += pane.rect.col;
+            region.rect.rows = std::min(region.rect.rows, text_rows);
+            region.rect.cols = std::min(region.rect.cols, pane.rect.cols);
+            region.id = std::format("workspace/{}/{}", pane.id, region.id);
+            region.pane_id = pane.id;
+            region.active = pane.active;
+            if (region.role == RegionRole::StatusBar) {
+                region.rect.row = pane.rect.row + pane.rect.rows - 1;
+                region.rect.rows = 1;
+                region.rect.col = pane.rect.col;
+                region.rect.cols = pane.rect.cols;
+                region.vertical_anchor = VerticalAnchor::Cell;
+            } else {
+                region.vertical_anchor = VerticalAnchor::PaneGrid;
+                region.content_offset_rows = pane.scene.grid_offset_rows;
+            }
+            workspace.regions.push_back(std::move(region));
+        }
+        if (pane.active) {
+            if (pane.scene.active_text_row) {
+                workspace.active_text_row = pane.rect.row + pane.scene.active_text_row.value_or(0);
+            }
+            workspace.cursor_row = pane.rect.row + pane.scene.cursor_row;
+            workspace.cursor_col = pane.rect.col + pane.scene.cursor_col;
+            workspace.cursor_visible = pane.scene.cursor_visible;
+        }
+    }
+
+    const bool chrome_owns_cursor = std::ranges::any_of(chrome.regions, [](const Region& region) {
+        return (region.role == RegionRole::Popup && region.popup() != nullptr &&
+                region.popup()->input.has_value()) ||
+               (region.role == RegionRole::EchoArea && region.echo() != nullptr &&
+                region.echo()->cursor_byte.has_value());
+    });
+    for (Region& region : chrome.regions) {
+        if (region.role != RegionRole::EchoArea && region.role != RegionRole::Popup) {
+            continue;
+        }
+        workspace.regions.push_back(std::move(region));
+    }
+    if (chrome_owns_cursor) {
+        workspace.cursor_row = chrome.cursor_row;
+        workspace.cursor_col = chrome.cursor_col;
+        workspace.cursor_visible = chrome.cursor_visible;
+    }
+    return workspace;
+}
+
 } // namespace cind::ui

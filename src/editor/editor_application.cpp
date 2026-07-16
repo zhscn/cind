@@ -262,7 +262,7 @@ bool EditorApplication::split_window(WindowSplitAxis axis) {
     }
     const WindowId window = runtime_.windows().create(view);
     view_state_for(view).window = window;
-    if (!window_layout_.split(active_window_, window, axis)) {
+    if (!window_layout_.split({.target = active_window_, .new_window = window, .axis = axis})) {
         destroy_window(window);
         return false;
     }
@@ -424,12 +424,25 @@ const std::string& EditorApplication::path() const {
     return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();
 }
 
+const std::string& EditorApplication::path(WindowId window) const {
+    const Buffer& buffer = session(window).buffer();
+    return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();
+}
+
 const std::string& EditorApplication::style_origin() const {
     return active_buffer().style_origin;
 }
 
+const std::string& EditorApplication::style_origin(WindowId window) const {
+    return state_for(buffer_id(window)).style_origin;
+}
+
 std::uint32_t EditorApplication::save_generation() const {
     return active_buffer().save_generation;
+}
+
+std::uint32_t EditorApplication::save_generation(WindowId window) const {
+    return state_for(buffer_id(window)).save_generation;
 }
 
 bool EditorApplication::has_background_work() const {

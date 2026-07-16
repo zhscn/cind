@@ -4,6 +4,7 @@
 #include "ui/view_tree.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <span>
@@ -90,9 +91,14 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     cells[cell_index(row, col, scene.cols)] = {
                         static_cast<char>(region.surface),
                         static_cast<char>(region.vertical_anchor), static_cast<char>(region.role)};
-                    if (scene.active_text_row == row && (region.role == RegionRole::TextArea ||
-                                                         region.role == RegionRole::LineNumbers ||
-                                                         region.role == RegionRole::ChangeSigns)) {
+                    std::string& signature = cells[cell_index(row, col, scene.cols)];
+                    signature.push_back(region.active ? '\1' : '\0');
+                    append_integer(signature,
+                                   std::bit_cast<std::uint32_t>(region.content_offset_rows));
+                    if (region.active && scene.active_text_row == row &&
+                        (region.role == RegionRole::TextArea ||
+                         region.role == RegionRole::LineNumbers ||
+                         region.role == RegionRole::ChangeSigns)) {
                         cells[cell_index(row, col, scene.cols)].push_back('\x7f');
                     }
                 }
@@ -173,6 +179,19 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                                    static_cast<std::uint32_t>(echo->cursor_byte.has_value()));
                     append_integer(signature, echo->cursor_byte.value_or(0));
                 }
+            }
+        }
+    }
+    for (const SceneDivider& divider : scene.dividers) {
+        for (int offset = 0; offset < divider.length; ++offset) {
+            const int row =
+                divider.axis == DividerAxis::Vertical ? divider.start + offset : divider.position;
+            const int col =
+                divider.axis == DividerAxis::Vertical ? divider.position : divider.start + offset;
+            if (row >= 0 && row < scene.rows && col >= 0 && col < scene.cols) {
+                std::string& signature = cells[cell_index(row, col, scene.cols)];
+                signature.push_back('\x1b');
+                signature.push_back(static_cast<char>(divider.axis));
             }
         }
     }
