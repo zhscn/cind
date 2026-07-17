@@ -5,6 +5,7 @@
   #:use-module (cind helix)
   #:use-module (cind host)
   #:use-module (cind input)
+  #:use-module (cind introspect)
   #:use-module (cind meow)
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
@@ -617,6 +618,7 @@
                 (help-keys-accept host context invocation))
               #f)
         (list "help.keys" help-keys #f))
+   (introspection-command-definitions host)
    (make-region-commands host)
    (emacs-command-definitions host)
    (helix-command-definitions host)
@@ -633,21 +635,24 @@
                                  (list-ref definition 1)
                                  (list-ref definition 2)))
               commands)
+    (install-introspection-documentation! host)
     (length commands)))
 
 (define (core-providers host)
-  (list (cons "commands"
-              (lambda (context query)
-                (commands-provider host context query)))
-        (cons "buffers"
-              (lambda (context query)
-                (buffers-provider host context query)))
-        (cons "project-files"
-              (lambda (context query)
-                (project-files-provider host context query)))
-        (cons "key-bindings"
-              (lambda (context query)
-                (key-bindings-provider host context query)))))
+  (append
+   (list (cons "commands"
+               (lambda (context query)
+                 (commands-provider host context query)))
+         (cons "buffers"
+               (lambda (context query)
+                 (buffers-provider host context query)))
+         (cons "project-files"
+               (lambda (context query)
+                 (project-files-provider host context query)))
+         (cons "key-bindings"
+               (lambda (context query)
+                 (key-bindings-provider host context query))))
+   (introspection-providers host)))
 
 (define (install-core-providers! host)
   (let ((providers (core-providers host)))
@@ -778,7 +783,12 @@
     ("M-g n" . "location.next-error")
     ("M-g p" . "location.previous-error")
     ("M-%" . "search.replace")
-    ("C-h b" . "help.keys")
+    ("C-h b" . "help.describe-bindings")
+    ("C-h k" . "help.describe-key")
+    ("C-h x" . "help.describe-command")
+    ("C-h f" . "help.describe-function")
+    ("C-h v" . "help.describe-variable")
+    ("C-h m" . "help.describe-mode")
     ("RET" . "edit.newline")
     ("TAB" . "edit.indent")
     ("Backspace" . "edit.delete-backward")

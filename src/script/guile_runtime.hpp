@@ -32,6 +32,8 @@ struct GuileTextRange {
 
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
+    std::function<std::expected<void, std::string>(WindowId, std::string, std::string)>
+        display_help_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
     std::function<void(std::string)> set_message;
@@ -50,6 +52,7 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, int)> select_other_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
+    std::function<std::vector<KeymapId>(WindowId)> active_keymap_layers;
     std::function<std::vector<KeymapId>(WindowId)> base_keymap_layers;
     std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;

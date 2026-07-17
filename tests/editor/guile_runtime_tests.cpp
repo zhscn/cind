@@ -105,6 +105,22 @@ TEST_CASE("Guile extensions load in an isolated module") {
     const CommandId command = require_command(runtime, "user.answer");
     const KeymapId keymap = require_keymap(runtime, "user.map");
     CHECK(resolve_command(runtime, keymap, "C-c a") == command);
+    CHECK(runtime.commands().definition(command).source ==
+          std::format("scheme:{}", extension.path().string()));
+    REQUIRE(guile.install_core_providers().has_value());
+    const BufferId buffer = runtime.buffers().create({.name = "extension-test",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const std::vector<InteractionCandidate> variables =
+        complete_provider(runtime, "scheme-variables", context);
+    CHECK(std::ranges::any_of(variables, [&](const InteractionCandidate& candidate) {
+        return candidate.label == "private-value" && candidate.detail == extension.path().string();
+    }));
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     REQUIRE(snapshot.extensions.size() == 1);
     CHECK(snapshot.extensions.front() == extension.path().string());
@@ -167,7 +183,7 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.modules ==
           std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
                                    "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                                   "cind structural", "cind core"});
+                                   "cind structural", "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -352,6 +368,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     std::pair<WindowId, BufferId> displayed;
     bool buffer_displayed = false;
+    WindowId displayed_help_window;
+    std::string help_name;
+    std::string help_text;
     std::tuple<ViewId, std::uint32_t, std::uint32_t> moved;
     bool caret_moved = false;
     std::string message;
@@ -402,6 +421,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                BufferId target_buffer) -> std::expected<void, std::string> {
              displayed = std::pair{target_window, target_buffer};
              buffer_displayed = true;
+             return {};
+         },
+         .display_help_buffer = [&](WindowId target_window, std::string name,
+                                    std::string text) -> std::expected<void, std::string> {
+             displayed_help_window = target_window;
+             help_name = std::move(name);
+             help_text = std::move(text);
              return {};
          },
          .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
@@ -497,6 +523,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return std::vector<GuileKeyBindingSummary>{
                      {.keys = "C-x C-s", .command = "file.save"}};
              },
+         .active_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
          .base_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
          .set_selection =
              [&](ViewId target, ViewSelection selection) {
@@ -599,10 +626,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 137);
+    CHECK(*installed == 146);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 4);
+    CHECK(*providers == 6);
     const CommandId save = require_command(runtime, "file.save");
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -631,6 +658,75 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(binding_candidates[0].value == "C-x C-s  file.save");
     CHECK(binding_candidates[0].label == "C-x C-s");
     CHECK(binding_candidates[0].detail == "file.save");
+
+    const std::vector<InteractionCandidate> function_candidates =
+        complete_provider(runtime, "scheme-functions", context);
+    const auto describe_mode_function =
+        std::ranges::find_if(function_candidates, [](const InteractionCandidate& candidate) {
+            return candidate.label == "describe-mode" && candidate.detail == "(cind introspect)";
+        });
+    REQUIRE(describe_mode_function != function_candidates.end());
+
+    const CommandResult function_request_result =
+        runtime.commands().invoke(require_command(runtime, "help.describe-function"), context);
+    REQUIRE(function_request_result.has_value());
+    const auto* function_request = std::get_if<InteractionRequest>(&*function_request_result);
+    REQUIRE(function_request != nullptr);
+    CHECK(function_request->provider == "scheme-functions");
+    const CommandResult function_help = runtime.commands().invoke(
+        function_request->accept_command, context,
+        CommandInvocation{.arguments = {describe_mode_function->value}, .prefix = {}});
+    REQUIRE(function_help.has_value());
+    CHECK(displayed_help_window == window);
+    CHECK(help_text.find("describe-mode is defined in (cind introspect)") != std::string::npos);
+    CHECK(help_text.find("Kind: function") != std::string::npos);
+
+    const CommandResult mode_help =
+        runtime.commands().invoke(require_command(runtime, "help.describe-mode"), context);
+    REQUIRE(mode_help.has_value());
+    CHECK(help_text.find("Mode state for the current buffer") != std::string::npos);
+    CHECK(help_text.find("Effective policy") != std::string::npos);
+
+    const std::vector<InteractionCandidate> variable_candidates =
+        complete_provider(runtime, "scheme-variables", context);
+    const auto help_name_variable =
+        std::ranges::find_if(variable_candidates, [](const InteractionCandidate& candidate) {
+            return candidate.label == "help-buffer-name" && candidate.detail == "(cind introspect)";
+        });
+    REQUIRE(help_name_variable != variable_candidates.end());
+    const CommandResult variable_request_result =
+        runtime.commands().invoke(require_command(runtime, "help.describe-variable"), context);
+    REQUIRE(variable_request_result.has_value());
+    const auto* variable_request = std::get_if<InteractionRequest>(&*variable_request_result);
+    REQUIRE(variable_request != nullptr);
+    const CommandResult variable_help = runtime.commands().invoke(
+        variable_request->accept_command, context,
+        CommandInvocation{.arguments = {help_name_variable->value}, .prefix = {}});
+    REQUIRE(variable_help.has_value());
+    CHECK(help_text.find("help-buffer-name is defined in (cind introspect)") != std::string::npos);
+    CHECK(help_text.find("\"*Help*\"") != std::string::npos);
+
+    const CommandId describe_bindings = require_command(runtime, "help.describe-bindings");
+    const CommandResult bindings_help = runtime.commands().invoke(describe_bindings, context);
+    REQUIRE(bindings_help.has_value());
+    CHECK(help_name == "*Help*");
+    CHECK(help_text.find("Active key bindings") != std::string::npos);
+    CHECK(help_text.find("C-x C-s") != std::string::npos);
+
+    const CommandId describe_command = require_command(runtime, "help.describe-command");
+    const CommandResult describe_request_result =
+        runtime.commands().invoke(describe_command, context);
+    REQUIRE(describe_request_result.has_value());
+    const auto* describe_request = std::get_if<InteractionRequest>(&*describe_request_result);
+    REQUIRE(describe_request != nullptr);
+    CHECK(describe_request->provider == "commands");
+    const CommandResult described = runtime.commands().invoke(
+        describe_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("help.describe-command")}, .prefix = {}});
+    REQUIRE(described.has_value());
+    CHECK(help_text.find("help.describe-command is a command") != std::string::npos);
+    CHECK(help_text.find("Display the registry metadata") != std::string::npos);
+    CHECK(runtime.commands().definition(describe_command).source == "scheme:(cind core)");
 
     const CommandId palette = require_command(runtime, "command.palette");
     const CommandResult palette_result = runtime.commands().invoke(palette, context);
@@ -958,8 +1054,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 137);
+    CHECK(snapshot.scripted_commands == 146);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 4);
+    CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

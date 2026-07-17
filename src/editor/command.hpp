@@ -154,10 +154,13 @@ public:
         std::string name;
         Execute execute;
         Enabled enabled;
+        std::string documentation;
+        std::string source;
     };
 
     CommandId define(std::string name, Execute execute, Enabled enabled = {});
     void configure(CommandId id, Execute execute, Enabled enabled = {});
+    void describe(CommandId id, std::string documentation, std::string source);
     void seal() { sealed_ = true; }
     bool sealed() const { return sealed_; }
 

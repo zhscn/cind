@@ -243,6 +243,8 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
+    std::expected<void, std::string> display_help_buffer(WindowId window, std::string name,
+                                                         std::string text);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
     bool split_window(WindowId target, WindowSplitAxis axis);
@@ -308,6 +310,7 @@ private:
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
     ModeId cpp_mode_;
+    ModeId special_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;
     std::string message_;

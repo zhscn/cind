@@ -95,7 +95,11 @@ CommandId CommandRegistry::define(std::string name, Execute execute, Enabled ena
         throw std::invalid_argument(std::format("command '{}' is already defined", name));
     }
     const CommandId id{static_cast<std::uint32_t>(definitions_.size())};
-    definitions_.push_back(Definition{std::move(name), std::move(execute), std::move(enabled)});
+    definitions_.push_back(Definition{.name = std::move(name),
+                                      .execute = std::move(execute),
+                                      .enabled = std::move(enabled),
+                                      .documentation = {},
+                                      .source = "native"});
     by_name_.emplace(definitions_.back().name, id);
     return id;
 }
@@ -107,6 +111,15 @@ void CommandRegistry::configure(CommandId id, Execute execute, Enabled enabled) 
     Definition& existing = definitions_.at(id.value);
     existing.execute = std::move(execute);
     existing.enabled = std::move(enabled);
+}
+
+void CommandRegistry::describe(CommandId id, std::string documentation, std::string source) {
+    if (sealed_) {
+        throw std::logic_error("command registry is sealed");
+    }
+    Definition& existing = definitions_.at(id.value);
+    existing.documentation = std::move(documentation);
+    existing.source = source.empty() ? "native" : std::move(source);
 }
 
 const CommandRegistry::Definition& CommandRegistry::definition(CommandId id) const {

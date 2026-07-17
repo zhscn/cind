@@ -90,6 +90,11 @@ module with `host`, `(cind host)`, `(cind command)`, and `(cind input)` availabl
 Definitions made by the file are installed as one transaction. A condition aborts its registry
 changes and is reported in the editor message area and scripting inspector state.
 
+The `C-h` prefix opens editor self-description commands. `C-h k` describes the command resolved by
+a key sequence, `C-h x` describes a command, `C-h b` lists active bindings, `C-h m` describes the
+current mode policy, and `C-h f`/`C-h v` describe Scheme functions and variables. Descriptions use a
+read-only `*Help*` buffer in both graphical and terminal frontends.
+
 ## Build without the GUI
 
 The default build produces the terminal editor and command-line analysis tools without compiling

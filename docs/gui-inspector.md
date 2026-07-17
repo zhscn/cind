@@ -143,6 +143,10 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor 的 cell 坐标、可见性和 beam/block/underline shape |
 | `scene.panes` | pane ID、cell rect 和 active 状态 |
+
+`describe-xxx` 使用普通的 read-only generated buffer 和 `special-mode`。因此 `*Help*` 的
+buffer/view/window 归属通过 `editor.buffers`、`editor.windows` 和 `editor.focus` 检查，最终绘制
+仍通过 `scene` 与 `render.document_layout` 检查；inspector 不维护另一份 help 专用状态。
 | `scene.dividers` | 分割线 ID、方向、位置和跨度 |
 | `scene.view_tree` | 按 Grid、Chrome、Overlay 排列的稳定 view 层级 |
 | `scene.region.<role>` | 指定 region，例如 `scene.region.line-numbers` |

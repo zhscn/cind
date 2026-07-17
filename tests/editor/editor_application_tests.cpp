@@ -1315,21 +1315,14 @@ TEST_CASE("deleting the sole window preserves the application focus target") {
     CHECK(application.message() == "cannot delete the only window");
 }
 
-TEST_CASE("which-key help and command palette use searchable interaction providers") {
+TEST_CASE("describe bindings and command palette use shared command state") {
     EditorApplication application = make_application("sample.cc", "text");
 
     send_keys(application, "C-h b");
-    REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "key-bindings");
-    CHECK(std::ranges::any_of(
-        application.interaction().state()->candidates, [](const InteractionCandidate& candidate) {
-            return candidate.label == "C-x C-s" && candidate.detail == "file.save";
-        }));
-    CHECK(std::ranges::any_of(
-        application.interaction().state()->candidates, [](const InteractionCandidate& candidate) {
-            return candidate.label == "C-x C-c" && candidate.detail == "application.quit";
-        }));
-    send_keys(application, "C-g");
+    CHECK(application.session().buffer().name() == "*Help*");
+    const std::string help = application.session().snapshot().content().to_string();
+    CHECK(help.find("C-x C-s  file.save") != std::string::npos);
+    CHECK(help.find("C-x C-c  application.quit") != std::string::npos);
 
     send_keys(application, "M-x");
     REQUIRE(application.interaction().state() != nullptr);
@@ -1696,4 +1689,43 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     CHECK_FALSE(application.dirty());
 
     std::filesystem::remove_all(directory, ignored);
+}
+
+TEST_CASE("describe commands display reusable generated help buffers") {
+    EditorApplication application = make_application({}, "sample\n");
+    EditorRuntime& runtime = application.runtime();
+    const CommandId describe =
+        runtime.commands().find("help.describe-bindings").value_or(CommandId{});
+    REQUIRE(describe);
+    const BufferId source = application.buffer_id();
+    CommandContext context(runtime, application.window_id(), source, application.view_id());
+
+    const CommandResult first = runtime.commands().invoke(describe, context);
+    REQUIRE(first.has_value());
+    const BufferId help = application.buffer_id();
+    const Buffer& help_buffer = runtime.buffers().get(help);
+    CHECK(help_buffer.name() == "*Help*");
+    CHECK(help_buffer.kind() == BufferKind::Generated);
+    CHECK(help_buffer.read_only());
+    const ModeId help_mode = help_buffer.modes().major().value_or(ModeId{});
+    REQUIRE(help_mode);
+    CHECK(runtime.modes().definition(help_mode).name == "special-mode");
+    CHECK(help_buffer.snapshot().content().to_string().find("Active key bindings") !=
+          std::string::npos);
+
+    REQUIRE(application.switch_buffer(source));
+    CommandContext repeated_context(runtime, application.window_id(), application.buffer_id(),
+                                    application.view_id());
+    const CommandResult second = runtime.commands().invoke(describe, repeated_context);
+    REQUIRE(second.has_value());
+    CHECK(application.buffer_id() == help);
+    CHECK(application.buffer_count() == 2);
+    CHECK(runtime.views().caret(application.view_id()) == TextOffset{});
+
+    REQUIRE(application.switch_buffer(source));
+    send_keys(application, "C-h k C-x C-s");
+    CHECK(application.buffer_id() == help);
+    const std::string key_help = application.session().snapshot().content().to_string();
+    CHECK(key_help.find("file.save is a command") != std::string::npos);
+    CHECK(key_help.find("Key sequence: C-x C-s") != std::string::npos);
 }

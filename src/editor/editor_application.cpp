@@ -72,6 +72,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
+           .display_help_buffer =
+               [this](WindowId window, std::string name, std::string text) {
+                   return display_help_buffer(window, std::move(name), std::move(text));
+               },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
                    return move_caret_to_line(view, line, display_column);
@@ -143,13 +147,40 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .active_key_bindings =
                [this] {
                    std::vector<GuileKeyBindingSummary> result;
-                   for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
-                       for (const KeymapBinding& binding :
-                            runtime_.keymaps().bindings(layer.keymap)) {
+                   const auto append = [&](KeymapId keymap) {
+                       for (const KeymapBinding& binding : runtime_.keymaps().bindings(keymap)) {
+                           const std::string keys = format_key_sequence(binding.sequence);
+                           if (std::ranges::any_of(result, [&](const GuileKeyBindingSummary& item) {
+                                   return item.keys == keys;
+                               })) {
+                               continue;
+                           }
                            result.push_back(
-                               {.keys = format_key_sequence(binding.sequence),
+                               {.keys = keys,
                                 .command = runtime_.commands().definition(binding.command).name});
                        }
+                   };
+                   for (const KeymapId keymap : command_loop_.override_keymaps()) {
+                       append(keymap);
+                   }
+                   for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
+                       append(layer.keymap);
+                   }
+                   return result;
+               },
+           .active_keymap_layers =
+               [this](WindowId window) {
+                   std::vector<KeymapId> result;
+                   if (window == active_window_) {
+                       result.insert(result.end(), command_loop_.override_keymaps().begin(),
+                                     command_loop_.override_keymaps().end());
+                       for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
+                           result.push_back(layer.keymap);
+                       }
+                       return result;
+                   }
+                   for (const KeymapLayer& layer : base_keymap_layers(window)) {
+                       result.push_back(layer.keymap);
                    }
                    return result;
                },
@@ -322,6 +353,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         });
     register_input_states();
     register_modes();
+    special_mode_ = runtime_.modes().find("special-mode").value_or(ModeId{});
+    if (!special_mode_) {
+        throw std::logic_error("Guile mode policy did not define special-mode");
+    }
     cpp_mode_ = ensure_cpp_mode(runtime_).mode;
     register_commands();
     register_interaction_providers();
@@ -1477,6 +1512,53 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
         sync_keymaps();
     }
     return true;
+}
+
+std::expected<void, std::string>
+EditorApplication::display_help_buffer(WindowId window, std::string name, std::string text) {
+    try {
+        BufferId buffer;
+        if (const std::optional<BufferId> existing = runtime_.buffers().find_by_name(name)) {
+            buffer = *existing;
+            Buffer& target = runtime_.buffers().get(buffer);
+            if (target.kind() != BufferKind::Generated) {
+                return std::unexpected(std::format("buffer '{}' is not generated", name));
+            }
+            target.set_read_only(false);
+            try {
+                EditTransaction transaction = target.begin_transaction();
+                transaction.replace(
+                    TextRange{TextOffset{}, target.snapshot().content().end_offset()}, text);
+                (void)transaction.commit();
+                target.mark_saved(target.snapshot().content());
+                target.set_read_only(true);
+            } catch (...) {
+                target.set_read_only(true);
+                throw;
+            }
+        } else {
+            buffer = create_buffer(BufferSpec{.name = std::move(name),
+                                              .initial_text = std::move(text),
+                                              .kind = BufferKind::Generated,
+                                              .resource_uri = std::nullopt,
+                                              .read_only = true},
+                                   CppIndentStyle{}, "generated help", special_mode_);
+        }
+        if (!show_buffer(window, buffer)) {
+            return std::unexpected("help buffer cannot be displayed");
+        }
+        ViewState* view = find_view(window, buffer);
+        if (view == nullptr) {
+            return std::unexpected("help buffer view was not created");
+        }
+        runtime_.views().clear_selection(view->view);
+        runtime_.views().set_caret(view->view, TextOffset{});
+        runtime_.views().get(view->view).viewport() = {};
+        basic_commands_.reset_preferred_column(view->view);
+        return {};
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
+    }
 }
 
 std::expected<void, std::string>

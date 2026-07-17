@@ -76,6 +76,7 @@ struct GuileState {
     std::uint64_t mode_revision = 0;
     std::size_t mode_definitions = 0;
     std::optional<std::string> last_error;
+    std::string definition_source = "scheme";
 };
 
 struct HostLease {
@@ -290,6 +291,13 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
             if (existing) {
                 host.runtime->commands().configure(command, std::move(execute), std::move(enabled));
             }
+            std::string documentation;
+            const SCM documentation_value = scm_procedure_documentation(execute_value);
+            if (scm_is_string(documentation_value)) {
+                documentation = scheme_string(documentation_value);
+            }
+            host.runtime->commands().describe(command, std::move(documentation),
+                                              state->definition_source);
             ++host.commands_installed;
             return scm_from_uint32(command.value);
         } catch (...) {
@@ -308,6 +316,34 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
         scm_misc_error("define-command!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("set-command-documentation!", 2, name_value, "string");
+    }
+    if (!scm_is_string(documentation_value)) {
+        scm_wrong_type_arg_msg("set-command-documentation!", 3, documentation_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-command-documentation!");
+        const std::string name = scheme_string(name_value);
+        const std::optional<CommandId> command = host.runtime->commands().find(name);
+        if (!command) {
+            scm_misc_error("set-command-documentation!", "unknown command", SCM_EOL);
+        }
+        const CommandRegistry::Definition& definition =
+            host.runtime->commands().definition(*command);
+        host.runtime->commands().describe(*command, scheme_string(documentation_value),
+                                          definition.source);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-command-documentation!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-command-documentation!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -658,6 +694,32 @@ SCM base_keymap_layers(SCM host_object, SCM context_value) {
         scm_misc_error("base-keymap-layers", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("base-keymap-layers", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM active_keymap_layers(SCM host_object, SCM context_value) {
+    try {
+        HostLease& host = require_host(host_object, "active-keymap-layers");
+        if (!host.services.active_keymap_layers) {
+            scm_misc_error("active-keymap-layers", "active keymap layer service is unavailable",
+                           SCM_EOL);
+        }
+        const CommandContext context =
+            command_context_from_scheme(host, context_value, "active-keymap-layers");
+        const std::vector<KeymapId> layers =
+            host.services.active_keymap_layers(context.window_id());
+        SCM result = scm_c_make_vector(layers.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < layers.size(); ++index) {
+            scm_c_vector_set_x(result, index,
+                               name_symbol(host.runtime->keymaps().definition(layers[index]).name));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("active-keymap-layers", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("active-keymap-layers", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1430,6 +1492,38 @@ SCM buffer_mode_policy(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+// Returns #(major-mode-or-#f minor-modes effective-policy).
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_mode_summary(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-mode-summary");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-mode-summary", 2);
+        const BufferModes& modes = host.runtime->buffers().get(buffer).modes();
+        SCM result = scm_c_make_vector(3, SCM_BOOL_F);
+        if (modes.major()) {
+            scm_c_vector_set_x(result, 0,
+                               name_symbol(host.runtime->modes().definition(*modes.major()).name));
+        }
+        SCM minors = scm_c_make_vector(modes.minors().size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < modes.minors().size(); ++index) {
+            scm_c_vector_set_x(
+                minors, index,
+                name_symbol(host.runtime->modes().definition(modes.minors()[index]).name));
+        }
+        scm_c_vector_set_x(result, 1, minors);
+        scm_c_vector_set_x(
+            result, 2,
+            mode_policy_value(host.runtime->modes().effective_policy(modes), *host.runtime));
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("buffer-mode-summary", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("buffer-mode-summary", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
     if (!scheme_true(scm_procedure_p(procedure_value))) {
@@ -1624,6 +1718,54 @@ SCM enabled_command_names(SCM host_object, SCM context_value) {
     return SCM_BOOL_F;
 }
 
+// Returns #(name documentation-or-#f source enabled? bindings).
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("command-properties", 3, name_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "command-properties");
+        CommandContext context =
+            command_context_from_scheme(host, context_value, "command-properties");
+        const std::string name = scheme_string(name_value);
+        const std::optional<CommandId> command = host.runtime->commands().find(name);
+        if (!command) {
+            return SCM_BOOL_F;
+        }
+        const CommandRegistry::Definition& definition =
+            host.runtime->commands().definition(*command);
+        std::vector<std::string> bindings;
+        if (host.services.active_key_bindings) {
+            for (const GuileKeyBindingSummary& binding : host.services.active_key_bindings()) {
+                if (binding.command == name) {
+                    bindings.push_back(binding.keys);
+                }
+            }
+        }
+        SCM binding_values = scm_c_make_vector(bindings.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < bindings.size(); ++index) {
+            scm_c_vector_set_x(binding_values, index,
+                               scm_from_utf8_string(bindings[index].c_str()));
+        }
+        SCM result = scm_c_make_vector(5, SCM_BOOL_F);
+        scm_c_vector_set_x(result, 0, scm_from_utf8_string(definition.name.c_str()));
+        if (!definition.documentation.empty()) {
+            scm_c_vector_set_x(result, 1, scm_from_utf8_string(definition.documentation.c_str()));
+        }
+        scm_c_vector_set_x(result, 2, scm_from_utf8_string(definition.source.c_str()));
+        scm_c_vector_set_x(result, 3,
+                           scm_from_bool(host.runtime->commands().enabled(*command, context)));
+        scm_c_vector_set_x(result, 4, binding_values);
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("command-properties", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("command-properties", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM open_buffer_summaries(SCM host_object) {
     HostLease& host = require_host(host_object, "open-buffer-summaries");
     if (!host.services.open_buffers) {
@@ -1649,6 +1791,30 @@ SCM open_buffer_summaries(SCM host_object) {
         raise_host_error("open-buffer-summaries", exception.what());
     } catch (...) {
         scm_misc_error("open-buffer-summaries", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM loaded_extension_modules(SCM host_object) {
+    try {
+        HostLease& host = require_host(host_object, "loaded-extension-modules");
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("loaded-extension-modules", "Guile runtime has expired", SCM_EOL);
+        }
+        SCM result = scm_c_make_vector(state->extensions.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < state->extensions.size(); ++index) {
+            SCM entry = scm_c_make_vector(2, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(entry, 0,
+                               scm_from_utf8_string(state->extensions[index].path.c_str()));
+            scm_c_vector_set_x(entry, 1, state->extensions[index].module);
+            scm_c_vector_set_x(result, index, entry);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("loaded-extension-modules", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("loaded-extension-modules", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -2499,6 +2665,35 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
     return SCM_UNSPECIFIED;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM display_help_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("display-help-buffer!", 3, name_value, "string");
+    }
+    if (!scm_is_string(text_value)) {
+        scm_wrong_type_arg_msg("display-help-buffer!", 4, text_value, "string");
+    }
+    HostLease& host = require_host(host_object, "display-help-buffer!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "display-help-buffer!", 2);
+    if (!host.services.display_help_buffer) {
+        scm_misc_error("display-help-buffer!", "help-buffer capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> displayed = host.services.display_help_buffer(
+            window, scheme_string(name_value), scheme_string(text_value));
+        if (!displayed) {
+            raise_host_error("display-help-buffer!", displayed.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("display-help-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("display-help-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -2872,6 +3067,8 @@ void initialize_host_module(void*) {
     (void)scm_gc_protect_object(host_type);
     (void)scm_c_define_gsubr("define-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_command));
+    (void)scm_c_define_gsubr("set-command-documentation!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_command_documentation));
     (void)scm_c_define_gsubr("define-interaction-provider!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_interaction_provider));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
@@ -2886,6 +3083,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(resolve_key_sequence));
     (void)scm_c_define_gsubr("base-keymap-layers", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(base_keymap_layers));
+    (void)scm_c_define_gsubr("active-keymap-layers", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(active_keymap_layers));
     (void)scm_c_define_gsubr("key-sequence-completions", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(key_sequence_completions));
     (void)scm_c_define_gsubr("set-input-feedback!", 4, 0, 0,
@@ -2930,12 +3129,18 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_buffer_minor_mode));
     (void)scm_c_define_gsubr("buffer-mode-policy", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_mode_policy));
+    (void)scm_c_define_gsubr("buffer-mode-summary", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_mode_summary));
     (void)scm_c_define_gsubr("observe-mode-policy-changes!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(observe_mode_policy_changes));
     (void)scm_c_define_gsubr("enabled-command-names", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
+    (void)scm_c_define_gsubr("command-properties", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(command_properties));
     (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffer_summaries));
+    (void)scm_c_define_gsubr("loaded-extension-modules", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(loaded_extension_modules));
     (void)scm_c_define_gsubr("project-root", 2, 0, 0, reinterpret_cast<scm_t_subr>(project_root));
     (void)scm_c_define_gsubr("project-files", 2, 0, 0, reinterpret_cast<scm_t_subr>(project_files));
     (void)scm_c_define_gsubr("path-relative", 3, 0, 0, reinterpret_cast<scm_t_subr>(path_relative));
@@ -2993,6 +3198,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(path_as_directory));
     (void)scm_c_define_gsubr("display-buffer!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer));
+    (void)scm_c_define_gsubr("display-help-buffer!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(display_help_buffer));
     (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_caret_to_line));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
@@ -3018,24 +3225,26 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export(
-        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-        "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-        "clear-input-feedback!", "%define-input-state!", "set-input-state-lifecycle!",
-        "set-input-state-position-hints!", "define-input-strategy!", "set-default-input-strategy!",
-        "set-view-input-strategy!", "view-input-strategy", "set-base-input-state!",
-        "push-input-state!", "pop-input-state!", "reset-input-states!", "view-input-states",
-        "observe-input-state-changes!", "define-thing!", "define-motion!", "%define-mode!",
-        "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
-        "observe-mode-policy-changes!", "enabled-command-names", "open-buffer-summaries",
-        "project-root", "project-files", "path-relative", "path-filename", "active-key-bindings",
-        "buffer-id-by-name", "buffer-resource", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
-        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+        "define-command!", "set-command-documentation!", "define-interaction-provider!",
+        "define-keymap!", "bind-key!", "bind-key-if-command!", "bind-remap!", "keymap-bindings",
+        "resolve-key-sequence", "base-keymap-layers", "active-keymap-layers",
+        "key-sequence-completions", "set-input-feedback!", "clear-input-feedback!",
+        "%define-input-state!", "set-input-state-lifecycle!", "set-input-state-position-hints!",
+        "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
+        "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
+        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
+        "define-motion!", "%define-mode!", "mode-properties", "set-buffer-major-mode!",
+        "set-buffer-minor-mode!", "buffer-mode-policy", "buffer-mode-summary",
+        "observe-mode-policy-changes!", "enabled-command-names", "command-properties",
+        "open-buffer-summaries", "loaded-extension-modules", "project-root", "project-files",
+        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
+        "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!",
+        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
+        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-help-buffer!",
         "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
         "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
         "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
@@ -3762,8 +3971,9 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "input", "extension", "emacs", "toy-modal",
-                                        "meow", "vim", "helix", "structural", "core"}) {
+        for (std::string_view module :
+             {"command", "input", "extension", "emacs", "toy-modal", "meow", "vim", "helix",
+              "structural", "introspect", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3836,10 +4046,12 @@ public:
     std::expected<std::size_t, std::string> install_core_commands() {
         require_owner_thread();
         lease_->commands_installed = 0;
+        state_->definition_source = "scheme:(cind core)";
         GuileCall call;
         call.operation = GuileCall::Operation::InstallCommands;
         call.host = host_;
         std::expected<SCM, std::string> result = run_guile_call(call);
+        state_->definition_source = "scheme";
         if (!result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
@@ -3970,7 +4182,9 @@ public:
         call.operation = GuileCall::Operation::LoadExtension;
         call.path = extension_path;
         call.host = host_;
+        state_->definition_source = std::format("scheme:{}", extension_path);
         std::expected<SCM, std::string> loaded = run_guile_call(call);
+        state_->definition_source = "scheme";
         if (!loaded) {
             discard_state_tail(*state_, state_checkpoint);
             lease_->runtime->restore_extensions(registries);
@@ -4012,7 +4226,7 @@ public:
                 .version = version_,
                 .modules = {"cind command", "cind input", "cind extension", "cind emacs",
                             "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                            "cind structural", "cind core"},
+                            "cind structural", "cind introspect", "cind core"},
                 .extensions =
                     [&] {
                         std::vector<std::string> paths;

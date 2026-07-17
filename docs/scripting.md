@@ -27,8 +27,9 @@ object. Scheme code does not resolve an implicit current application.
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind extension)` owns isolated source-file loading;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
-strategies; `(cind structural)` defines structural selection policy; and `(cind core)` composes the
-built-in editor policy.
+strategies; `(cind structural)` defines structural selection policy; `(cind introspect)` derives
+editor self-description from registry and module state; and `(cind core)` composes the built-in
+editor policy.
 These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
 through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
 scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
@@ -66,6 +67,7 @@ The native module exports:
 
 ```scheme
 (define-command! host command-name execute enabled)
+(set-command-documentation! host command-name documentation)
 (define-interaction-provider! host provider-name complete)
 (define-keymap! host keymap-name parent-or-#f)
 (bind-key! host keymap-name key-sequence command-or-prefix)
@@ -74,6 +76,7 @@ The native module exports:
 (keymap-bindings host keymap-name)
 (resolve-key-sequence host keymap-names key-sequence)
 (base-keymap-layers host context)
+(active-keymap-layers host context)
 (key-sequence-completions host keymap-names key-sequence)
 (set-input-feedback! host view-id sequence hints)
 (clear-input-feedback! host view-id)
@@ -97,9 +100,12 @@ The native module exports:
 (set-buffer-major-mode! host buffer-id mode-name-or-#f)
 (set-buffer-minor-mode! host buffer-id mode-name enabled?)
 (buffer-mode-policy host buffer-id)
+(buffer-mode-summary host buffer-id)
 (observe-mode-policy-changes! host procedure)
 (enabled-command-names host context)
+(command-properties host context command-name)
 (open-buffer-summaries host)
+(loaded-extension-modules host)
 (project-root host project-id)
 (project-files host project-id)
 (active-key-bindings host)
@@ -148,12 +154,16 @@ The native module exports:
 (delete-other-windows! host window-id)
 (select-other-window! host window-id delta)
 (request-redraw! host)
+(display-help-buffer! host window-id buffer-name text)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
 immutable command context and invocation value. `enabled` receives the same context and is either a
 predicate or `#f`. The runtime protects registered procedures from collection and invalidates them
-with their owning application.
+with their owning application. A command definition records documentation and its native, bundled
+Scheme, or extension source. `set-command-documentation!` supplies an explicit docstring when the
+procedure itself has none. `command-properties` returns the name, optional documentation, source,
+enabled state, and bindings resolved from the active keymap stack.
 
 `define-keymap!` creates or reconfigures a named keymap with an explicit parent. Names may be
 symbols or strings. Repeating the definition is idempotent, which lets policy installation refresh
@@ -179,7 +189,8 @@ are excluded. `key-sequence-completions` performs the corresponding side-effect-
 an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors, merges duplicate
 keys by layer precedence, and applies the same one-pass remap as resolution. These operations let a
 transient translator inspect the command surface beneath itself without depending on an implicit
-focused application.
+focused application. `active-keymap-layers` includes transient InputState maps and system overrides
+and is the source for literal key self-description.
 
 `(cind input)` exposes the state-definition interface:
 
@@ -294,12 +305,22 @@ retained in the scripting inspection snapshot.
 platform-native relative, filename and parent calculations. These capabilities keep candidate
 selection and presentation in Scheme while C++ retains registry identity and filesystem syntax.
 
+`buffer-mode-summary` returns the current major mode, enabled minor modes, and effective policy;
+`mode-properties` describes each registered definition. `loaded-extension-modules` returns only the
+fresh modules retained by the owning `GuileRuntime`, so module inspection preserves application and
+extension isolation.
+
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
 moves a view caret using zero-based logical line and display-column coordinates, clamps the line to
 the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
+
+`display-help-buffer!` creates or replaces a named read-only generated buffer, assigns
+`special-mode`, resets its cached View to the beginning, and displays it through the same Window and
+View lifecycle as any other buffer. Help is frontend-independent editor state rather than a
+renderer-owned overlay.
 
 View and text capabilities expose byte offsets as unsigned integers. Ordinary text ranges use
 two-element start/end vectors. `view-selection` returns
@@ -495,10 +516,24 @@ structural semantics and bindings.
 
 ## Scripted interaction providers
 
-`(cind core)` defines the synchronous `commands`, `buffers`, `project-files` and `key-bindings`
-providers. Scheme filters internal commands and formats semantic candidate fields from native
-snapshots. Query ranking remains in `InteractionController`, so native and scripted providers share
-the same ordering, selection and viewport behavior.
+`(cind core)` defines the synchronous `commands`, `buffers`, `project-files`, `key-bindings`,
+`scheme-functions`, and `scheme-variables` providers. Scheme filters internal commands and formats
+semantic candidate fields from native snapshots. Query ranking remains in `InteractionController`,
+so native and scripted providers share the same ordering, selection and viewport behavior.
+
+## Editor self-description
+
+`(cind introspect)` implements `describe-key`, `describe-command`, `describe-bindings`,
+`describe-mode`, `describe-function`, and `describe-variable` policy over host snapshots. Key
+description uses the shared `input.read-key` state and layered keymap resolution, including named
+prefix maps and remaps. Command and mode descriptions consume registry metadata. Function and
+variable descriptions enumerate local bindings from bundled modules and the isolated extension
+modules owned by the application.
+
+All descriptions render into the reusable `*Help*` buffer. Values and source forms are bounded
+before formatting, and a missing or changed binding produces a command error instead of retaining a
+raw module pointer in interaction state. The command palette, Help providers, GUI inspector, and an
+Ares lookup client can therefore consume the same authoritative identities and metadata.
 
 The `files` provider remains native because directory enumeration is cancellable worker-thread I/O.
 It captures immutable query and resource values, runs through `AsyncRuntime`, and returns the same
