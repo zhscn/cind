@@ -25,8 +25,8 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API; `(cind emacs)`, `(cind meow)`, `(cind vim)`, and
-`(cind toy-modal)` define input strategies; and `(cind core)` composes the built-in editor policy.
+defines the public command value API; `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`,
+and `(cind toy-modal)` define input strategies; and `(cind core)` composes the built-in editor policy.
 These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
 through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
 scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
@@ -377,6 +377,13 @@ is handled by the same Selection transform as other schemes. `,` and `.` push a 
 state for inner and bounds selection. `char-thing-table-add!` owns the strategy's configurable
 character-to-semantic-thing table; the bundled table maps `a`, `w`, and `s` to the active mode's
 angle, word, and string definitions.
+
+`(cind helix)` is a selection-first modal strategy selected with `C-c h`. Its durable `hx-normal`,
+`hx-select`, and `hx-insert` states use separate declarative keymaps. Normal motions replace every
+range in the View Selection; select motions apply the same registered Motion with extension enabled,
+preserving each anchor. The `mi` and `ma` prefixes push `helix-thing`, a transient single-key state
+that resolves the active mode's inner or bounds Thing at every range head. Delete dispatches the
+shared atomic selection verb, and the strategy preserves multi-range selection results across edits.
 
 ## Scripted interaction providers
 

@@ -127,17 +127,17 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
     CHECK(state.scripting.engine == "guile");
-    CHECK(state.scripting.modules == std::vector<std::string>{"cind command", "cind emacs",
-                                                              "cind toy-modal", "cind meow",
-                                                              "cind vim", "cind core"});
+    CHECK(state.scripting.modules ==
+          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind meow",
+                                   "cind vim", "cind helix", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 96);
+    CHECK(state.scripting.scripted_commands == 111);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
-    CHECK(state.scripting.scripted_input_states == 13);
-    CHECK(state.scripting.scripted_input_strategies == 4);
+    CHECK(state.scripting.scripted_input_states == 17);
+    CHECK(state.scripting.scripted_input_strategies == 5);
     CHECK(state.scripting.mode_revision == 1);
     CHECK(state.scripting.scripted_modes == 3);
     CHECK(state.text_input_policy == "accept");

@@ -3279,7 +3279,8 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "emacs", "toy-modal", "meow", "vim", "core"}) {
+        for (std::string_view module :
+             {"command", "emacs", "toy-modal", "meow", "vim", "helix", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3443,7 +3444,7 @@ public:
         return {.engine = "guile",
                 .version = version_,
                 .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind vim",
-                            "cind core"},
+                            "cind helix", "cind core"},
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,

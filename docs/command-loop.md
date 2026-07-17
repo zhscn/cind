@@ -171,6 +171,12 @@ registries before dispatching the region verb. Decimal counts and single-key nam
 in the command loop prefix slot across the operator state. `C-c v` selects the strategy from the
 default Emacs map.
 
+The bundled `(cind helix)` strategy defines normal, select, and insert durable states. The normal
+and select maps bind the same Motion mechanisms to replace and extend transforms respectively, so
+each command operates over the full View Selection. `mi` and `ma` enter a transient single-key Thing
+capture state, and deletion consumes the resulting ranges through the shared atomic selection verb.
+`C-c h` selects the strategy from the default Emacs map.
+
 ## Command loop and prefix help
 
 One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap

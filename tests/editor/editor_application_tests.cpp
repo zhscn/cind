@@ -486,6 +486,76 @@ TEST_CASE("Guile Vim policy composes states prefixes operators and things") {
     CHECK(application.input_state().name == "vim-normal");
 }
 
+TEST_CASE("Guile Helix policy transforms every selection through shared nouns") {
+    EditorApplication application = make_application("sample.cc", "one two three four");
+    EditorRuntime& runtime = application.runtime();
+
+    send_keys(application, "C-c h");
+    CHECK(application.input_state().name == "hx-normal");
+    const std::optional<InputStrategyId> strategy =
+        runtime.views().get(application.view_id()).input_strategy();
+    REQUIRE(strategy.has_value());
+    CHECK(runtime.input_strategies().definition(*strategy).name == "helix");
+
+    const auto set_carets = [&](TextOffset first, TextOffset second) {
+        runtime.views().set_selection(
+            application.view_id(),
+            ViewSelection{.ranges = {{.anchor = first,
+                                      .head = first,
+                                      .granularity = SelectionGranularity::Character},
+                                     {.anchor = second,
+                                      .head = second,
+                                      .granularity = SelectionGranularity::Character}},
+                          .primary = 1,
+                          .metadata = "((strategy . helix))"});
+    };
+
+    set_carets(TextOffset{0}, TextOffset{8});
+    send_keys(application, "w");
+    REQUIRE(application.session().active_selection().has_value());
+    ViewSelection selected = *application.session().active_selection();
+    REQUIRE(selected.ranges.size() == 2);
+    CHECK(selected.ranges[0].head == TextOffset{4});
+    CHECK(selected.ranges[1].head == TextOffset{14});
+    CHECK(selected.primary == 1);
+
+    set_carets(TextOffset{1}, TextOffset{5});
+    send_keys(application, "m i");
+    CHECK(application.input_state().name == "helix-thing");
+    CHECK(application.pending_key_sequence_text() == "m i");
+    send_keys(application, "w");
+    CHECK(application.input_state().name == "hx-normal");
+    REQUIRE(application.session().active_selection().has_value());
+    selected = *application.session().active_selection();
+    REQUIRE(selected.ranges.size() == 2);
+    CHECK(selected.ranges[0].ordered() == make_range(0, 3));
+    CHECK(selected.ranges[1].ordered() == make_range(4, 7));
+    CHECK(selected.primary == 1);
+
+    send_keys(application, "d");
+    CHECK(application.input_state().name == "hx-normal");
+    CHECK(application.session().snapshot().content() == "  three four");
+    REQUIRE(application.session().undo());
+    CHECK(application.session().snapshot().content() == "one two three four");
+
+    set_carets(TextOffset{0}, TextOffset{8});
+    send_keys(application, "v w");
+    CHECK(application.input_state().name == "hx-select");
+    REQUIRE(application.session().active_selection().has_value());
+    selected = *application.session().active_selection();
+    CHECK(selected.ranges[0].anchor == TextOffset{0});
+    CHECK(selected.ranges[0].head == TextOffset{4});
+    CHECK(selected.ranges[1].anchor == TextOffset{8});
+    CHECK(selected.ranges[1].head == TextOffset{14});
+    CHECK(selected.primary == 1);
+
+    send_keys(application, "ESC i");
+    CHECK(application.input_state().name == "hx-insert");
+    application.insert_text("X");
+    send_keys(application, "ESC");
+    CHECK(application.input_state().name == "hx-normal");
+}
+
 TEST_CASE("Guile selection verbs replace every range in one undo unit") {
     EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
     EditorRuntime& runtime = application.runtime();
