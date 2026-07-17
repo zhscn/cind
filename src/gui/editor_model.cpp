@@ -368,6 +368,7 @@ EditorRenderState EditorModel::render_state() {
             .viewport = {.top_line = viewport.top_line,
                          .top_line_offset = viewport.top_line_offset,
                          .left_column = viewport.left_column},
+            .reveal_caret = application_.reveal_caret(),
             .window_slot = window.slot,
             .window_generation = window.generation,
             .view_slot = view.slot,

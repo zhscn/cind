@@ -292,7 +292,8 @@ void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui
 
 GuiFrameController::AnimationPresentation
 GuiFrameController::animation_presentation(const SkiaViewPresentation& target_view,
-                                           float logical_height, FrameClock::time_point now) const {
+                                           float logical_height, bool constrain_to_cursor,
+                                           FrameClock::time_point now) const {
     AnimationPresentation presentation;
     presentation.frame.view = target_view;
     if (scroll_animation_) {
@@ -301,12 +302,31 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
             spring_at_rest(state, {.target = scroll_animation_->target_scroll_top,
                                    .position_tolerance = scroll_position_tolerance,
                                    .velocity_tolerance = scroll_velocity_tolerance});
-        const float visual_top = at_rest ? scroll_animation_->target_scroll_top : state.position;
+        float visual_top = at_rest ? scroll_animation_->target_scroll_top : state.position;
         presentation.active = true;
         presentation.scroll_finished = at_rest;
         const float cell_height = static_cast<float>(presenter_.cell_height());
-        const float document_offset_y =
-            (scroll_animation_->target_scroll_top - visual_top) * cell_height;
+        const ui::SceneVerticalLayout vertical_layout(*last_scene_,
+                                                      presenter_.vertical_metrics(logical_height));
+        const float grid_bottom = vertical_layout.grid_clip_bottom();
+        float document_offset_y = (scroll_animation_->target_scroll_top - visual_top) * cell_height;
+        if (constrain_to_cursor &&
+            presentation.frame.view.cursor_owner == SkiaCursorOwner::Document &&
+            presentation.frame.view.cursor_rect) {
+            const SkiaLogicalRect& cursor = *presentation.frame.view.cursor_rect;
+            float minimum_offset = std::min(0.0F, -cursor.y);
+            float maximum_offset = std::max(0.0F, grid_bottom - (cursor.y + cursor.height));
+            if (presentation.frame.view.active_line_y) {
+                minimum_offset = std::max(minimum_offset,
+                                          std::min(0.0F, -*presentation.frame.view.active_line_y));
+                maximum_offset =
+                    std::min(maximum_offset,
+                             std::max(0.0F, grid_bottom - (*presentation.frame.view.active_line_y +
+                                                           cell_height)));
+            }
+            document_offset_y = std::clamp(document_offset_y, minimum_offset, maximum_offset);
+            visual_top = scroll_animation_->target_scroll_top - document_offset_y / cell_height;
+        }
         if (presentation.frame.view.active_line_y) {
             *presentation.frame.view.active_line_y += document_offset_y;
         }
@@ -323,9 +343,6 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
                  .clip_top = 0.0F,
                  .clip_bottom = 0.0F});
         }
-        const ui::SceneVerticalLayout vertical_layout(*last_scene_,
-                                                      presenter_.vertical_metrics(logical_height));
-        const float grid_bottom = vertical_layout.grid_clip_bottom();
         const auto layer_origin = [&](std::size_t index) {
             const SkiaScrollLayer& positioned = presentation.frame.scroll_layers[index];
             return positioned.scene->grid_offset_rows * cell_height + positioned.grid_offset_y;
@@ -341,6 +358,10 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
         if (!presentation.scroll_finished) {
             presentation.state.active = true;
             presentation.state.scroll = true;
+            presentation.state.cursor_constrained =
+                constrain_to_cursor &&
+                presentation.frame.view.cursor_owner == SkiaCursorOwner::Document &&
+                presentation.frame.view.cursor_rect.has_value();
             presentation.state.scroll_progress = std::clamp(
                 1.0F - std::abs(state.position - scroll_animation_->target_scroll_top) /
                            std::max(scroll_animation_->initial_distance, scroll_position_tolerance),
@@ -395,8 +416,8 @@ PresentedFrame GuiFrameController::build(FrameRequest request) {
     const SkiaViewPresentation target_view = presenter_.view_presentation(*layout);
     update_animation_targets(scene, target_view, request.scroll_top, request.identity,
                              request.animate_scroll, request.geometry_changed, request.now);
-    AnimationPresentation animation =
-        animation_presentation(target_view, request.logical_height, request.now);
+    AnimationPresentation animation = animation_presentation(
+        target_view, request.logical_height, request.constrain_scroll_to_cursor, request.now);
 
     ui::SceneDamage scene_damage = damage_tracker_.update(*scene, request.geometry_changed);
     std::vector<SkiaLogicalRect> logical_damage;

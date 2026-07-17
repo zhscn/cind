@@ -727,6 +727,8 @@ private:
                                                         .output_height = pixel_height,
                                                         .display_scale = scale,
                                                         .animate_scroll = !direct_scroll_pending_,
+                                                        .constrain_scroll_to_cursor =
+                                                            editor_state.reveal_caret,
                                                         .geometry_changed = geometry_changed,
                                                         .now = FrameClock::now()});
         timings.frame_build_us =
@@ -853,6 +855,7 @@ private:
             .active = frame_animation.active,
             .scroll = frame_animation.scroll,
             .cursor = frame_animation.cursor,
+            .cursor_constrained = frame_animation.cursor_constrained,
             .cursor_owner = std::string(cursor_owner_name(frame_animation.cursor_owner)),
             .scroll_progress = frame_animation.scroll_progress,
             .cursor_progress = frame_animation.cursor_progress,

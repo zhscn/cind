@@ -150,7 +150,9 @@ Bottom-anchored chrome and overlay regions are fixed while grid layers move. A s
 selects adjacent viewport snapshots around the visual scroll position. Each prepared layer owns a
 non-overlapping vertical band, with an ink guard at the seam for glyph overhang. The caret,
 active-line fill and active line number use one `SkiaViewPresentation`, so they share one animation
-sample.
+sample. When keyboard navigation reveals the caret, the visual scroll position is constrained so
+the document cursor and active-line remain inside the grid clip; wheel scrolling keeps the
+unconstrained spring presentation.
 
 A workspace contains independently scrolling pane grids and therefore uses direct presentation
 with normal scene damage. A single-grid Scene uses the scalar scroll timeline and caret animation.

@@ -63,6 +63,7 @@ struct FrameAnimationState {
     bool active = false;
     bool scroll = false;
     bool cursor = false;
+    bool cursor_constrained = false;
     SkiaCursorOwner cursor_owner = SkiaCursorOwner::None;
     float scroll_progress = 1.0F;
     float cursor_progress = 1.0F;
@@ -84,6 +85,7 @@ struct FrameRequest {
     int output_height = 0;
     float display_scale = 1.0F;
     bool animate_scroll = true;
+    bool constrain_scroll_to_cursor = true;
     bool geometry_changed = false;
     FrameClock::time_point now = FrameClock::now();
 };
@@ -178,7 +180,7 @@ private:
                                   bool geometry_changed,
                                   FrameClock::time_point now);
     AnimationPresentation animation_presentation(const SkiaViewPresentation& target_view,
-                                                 float logical_height,
+                                                 float logical_height, bool constrain_to_cursor,
                                                  FrameClock::time_point now) const;
     SpringState scroll_state(const ScrollAnimation& animation, FrameClock::time_point now) const;
     SkiaViewPresentation animated_view(const ViewAnimation& animation,

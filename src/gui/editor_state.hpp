@@ -166,6 +166,7 @@ struct ScriptingStateSnapshot {
 struct EditorRenderState {
     RevisionId revision = 0;
     ui::EditorViewport viewport;
+    bool reveal_caret = true;
     std::uint32_t window_slot = 0;
     std::uint32_t window_generation = 0;
     std::uint32_t view_slot = 0;

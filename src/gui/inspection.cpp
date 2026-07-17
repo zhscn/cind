@@ -1042,6 +1042,8 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
     append_bool(output, animation.scroll);
     output += ",\"cursor\":";
     append_bool(output, animation.cursor);
+    output += ",\"cursor_constrained\":";
+    append_bool(output, animation.cursor_constrained);
     output += ",\"cursor_owner\":";
     append_json_string(output, animation.cursor_owner);
     output +=
@@ -1744,12 +1746,18 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         } else if (frame.render.document_layout && frame.render.document_layout->cursor_rect) {
             view_cursor = &*frame.render.document_layout->cursor_rect;
         }
-        if (view_cursor && animation.cursor_rect &&
-            (std::abs(animation.cursor_rect->x - view_cursor->x) > 0.01F ||
-             std::abs(animation.cursor_rect->y - view_cursor->y) > 0.01F ||
-             std::abs(animation.cursor_rect->width - view_cursor->width) > 0.01F ||
-             std::abs(animation.cursor_rect->height - view_cursor->height) > 0.01F)) {
-            violations.emplace_back("render scroll cursor does not match current view state");
+        const float document_offset_y =
+            (animation.target_scroll_top - animation.visual_scroll_top) *
+            static_cast<float>(frame.render.cell_height);
+        if (view_cursor && animation.cursor_rect) {
+            const float expected_cursor_y =
+                view_cursor->y + (animation.cursor_owner == "document" ? document_offset_y : 0.0F);
+            if (std::abs(animation.cursor_rect->x - view_cursor->x) > 0.01F ||
+                std::abs(animation.cursor_rect->y - expected_cursor_y) > 0.01F ||
+                std::abs(animation.cursor_rect->width - view_cursor->width) > 0.01F ||
+                std::abs(animation.cursor_rect->height - view_cursor->height) > 0.01F) {
+                violations.emplace_back("render scroll cursor does not match the visual viewport");
+            }
         }
         if (animation.active_line_y && !std::isfinite(*animation.active_line_y)) {
             violations.emplace_back("render animated active line position is not finite");
@@ -1763,11 +1771,19 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                               .viewport_height = logical_height,
                               .footer_heights = ui::editor_footer_heights(
                                   static_cast<float>(frame.render.cell_height))});
-            const float expected_active_line_y = layout.row_top(*frame.scene.active_text_row);
+            const float expected_active_line_y =
+                layout.row_top(*frame.scene.active_text_row) + document_offset_y;
             if (!animation.active_line_y ||
                 std::abs(*animation.active_line_y - expected_active_line_y) > 0.01F) {
                 violations.emplace_back(
-                    "render animated active line does not match current view state");
+                    "render animated active line does not match the visual viewport");
+            }
+            if (animation.cursor_constrained && animation.cursor_owner == "document" &&
+                animation.cursor_rect &&
+                (animation.cursor_rect->y < -0.01F ||
+                 animation.cursor_rect->y + animation.cursor_rect->height >
+                     layout.grid_clip_bottom() + 0.01F)) {
+                violations.emplace_back("render scroll cursor is outside the document grid");
             }
         } else if (animation.active_line_y) {
             violations.emplace_back("render scroll has an active line without current view state");
@@ -1827,6 +1843,10 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     if (animation.active != (animation.scroll || animation.cursor)) {
         violations.emplace_back("render animation activity flags are inconsistent");
+    }
+    if (animation.cursor_constrained &&
+        (!animation.scroll || animation.cursor_owner != "document" || !animation.cursor_rect)) {
+        violations.emplace_back("render cursor constraint has no document scroll cursor");
     }
     if (animation.active && !frame.render.damage.full_repaint) {
         violations.emplace_back("render animation requires a full presentation repaint");

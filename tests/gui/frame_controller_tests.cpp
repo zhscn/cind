@@ -71,7 +71,7 @@ Scene frame_scene(int cursor_row, int marker, bool popup_visible = false) {
 
 FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top,
                          FrameClock::time_point now, bool geometry_changed = false,
-                         bool animate_scroll = true) {
+                         bool animate_scroll = true, bool constrain_scroll_to_cursor = true) {
     const int width = presenter.cell_width() * scene.cols;
     const int height = presenter.cell_height() * scene.rows;
     return {.scene = std::move(scene),
@@ -89,6 +89,7 @@ FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top
             .output_height = height,
             .display_scale = 1.0F,
             .animate_scroll = animate_scroll,
+            .constrain_scroll_to_cursor = constrain_scroll_to_cursor,
             .geometry_changed = geometry_changed,
             .now = now};
 }
@@ -171,6 +172,73 @@ TEST_CASE("animated document chrome follows the visual scroll transform") {
     const float highlight_delta = *moving.view().active_line_y - *target_view.active_line_y;
     CHECK(cursor_delta == doctest::Approx(highlight_delta));
     CHECK(cursor_delta > 0.0F);
+}
+
+TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    const FrameClock::time_point start{};
+
+    SUBCASE("downward motion catches up at the bottom edge") {
+        GuiFrameController controller(presenter);
+        PresentedFrame initial =
+            controller.build(request_for(presenter, frame_scene(26, 0), 0.0F, start, true));
+        controller.did_present(initial);
+        PresentedFrame target = controller.build(
+            request_for(presenter, frame_scene(26, 3), 3.0F, start + std::chrono::milliseconds(1)));
+        controller.did_present(target);
+        PresentedFrame moving = controller.build(request_for(
+            presenter, frame_scene(26, 3), 3.0F, start + std::chrono::milliseconds(20)));
+
+        REQUIRE(moving.view().cursor_rect);
+        REQUIRE_FALSE(moving.animation().scroll_layers.empty());
+        const float grid_bottom = moving.animation().scroll_layers.back().clip_bottom;
+        const SkiaViewPresentation target_view = presenter.view_presentation(moving.layout());
+        REQUIRE(target_view.cursor_rect);
+        REQUIRE(target_view.active_line_y);
+        const float target_bottom =
+            std::max(target_view.cursor_rect->y + target_view.cursor_rect->height,
+                     *target_view.active_line_y + static_cast<float>(presenter.cell_height()));
+        const float maximum_lag = std::max(0.0F, grid_bottom - target_bottom) /
+                                  static_cast<float>(presenter.cell_height());
+        CHECK(moving.view().cursor_rect->y + moving.view().cursor_rect->height <=
+              grid_bottom + 0.01F);
+        CHECK(moving.animation_state().cursor_constrained);
+        CHECK(moving.animation_state().visual_scroll_top >= 3.0F - maximum_lag - 0.01F);
+    }
+
+    SUBCASE("upward motion catches up at the top edge") {
+        GuiFrameController controller(presenter);
+        PresentedFrame initial =
+            controller.build(request_for(presenter, frame_scene(1, 1), 1.0F, start, true));
+        controller.did_present(initial);
+        PresentedFrame target = controller.build(
+            request_for(presenter, frame_scene(1, 0), 0.0F, start + std::chrono::milliseconds(1)));
+        controller.did_present(target);
+        PresentedFrame moving = controller.build(
+            request_for(presenter, frame_scene(1, 0), 0.0F, start + std::chrono::milliseconds(20)));
+
+        REQUIRE(moving.view().cursor_rect);
+        CHECK(moving.view().cursor_rect->y >= -0.01F);
+        CHECK(moving.animation_state().visual_scroll_top ==
+              doctest::Approx(moving.animation_state().target_scroll_top));
+    }
+
+    SUBCASE("wheel motion retains the unconstrained spring") {
+        GuiFrameController controller(presenter);
+        PresentedFrame initial =
+            controller.build(request_for(presenter, frame_scene(26, 0), 0.0F, start, true));
+        controller.did_present(initial);
+        PresentedFrame target =
+            controller.build(request_for(presenter, frame_scene(26, 3), 3.0F,
+                                         start + std::chrono::milliseconds(1), false, true, false));
+        controller.did_present(target);
+        PresentedFrame moving = controller.build(request_for(presenter, frame_scene(26, 3), 3.0F,
+                                                             start + std::chrono::milliseconds(20),
+                                                             false, true, false));
+
+        CHECK_FALSE(moving.animation_state().cursor_constrained);
+        CHECK(moving.animation_state().visual_scroll_top < 1.0F);
+    }
 }
 
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {

@@ -269,7 +269,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                         .grid_offset_y = 10.0F,
                         .clip_top = 10.0F,
                         .clip_bottom = 68.0F}},
-            .active_line_y = 0.0F,
+            .active_line_y = 10.0F,
             .cursor_rect =
                 LogicalPixelRectSnapshot{
                     .x = 112.0F,
@@ -394,7 +394,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":42") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":43") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -637,7 +637,7 @@ TEST_CASE("inspection exposes continuous document scroll layers") {
     const std::string& animation = response.payload;
     CHECK(animation.find("\"visual_scroll_top\":0.5") != std::string::npos);
     CHECK(animation.find("\"cursor_owner\":\"popup\"") != std::string::npos);
-    CHECK(animation.find("\"active_line_y\":0") != std::string::npos);
+    CHECK(animation.find("\"active_line_y\":10") != std::string::npos);
     CHECK(animation.find("\"layers\":[{\"scroll_top\":0,\"grid_offset_y\":-10,"
                          "\"clip_top\":0,\"clip_bottom\":10}") != std::string::npos);
 }
@@ -649,7 +649,7 @@ TEST_CASE("inspection reports a scroll cursor detached from the current view") {
     const std::shared_ptr<const FrameInspection> frame = hub.latest();
     REQUIRE(frame);
     REQUIRE(frame->violations.size() == 1);
-    CHECK(frame->violations.front() == "render scroll cursor does not match current view state");
+    CHECK(frame->violations.front() == "render scroll cursor does not match the visual viewport");
 }
 
 TEST_CASE("inspection reports a document cursor and active line out of phase") {

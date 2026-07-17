@@ -316,10 +316,12 @@ document、popup 与 echo 之间的 focus 变化直接采用目标 surface 的 p
 过渡持续期间，每一帧使用完整 raster 和完整 texture upload；静止帧继续使用 retained
 raster 和局部 damage。关键帧 timeline 绑定到 window、view、buffer 和 document revision；
 上下文变化会结束当前过渡。标准滚轮步进移动三行；高精度滚轮的分数 delta 会累积到同一
-滚动尺度。Active-line 和 cursor 属于当前 view 的瞬时呈现状态，使用目标 viewport 的像素
-布局并独立于正文弹簧落位；关键帧只提供滚动中的文档内容。相邻 layer 按文档行边界划分
-互不重叠的 ownership band，所有 band 合计覆盖一次 grid viewport。绘制为前一个 band 保留
-一行 ink guard，覆盖跨行的 glyph ink；后一个 band 随后覆盖接缝以下的重复内容。
+滚动尺度。Active-line 和 document cursor 属于当前 view 的瞬时呈现状态，以目标 viewport
+布局为基准并应用视觉 scroll-top 的同一文档变换。键盘导航请求 reveal caret 时，视觉
+scroll-top 会被约束在能让 cursor 和 active-line 完整位于 grid clip 内的范围；滚轮滚动不
+施加该约束，popup 和 echo cursor 也不参与正文变换。相邻 layer 按文档行边界划分互不重叠的
+ownership band，所有 band 合计覆盖一次 grid viewport。绘制为前一个 band 保留一行 ink
+guard，覆盖跨行的 glyph ink；后一个 band 随后覆盖接缝以下的重复内容。
 动画事件循环由 VSync 驱动；不支持 VSync 的 renderer 使用短时 event wait 控制帧率。
 包含独立 pane-grid 的 workspace 使用直接呈现和正常 scene damage；单 grid scene 使用标量
 scroll timeline 和 cursor transition。
@@ -327,6 +329,7 @@ scroll timeline 和 cursor transition。
 `render.animation` 包含：
 
 - `active`、`scroll` 和 `cursor`：当前帧启用的过渡层；
+- `cursor_constrained`：键盘 reveal policy 是否约束视觉 scroll-top 以保持正文 caret 可见；
 - `cursor_owner`：实际呈现 caret 的 `document`、`popup`、`echo`、`other` 或 `none`
   surface；
 - `scroll_progress` 和 `cursor_progress`：应用缓动后的 `[0, 1]` 进度；
@@ -339,10 +342,10 @@ scroll timeline 和 cursor transition。
 
 动画帧的 `render.damage.full_repaint` 为 `true`。Inspector 校验 layer 按文档位置排序、夹住
 视觉 scroll-top，每个像素偏移与文档行差一致，且 clip bands 无间隙、无重叠地覆盖完整
-grid；滚动帧的 `active_line_y` 必须由当前 Scene 的 active row 和目标 viewport 布局唯一导出，
-`cursor_rect` 必须匹配当前 view 的 shaped cursor layout 并完整位于 output 内。正文 caret
-过渡中的 `cursor_rect.y` 和 `active_line_y` 必须相同。Inspector 使用相同的动画状态生成独立
-完整 raster，并通过 `full_reference_match` 校验呈现缓冲区。
+grid；滚动帧的 `active_line_y` 必须等于当前 Scene active row 的目标布局位置加文档变换，
+`cursor_rect` 必须以同一变换匹配当前 view 的 shaped cursor layout，并完整位于 document
+grid 内。正文 caret 过渡中的 `cursor_rect.y` 和 `active_line_y` 必须相同。Inspector 使用
+相同的动画状态生成独立完整 raster，并通过 `full_reference_match` 校验呈现缓冲区。
 
 ### Damage diagnostics
 
