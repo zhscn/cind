@@ -1,0 +1,6 @@
+This directory contains the Guile Ares RS 0.9.7 release from
+https://git.sr.ht/~abcdw/guile-ares-rs, commit
+661fd97d520e63f72f60bd965ce604bba7dc80cd.
+
+Cind loads the Scheme modules under src/guile directly. Upstream sources are
+distributed under GPL-3.0-or-later; see LICENSE.

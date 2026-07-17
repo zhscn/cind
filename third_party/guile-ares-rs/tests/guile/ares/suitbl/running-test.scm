@@ -1,0 +1,590 @@
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;; SPDX-FileCopyrightText: 2026 Andrew Tropin <andrew@trop.in>
+
+(define-module (ares suitbl running-test)
+  #:use-module (ares suitbl core)
+  #:use-module (ice-9 control)
+  #:use-module ((ice-9 exceptions) #:select (exception-message
+                                              with-exception-handler))
+  #:use-module (ice-9 match)
+  #:use-module ((ares suitbl running) #:prefix running:))
+
+
+
+(define (sample-assertion body)
+  `((assertion/body . ,body)
+    (assertion/location . ((filename . "running-test.scm")
+                           (line . 0)
+                           (column . 0)))))
+
+(define-suite assertion-outcomes->assertion-summary-tests
+  (test "summarize assertion outcomes with pass-only data"
+    (is (equal?
+         '((passes . 2)
+           (failures . 0)
+           (errors . 0)
+           (assertions . 2))
+         (running:assertion-outcomes->assertion-summary '(pass pass)))))
+
+  (test "summarize assertion outcomes with mixed data"
+    (is (equal?
+         '((passes . 1)
+           (failures . 1)
+           (errors . 1)
+           (assertions . 3))
+         (running:assertion-outcomes->assertion-summary '(pass fail error)))))
+
+  (test "summarize assertion outcomes with empty data"
+    (is (equal?
+         '((passes . 0)
+           (failures . 0)
+           (errors . 0)
+           (assertions . 0))
+         (running:assertion-outcomes->assertion-summary '())))))
+
+(define-suite assertion-summary->test-run-outcome-tests
+  (test "returns pass for zero-assertion summary"
+    (is (eq?
+         'pass
+         (running:assertion-summary->test-run-outcome
+          '((passes . 0)
+            (failures . 0)
+            (errors . 0)
+            (assertions . 0))))))
+
+  (test "returns pass for pass-only summary"
+    (is (eq?
+         'pass
+         (running:assertion-summary->test-run-outcome
+          '((passes . 2)
+            (failures . 0)
+            (errors . 0)
+            (assertions . 2))))))
+
+  (test "returns fail for summary with failures"
+    (is (eq?
+         'fail
+         (running:assertion-summary->test-run-outcome
+          '((passes . 1)
+            (failures . 1)
+            (errors . 0)
+            (assertions . 2))))))
+
+  (test "returns error for summary with errors"
+    (is (eq?
+         'error
+         (running:assertion-summary->test-run-outcome
+          '((passes . 1)
+            (failures . 0)
+            (errors . 1)
+            (assertions . 2))))))
+
+  (test "returns error when both failures and errors are present"
+    (is (eq?
+         'error
+         (running:assertion-summary->test-run-outcome
+          '((passes . 0)
+            (failures . 1)
+            (errors . 1)
+            (assertions . 2)))))))
+
+(define-suite assertion-summary->test-run-summary-tests
+  (test "returns pass summary for zero-assertion summary"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 0))
+         (running:assertion-summary->test-run-summary
+          '((passes . 0)
+            (failures . 0)
+            (errors . 0)
+            (assertions . 0))))))
+
+  (test "returns error summary for mixed assertion summary"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 3))
+         (running:assertion-summary->test-run-summary
+          '((passes . 1)
+            (failures . 2)
+            (errors . 1)
+            (assertions . 3)))))))
+
+(define-suite run-summary->run-outcome-tests
+  (test "returns pass for summary without failures and errors"
+    (is (eq?
+         'pass
+         (running:run-summary->run-outcome
+          '((tests . 1)
+            (failures . 0)
+            (errors . 0)
+            (skipped . 0)
+            (assertions . 2))))))
+
+  (test "returns error for summary with failures and errors"
+    (is (eq?
+         'error
+         (running:run-summary->run-outcome
+          '((tests . 2)
+            (failures . 1)
+            (errors . 1)
+            (skipped . 0)
+            (assertions . 3)))))))
+
+(define-suite assertion-outcomes->test-run-summary-tests
+  (test "returns pass summary for pass-only events"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 2))
+         (running:assertion-outcomes->test-run-summary '(pass pass)))))
+
+  (test "returns fail summary for fail-only events"
+    (is (equal?
+         '((tests . 1)
+           (failures . 1)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 1))
+         (running:assertion-outcomes->test-run-summary '(fail)))))
+
+  (test "returns error summary for error-only events"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 1))
+         (running:assertion-outcomes->test-run-summary '(error)))))
+
+  (test "returns error summary for mixed fail and error events"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 3))
+         (running:assertion-outcomes->test-run-summary '(pass fail error)))))
+
+  (test "returns pass summary for empty events"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 0))
+         (running:assertion-outcomes->test-run-summary '())))))
+
+(define-suite run-history->run-summary-tests
+  (test "returns initial run summary for empty run history"
+    (is (equal?
+         '((tests . 0)
+           (failures . 0)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 0))
+         (running:run-history->run-summary '()))))
+
+  (test "returns single per-test summary for one-entry run history"
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 0)
+           (skipped . 0)
+           (assertions . 2))
+         (running:run-history->run-summary
+          `(((test-run/summary
+              . ((tests . 1)
+                 (failures . 0)
+                 (errors . 0)
+                 (skipped . 0)
+                 (assertions . 2)))))))))
+
+  (test "sums mixed-outcome per-test summaries across run history"
+    (is (equal?
+         '((tests . 3)
+           (failures . 1)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 6))
+         (running:run-history->run-summary
+          `(((test-run/summary
+              . ((tests . 1)
+                 (failures . 0)
+                 (errors . 0)
+                 (skipped . 0)
+                 (assertions . 2))))
+            ((test-run/summary
+              . ((tests . 1)
+                 (failures . 1)
+                 (errors . 0)
+                 (skipped . 0)
+                 (assertions . 1))))
+            ((test-run/summary
+              . ((tests . 1)
+                 (failures . 0)
+                 (errors . 1)
+                 (skipped . 0)
+                 (assertions . 3))))))))))
+
+(define (sample-test description)
+  `((test/description . ,description)))
+
+(define-suite make-test-run-extended-outcome-tests
+  (test "extended outcome is pass for normal passing test"
+    (define test-run
+      (running:make-test-run
+       (sample-test "t")
+       (running:with-exception-continuation (lambda () #t))
+       (list (running:make-assertion-run
+              (sample-assertion #t)
+              (running:with-exception-continuation (lambda () #t))))))
+    (is (eq? 'pass (assoc-ref test-run 'test-run/outcome)))
+    (is (eq? 'pass (assoc-ref test-run 'test-run/extended-outcome))))
+
+  (test "extended outcome is zero-assertions when no assertions ran"
+    (define test-run
+      (running:make-test-run
+       (sample-test "t")
+       (running:with-exception-continuation (lambda () #t))
+       '()))
+    (is (eq? 'pass (assoc-ref test-run 'test-run/outcome)))
+    (is (eq? 'zero-assertions (assoc-ref test-run 'test-run/extended-outcome))))
+
+  (test "extended outcome is aborted when test body raised"
+    (define test-run
+      (running:make-test-run
+       (sample-test "t")
+       (running:with-exception-continuation (lambda () (error "boom")))
+       '()))
+    (is (eq? 'error (assoc-ref test-run 'test-run/outcome)))
+    (is (eq? 'aborted (assoc-ref test-run 'test-run/extended-outcome))))
+
+  (test "test body error overrides earlier assertion failure in summary"
+    (define test-run
+      (running:make-test-run
+       (sample-test "t")
+       (running:with-exception-continuation (lambda () (error "boom")))
+       (list (running:make-assertion-run
+              (sample-assertion #f)
+              (running:with-exception-continuation (lambda () #f))))))
+    (define test-run-summary
+      (assoc-ref test-run 'test-run/summary))
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 1))
+         test-run-summary)))
+
+  (test "test body error does not double-count assertion error in summary"
+    (define test-run
+      (running:make-test-run
+       (sample-test "t")
+       (running:with-exception-continuation (lambda () (error "boom")))
+       (list (running:make-assertion-run
+              (sample-assertion '(error "assertion boom"))
+              (running:with-exception-continuation
+               (lambda ()
+                 (error "assertion boom")))))))
+    (define test-run-summary
+      (assoc-ref test-run 'test-run/summary))
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 1))
+         test-run-summary))))
+
+(define-suite make-assertion-run-tests
+  (test "stores assertion, pass outcome, and returned value"
+    (define assertion (sample-assertion #t))
+    (define assertion-run
+      (running:make-assertion-run
+       assertion
+       (running:with-exception-continuation (lambda () #t))))
+    (define stored-run-result
+      (assoc-ref assertion-run 'assertion-run/result))
+
+    (is (equal? assertion (assoc-ref assertion-run 'assertion)))
+    (is (eq? 'pass (assoc-ref assertion-run 'assertion-run/outcome)))
+    (is (running:returned? stored-run-result))
+    (is (eq? #t (running:returned-value stored-run-result))))
+
+  (test "stores assertion, fail outcome, and returned value"
+    (define assertion (sample-assertion #f))
+    (define assertion-run
+      (running:make-assertion-run
+       assertion
+       (running:with-exception-continuation (lambda () #f))))
+    (define stored-run-result
+      (assoc-ref assertion-run 'assertion-run/result))
+
+    (is (equal? assertion (assoc-ref assertion-run 'assertion)))
+    (is (eq? 'fail (assoc-ref assertion-run 'assertion-run/outcome)))
+    (is (running:returned? stored-run-result))
+    (is (eq? #f (running:returned-value stored-run-result))))
+
+  (test "stores assertion, error outcome, and exception"
+    (define assertion (sample-assertion '(error "boom")))
+    (define assertion-run
+      (running:make-assertion-run
+       assertion
+       (running:with-exception-continuation
+        (lambda ()
+          (error "boom")))))
+    (define stored-run-result
+      (assoc-ref assertion-run 'assertion-run/result))
+
+    (is (equal? assertion (assoc-ref assertion-run 'assertion)))
+    (is (eq? 'error (assoc-ref assertion-run 'assertion-run/outcome)))
+    (is (running:raised? stored-run-result))
+    (is (equal? "boom"
+                (exception-message
+                 (running:raised-exception stored-run-result))))))
+
+(define-suite assertion-runs-summary-tests
+  (test "summarize assertion runs with mixed data"
+    (define assertion-runs
+      (list
+       (running:make-assertion-run
+        (sample-assertion #t)
+        (running:with-exception-continuation (lambda () #t)))
+       (running:make-assertion-run
+        (sample-assertion #f)
+        (running:with-exception-continuation (lambda () #f)))
+       (running:make-assertion-run
+        (sample-assertion '(error "boom"))
+        (running:with-exception-continuation
+         (lambda ()
+           (error "boom"))))))
+
+    (is (equal?
+         '((passes . 1)
+           (failures . 1)
+           (errors . 1)
+           (assertions . 3))
+         (running:assertion-runs->assertion-summary
+          assertion-runs))))
+
+  (test "returns error test summary for mixed assertion runs"
+    (define assertion-runs
+      (list
+       (running:make-assertion-run
+        (sample-assertion #t)
+        (running:with-exception-continuation (lambda () #t)))
+       (running:make-assertion-run
+        (sample-assertion #f)
+        (running:with-exception-continuation (lambda () #f)))
+       (running:make-assertion-run
+        (sample-assertion '(error "boom"))
+        (running:with-exception-continuation
+         (lambda ()
+           (error "boom"))))))
+
+    (is (equal?
+         '((tests . 1)
+           (failures . 0)
+           (errors . 1)
+           (skipped . 0)
+           (assertions . 3))
+         (running:assertion-runs->test-run-summary
+          assertion-runs)))))
+
+(define (raises-exception? thunk)
+  (with-exception-handler
+   (lambda (_)
+     #t)
+   (lambda ()
+     (thunk)
+     #f)
+   #:unwind? #t))
+
+
+;;;
+;;; Stack capture helpers
+;;;
+
+(define (exception-stack-frame-procedure-names thunk)
+  (let/ec return
+    (with-exception-handler
+     (lambda (_)
+       (return
+        (let ((stack (make-stack #t)))
+          (let loop ((index 0)
+                     (result '()))
+            (if (= index (stack-length stack))
+                (reverse result)
+                (loop (1+ index)
+                      (cons (frame-procedure-name (stack-ref stack index))
+                            result)))))))
+     thunk
+     #:unwind? #f)))
+
+(define (list-prefix? prefix lst)
+  (cond
+   ((null? prefix) #t)
+   ((null? lst) #f)
+   ((equal? (car prefix) (car lst))
+    (list-prefix? (cdr prefix) (cdr lst)))
+   (else
+    #f)))
+
+(define (contains-contiguous-sublist? lst sublist)
+  (cond
+   ((null? sublist) #t)
+   ((null? lst) #f)
+   ((list-prefix? sublist lst) #t)
+   (else
+    (contains-contiguous-sublist? (cdr lst) sublist))))
+
+(define-suite assertion-run-result->assertion-outcome-tests
+  (test "maps truthy returned result to pass outcome"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda () #t)))
+           (outcome
+            (running:assertion-run-result->assertion-outcome run-result)))
+      (is (equal? 'pass outcome))))
+
+  (test "maps falsey returned result to fail outcome"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda () #f)))
+           (outcome
+            (running:assertion-run-result->assertion-outcome run-result)))
+      (is (equal? 'fail outcome))))
+
+  (test "maps raised result to error outcome"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda ()
+               (error "boom"))))
+           (outcome
+            (running:assertion-run-result->assertion-outcome run-result)))
+      (is (equal? 'error outcome)))))
+
+(define-suite assertion-run-result->reporter-message-tests
+  (test "maps truthy returned result to assertion-end reporter message"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda () #t)))
+           (message
+            (running:assertion-run-result->reporter-message run-result)))
+      (is (equal? 'run/assertion-end (assoc-ref message 'type)))))
+
+  (test "maps falsey returned result to assertion-end reporter message"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda () #f)))
+           (message
+            (running:assertion-run-result->reporter-message run-result)))
+      (is (equal? 'run/assertion-end (assoc-ref message 'type)))))
+
+  (test "maps raised result to assertion-end reporter message"
+    (let* ((run-result
+            (running:with-exception-continuation
+             (lambda ()
+               (error "boom"))))
+           (message
+            (running:assertion-run-result->reporter-message run-result)))
+      (is (equal? 'run/assertion-end (assoc-ref message 'type))))))
+
+(define-suite assertion-run->reporter-message-tests
+  (test "includes assertion data for passing assertion runs"
+    (define assertion (sample-assertion #t))
+    (define assertion-run
+      (running:make-assertion-run
+       assertion
+       (running:with-exception-continuation (lambda () #t))))
+    (define message
+      (running:assertion-run->reporter-message assertion-run))
+
+    (is (equal? 'run/assertion-end (assoc-ref message 'type)))
+    (is (equal? assertion (assoc-ref message 'assertion)))
+    (is (equal? assertion-run (assoc-ref message 'assertion-run))))
+
+  (test "includes assertion error for erroring assertion runs"
+    (define assertion (sample-assertion '(error "boom")))
+    (define assertion-run
+      (running:make-assertion-run
+       assertion
+       (running:with-exception-continuation
+        (lambda ()
+          (error "boom")))))
+    (define message
+      (running:assertion-run->reporter-message assertion-run))
+    (define message-assertion-run
+      (assoc-ref message 'assertion-run))
+    (define message-run-result
+      (assoc-ref message-assertion-run 'assertion-run/result))
+
+    (is (equal? 'run/assertion-end (assoc-ref message 'type)))
+    (is (equal? assertion (assoc-ref message 'assertion)))
+    (is (equal? assertion-run message-assertion-run))
+    (is (equal? "boom"
+                (exception-message
+                 (running:raised-exception message-run-result))))))
+
+(define-suite with-exception-continuation-tests
+  (test "returns tagged returned value when no exception is raised"
+    (let ((result
+           (running:with-exception-continuation
+            (lambda () 'ok))))
+      (is (running:returned? result))
+      (is (equal? 'ok (running:returned-value result)))))
+
+  (test "returns raised with continuation and exception when thunk raises"
+    (let ((result
+           (running:with-exception-continuation
+            (lambda ()
+              (error "boom")))))
+      (is (running:raised? result))
+      (is (procedure? (running:raised-continuation result)))
+      (is (string=? "boom"
+                    (exception-message (running:raised-exception result))))))
+
+  (test "captured continuation re-raises exception when called"
+    (let ((result
+           (running:with-exception-continuation
+            (lambda ()
+              (error "boom")))))
+      (is (running:raised? result))
+      (is (raises-exception? (running:raised-continuation result)))))
+
+  (test "captured continuation re-raises exception with original stack"
+    (define top #f)
+    (define mid #f)
+    (define bot #f)
+    (define expected-stack-procedure-names
+      '(bot mid top))
+
+    ;; Two tricks to avoid inlining optimization of the function
+    ;; described in docs/guile/function-inlining.md
+    (set! bot (lambda () (error "boom")))
+    (set! mid (lambda () (list (bot))))
+    (set! top (lambda () (list (mid))))
+
+    (let* ((direct-stack
+            (exception-stack-frame-procedure-names top))
+           (result
+            (running:with-exception-continuation top))
+           (reraised-stack
+            (exception-stack-frame-procedure-names
+             (running:raised-continuation result))))
+      (is (running:raised? result))
+      (is (contains-contiguous-sublist?
+           direct-stack
+           expected-stack-procedure-names))
+      (is (contains-contiguous-sublist?
+           reraised-stack
+           expected-stack-procedure-names)))))

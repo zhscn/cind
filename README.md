@@ -13,19 +13,24 @@ On Fedora, install the development dependencies with:
 
 ```sh
 sudo dnf install \
-  cmake ninja-build gcc-c++ pkgconf-pkg-config ripgrep \
-  utf8proc-devel libuv-devel guile30-devel SDL3-devel libepoxy-devel freetype-devel fontconfig-devel \
+  cmake ninja-build gcc gcc-c++ make autoconf automake libtool gperf gettext-devel texinfo \
+  pkgconf-pkg-config ripgrep gc-devel libffi-devel libunistring-devel gmp-devel \
+  libtool-ltdl-devel libxcrypt-devel utf8proc-devel libuv-devel SDL3-devel \
+  libepoxy-devel freetype-devel fontconfig-devel \
   libicu-devel libjpeg-turbo-devel libpng-devel harfbuzz-devel
 ```
 
 Skia and its WebKit-maintained CMake build files are included in `third_party/skia`. Building the
 GUI does not require a separate Skia checkout, GN, depot_tools, or an external source directory.
-CMake downloads doctest when tests are enabled, so the initial configure requires network access.
+CMake builds a project-private Guile runtime and Fibers dependency, and downloads doctest when
+tests are enabled. Their initial builds require network access. Ares Scheme sources are included in
+`third_party/guile-ares-rs`.
 
 On macOS with Homebrew, install the native dependencies with:
 
 ```sh
-brew install cmake ninja pkgconf utf8proc libuv guile sdl3 freetype fontconfig \
+brew install cmake ninja pkgconf autoconf automake libtool gperf gettext texinfo \
+  bdw-gc libffi libunistring gmp utf8proc libuv sdl3 freetype fontconfig \
   icu4c@78 jpeg-turbo libpng harfbuzz
 ```
 

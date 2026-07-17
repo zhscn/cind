@@ -1,0 +1,551 @@
+(define-module (ares suitbl-test)
+  #:use-module (ares guile prelude)
+  #:use-module (ares suitbl)
+  #:use-module ((ares suitbl runner) #:prefix runner:)
+  #:use-module (ares suitbl core)
+  #:use-module (ares suitbl discovery)
+  #:use-module ((ares suitbl reporters) #:prefix reporter:)
+  #:use-module ((ares suitbl running) #:prefix running:)
+  #:use-module ((ares suitbl state) #:prefix state:)
+  #:use-module (ares alist)
+  #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-197)
+  #:use-module (ice-9 exceptions))
+
+
+;;;
+;;; Thoughts and Questions
+;;;
+
+;;; Tests skipping
+;; Do we skip asserts or test cases? test cases, because they are a
+;; unit of execution/report/etc, not the assert
+
+;; skipping tests use cases: skip tests for particular platform, test
+;; stubs for friend, who will implement the functionality later.
+
+;; Syntax for skipping? can be a xtest, can be
+;; (skip-next-test), can be (test "description" 'skip-it (is #f))
+;; probably the last one
+
+;; We don't need to bake skipping syntax into test definition, because
+;; it bakes test-runner logic into test definitions.  Skipping tests
+;; should be done on test-runner side.  What we can add to tests is
+;; metainformation.
+
+
+;;; Expected to pass/fail AKA xpass xfail
+
+;; The primary use cases: documenting/tracking known issues and
+;; testing planned features/changes without breaking CI.
+
+;; Can be implemented with metadata and customization on test-runner side:
+;; for example mark test with (known-issue . https://repo/issue/14325)
+;; filter out all tests with known-issue metadata from primary run.
+;; Make a special runner which runs only known-issues tests and exit
+;; with 1 if any of them are passing
+
+;; This approach is simpler, cleaner and much more explicit in
+;; comparison to xfail/xpass with its obscure semantics
+
+;;; Basic test run results
+;; test results: pass, fail, error, skip
+
+
+;;; Junit test run summary
+#|
+https://github.com/testmoapp/junitxml?tab=readme-ov-file#example
+name        Name of the entire test run
+tests       Total number of tests in this file
+failures    Total number of failed tests in this file
+errors      Total number of errored tests in this file
+skipped     Total number of skipped tests in this file
+assertions  Total number of assertions for all tests in this file
+time        Aggregated time of all tests in this file in seconds
+timestamp   Date and time of when the test run was executed (in ISO 8601 format)
+|#
+
+
+;;; Naming test suites
+;; Test suite should contain suffix, which will distinguish it from
+;; subject under test.  Even if we export module as sut:, the prefix
+;; will make it clearer that it's a test suite, not the function of
+;; original module.
+
+#|
+Questions:
+1.
+How to backlink test to function, so you can see all the tests related
+to the function?
+
+2.
+Test tags, which can be used to produce test suites (subset of tests):
+unit, integration, acceptance, backend, frontend
+https://github.com/testmoapp/junitxml
+
+3.
+Continuous testing.
+- Watch for changed tests/implementations?
+- Re-run [failed] tests on every eval?
+
+4.
+Arguments pre-evaluations, do we really need it?
+Maybe it's ok to do post-fail re-evaluation?
+
+Why we pre-evaluate arguments is because we want to produce
+meaningful error messages.
+
+Imagine situation:
+(let ((a "he")
+      (b "hoho"))
+  (is (string=? (string-append a "he") b)))
+
+Saying that in expression (string=? (string-append a "he") b)
+"hehe" is not string=? to "hoho" is useful, but saying
+that (not (string=? (string-append a "he") b)) is not so.
+
+5.
+load-tests* variable (or syntax-parameter), which controls macro
+expansion logic, setting it to #f will make all test defining
+functions to produce empty results.  Probably we don't need it,
+because all tests are deffered.  The only possible use case is
+stripping out tests from production code, when the tests are in the
+same module with the subject under the test.
+
+6.
+Skip test functionality.  Do we want a special test-skip
+statement or something similiar?  Probably no, because we can skip
+test cases on test-runner/IDE side.
+
+7.
+Fixtures must be implemented on suite/test metadata side,
+because test macro is not composable and can't be wrapped.
+
+|#
+
+
+;;;
+;;; Reference materials
+;;;
+
+;; https://gerbil.scheme.org/reference/dev/test.html
+;; https://gerbil.scheme.org/reference/std/test.html#test-suite
+;; check macro and various convinience wrappers
+
+;; https://srfi.schemers.org/srfi-78/srfi-78.html
+
+;; https://cljdoc.org/d/lambdaisland/kaocha/1.91.1392/doc/5-running-kaocha-from-the-repl
+;; https://github.com/weavejester/eftest
+;; Nice clojure test runners
+
+;; http://testanything.org/tap-version-14-specification.html
+;; test output specification
+
+;; https://github.com/nubank/matcher-combinators
+;; A list of helper function, which allows for flexible matching of
+;; highly nested data structures
+
+
+
+;; TODO: [Andrew Tropin, 2025-05-01] Make this macro provide useful
+;; information to test runner or reporter, so it's easy to understand
+;; what went wrong here.
+(define-syntax exception-message=?
+  (lambda (stx)
+    (syntax-case stx ()
+      ((_ message expression)
+       #'(throws-exception?
+          (begin
+            expression
+            (raise-exception
+             (make-exception-with-message
+              "expression didn't raise the exception")))
+          (lambda (ex)
+            (string=? message (exception-message ex))))))))
+
+(comment
+ (exception-message=?
+  "hello"
+  (raise-exception
+   (make-exception-with-message "hello"))))
+
+;; TODO: [Andrew Tropin, 2025-05-15] Rename to test-environment-silent
+(define-syntax with-silent-test-environment
+  (lambda (stx)
+    (syntax-case stx ()
+      ((_ body body* ...)
+       #'(parameterize ((test-runner*
+                         (runner:make-suitbl
+                          #:config `((test-reporter . ,reporter:silent)))))
+           body body* ...)))))
+
+
+;;;
+;;; Tests for is, test, suite that we can use to test test runners
+;;;
+
+(comment
+ (display 'hi)
+ (+ 1 2)
+ 'hi)
+
+;; (is-usage-tests)
+
+(define-suite is-usage-tests
+  (test "basic atomic values"
+    (is #t)
+    (is 123)
+    (is 'some-symbol))
+
+  (test "an expression asserting atmoic value of the variable"
+    (let ((a 123))
+      (is a))
+    (define b 'heyhey)
+    (is b))
+
+  (test "predicates"
+    (is (= 1 1))
+    (is (even? 14))
+    (is (lset= = '(1 2 2 3) '(1 2 2 3)))
+    (is (= 4 (+ 2 2))))
+
+  ;; TODO: [Andrew Tropin, 2025-05-01] Move to reporter tests
+  #;
+  (test "error message is good"
+    ;; TODO: [Andrew Tropin, 2025-04-08] Produce more sane error message
+    ;; for cases with atomic or identifier expressions.
+    (is #f)
+    (is (= 4 7))
+    (is (lset= = '(1 2 2 3) '(2 3 4 5)))
+    (is (= 40000000000000000000000000
+           (+ 20000000000000000000000000
+              20000000000000000000000000))))
+
+  (test "if is assert fails when inside suite outside of test macro"
+    (is
+     (throws-exception?
+      (with-silent-test-environment
+       (suite "sample test suite"
+         (is (= 7 (+ 3 4)))))
+      (lambda (ex)
+        (string=?
+         "Assert encountered inside suite, but outside of test"
+         (exception-message ex))))))
+
+  (test "is on it's own in empty env"
+    (is (= 7
+           (with-silent-test-environment
+            (is 7)))))
+
+  (test "nested is and is return value"
+    (is (= 7 (is (+ 3 4))))))
+
+(define-suite test-macro-usage-tests
+  (test "simple test case with metadata marking it as slow"
+    'metadata `((slow? . #t))
+    ;; (sleep 1)
+    (is #t))
+
+  (test "zero asserts test macro works fine"
+    "Not yet implemented")
+
+  (test "standalone test macro usage"
+    (define standalone-test-macro-return-value
+      (with-silent-test-environment
+       (test "simple failure"
+         (is #t))))
+
+    (is (unspecified? standalone-test-macro-return-value))
+
+    (define run-summary-with-failures-and-errors
+      (with-silent-test-environment
+       (test "simple failure"
+         (is #f))
+       (state:get-run-summary
+        (runner:get-state))))
+
+    (is
+     (equal?
+      '((errors . 0) (failures . 1) (assertions . 1) (tests . 1))
+      (alist-select-keys
+       '(errors failures assertions tests)
+       run-summary-with-failures-and-errors)))
+
+    (define run-summary-without-failures
+      (with-silent-test-environment
+       (test "simple success"
+         (is #t))
+       (state:get-run-summary
+        (runner:get-state))))
+    (is
+     (equal?
+      '((errors . 0) (failures . 0) (assertions . 1) (tests . 1))
+      (alist-select-keys
+       '(errors failures assertions tests)
+       run-summary-without-failures)))))
+
+(define-suite nested-suites-and-test-macros-tests
+  (test "expression throws programming-error on unbound variable"
+    (is (throws-exception? (+ b 1 2) programming-error?)))
+
+  (test "nested test macro usage is forbidden"
+    (define run-history
+      (with-silent-test-environment
+       (test "outer test macro"
+         (test "nested test macro" (is #t)))
+       (state:get-run-history
+        (runner:get-state))))
+    (define outer-test-run (car run-history))
+    (is (eq? 'aborted
+             (assoc-ref outer-test-run 'test-run/extended-outcome)))
+    (is (string=? "Test Macros can't be nested"
+                  (exception-message
+                   (running:raised-exception
+                    (assoc-ref outer-test-run 'test-run/result))))))
+
+  (test "that suite nested in test case is forbidden"
+    (define run-history
+      (with-silent-test-environment
+       (test "test macro"
+         (suite "nested suite" (is #t)))
+       (state:get-run-history
+        (runner:get-state))))
+    (define outer-test-run (car run-history))
+    (is (eq? 'aborted
+             (assoc-ref outer-test-run 'test-run/extended-outcome)))
+    (is (string=? "Test Suite can't be nested into Test Macro"
+                  (exception-message
+                   (running:raised-exception
+                    (assoc-ref outer-test-run 'test-run/result))))))
+
+  ;; TODO: [Andrew Tropin, 2025-05-23] Make reporter to provide
+  ;; following error:
+
+  ;; The expression
+  ;; (with-silent-test-environment
+  ;;  (test "test macro"
+  ;;    (suite "nested suite" (is #t))))
+  ;; expected to throw a 'specific-type-of-exception', but thrown
+  ;; <pretty-printed-exception>
+
+  (suite "nested test suite 1"
+    (test "test macro 1#1"
+      (is #t)
+      (is "very true"))
+    (suite "even more nested test suite 1.1"
+      (test "test macro 1.1#1"
+        (is (= 4 (+ 2 2)))))))
+
+(define failing-asserts-tests
+  (suite-thunk "suite"
+    (test "simple failure"
+      (is #f))
+    (test "simple error"
+      (is (throw 'hi)))
+    (test "error > failure"
+      (is #f)
+      (is (throw 'hi)))))
+
+(define-suite suite-usage-tests
+
+  ;; TODO: [Andrew Tropin, 2025-05-09] Just think about what test
+  ;; suite returns, because the expectation that it returns run
+  ;; summary, however, it's not the case, when suite is nested
+
+  ;; (define suite-results
+  ;;   (failing-asserts-tests))
+  ;; (pk suite-results)
+  ;; (test "suite-results"
+  ;;   (is (equal? 'hi suite-results)))
+
+  ;; TODO: [Andrew Tropin, 2025-05-20] Improve this test, check that
+  ;; metadata saved and we can retrive it.
+  (suite "test suite with metadata"
+    'metadata `((interesting? . #t))
+    (test "simple"
+      (is #t)))
+
+  (nested-suites-and-test-macros-tests))
+
+
+
+;; (test-runner-operations-tests)
+(define-suite test-runner-operations-tests
+  (test "\
+run summary is #f by default, but appears after test suite is executed"
+    (is (equal?
+         #f
+         (with-silent-test-environment
+          (state:get-run-summary
+           (runner:get-state)))))
+
+    (is (not
+         (null?
+          (with-silent-test-environment
+           (suite "suite1"
+             (test "case1"
+               (is #t)))
+           (state:get-run-summary
+            (runner:get-state))))))
+
+    (define run-summary-with-failures-and-errors
+      (with-silent-test-environment
+       (suite "suite"
+         (test "simple failure"
+           (is #f))
+         (test "simple error"
+           (is (throw 'hi)))
+         (test "error > failure"
+           (is #f)
+           (is (throw 'hi))))
+       (state:get-run-summary
+        (runner:get-state))))
+
+    (is
+     (equal?
+      '((errors . 2) (failures . 1) (assertions . 4) (tests . 3))
+      (alist-select-keys
+       '(errors failures assertions tests)
+       run-summary-with-failures-and-errors)))))
+
+(define base-test-runner-tests
+  (suite-thunk "base-test-runner-tests"
+    (is-usage-tests)
+    (test-runner-operations-tests)
+    (test-macro-usage-tests)
+    (suite-usage-tests)))
+
+(define-suite execution-timeout-tests
+  ;; https://legacy.cs.indiana.edu/~dyb/pubs/engines.pdf
+  (test "test"
+    (is #t)))
+
+
+
+;;; Notes from the call with Josep
+
+#|
+
+Truncating long lines is asserts report/diff.
+Colorizing can also help for readability.
+
+The execution order should be random by default.
+
+The test runner, should redefine current-output/error-port and manage
+them explicitly, so our tests are not interfering with test reporters.
+By default print them as they come, but make it possible to print it
+after the whole test suite executed.
+
+Provide an API for running test from CLI.
+
+
+The future reporter:
+┌> base-test-runner-tests
+|┌> test-macro-usage-tests
+|| + test simple test case with metadata marking it as slow
+|| + test zero asserts test macro works fine
+|| + test standalone test macro usage
+|└> test-macro-usage-tests
+|┌> suite-usage-tests
+||┌> test suite with metadata
+||| + test simple
+||└> test suite with metadata
+||┌> nested-suites-and-test-macros-tests
+||| + test expression throws programming-error on unbound variable
+||| + test nested test macro usage is forbidden
+||| + test that suite nested in test case is forbidden
+|||┌> nested test suite 1
+|||| + test test macro 1#1
+||||┌> even more nested test suite 1.1
+||||| + test test macro 1.1#1
+||||└> even more nested test suite 1.1
+|||└> nested test suite 1
+||└> nested-suites-and-test-macros-tests
+|└> suite-usage-tests
+└> base-test-runner-tests
+
+Loaded 200 tests and 12 test suits.
+
+[[(...)(..)(....)(.)(.)(..)][(...)][(.)()(..)][[(.)][(.)(.)(.)[(F.)[(.)]]]]]
+
+┌Test nested test macro usage is forbidden
+(throws-exception? (with-silent-test-environment (test "outer test macro" (test "nested test macro" (is #t)))) (lambda (ex) (string=? "Test Macros can't be nested" (exception-message ex))))
+X #f
+└Test nested test macro usage is forbidden
+
+((errors . 0) (failures . 1) (assertions . 26) (tests . 16))
+
+|#
+
+
+;;; Today/Next
+
+
+;; TODO: [Andrew Tropin, 2025-07-29] Add composable immutable filters
+;; and transformers, (failing-first, fast-first,
+;; only-failing-but-if-no-failing-just-all, only-last-loaded :: by
+;; default load test adds test, this filter will allow to restart only
+;; last loaded test), they can be enabled/disabled with transient
+;; flags
+
+;; TODO: [Andrew Tropin, 2025-05-15] Implement composable
+;; test-reporter-print-failures-and-errors, which will be
+;; executed at the end and provide detailed info of
+;; locations with failed tests
+
+;; TODO: [Andrew Tropin, 2025-05-19] Add delayed logging reporter
+
+;; TODO: [Andrew Tropin, 2025-05-19] Add testing started/finished
+;; message (make sure all test runners get this message) (maybe not,
+;; because it's necessary only for reporters to reset state) (the
+;; previous message related only to the message in parentheses before)
+
+;; TODO: [Andrew Tropin, 2025-04-11] Specify test timeouts to 10 by
+;; default, so the test evaluation never hangs.
+
+;; TODO: [Andrew Tropin, 2025-04-22] Add enable-re-run-failed-tests-on-eval,
+;; which will re-run last failed tests on each eval
+
+;; TODO: [Andrew Tropin, 2025-05-03] Add SRFI-64 migration tooling?
+
+;; TODO: [Andrew Tropin, 2025-05-01] Return back profiling to test-runner
+
+;; TODO: [Andrew Tropin, 2025-05-12] Add load-tests* syntax parameter,
+;; which will control if tests should be evaluated/loaded.
+
+;; TODO: [Andrew Tropin, 2025-05-12] How to access private functions
+;; of SUT (subject module under test)?  Rust have nested tests
+;; submodule, which lexcally closed over parent module (have access to
+;; private vars)
+;; https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html
+
+;; TODO: [Andrew Tropin, 2025-06-30] Add continuation barries to
+;; asserts by default to avoid jumping out of the test
+
+;; TODO: [Andrew Tropin, 2025-07-10] Add test reporter, which pprints
+;; the value of the last expression in the (test ...), it's very
+;; useful for the evaluation of multiple expressions.  When using
+;; tests as repl history.
+
+;; TODO: [Andrew Tropin, 2025-07-29] Add hashes, time when loaded to
+;; textual representation for easier filtering
+
+
+;;; Feature requests
+
+;; TODO: [Andrew Tropin, 2025-05-12] Add documentation tests
+;; https://doc.rust-lang.org/rust-by-example/testing/doc_testing.html
+;; They get executed with all the usual tests and also get embedded in
+;; the documentation
+;; https://doc.rust-lang.org/stable/std/ptr/macro.addr_of.html
+
+;; TODO: [Andrew Tropin, 2025-05-20] Implement snapshot testing workflow
+;; TODO: [Andrew Tropin, 2025-05-20] Implement doctest testing workflow
+
+;; TODO: [Andrew Tropin, 2025-05-25] Add an example of custom test runner
+
+;; TODO: [Andrew Tropin, 2025-08-01] Make is assert usable in
+;; production code and disable it in release builds (make it return
+;; unspecified or something alike)
+
+

@@ -218,6 +218,20 @@ TEST_CASE("Guile evaluation keeps an application-local module and reports stream
     CHECK(failed->error.value_or("").find("evaluation failed") != std::string::npos);
 }
 
+TEST_CASE("embedded Guile provides the vendored Scheme development runtime") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> result =
+        guile.evaluate({.source = R"((use-modules (ares version) (fibers config))
+(list (version) ares-version %fibers-version))",
+                        .source_name = "development-runtime-test.scm"});
+
+    REQUIRE(result.has_value());
+    CHECK_FALSE(result->error.has_value());
+    CHECK(result->values == std::vector<std::string>{"(\"3.0.11\" \"0.9.7\" \"1.4.3\")"});
+}
+
 TEST_CASE("bundled Guile policy installs available default key bindings") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
@@ -245,7 +259,7 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
-    CHECK_FALSE(snapshot.version.empty());
+    CHECK(snapshot.version == "3.0.11");
     CHECK(snapshot.modules ==
           std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
                                    "cind toy-modal", "cind meow", "cind vim", "cind helix",

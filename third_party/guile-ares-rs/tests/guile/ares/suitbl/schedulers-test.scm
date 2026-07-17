@@ -1,0 +1,169 @@
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;; Copyright © 2026 Andrew Tropin <andrew@trop.in>
+
+(define-module (ares suitbl schedulers-test)
+  #:use-module (ares suitbl core)
+  #:use-module ((ares suitbl runner) #:prefix runner:)
+  #:use-module ((ares suitbl state)
+                #:select (get-scheduled-tests))
+  #:use-module ((ares suitbl test-utils)
+                #:select (make-test-runner-with-mixed-tests
+                          runner->state
+                          test-descriptions))
+  #:use-module ((ares suitbl schedulers)
+                #:prefix scheduler:)
+  #:use-module ((srfi srfi-1) #:select (lset=)))
+
+(define-suite scheduler-tests
+  (test "scheduler:slow keeps only slow tests"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define slow (scheduler:slow (get-scheduled-tests state '()) state))
+    (is (= 2 (length slow)))
+    (is (lset= equal?
+               '("slow network call" "slow database query")
+               (test-descriptions slow))))
+
+  (test "scheduler:fast keeps only fast tests"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define fast (scheduler:fast (get-scheduled-tests state '()) state))
+    (is (= 2 (length fast)))
+    (is (lset= equal?
+               '("fast addition" "fast string check")
+               (test-descriptions fast))))
+
+  (test "scheduler:non-dev filters tests from dev suites"
+    (define tr (runner:make-silent))
+    (with-test-runner tr
+      (suite "root"
+        (test "regular test"
+          (is #t))
+        (suite "dev suite" 'metadata '((dev? . #t))
+          (test "dev test"
+            (is #t)))))
+    (define state (runner->state tr))
+    (define non-dev (scheduler:non-dev (get-scheduled-tests state '()) state))
+    (is (= 1 (length non-dev)))
+    (is (lset= equal?
+               '("regular test")
+               (test-descriptions non-dev))))
+
+  (test "scheduler:non-dev filters tests nested under dev suites"
+    (define tr (runner:make-silent))
+    (with-test-runner tr
+      (suite "root"
+        (suite "dev suite" 'metadata '((dev? . #t))
+          (suite "nested suite"
+            (test "nested dev test"
+              (is #t))))
+        (suite "regular suite"
+          (test "nested regular test"
+            (is #t)))))
+    (define state (runner->state tr))
+    (define non-dev (scheduler:non-dev (get-scheduled-tests state '()) state))
+    (is (= 1 (length non-dev)))
+    (is (lset= equal?
+               '("nested regular test")
+               (test-descriptions non-dev))))
+
+  (test "scheduler:make-matching filters by description pattern"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define matched
+      ((scheduler:make-matching "slow") (get-scheduled-tests state '()) state))
+    (is (= 2 (length matched)))
+    (is (lset= equal?
+               '("slow network call" "slow database query")
+               (test-descriptions matched))))
+
+  (test "scheduler:make-matching with specific pattern"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define matched
+      ((scheduler:make-matching "addition") (get-scheduled-tests state '()) state))
+    (is (= 1 (length matched)))
+    (is (equal? "fast addition"
+                (assoc-ref (car matched) 'test/description))))
+
+  (test "scheduler:failed-or-all returns all tests when none failed"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define all-tests (get-scheduled-tests state '()))
+    ;; All tests pass, so scheduler:failed-or-all should return all of them
+    (define scheduled
+      (scheduler:failed-or-all all-tests state))
+    (is (= (length all-tests) (length scheduled))))
+
+  (test "scheduler:failed-or-all keeps tests that errored"
+    (define tr (runner:make-silent))
+    (with-test-runner tr
+      (suite "suite with failures"
+        (test "passing test"
+          (is #t))
+        (test "failing test"
+          (is #f))
+        (test "erroring test"
+          (is (throw 'boom)))))
+    (define state (runner->state tr))
+    (define scheduled
+      (scheduler:failed-or-all (get-scheduled-tests state '()) state))
+    (is (= 2 (length scheduled)))
+    (is (lset= equal?
+               '("failing test" "erroring test")
+               (test-descriptions scheduled))))
+
+  (test "scheduler:compose chains filters"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define composed
+      (scheduler:compose scheduler:slow (scheduler:make-matching "network")))
+    (define result (composed (get-scheduled-tests state '()) state))
+    (is (= 1 (length result)))
+    (is (equal? "slow network call"
+                (assoc-ref (car result) 'test/description))))
+
+  (test "scheduler:make-module filters by module name pattern"
+    (define mod (resolve-module '(ares suitbl schedulers-test)))
+    (define tr (runner:make-silent))
+    (with-test-runner tr
+      (suite "root"
+        (suite "module suite"
+          'metadata `((module-suite? . #t)
+                       (module . ,mod))
+          (test "test in current module"
+            (is #t)))
+        (suite "other suite"
+          (test "test without module"
+            (is #t)))))
+    (define state (runner->state tr))
+    (define matched
+      ((scheduler:make-module "schedulers-test")
+       (get-scheduled-tests state '()) state))
+    (is (= 1 (length matched)))
+    (is (equal? "test in current module"
+                (assoc-ref (car matched) 'test/description))))
+
+  (test "scheduler:make-module returns empty when no module matches"
+    (define mod (resolve-module '(ares suitbl schedulers-test)))
+    (define tr (runner:make-silent))
+    (with-test-runner tr
+      (suite "root"
+        (suite "module suite"
+          'metadata `((module-suite? . #t)
+                       (module . ,mod))
+          (test "test in current module"
+            (is #t)))))
+    (define state (runner->state tr))
+    (define matched
+      ((scheduler:make-module "nonexistent-module")
+       (get-scheduled-tests state '()) state))
+    (is (= 0 (length matched))))
+
+  (test "scheduler:compose with no schedulers returns all tests"
+    (define tr (make-test-runner-with-mixed-tests))
+    (define state (runner->state tr))
+    (define composed (scheduler:compose))
+    (define all-tests (get-scheduled-tests state '()))
+    (define result (composed all-tests state))
+    (is (= (length all-tests) (length result)))))

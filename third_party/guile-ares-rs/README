@@ -1,0 +1,175 @@
+# -*- mode: org -*-
+#+OPTIONS: toc:nil
+
+* Introduction
+Asynchronous Reliable Extensible Sleek RPC Server for Guile.  First of
+all it's a library providing a lot of tools for evaluating and
+exploring the code, from simple reflection API to interruptible
+asynchronous evaluation.  In addition to that it provides an async RPC
+server implementation based on [[https://nrepl.org/nrepl/index.html][nREPL]] protocol and can be used for
+programmable interactions with a running guile processes, for
+implementing REPLs, IDEs, test runners or other tools. It also can be
+potentially used as a backend or library for LSP server.
+
+#+BEGIN_EXPORT html
+<p><a href="https://builds.sr.ht/~abcdw/guile-ares-rs">
+<img src="https://builds.sr.ht/~abcdw/guile-ares-rs/commits/master.svg" alt="builds.sr.ht status" />
+</a>
+<a href="https://www.gnu.org/software/guile/">
+<img src="https://luis-felipe.gitlab.io/media/badges/gnu-guile-made.svg" alt="" />
+</a></p>
+#+END_EXPORT
+
+~guile-ares-rs~ was previously known as ~guile-nrepl~ (because it started
+as just nREPL implementation in Guile Scheme).  It was renamed to
+avoid any confusion with network/socket REPL, ~guile-ares-rs~ is not a
+usual REPL, it's actually not a REPL at all, it's an RPC Server,
+however it's possible to implement REPL-like experience with it (and
+respective client).
+
+It's intended for use with [[https://git.sr.ht/~abcdw/emacs-arei][Arei]] IDE, but you can use it with other
+generic nREPL [[https://nrepl.org/nrepl/usage/clients.html][clients]].
+
+* Usage
+There are multiple ways to utilize Ares RS, but most straightforward is
+to spawn a standalone server and connect to it from a client ([[https://git.sr.ht/~abcdw/emacs-arei][Emacs
+Arei]] for example):
+
+#+begin_src sh
+guix shell guile guile-ares-rs -- ares-nrepl
+#+end_src
+
+Don't forget to add your project source code and other dependencies to
+[[https://trop.in/blog/how-to-set-up-guile-load-path][load path]]. For example:
+
+#+begin_src sh
+ares-nrepl -- -L src/guile
+#+end_src
+
+The ares-nrepl command is a wrapper around guile, the above command is
+equivalent to =guile -L src/guile -c '((@ (ares server)
+run-nrepl-server))'=
+
+To be able to use G-expression special syntax ~#~~, ~#$~ and ~#$@~ or when
+using Arei with Guix or other project, which have [[https://www.gnu.org/software/guile/manual/html_node/Reader-Extensions.html][reader extensions]],
+load reader extension before starting the nrepl server. You can find
+the explanation [[https://todo.sr.ht/~abcdw/tickets/15][here]].
+
+#+begin_src sh
+guile -c \
+"(begin (use-modules (guix gexp)) #;(load gexp reader extension globally) \
+((@ (ares server) run-nrepl-server)))"
+#+end_src
+
+To learn more on how to setup a proper environment with exact version
+of Guix and channels available in the load path, take a look at
+[[https://git.sr.ht/~abcdw/sample-guile-project/tree/master/item/Makefile][sample-guile-project]].
+
+* Development
+Ares depends on [[https://github.com/wingo/fibers][fibers]], and on guile-custom-ports (is a part of guile
+since 3.0.10).  Tests are executed with ~make check~ or within Arei
+using UI for ~ares.testing~ extension.
+
+[[https://git-send-email.io/][Send]] patches to [[https://lists.sr.ht/~abcdw/rde-devel][rde-devel]] mailing list in format:
+~[PATCH guile-ares-rs 0/3] SUBJECT-HERE~.
+
+[[https://man.sr.ht/lists.sr.ht/etiquette.md][Send]] feedback to [[https://lists.sr.ht/~abcdw/rde-discuss][rde-discuss]].
+
+** First Release Roadmap
+Arei and Ares 1.0 [[https://todo.sr.ht/~abcdw/tickets?search=status%3Aopen%20label%3A%22milestone-arei-1.0%22][milestone]].
+
+** Open Questions
+- How to work with fibers in nrepl?  Maybe C-2 C-c C-e to entered to
+  the clonned session with fibers spawned.
+- Bootstrap from guile network repl? (Send guile-ares-rs
+  implementation to remote network repl server to make it nrepl).
+- Multiple guile languages support.
+- +How to bypass continuation barrier in evaluation thread, when using
+  previously stored continuation.+
+- Translation level for shrothanded nrepl base operations?
+- Do we need to support meta-commands? (Probably not, it just
+  functions, which can be exported to user or repl module scope).
+
+* Other REPLs Quirks
+One of the reasons this project started is unfortunate missbehave of
+current REPL soultions in different situation and here is a list of
+some of them:
+- Text based REPL over socket is not interruptible.
+- call/cc works when pasted into prompt of the repl, but fails when
+  evaling from buffer with C-x C-e. (when saving continuation to
+  symbol with set!)
+- It's not possible to see stdout until evaluation completed.
+- Gider tests hangs repl on errors.
+- CAPF function is injected, even if there is no connection to REPL
+  and throws errors preventing other CAPFs to work.
+- There is no way to provide stdin input to running expression.
+- Go to definition doesn't work for with-input-from-port.
+- After using ~,i~ in REPL, go to definition hangs up.
+- Go to definition opens non-existing file.
+- If expression being evaluated from buffer requires input from stdin
+  it will be frozen.
+- Rebinds M-. instead of using xref.
+- https://spritely.institute/files/docs/guile-goblins/0.11.0/TEMPORARY-Live-hacking-_0060_0060fix_0027_0027.html
+- https://www.reddit.com/r/scheme/comments/qyqxcd/geiser_sucks_is_there_a_way_to_make_it_suck_less/
+- [[https://fosstodon.org/@Olical@mastodon.social/111142225750231308][Comment by Olical, Conjure author on guile-ares-rs integration]]
+
+* Links
+** NREPL
+*** Servers
+- https://github.com/nrepl/nrepl :: default clojure implementation.
+- https://nrepl.org/nrepl/1.0/building_servers.html :: some tips.
+- https://gitlab.com/technomancy/ogion/-/blob/master/main.rkt :: very
+  simple Racket nREPL.
+- https://gitlab.com/technomancy/jeejah :: lua nREPL server.
+- https://github.com/babashka/babashka.nrepl :: probably most advanced
+  3rd party nREPL server implementation, doesn't support interrupts.
+- https://docs.cider.mx/cider-nrepl/nrepl-api/ops.html#info :: extensions
+  of nREPL for CIDER.
+
+*** Debugging Tool
+- http://www.flow-storm.org/
+- https://github.com/clojure-emacs/sayid
+- https://github.com/philoskim/debux
+- https://github.com/jpmonettas/flow-storm-debugger
+- https://docs.cider.mx/cider/debugging/debugger.html
+- https://www.gnu.org/software/guile/manual/html_node/Interactive-Debugging.html
+- https://www.gnu.org/software/guile/manual/html_node/Debugging.html
+
+*** Tools
+- https://github.com/lambdaisland/nrepl-proxy
+
+*** Clients
+- https://github.com/sanel/monroe/
+- https://github.com/Sasanidas/Rail
+- Potentially Conjure, when nREPL for guile will be implemented in it.
+
+*** Bencode
+- https://github.com/flatwhatson/grump/blob/master/grump-lib/bencode.scm
+- https://github.com/caolan/chicken-bencode
+- http://www.bittorrent.org/beps/bep_0003.html#bencoding
+- https://wiki.theory.org/BitTorrentSpecification#Bencoding
+
+* FAQ
+Q: Can I use guile-ares-rs with an existing network REPL?
+
+A: Theoretically it's possible to upgrade existing REPL to
+guile-ares-rs, see bootstrap and infect modules (they can be not
+implemented yet).
+
+* Acknowledgements
+Thanks for inspiration, help, support and motivation to Jos´e Antonio
+Ortega Ruiz, Nikita Domnitskii, Maxime Devos, Andy Wingo, Bozhidar
+Batsov, Andrey Listopadov, Dmitrii Bogdanov, David Thompson, Dmitry
+Polyakov.
+
+A suitbl library is funded through [[https://nlnet.nl/core][NGI Zero Core]], a fund established
+by [[https://nlnet.nl][NLnet]] with financial support from the European Commission's [[https://ngi.eu][Next
+Generation Internet]] program.
+
+Learn more at the [[https://nlnet.nl/project/SchemeTestingFramework][NLnet project page]].
+
+#+ATTR_HTML: :width 20%
+[[https://nlnet.nl][https://nlnet.nl/logo/banner-bw.svg]]
+
+#+ATTR_HTML: :width 20%
+[[https://nlnet.nl/core][https://nlnet.nl/image/logos/NGI0_tag_black_mono.svg]]

@@ -3429,8 +3429,23 @@ void initialize_host_module(void*) {
         nullptr);
 }
 
+enum class GuileSearchPath : std::uint8_t {
+    Source,
+    Compiled,
+};
+
+void prepend_guile_search_path(GuileSearchPath kind, const char* path) {
+    const char* variable_name =
+        kind == GuileSearchPath::Source ? "%load-path" : "%load-compiled-path";
+    const SCM variable = scm_c_lookup(variable_name);
+    scm_variable_set_x(variable, scm_cons(scm_from_utf8_string(path), scm_variable_ref(variable)));
+}
+
 void initialize_guile() {
     scm_init_guile();
+    prepend_guile_search_path(GuileSearchPath::Source, CIND_GUILE_SITE_DIR);
+    prepend_guile_search_path(GuileSearchPath::Source, CIND_ARES_SCHEME_DIR);
+    prepend_guile_search_path(GuileSearchPath::Compiled, CIND_GUILE_SITE_CCACHE_DIR);
     (void)scm_c_define_module("cind host", initialize_host_module, nullptr);
 }
 

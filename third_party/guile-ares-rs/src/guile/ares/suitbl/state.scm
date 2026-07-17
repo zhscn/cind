@@ -1,0 +1,288 @@
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;; Copyright © 2024, 2025, 2026 Andrew Tropin <andrew@trop.in>
+
+(define-module (ares suitbl state)
+  #:use-module ((ares atomic)
+                #:select
+                (atomic-box-update!
+                 make-atomic-box
+                 atomic-box-ref))
+  #:use-module ((ares suitbl definitions) #:select (test-runner* test?))
+  #:use-module ((ares suitbl reporters) #:prefix reporter:)
+  #:use-module ((ares suitbl running) #:prefix running:)
+  #:use-module ((srfi srfi-1)
+                #:select (alist-delete alist-cons fold filter-map))
+
+  #:use-module ((srfi srfi-197) #:select (chain chain-and))
+
+  #:export (save-event!
+            get-log
+
+            make-suite-node
+            make-test-node
+            simplify-suite-tree
+            simplify-suite-forest
+            simplify-run-history
+
+            add-loaded-test!
+            add-suite-tree!
+            get-suite-forest
+            get-suite-forest-with-summary
+            reset-loaded-tests!
+            get-loaded-tests
+            get-scheduled-tests
+            get-stats
+
+            save-run-history!
+            get-run-history
+            get-run-summary
+
+            get-runner-config
+            get-runner-config-value
+            set-runner-config-value!
+            merge-runner-config))
+
+
+;;;
+;;; Helpers
+;;;
+
+(define (update-alist-value alist key value)
+  (chain alist
+    (alist-delete key _)
+    (alist-cons key value _)))
+
+(define (update-atomic-alist-value! alist-atom key f)
+  (atomic-box-update!
+   alist-atom
+   (lambda (alist)
+     (let* ((value (or (assoc-ref alist key) #f))
+            (new-value (f value)))
+       (update-alist-value alist key new-value)))))
+
+
+;;;
+;;; Logging
+;;;
+
+(define (save-event! state event)
+  (update-atomic-alist-value!
+   state 'events
+   (lambda (l)
+     (cons event (or l '())))))
+
+(define (get-log state)
+  (reverse
+   (chain state
+     (atomic-box-ref _)
+     (assoc-ref _ 'events)
+     (or _ '()))))
+
+
+;;;
+;;; Suite tree
+;;;
+
+(define (suite-node? x)
+  (and (list? x)
+       (assoc-ref x 'suite)
+       (assoc-ref x 'suite-node/children)))
+
+(define (make-suite-node suite children)
+  `((suite . ,suite)
+    (suite-node/children . ,children)))
+
+(define (test-node? x)
+  (and (list? x)
+       (assoc-ref x 'test)))
+
+(define (make-test-node test)
+  `((test . ,test)))
+
+(define (suite->string suite)
+  (assoc-ref suite 'suite/description))
+
+(define (test->string test)
+  (assoc-ref test 'test/description))
+
+(define (alist-update alist key f)
+  (let ((v (assoc-ref alist key)))
+    (chain alist
+      (alist-delete key _)
+      (alist-cons key (f v) _))))
+
+(define (simplify-suite-node node)
+  (chain node
+    (alist-update _ 'suite-node/children
+                  (lambda (l) (map simplify-suite-tree l)))
+    (alist-update _ 'suite suite->string)))
+
+(define (simplify-test-node node)
+  (alist-update node 'test test->string))
+
+(define (simplify-suite-tree node)
+  (cond
+   ((suite-node? node) (simplify-suite-node node))
+   ((test-node? node) (simplify-test-node node))
+   (else node)))
+
+(define (simplify-suite-forest forest)
+  (map simplify-suite-tree forest))
+
+(define (simplify-run-history run-history)
+  (map (lambda (entry)
+         `((test . ,(test->string (assoc-ref entry 'test)))
+           (test-run/summary . ,(assoc-ref entry 'test-run/summary))
+           (test-run/outcome . ,(assoc-ref entry 'test-run/outcome))))
+       run-history))
+
+
+;;;
+;;; Loaded and scheduled tests and suites
+;;;
+
+(define (add-loaded-test! state test)
+  (update-atomic-alist-value!
+   state 'runner/loaded-tests
+   (lambda (l) (cons test (or l '())))))
+
+(define (add-suite-tree! state suite-tree)
+  (update-atomic-alist-value!
+   state 'runner/suite-forest
+   (lambda (forest) (cons suite-tree (or forest '())))))
+
+(define (get-suite-forest state)
+  (reverse
+   (chain (atomic-box-ref state)
+     (assoc-ref _ 'runner/suite-forest)
+     (or _ '()))))
+
+(define (get-suite-forest-with-summary state)
+  (define run-history (get-run-history state))
+  (define suite-forest (get-suite-forest state))
+
+  ;; TODO: [Andrew Tropin, 2025-10-02] Make lookup O(1)
+  (define (find-test-run-entry test suite-path)
+    (and
+     run-history
+     (let loop ((history run-history))
+       (if (null? history)
+           #f
+           (let ((entry (car history)))
+             (if (and (equal? (assoc-ref entry 'test) test)
+                      (equal? (assoc-ref (assoc-ref entry 'test) 'suite/path)
+                              suite-path))
+                 entry
+                 (loop (cdr history))))))))
+
+  (define (annotate-node node suite-path)
+    (cond
+     ((test-node? node)
+      (let* ((test (assoc-ref node 'test))
+             (entry (find-test-run-entry test suite-path)))
+        (if entry
+            (let ((test-run-summary (assoc-ref entry 'test-run/summary))
+                  (test-run-outcome (assoc-ref entry 'test-run/outcome)))
+              (chain node
+                (alist-cons 'test-run/summary test-run-summary _)
+                (alist-cons 'test-run/outcome test-run-outcome _)))
+            node)))
+
+     ((suite-node? node)
+      (let* ((suite (assoc-ref node 'suite))
+             (new-suite-path (append suite-path (list suite)))
+             (children (assoc-ref node 'suite-node/children))
+             (annotated-children (map (lambda (child)
+                                        (annotate-node child new-suite-path))
+                                      children))
+             (suite-run-summary
+              (fold running:merge-run-summaries
+                    running:initial-run-summary
+                    (filter-map (lambda (child)
+                                  (or (assoc-ref child 'test-run/summary)
+                                      (assoc-ref child 'suite-run/summary)))
+                                annotated-children)))
+             (suite-run-outcome
+              (running:run-summary->run-outcome suite-run-summary))
+             (updated-node (alist-update node 'suite-node/children
+                                       (lambda (_) annotated-children))))
+        (chain updated-node
+          (alist-cons 'suite-run/summary suite-run-summary _)
+          (alist-cons 'suite-run/outcome suite-run-outcome _))))
+
+     (else node)))
+
+  (map (lambda (node) (annotate-node node '())) suite-forest))
+
+(define (reset-loaded-tests! state)
+  (atomic-box-update!
+   state
+   (lambda (alist)
+     (chain alist
+       (update-alist-value _ 'runner/loaded-tests '())
+       (update-alist-value _ 'runner/suite-forest '())
+       (update-alist-value _ 'runner/run-history '())))))
+
+(define (get-loaded-tests state)
+  (chain (atomic-box-ref state)
+    (assoc-ref _ 'runner/loaded-tests)
+    (or _ '())))
+
+(define (select-interesting-tests lot)
+  (filter (lambda (t)
+            (chain-and t
+              (assoc-ref _ 'test/metadata)
+              (assoc-ref _ 'slow?)))
+          lot))
+
+(define (get-scheduled-tests state runner-config)
+  (let ((schedule-tests (or (assoc-ref runner-config 'schedule-tests)
+                            (lambda (tests state) tests))))
+    (schedule-tests (get-loaded-tests state) state)))
+
+(define (get-stats state runner-config)
+  (let* ((loaded-tests-count (length (get-loaded-tests state)))
+         (selected-tests-count (length (get-scheduled-tests state runner-config))))
+    `((loaded-tests-count . ,loaded-tests-count)
+      (selected-tests-count . ,selected-tests-count))))
+
+
+;;;
+;;; Run history and summaries
+;;;
+
+(define (save-run-history! state run-history)
+  (update-atomic-alist-value!
+   state 'runner/run-history (lambda (_) run-history)))
+
+(define (get-run-history state)
+  (chain state
+    (atomic-box-ref _)
+    (assoc-ref _ 'runner/run-history)))
+
+(define (get-run-summary state)
+  (let ((run-history (get-run-history state)))
+    (and run-history (running:run-history->run-summary run-history))))
+
+
+;;;
+;;; Test runner config
+;;;
+
+(define (merge-runner-config cfg1 cfg2)
+  (append cfg1 cfg2))
+
+(define (get-runner-config state)
+  (chain (atomic-box-ref state)
+    (assoc-ref _ 'runner/config)
+    (or _ '())))
+
+(define (get-runner-config-value state key)
+  (chain-and (atomic-box-ref state)
+    (assoc-ref _ 'runner/config)
+    (assoc-ref _ key)))
+
+(define (set-runner-config-value! state key value)
+  (update-atomic-alist-value!
+   state 'runner/config
+   (lambda (alist) (update-alist-value (or alist '()) key value))))

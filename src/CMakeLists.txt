@@ -167,11 +167,14 @@ add_library(cind_guile STATIC
 target_include_directories(cind_guile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(cind_guile PRIVATE
   CIND_BUNDLED_SCHEME_DIR="${CIND_SCHEME_OUTPUT_DIR}"
+  CIND_ARES_SCHEME_DIR="${PROJECT_SOURCE_DIR}/third_party/guile-ares-rs/src/guile"
+  CIND_GUILE_SITE_DIR="${CIND_GUILE_SITE_DIR}"
+  CIND_GUILE_SITE_CCACHE_DIR="${CIND_GUILE_SITE_CCACHE_DIR}"
 )
-add_dependencies(cind_guile cind_scheme_resources)
+add_dependencies(cind_guile cind_scheme_resources cind_fibers_external)
 target_link_libraries(cind_guile
   PUBLIC cind_application
-  PRIVATE PkgConfig::Guile
+  PRIVATE Cind::Guile
 )
 
 add_library(cind_editor STATIC

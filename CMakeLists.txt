@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(cind LANGUAGES CXX)
+project(cind LANGUAGES C CXX)
 
 if (CIND_BUILD_GUI AND APPLE)
   enable_language(OBJCXX)
@@ -16,8 +16,12 @@ option(CIND_BUILD_GUI "Build the Skia/SDL3 graphical editor frontend" OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Utf8Proc REQUIRED IMPORTED_TARGET libutf8proc)
 pkg_check_modules(Libuv REQUIRED IMPORTED_TARGET libuv)
-pkg_check_modules(Guile REQUIRED IMPORTED_TARGET guile-3.0)
 find_package(Threads REQUIRED)
+
+include(cmake/GuileRuntime.cmake)
+cind_add_guile_runtime()
+
+list(APPEND CMAKE_BUILD_RPATH "${CIND_GUILE_PREFIX}/lib")
 
 if (CIND_BUILD_GUI)
   include(cmake/WebKitSkia.cmake)

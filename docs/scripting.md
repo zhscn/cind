@@ -593,17 +593,21 @@ Additional host APIs follow the same boundary:
 - schedule blocking work through `AsyncRuntime` and apply completions on the editor thread;
 - keep frontend, Skia, SDL and terminal objects outside the scripting ABI.
 
-## Ares development-service design
+## Ares development runtime
 
 [Guile Ares RS](https://git.sr.ht/~abcdw/guile-ares-rs) fits the development backend for Scheme
 source. Ares is a Guile library and nREPL-compatible RPC server; the `rs` suffix means RPC Server.
 Its protocol provides interruptible asynchronous evaluation, streamed output, stdin, completion,
 symbol lookup, documentation, arglists, sessions and backtraces.
 
-The optional provider uses Ares as a separately installed service and implements the nREPL bencode
-client over `AsyncRuntime`. This keeps Ares's GPL-3.0-or-later sources outside the cind source tree
-and avoids coupling the editor build to Ares internals. Protocol results map onto existing editor
-mechanisms:
+CMake builds Guile 3.0.11 into a private build-tree prefix and links `GuileRuntime` against that
+library. Fibers 1.4.3 is built by the same dependency graph against the private Guile and installed
+into the same prefix. The Ares 0.9.7 Scheme sources are vendored under
+`third_party/guile-ares-rs`; the embedded runtime adds that source directory and the private Fibers
+source and compiled-module directories to its module search paths. This keeps the executable,
+native Fibers extension and Scheme modules on one Guile ABI.
+
+Ares protocol results map onto existing editor mechanisms:
 
 | Ares/nREPL result | cind mechanism |
 | --- | --- |
@@ -618,8 +622,3 @@ An in-process endpoint uses the same Guile VM as `GuileRuntime`, which makes `(c
 cind policy modules available for live inspection and evaluation. The in-process endpoint receives
 an explicit host capability and uses Ares fibers for evaluation; it does not call editor mechanisms
 from an evaluation fiber. Host requests are marshalled to the editor thread.
-
-Current Ares releases require Guile 3.0.10 or newer, `fibers`, and the custom-port facilities
-included with that Guile release. The base scripting host uses the `guile-3.0` pkg-config API; the
-in-process Ares endpoint is enabled only when those stronger development-service dependencies are
-available.
