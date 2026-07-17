@@ -395,6 +395,36 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
     CHECK(popup->popup()->input_cursor == 3);
 }
 
+TEST_CASE("picker input keeps one stable minibuffer region with no matches") {
+    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+
+    REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
+    const ui::Scene initial = compose_frame(model, 20, 100);
+    const ui::Region* initial_popup = initial.find(ui::RegionRole::Popup);
+    REQUIRE(initial_popup != nullptr);
+    const int popup_rows = initial_popup->rect.rows;
+
+    model.insert_text("no-command-can-match-this-query");
+    ui::Scene empty = compose_frame(model, 20, 100);
+    const ui::Region* popup = empty.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup());
+    CHECK(popup->rect.rows == popup_rows);
+    CHECK(popup->popup()->items.empty());
+    CHECK(popup->popup()->input == "no-command-can-match-this-query");
+    const ui::Region* echo = empty.find(ui::RegionRole::EchoArea);
+    REQUIRE(echo != nullptr);
+    REQUIRE(echo->echo());
+    CHECK(echo->echo()->text.empty());
+    CHECK_FALSE(echo->echo()->cursor_byte);
+
+    REQUIRE(model.handle_key(KeyStroke::named(KeyCode::Backspace), 10));
+    empty = compose_frame(model, 20, 100);
+    popup = empty.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    CHECK(popup->rect.rows == popup_rows);
+}
+
 TEST_CASE("semantic pointer targets edit document positions without viewport reconstruction") {
     EditorModel model("sample.cc", "zero\none\ntwo\n", CppIndentStyle{}, "test", 1);
     model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentText,

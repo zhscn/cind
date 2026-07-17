@@ -84,8 +84,12 @@ public:
     bool erase_forward(CommandContext& context);
     bool move_backward();
     bool move_forward();
+    bool move_word_backward();
+    bool move_word_forward();
     bool move_to_start();
     bool move_to_end();
+    bool kill_to_end(CommandContext& context);
+    bool yank(CommandContext& context);
     bool move_selection(int delta);
     bool select(std::size_t index);
     void refresh_candidates(CommandContext& context) { refresh(context); }
@@ -109,6 +113,7 @@ private:
     std::uint64_t next_generation_ = 0;
     std::optional<InteractionState> state_;
     std::unordered_map<std::string, std::vector<std::string>> histories_;
+    std::string last_kill_;
 };
 
 } // namespace cind

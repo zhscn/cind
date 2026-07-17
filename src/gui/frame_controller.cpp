@@ -305,6 +305,15 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
         presentation.active = true;
         presentation.scroll_finished = at_rest;
         const float cell_height = static_cast<float>(presenter_.cell_height());
+        const float document_offset_y =
+            (scroll_animation_->target_scroll_top - visual_top) * cell_height;
+        if (presentation.frame.view.active_line_y) {
+            *presentation.frame.view.active_line_y += document_offset_y;
+        }
+        if (presentation.frame.view.cursor_owner == SkiaCursorOwner::Document &&
+            presentation.frame.view.cursor_rect) {
+            presentation.frame.view.cursor_rect->y += document_offset_y;
+        }
         const std::vector<ScrollSceneLayer> layers =
             scroll_animation_->timeline.layers_at(visual_top);
         for (const ScrollSceneLayer& layer : layers) {

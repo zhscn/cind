@@ -139,12 +139,42 @@ bool InteractionController::move_forward() {
     return state_ && state_->input.move_forward();
 }
 
+bool InteractionController::move_word_backward() {
+    return state_ && state_->input.move_word_backward();
+}
+
+bool InteractionController::move_word_forward() {
+    return state_ && state_->input.move_word_forward();
+}
+
 bool InteractionController::move_to_start() {
     return state_ && state_->input.move_to_start();
 }
 
 bool InteractionController::move_to_end() {
     return state_ && state_->input.move_to_end();
+}
+
+bool InteractionController::kill_to_end(CommandContext& context) {
+    if (!state_) {
+        return false;
+    }
+    std::optional<std::string> removed = state_->input.take_to_end();
+    if (!removed) {
+        return false;
+    }
+    last_kill_ = std::move(*removed);
+    refresh(context);
+    return true;
+}
+
+bool InteractionController::yank(CommandContext& context) {
+    if (!state_ || last_kill_.empty()) {
+        return false;
+    }
+    state_->input.insert(last_kill_);
+    refresh(context);
+    return true;
 }
 
 bool InteractionController::move_selection(int delta) {
@@ -175,11 +205,12 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
         return std::unexpected("no interaction is active");
     }
     std::string value = state_->input.text();
-    if (state_->request.kind == InteractionKind::Picker && !state_->candidates.empty()) {
+    if (state_->request.kind == InteractionKind::Picker && !state_->loading &&
+        !state_->candidates.empty()) {
         value = state_->candidates[state_->selected].value;
     } else if (state_->request.kind == InteractionKind::Picker &&
                !state_->request.allow_custom_input) {
-        state_->error = "no matching candidate";
+        state_->error = state_->loading ? "candidates are still loading" : "no matching candidate";
         return std::unexpected(state_->error);
     }
 
@@ -227,11 +258,11 @@ void InteractionController::refresh(CommandContext& context) {
     InteractionState& state = *active;
     const std::uint64_t generation = ++next_generation_;
     state.generation = generation;
-    state.selected = 0;
     state.loading = false;
     state.error.clear();
-    state.candidates.clear();
     if (state.request.kind != InteractionKind::Picker) {
+        state.selected = 0;
+        state.candidates.clear();
         return;
     }
     try {
@@ -239,6 +270,7 @@ void InteractionController::refresh(CommandContext& context) {
             providers_->complete(state.request.provider, context, state.input.text());
         if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
             state.candidates = rank(std::move(*candidates), state.input.text());
+            state.selected = 0;
             return;
         }
         if (async_runtime_ == nullptr) {

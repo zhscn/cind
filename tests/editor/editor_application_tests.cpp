@@ -1591,6 +1591,25 @@ TEST_CASE("application global prefix remains active while picker owns focus") {
     CHECK(application.should_quit());
 }
 
+TEST_CASE("focused interactions inherit and remap text editing commands") {
+    EditorApplication application = make_application("sample.cc", "document");
+
+    send_keys(application, "M-x");
+    application.insert_text("foo bar");
+    send_keys(application, "C-a");
+    send_keys(application, "M-f");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->input.caret() == 3);
+    CHECK(application.last_command() == "interaction.forward-word");
+
+    send_keys(application, "C-k");
+    CHECK(application.interaction().state()->input.text() == "foo");
+    CHECK(application.last_command() == "interaction.kill-line");
+    send_keys(application, "C-y");
+    CHECK(application.interaction().state()->input.text() == "foo bar");
+    CHECK(application.session().snapshot().content().to_string() == "document");
+}
+
 TEST_CASE("active window assembles explicit window view buffer mode and global keymaps") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();

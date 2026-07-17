@@ -119,10 +119,12 @@ the same contract in one step by inserting the decoded character only after disp
 unconsumed. Text input remains accepted while an interaction owns focus, independently of the
 obscured document's state.
 
-An interaction uses its local map followed by `application.global`; picker maps inherit the common
-interaction text map. Window, View, state, Buffer, and mode maps belonging to the obscured document
-are not active while the interaction owns focus, and document input-state handlers are bypassed, so
-an unbound editing key cannot mutate the document behind a popup.
+An interaction uses its local map followed by `application.global`. The common interaction map
+inherits `editor.text-input`, and remaps its semantic movement and editing commands to the focused
+single-line input. Picker maps inherit that interaction map and override only candidate navigation.
+Window, View, state, Buffer, and mode maps belonging to the obscured document are not active while
+the interaction owns focus, and document input-state handlers are bypassed, so an unbound editing
+key cannot mutate the document behind a popup.
 
 The focused document state also supplies its cursor shape and modeline indicator. These presentation
 properties travel through the shared Scene and are rendered by both terminal and graphical
@@ -139,8 +141,9 @@ different continuations in lower maps. A command or prefix defined by the higher
 complete sequence still takes precedence.
 
 `application.global` contains bindings that are valid independently of the focused text target,
-including `C-x C-c`. Document editing and buffer commands remain in `editor.default`; interaction
-editing remains in the interaction keymap family.
+including `C-x C-c`. `editor.text-input` contains bindings whose command semantics apply to any
+focused editable text. `editor.default` inherits that map and adds document and buffer commands;
+interaction maps inherit and remap the same text commands without exposing document-local maps.
 
 Always-active override maps are resolved before a pending sequence. The built-in system override
 binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix, focused interaction, or transient
@@ -275,23 +278,25 @@ candidate-provider name, an accept command ID, and typed arguments. The command 
 normal event loop.
 
 An interaction owns a single-line UTF-8 `TextInput` with a caret on an extended grapheme boundary.
-Text events insert at the caret and refresh candidates. The common interaction keymap binds
-`C-f`/`C-b`, Right/Left, `C-a`/`C-e`, Home/End, Backspace, `C-d`/Delete, Enter, and Escape to editing,
-submission, and cancellation commands. The picker child map adds `C-n`/Down/Tab and `C-p`/Up for
-candidate navigation. Submission returns a named command dispatch that the command loop follows,
-so the accepted command remains visible as the executed command. An accept command may return
-another request, which supports multi-step interactions without retaining a C++ closure.
+Text events insert at the caret and refresh candidates. Its local keymap inherits character, word,
+line-boundary, deletion, kill and yank bindings from `editor.text-input`, then remaps those semantic
+commands to the interaction target. Enter and Escape remain interaction-local. The picker child map
+adds `C-n`/Down/Tab and `C-p`/Up for candidate navigation. Submission returns a named command
+dispatch that the command loop follows, so the accepted command remains visible as the executed
+command. An accept command may return another request, which supports multi-step interactions
+without retaining a C++ closure.
 
 Candidate providers return semantic values, labels, details, and filter text either immediately or
 through a cancellable worker job. Provider preparation runs on the editor thread and captures
 immutable worker input; filesystem traversal and large candidate ranking run through the async
 runtime. Every input change receives a monotonically increasing generation, and only results for
-the active generation can update the interaction. Command, key-binding, open-buffer, and filesystem
+the active generation can update the interaction. An asynchronous refresh retains the last complete
+candidate snapshot until the replacement is ready, then swaps the candidate list atomically.
+Command, key-binding, open-buffer, and filesystem
 providers implement the command palette, key help, buffer switching, and file opening. GUI and TUI
-render the same candidate and loading state through frontend-specific layout. The TUI places the
-prompt in the echo area and candidates in a cell popup. The GUI combines an interactive picker
-prompt and its candidates in an elevated logical-pixel overlay; prefix help uses the same structured
-popup content in a bottom-aligned overlay.
+render the same candidate and loading state through frontend-specific layout. Interactive pickers
+own a stable minibuffer band containing the prompt, input and candidate rows; the echo area is a
+separate message surface. Prefix help uses the same structured popup content without an input.
 
 ## Extension boundary
 

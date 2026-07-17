@@ -28,23 +28,23 @@ double scene_visible_text_rows(int text_rows, float visible_text_rows) {
                       1.0, static_cast<double>(text_rows));
 }
 
-std::size_t scene_popup_capacity(SceneGeometry geometry, std::size_t item_count) {
-    constexpr std::size_t maximum_popup_items = 12;
+std::size_t scene_popup_capacity(SceneGeometry geometry, std::size_t requested_capacity) {
     const int text_rows = scene_text_rows(geometry.rows);
-    if (item_count == 0 || geometry.cols < 16 || text_rows < 3) {
+    if (requested_capacity == 0 || geometry.cols < 16 || text_rows < 3) {
         return 0;
     }
     // The minibuffer reflows the frame instead of overlaying it: prompt and
     // candidates may claim at most half of the text rows.
     const int budget = std::max(1, text_rows / 2 - 1);
     return std::min<std::size_t>(
-        item_count, std::min<std::size_t>(maximum_popup_items, static_cast<std::size_t>(budget)));
+        requested_capacity,
+        std::min<std::size_t>(editor_picker_capacity, static_cast<std::size_t>(budget)));
 }
 
 // Scene rows the minibuffer band occupies (prompt row + visible candidates);
 // zero while no picker is active.
-int scene_popup_rows(SceneGeometry geometry, std::size_t item_count) {
-    const std::size_t capacity = scene_popup_capacity(geometry, item_count);
+int scene_popup_rows(SceneGeometry geometry, std::size_t requested_capacity) {
+    const std::size_t capacity = scene_popup_capacity(geometry, requested_capacity);
     return capacity == 0 ? 0 : static_cast<int>(capacity) + 1;
 }
 
@@ -54,8 +54,10 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
                                          EditorSceneViewState current) {
     // The minibuffer band shrinks the text area, so caret reveal must use the
     // reduced height while a picker is active.
+    const std::size_t popup_capacity =
+        input.popup_capacity == 0 ? input.popup_item_count : input.popup_capacity;
     const int popup_rows =
-        scene_popup_rows({.rows = input.rows, .cols = input.cols}, input.popup_item_count);
+        scene_popup_rows({.rows = input.rows, .cols = input.cols}, popup_capacity);
     const int text_rows = std::max(1, scene_text_rows(input.rows) - popup_rows);
     const float visible_rows_input =
         input.visible_text_rows > 0.0F
@@ -102,7 +104,7 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
 
     current.popup.reveal(
         input.popup_selection, input.popup_item_count,
-        scene_popup_capacity({.rows = input.rows, .cols = input.cols}, input.popup_item_count));
+        scene_popup_capacity({.rows = input.rows, .cols = input.cols}, popup_capacity));
     return current;
 }
 
@@ -110,8 +112,10 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     const EditorViewport& viewport = view.viewport;
     // An active picker reflows the frame: document rows and the modeline move
     // up to give the minibuffer band its own rows above the echo line.
+    const std::size_t popup_capacity =
+        input.popup_capacity == 0 ? input.popup_items.size() : input.popup_capacity;
     const int popup_rows =
-        scene_popup_rows({.rows = input.rows, .cols = input.cols}, input.popup_items.size());
+        scene_popup_rows({.rows = input.rows, .cols = input.cols}, popup_capacity);
     const int text_rows = std::max(1, scene_text_rows(input.rows) - popup_rows);
     const float visible_rows_input =
         input.visible_text_rows > 0.0F
@@ -270,7 +274,8 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
             ? input.popup_selection
             : std::nullopt;
     if (popup_rows > 0) {
-        const std::size_t visible_count = static_cast<std::size_t>(popup_rows - 1);
+        const std::size_t capacity = static_cast<std::size_t>(popup_rows - 1);
+        const std::size_t visible_count = std::min(capacity, input.popup_items.size());
         const std::size_t maximum_first = input.popup_items.size() - visible_count;
         const std::size_t first = std::min(view.popup.first_item(), maximum_first);
         // The minibuffer band claims the reflowed rows between the modeline

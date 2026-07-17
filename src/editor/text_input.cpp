@@ -58,6 +58,30 @@ std::size_t previous_grapheme(std::string_view text, std::size_t caret) {
     return previous;
 }
 
+bool word_character(utf8proc_int32_t value) {
+    switch (utf8proc_category(value)) {
+    case UTF8PROC_CATEGORY_LU:
+    case UTF8PROC_CATEGORY_LL:
+    case UTF8PROC_CATEGORY_LT:
+    case UTF8PROC_CATEGORY_LM:
+    case UTF8PROC_CATEGORY_LO:
+    case UTF8PROC_CATEGORY_MN:
+    case UTF8PROC_CATEGORY_MC:
+    case UTF8PROC_CATEGORY_ME:
+    case UTF8PROC_CATEGORY_ND:
+    case UTF8PROC_CATEGORY_NL:
+    case UTF8PROC_CATEGORY_NO:
+    case UTF8PROC_CATEGORY_PC:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool grapheme_is_word(std::string_view text, std::size_t caret) {
+    return caret < text.size() && word_character(decode(text.substr(caret)).value);
+}
+
 } // namespace
 
 TextInput::TextInput(std::string text) : text_(std::move(text)), caret_(text_.size()) {}
@@ -107,6 +131,44 @@ bool TextInput::move_forward() {
     return true;
 }
 
+bool TextInput::move_word_backward() {
+    std::size_t target = caret_;
+    while (target > 0) {
+        const std::size_t previous = previous_grapheme(text_, target);
+        if (grapheme_is_word(text_, previous)) {
+            break;
+        }
+        target = previous;
+    }
+    while (target > 0) {
+        const std::size_t previous = previous_grapheme(text_, target);
+        if (!grapheme_is_word(text_, previous)) {
+            break;
+        }
+        target = previous;
+    }
+    if (target == caret_) {
+        return false;
+    }
+    caret_ = target;
+    return true;
+}
+
+bool TextInput::move_word_forward() {
+    std::size_t target = caret_;
+    while (target < text_.size() && !grapheme_is_word(text_, target)) {
+        target = next_grapheme(text_, target);
+    }
+    while (target < text_.size() && grapheme_is_word(text_, target)) {
+        target = next_grapheme(text_, target);
+    }
+    if (target == caret_) {
+        return false;
+    }
+    caret_ = target;
+    return true;
+}
+
 bool TextInput::move_to_start() {
     if (caret_ == 0) {
         return false;
@@ -121,6 +183,15 @@ bool TextInput::move_to_end() {
     }
     caret_ = text_.size();
     return true;
+}
+
+std::optional<std::string> TextInput::take_to_end() {
+    if (caret_ == text_.size()) {
+        return std::nullopt;
+    }
+    std::string removed = text_.substr(caret_);
+    text_.erase(caret_);
+    return removed;
 }
 
 } // namespace cind

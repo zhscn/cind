@@ -1357,3 +1357,71 @@ TEST_CASE("async interaction providers discard cancelled generations") {
     REQUIRE(interaction.state()->candidates.size() == 1);
     CHECK(interaction.state()->candidates.front().value == "ab");
 }
+
+TEST_CASE("async interaction refresh retains candidates until replacement is ready") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "prompt",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const CommandId accept = runtime.commands().define(
+        "async-retained.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    std::latch replacement_started(1);
+    std::latch release_replacement(1);
+    runtime.interaction_providers().define(
+        "retained", [&](CommandContext&, std::string_view query) -> InteractionProviderResult {
+            if (query.empty()) {
+                return std::vector<InteractionCandidate>{
+                    {.value = "old", .label = "old", .detail = {}, .filter_text = "old"}};
+            }
+            return InteractionCandidateWork{
+                [query = std::string(query), &replacement_started,
+                 &release_replacement](const std::stop_token& cancellation) {
+                    replacement_started.count_down();
+                    release_replacement.wait();
+                    if (cancellation.stop_requested()) {
+                        throw AsyncTaskCancelled();
+                    }
+                    return std::vector<InteractionCandidate>{
+                        {.value = query, .label = query, .detail = {}, .filter_text = query}};
+                }};
+        });
+
+    WakeSignal wake;
+    AsyncRuntime async([&wake] { wake.notify(); });
+    InteractionController interaction(runtime.interaction_providers());
+    interaction.attach_async_runtime(async);
+    REQUIRE(interaction
+                .start({.kind = InteractionKind::Picker,
+                        .prompt = "async: ",
+                        .initial_input = {},
+                        .history = {},
+                        .provider = "retained",
+                        .allow_custom_input = false,
+                        .accept_command = accept,
+                        .arguments = {}},
+                       context)
+                .has_value());
+    REQUIRE(interaction.state() != nullptr);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "old");
+
+    interaction.insert("new", context);
+    replacement_started.wait();
+    REQUIRE(interaction.state() != nullptr);
+    CHECK(interaction.state()->loading);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "old");
+
+    release_replacement.count_down();
+    REQUIRE(wake.wait());
+    CHECK(async.drain() == 1);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "new");
+}

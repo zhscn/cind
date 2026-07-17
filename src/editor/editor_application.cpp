@@ -1935,6 +1935,20 @@ void EditorApplication::register_commands() {
         },
         interaction_enabled);
     runtime_.commands().define(
+        "interaction.backward-word",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_word_backward();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.forward-word",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.move_word_forward();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
         "interaction.line-start",
         [this](CommandContext&, const CommandInvocation&) -> CommandResult {
             (void)interaction_.move_to_start();
@@ -1945,6 +1959,20 @@ void EditorApplication::register_commands() {
         "interaction.line-end",
         [this](CommandContext&, const CommandInvocation&) -> CommandResult {
             (void)interaction_.move_to_end();
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.kill-line",
+        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.kill_to_end(context);
+            return CommandCompleted{};
+        },
+        interaction_enabled);
+    runtime_.commands().define(
+        "interaction.yank",
+        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.yank(context);
             return CommandCompleted{};
         },
         interaction_enabled);
@@ -2049,14 +2077,16 @@ void EditorApplication::register_keymaps() {
     system_keymap_ = runtime_.keymaps().define("editor.system");
     interaction_text_keymap_ = runtime_.keymaps().define("interaction.text");
     interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
-    runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     refresh_default_keymap();
+    const std::optional<KeymapId> text_input_keymap = runtime_.keymaps().find("editor.text-input");
     const std::optional<KeymapId> editor_keymap = runtime_.keymaps().find("editor.default");
     const std::optional<KeymapId> application_keymap =
         runtime_.keymaps().find("application.global");
-    if (!editor_keymap || !application_keymap) {
+    if (!text_input_keymap || !editor_keymap || !application_keymap) {
         throw std::logic_error("Guile keymap policy did not define its root keymaps");
     }
+    runtime_.keymaps().set_parent(interaction_text_keymap_, *text_input_keymap);
+    runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     keymap_ = *editor_keymap;
     application_keymap_ = *application_keymap;
 
@@ -2070,21 +2100,23 @@ void EditorApplication::register_keymaps() {
     runtime_.keymaps().bind(system_keymap_, "C-g", command("keyboard.quit"));
     for (const auto& [keys, name] :
          std::initializer_list<std::pair<std::string_view, std::string_view>>{
-             {"RET", "interaction.submit"},
-             {"Backspace", "interaction.erase-backward"},
-             {"C-d", "interaction.erase-forward"},
-             {"Delete", "interaction.erase-forward"},
-             {"C-b", "interaction.backward-character"},
-             {"Left", "interaction.backward-character"},
-             {"C-f", "interaction.forward-character"},
-             {"Right", "interaction.forward-character"},
-             {"C-a", "interaction.line-start"},
-             {"Home", "interaction.line-start"},
-             {"C-e", "interaction.line-end"},
-             {"End", "interaction.line-end"},
-             {"ESC", "keyboard.quit"},
-         }) {
+             {"RET", "interaction.submit"}, {"ESC", "keyboard.quit"}}) {
         runtime_.keymaps().bind(interaction_text_keymap_, keys, command(name));
+    }
+    for (const auto& [source, target] :
+         std::initializer_list<std::pair<std::string_view, std::string_view>>{
+             {"edit.delete-backward", "interaction.erase-backward"},
+             {"edit.delete-forward", "interaction.erase-forward"},
+             {"cursor.backward-character", "interaction.backward-character"},
+             {"cursor.forward-character", "interaction.forward-character"},
+             {"cursor.backward-word", "interaction.backward-word"},
+             {"cursor.forward-word", "interaction.forward-word"},
+             {"cursor.line-start", "interaction.line-start"},
+             {"cursor.line-end", "interaction.line-end"},
+             {"edit.kill-line", "interaction.kill-line"},
+             {"edit.yank", "interaction.yank"},
+         }) {
+        runtime_.keymaps().bind_remap(interaction_text_keymap_, command(source), command(target));
     }
     for (std::string_view keys : {"C-n", "Down", "TAB"}) {
         runtime_.keymaps().bind(interaction_picker_keymap_, keys,

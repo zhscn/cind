@@ -147,6 +147,32 @@ TEST_CASE("direct scroll input bypasses the spring animation") {
     CHECK(scrolled.animation_state().visual_scroll_top == doctest::Approx(0.0F));
 }
 
+TEST_CASE("animated document chrome follows the visual scroll transform") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    GuiFrameController controller(presenter);
+    const FrameClock::time_point start{};
+
+    PresentedFrame initial =
+        controller.build(request_for(presenter, frame_scene(3, 0), 0.0F, start, true));
+    controller.did_present(initial);
+    PresentedFrame target = controller.build(
+        request_for(presenter, frame_scene(2, 1), 1.0F, start + std::chrono::milliseconds(1)));
+    controller.did_present(target);
+    PresentedFrame moving = controller.build(
+        request_for(presenter, frame_scene(2, 1), 1.0F, start + std::chrono::milliseconds(20)));
+    const SkiaViewPresentation target_view = presenter.view_presentation(moving.layout());
+
+    REQUIRE(moving.view().cursor_owner == SkiaCursorOwner::Document);
+    REQUIRE(moving.view().cursor_rect);
+    REQUIRE(target_view.cursor_rect);
+    REQUIRE(moving.view().active_line_y);
+    REQUIRE(target_view.active_line_y);
+    const float cursor_delta = moving.view().cursor_rect->y - target_view.cursor_rect->y;
+    const float highlight_delta = *moving.view().active_line_y - *target_view.active_line_y;
+    CHECK(cursor_delta == doctest::Approx(highlight_delta));
+    CHECK(cursor_delta > 0.0F);
+}
+
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {
     SkiaPresenter presenter("monospace", 16.0F);
     GuiFrameController controller(presenter);

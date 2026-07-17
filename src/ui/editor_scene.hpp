@@ -14,6 +14,8 @@
 
 namespace cind::ui {
 
+inline constexpr std::size_t editor_picker_capacity = 12;
+
 struct EditorViewport {
     std::uint32_t top_line = 0;
     float top_line_offset = 0.0F;
@@ -39,6 +41,10 @@ struct EditorSceneLayoutInput {
     int tab_width = 4;
     bool reveal_caret = true;
     std::size_t popup_item_count = 0;
+    // Candidate rows reserved by the active popup. Zero derives the capacity
+    // from popup_item_count; pickers provide a stable nonzero value so their
+    // geometry remains unchanged while filtering to fewer or zero items.
+    std::size_t popup_capacity = 0;
     std::optional<std::size_t> popup_selection;
 };
 
@@ -75,9 +81,10 @@ struct EditorSceneInput {
 
     std::string_view popup_title;
     std::span<const EditorPopupItem> popup_items;
+    std::size_t popup_capacity = 0;
     std::optional<std::size_t> popup_selection;
-    // Present for an interactive picker. The GUI places this input inside
-    // the popup; the TUI continues to expose it through the echo area.
+    // Present for an interactive picker. The popup is the sole presentation
+    // owner of this input and its caret in every frontend.
     std::optional<std::string_view> popup_input;
     std::optional<std::size_t> popup_input_cursor;
 };

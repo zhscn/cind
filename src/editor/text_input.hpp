@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -22,8 +23,11 @@ public:
     bool erase_forward();
     bool move_backward();
     bool move_forward();
+    bool move_word_backward();
+    bool move_word_forward();
     bool move_to_start();
     bool move_to_end();
+    std::optional<std::string> take_to_end();
 
 private:
     std::string text_;

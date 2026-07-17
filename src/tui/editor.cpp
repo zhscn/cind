@@ -423,16 +423,19 @@ private:
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
         const InteractionState* interaction = application_.interaction().state();
+        const bool picker_active =
+            interaction != nullptr && interaction->request.kind == InteractionKind::Picker;
         const bool any_prompt = interaction != nullptr || prompt_active_;
         const std::string echo_text =
-            interaction        ? interaction->request.prompt + interaction->input.text()
+            picker_active      ? std::string()
+            : interaction      ? interaction->request.prompt + interaction->input.text()
             : prompt_active_   ? prompt_label_ + prompt_input_
             : message_.empty() ? "C-x C-s save  C-x C-f open  C-x b buffer  C-x C-c quit  "
                                  "C-s search  M-x commands  C-h b help"
                                : message_;
         std::optional<int> echo_cursor;
         std::optional<std::size_t> echo_cursor_byte;
-        if (interaction != nullptr) {
+        if (interaction != nullptr && !picker_active) {
             echo_cursor = ui::display_width(interaction->request.prompt) +
                           ui::display_width(std::string_view(interaction->input.text())
                                                 .substr(0, interaction->input.caret()));
@@ -447,7 +450,9 @@ private:
         std::optional<std::size_t> popup_selection;
         std::optional<std::string_view> popup_input;
         std::optional<std::size_t> popup_input_cursor;
+        std::size_t popup_capacity = 0;
         if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
+            popup_capacity = ui::editor_picker_capacity;
             popup_title = interaction->request.prompt;
             popup_selection = interaction->candidates.empty()
                                   ? std::nullopt
@@ -459,6 +464,7 @@ private:
                 popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
             }
         } else if (!key_hints.empty()) {
+            popup_capacity = key_hints.size();
             popup_title = application_.pending_key_sequence_text() + " …";
             popup_items.reserve(key_hints.size());
             for (const KeyBindingHint& hint : key_hints) {
@@ -577,6 +583,7 @@ private:
                                                    .tab_width = tab_width(),
                                                    .reveal_caret = false,
                                                    .popup_item_count = popup_items.size(),
+                                                   .popup_capacity = popup_capacity,
                                                    .popup_selection = popup_selection},
                                                   chrome_view);
             popup_viewport_ = chrome_view.popup;
@@ -603,6 +610,7 @@ private:
                                           .echo_cursor_byte = echo_cursor_byte,
                                           .popup_title = popup_title,
                                           .popup_items = popup_items,
+                                          .popup_capacity = popup_capacity,
                                           .popup_selection = popup_selection,
                                           .popup_input = popup_input,
                                           .popup_input_cursor = popup_input_cursor},
@@ -625,6 +633,7 @@ private:
                                         .tab_width = tab_width(),
                                         .reveal_caret = true,
                                         .popup_item_count = popup_items.size(),
+                                        .popup_capacity = popup_capacity,
                                         .popup_selection = popup_selection},
                                        view);
         state.top_line = view.viewport.top_line;
@@ -654,6 +663,7 @@ private:
                                       .echo_cursor_byte = echo_cursor_byte,
                                       .popup_title = popup_title,
                                       .popup_items = popup_items,
+                                      .popup_capacity = popup_capacity,
                                       .popup_selection = popup_selection,
                                       .popup_input = popup_input,
                                       .popup_input_cursor = popup_input_cursor},

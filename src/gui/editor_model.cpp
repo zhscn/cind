@@ -30,14 +30,17 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial, C
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
     const InteractionState* interaction = application_.interaction().state();
     std::size_t popup_item_count = 0;
+    std::size_t popup_capacity = 0;
     std::optional<std::size_t> popup_selection;
     if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
         popup_item_count = interaction->candidates.size();
+        popup_capacity = ui::editor_picker_capacity;
         popup_selection = interaction->candidates.empty()
                               ? std::nullopt
                               : std::optional<std::size_t>(interaction->selected);
     } else {
         popup_item_count = application_.pending_key_hints().size();
+        popup_capacity = popup_item_count;
     }
 
     if (application_.window_layout().leaves().size() > 1) {
@@ -62,6 +65,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                  .reveal_caret =
                      placement.window == application_.window_id() && application_.reveal_caret(),
                  .popup_item_count = 0,
+                 .popup_capacity = 0,
                  .popup_selection = std::nullopt},
                 pane_view);
             pane_state.top_line = pane_view.viewport.top_line;
@@ -86,6 +90,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                               .tab_width = active.style().tab_width,
                                               .reveal_caret = false,
                                               .popup_item_count = popup_item_count,
+                                              .popup_capacity = popup_capacity,
                                               .popup_selection = popup_selection},
                                              popup_view);
         popup_viewport_ = popup_view.popup;
@@ -111,6 +116,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                     .tab_width = session.style().tab_width,
                                     .reveal_caret = application_.reveal_caret(),
                                     .popup_item_count = popup_item_count,
+                                    .popup_capacity = popup_capacity,
                                     .popup_selection = popup_selection},
                                    view);
     state.top_line = view.viewport.top_line;
@@ -128,7 +134,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     std::optional<std::size_t> echo_cursor_byte;
     const InteractionState* interaction = application_.interaction().state();
     const std::string_view echo = [&]() -> std::string_view {
-        if (interaction != nullptr) {
+        if (interaction != nullptr && interaction->request.kind != InteractionKind::Picker) {
             interaction_echo = interaction->request.prompt + interaction->input.text();
             echo_cursor = ui::display_width(interaction->request.prompt) +
                           ui::display_width(std::string_view(interaction->input.text())
@@ -145,7 +151,9 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     std::optional<std::size_t> popup_selection;
     std::optional<std::string_view> popup_input;
     std::optional<std::size_t> popup_input_cursor;
+    std::size_t popup_capacity = 0;
     if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
+        popup_capacity = ui::editor_picker_capacity;
         popup_title = interaction->request.prompt;
         popup_selection = interaction->candidates.empty()
                               ? std::nullopt
@@ -157,6 +165,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
         }
     } else if (!key_hints.empty()) {
+        popup_capacity = key_hints.size();
         popup_title = application_.pending_key_sequence_text() + " …";
         popup_items.reserve(key_hints.size());
         for (const KeyBindingHint& hint : key_hints) {
@@ -203,6 +212,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .echo_cursor_byte = echo_cursor_byte,
                                             .popup_title = popup_title,
                                             .popup_items = popup_items,
+                                            .popup_capacity = popup_capacity,
                                             .popup_selection = popup_selection,
                                             .popup_input = popup_input,
                                             .popup_input_cursor = popup_input_cursor};
@@ -254,6 +264,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
              .echo_cursor_byte = std::nullopt,
              .popup_title = {},
              .popup_items = {},
+             .popup_capacity = 0,
              .popup_selection = std::nullopt,
              .popup_input = std::nullopt,
              .popup_input_cursor = std::nullopt},
