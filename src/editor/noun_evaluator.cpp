@@ -252,6 +252,7 @@ MotionMechanism reversed(MotionMechanism mechanism) {
     case MotionMechanism::BackwardCharacter:
         return MotionMechanism::ForwardCharacter;
     case MotionMechanism::ForwardWord:
+    case MotionMechanism::ForwardWordEnd:
         return MotionMechanism::BackwardWord;
     case MotionMechanism::BackwardWord:
         return MotionMechanism::ForwardWord;
@@ -290,6 +291,24 @@ TextOffset forward_word(const Text& text, TextOffset from, bool symbol_words = f
     return TextOffset{static_cast<std::uint32_t>(at)};
 }
 
+TextOffset forward_word_end(const Text& text, TextOffset from) {
+    const std::string content = text.to_string();
+    std::size_t at = std::min<std::size_t>(from.value, content.size());
+    while (at < content.size() && character_class(static_cast<unsigned char>(content[at]), false) ==
+                                      CharacterClass::Whitespace) {
+        ++at;
+    }
+    if (at == content.size()) {
+        return TextOffset{static_cast<std::uint32_t>(at)};
+    }
+    const CharacterClass target = character_class(static_cast<unsigned char>(content[at]), false);
+    while (at < content.size() &&
+           character_class(static_cast<unsigned char>(content[at]), false) == target) {
+        ++at;
+    }
+    return TextOffset{static_cast<std::uint32_t>(at)};
+}
+
 TextOffset backward_word(const Text& text, TextOffset from, bool symbol_words = false) {
     const std::string content = text.to_string();
     std::size_t at = std::min<std::size_t>(from.value, content.size());
@@ -318,6 +337,8 @@ TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot
         return ui::previous_grapheme(snapshot.content(), from);
     case MotionMechanism::ForwardWord:
         return forward_word(snapshot.content(), from);
+    case MotionMechanism::ForwardWordEnd:
+        return forward_word_end(snapshot.content(), from);
     case MotionMechanism::BackwardWord:
         return backward_word(snapshot.content(), from);
     case MotionMechanism::ForwardSymbol:

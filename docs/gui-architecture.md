@@ -41,13 +41,13 @@ pointer targets. Editing commands do not inspect SDL events or rendering geometr
 Keyboard events always enter `EditorApplication::handle_key` before any paired text input is
 committed. A consumed printable key suppresses its paired SDL text event. Unconsumed UTF-8 text,
 IME commits and paste data enter `EditorApplication::insert_text`, which applies the focused input
-state's text policy. Interaction text is accepted through the same entry point while the interaction
-owns focus.
+state's text policy. Interaction text is accepted through the same entry point while its transient
+minibuffer View owns focus.
 
 `EditorModel` adapts the application state to the standard editor scene. It owns only presentation
 state that belongs to this frontend composition, such as the popup list viewport and line-sign
-cache. The document caret, selection, viewport and interaction input remain owned by their editor
-objects.
+cache. Document and minibuffer text, carets, selections, and view state remain owned by runtime
+Buffer/View objects.
 
 `WindowLayout` is the persistent split tree. Its leaves are `WindowId` values and its branches
 carry row/column orientation plus a normalized ratio. Splitting creates a new View for the same
@@ -55,10 +55,11 @@ Buffer, so caret, selection and viewport can diverge without duplicating documen
 a pane removes its cached views through the same registry lifecycle. The tree partitions a display
 extent into window rectangles and divider lines for both frontends.
 
-The keymap stack follows the focused target. Window, view, buffer and mode maps describe document
-focus; interaction maps describe popup and minibuffer focus; application-global and system
-override maps remain available at both targets. This keeps input routing data-driven and prevents
-widgets from implementing special key paths.
+The keymap stack follows the focused target. Document focus includes its Window, View, Buffer,
+mode, editor, and global layers. Minibuffer focus uses a transient Window/View/Buffer, its
+InputState and interaction View map, and the global layer. System overrides remain available at
+both targets. This keeps input routing data-driven and prevents widgets from implementing special
+key paths.
 
 ## View reduction and scene composition
 

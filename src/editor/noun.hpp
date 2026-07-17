@@ -71,6 +71,7 @@ enum class MotionMechanism : std::uint8_t {
     ForwardCharacter,
     BackwardCharacter,
     ForwardWord,
+    ForwardWordEnd,
     BackwardWord,
     ForwardSymbol,
     BackwardSymbol,

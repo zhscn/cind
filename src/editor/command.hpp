@@ -84,6 +84,16 @@ struct CommandCompleted {
     CommandSelectionResult selection = CommandSelectionDefault{};
 };
 
+// An explicit command target keeps deferred command composition independent
+// of whichever surface currently owns keyboard focus.
+struct CommandTarget {
+    WindowId window;
+    BufferId buffer;
+    ViewId view;
+
+    friend bool operator==(const CommandTarget&, const CommandTarget&) = default;
+};
+
 // Requests another named command without retaining a callback continuation.
 // CommandLoop follows the dispatch and reports the final command as the one
 // that executed, which keeps interaction submission and scripted command
@@ -91,6 +101,7 @@ struct CommandCompleted {
 struct CommandDispatch {
     CommandId command;
     CommandInvocation invocation;
+    std::optional<CommandTarget> target = std::nullopt;
 };
 
 // Prefix commands replace the command loop's pending prefix slot. The next

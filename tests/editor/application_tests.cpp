@@ -47,6 +47,15 @@ private:
     bool notified_ = false;
 };
 
+void insert_interaction_text(EditorRuntime& runtime, const InteractionController& interaction,
+                             std::string_view text) {
+    const InteractionState* state = interaction.state();
+    REQUIRE(state != nullptr);
+    EditTransaction transaction = runtime.buffers().get(state->buffer).begin_transaction();
+    transaction.insert(runtime.views().caret(state->view), text);
+    (void)transaction.commit();
+}
+
 } // namespace
 
 TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
@@ -1220,19 +1229,6 @@ TEST_CASE("input states are registered globally and stacked per view") {
     CHECK_THROWS_AS(runtime.views().push_input_state(left, InputStateId{}), std::out_of_range);
 }
 
-TEST_CASE("focused text input moves and deletes by grapheme cluster") {
-    TextInput input("a👩‍💻b");
-    CHECK(input.caret() == input.text().size());
-    REQUIRE(input.move_backward());
-    CHECK(input.caret() == input.text().size() - 1);
-    REQUIRE(input.move_backward());
-    CHECK(input.caret() == 1);
-    REQUIRE(input.move_forward());
-    REQUIRE(input.erase_backward());
-    CHECK(input.text() == "ab");
-    CHECK(input.caret() == 1);
-}
-
 TEST_CASE("interaction controller owns non-blocking command input") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "prompt",
@@ -1271,19 +1267,38 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const CommandLoopResult started = loop.dispatch(parse_key_sequence("C-f")->front(), context);
     CHECK(started.status == CommandLoopStatus::AwaitingInput);
     REQUIRE(started.interaction.has_value());
-    InteractionController interaction(runtime.interaction_providers());
-    REQUIRE(interaction.start(*started.interaction, context).has_value());
+    const std::size_t initial_buffers = runtime.buffers().all().size();
+    const std::size_t initial_windows = runtime.windows().all().size();
+    const KeymapId interaction_keymap = runtime.keymaps().define("interaction-test");
+    InteractionController interaction(runtime, runtime.interaction_providers());
+    REQUIRE(interaction.start(*started.interaction, context, interaction_keymap).has_value());
     REQUIRE(interaction.state() != nullptr);
-    CHECK(interaction.state()->input.text() == "needle");
-    CHECK(interaction.state()->input.caret() == 6);
+    const BufferId minibuffer = interaction.state()->buffer;
+    const ViewId minibuffer_view = interaction.state()->view;
+    const WindowId minibuffer_window = interaction.state()->window;
+    CHECK(runtime.buffers().get(minibuffer).kind() == BufferKind::Minibuffer);
+    CHECK(runtime.buffers().all().size() == initial_buffers + 1);
+    CHECK(runtime.windows().all().size() == initial_windows + 1);
+    CHECK(interaction.state()->origin ==
+          CommandTarget{.window = window, .buffer = buffer, .view = view});
+    CHECK(interaction.input_text() == "needle");
+    CHECK(interaction.input_caret() == TextOffset{6});
 
-    interaction.insert("é", context);
-    CHECK(interaction.erase_backward(context));
-    CHECK(interaction.state()->input.text() == "needle");
-    CHECK(interaction.state()->input.caret() == 6);
-    interaction.insert("-next", context);
+    insert_interaction_text(runtime, interaction, "é");
+    EditTransaction erase = runtime.buffers().get(interaction.state()->buffer).begin_transaction();
+    erase.erase({TextOffset{6}, TextOffset{8}});
+    (void)erase.commit();
+    CHECK(interaction.input_text() == "needle");
+    CHECK(interaction.input_caret() == TextOffset{6});
+    insert_interaction_text(runtime, interaction, "-next");
     const std::expected<InteractionSubmission, std::string> submission = interaction.submit();
     REQUIRE(submission.has_value());
+    CHECK(submission->target == CommandTarget{.window = window, .buffer = buffer, .view = view});
+    CHECK(runtime.buffers().try_get(minibuffer) == nullptr);
+    CHECK(runtime.views().try_get(minibuffer_view) == nullptr);
+    CHECK(runtime.windows().try_get(minibuffer_window) == nullptr);
+    CHECK(runtime.buffers().all().size() == initial_buffers);
+    CHECK(runtime.windows().all().size() == initial_windows);
     CHECK(loop.execute(submission->accept_command, context, submission->invocation).status ==
           CommandLoopStatus::Executed);
     CHECK(submitted == "needle-next");
@@ -1325,7 +1340,8 @@ TEST_CASE("async interaction providers discard cancelled generations") {
 
     WakeSignal wake;
     AsyncRuntime async([&wake] { wake.notify(); });
-    InteractionController interaction(runtime.interaction_providers());
+    const KeymapId interaction_keymap = runtime.keymaps().define("async-interaction-test");
+    InteractionController interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
@@ -1336,13 +1352,14 @@ TEST_CASE("async interaction providers discard cancelled generations") {
                         .allow_custom_input = false,
                         .accept_command = accept,
                         .arguments = {}},
-                       context)
+                       context, interaction_keymap)
                 .has_value());
     REQUIRE(interaction.state() != nullptr);
     CHECK(interaction.state()->loading);
     first_started.wait();
 
-    interaction.insert("b", context);
+    insert_interaction_text(runtime, interaction, "b");
+    interaction.refresh_candidates();
     REQUIRE(wake.wait());
     CHECK(async.drain() == 1);
     REQUIRE(interaction.state() != nullptr);
@@ -1395,7 +1412,8 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
 
     WakeSignal wake;
     AsyncRuntime async([&wake] { wake.notify(); });
-    InteractionController interaction(runtime.interaction_providers());
+    const KeymapId interaction_keymap = runtime.keymaps().define("retained-interaction-test");
+    InteractionController interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
@@ -1406,13 +1424,14 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
                         .allow_custom_input = false,
                         .accept_command = accept,
                         .arguments = {}},
-                       context)
+                       context, interaction_keymap)
                 .has_value());
     REQUIRE(interaction.state() != nullptr);
     REQUIRE(interaction.state()->candidates.size() == 1);
     CHECK(interaction.state()->candidates.front().value == "old");
 
-    interaction.insert("new", context);
+    insert_interaction_text(runtime, interaction, "new");
+    interaction.refresh_candidates();
     replacement_started.wait();
     REQUIRE(interaction.state() != nullptr);
     CHECK(interaction.state()->loading);

@@ -24,6 +24,7 @@ enum class BufferKind : std::uint8_t {
     Scratch,
     Generated,
     Process,
+    Minibuffer,
 };
 
 struct BufferSpec {

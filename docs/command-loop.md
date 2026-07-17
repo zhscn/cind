@@ -5,15 +5,16 @@ normalize input and render the shared scene; editing behavior lives in named com
 runtime, buffer, and view state.
 
 ```text
-terminal bytes ─┐                    active Window/View/Buffer/Mode
+terminal bytes ─┐                    focused Window/View/Buffer/Mode
                 ├─> KeyStroke ───────────────┬─> scoped Keymap stack ─> CommandLoop
 SDL key events ─┘                            │                              │
                                              │                              └─> CommandRegistry
 terminal UTF-8 ─┐                            │                                      │
 SDL text/IME ───┴─> focused text target ─────┘                                      ├─> EditSession
                          │                                                           ├─> runtime state
-                         └────────────> InteractionController <──────────────────────└─> InteractionRequest
+                         └────────────> transient minibuffer View <──────────────────└─> InteractionRequest
                                               │
+                                              ├─> InteractionController
                                               └─> named candidate provider
 
 Editor state ─> ui::Scene ─┬─> ANSI renderer
@@ -116,23 +117,25 @@ character ends at the command loop; a graphical frontend discards its paired tex
 unconsumed character may subsequently arrive as UTF-8 text, and `EditorApplication::insert_text`
 consults the focused input state's `accept` or `ignore` text policy before editing. TUI input applies
 the same contract in one step by inserting the decoded character only after dispatch leaves it
-unconsumed. Text input remains accepted while an interaction owns focus, independently of the
+unconsumed. Text input remains accepted while a minibuffer owns focus, independently of the
 obscured document's state.
 
-An interaction uses its local map followed by `application.global`. The common interaction map
-inherits `editor.text-input`, and remaps its semantic movement and editing commands to the focused
-single-line input. Picker maps inherit that interaction map and override only candidate navigation.
-Window, View, state, Buffer, and mode maps belonging to the obscured document are not active while
-the interaction owns focus, and document input-state handlers are bypassed, so an unbound editing
-key cannot mutate the document behind a popup.
+An interaction creates a transient minibuffer Buffer, View, and Window. Its View carries an
+interaction keymap that inherits `editor.text-input`; picker maps override only candidate
+navigation. The minibuffer uses the same durable InputState and handler pipeline as a document
+View, followed by its Window, View, and Buffer layers and `application.global`. `editor.default`
+and the obscured document's Window, View, Buffer, mode, and transient state layers are absent from
+this focus stack. Ordinary movement, deletion, undo, kill, yank, selection, and prefix commands
+therefore operate on the minibuffer through their normal `CommandContext` without interaction-only
+command copies.
 
-The focused document state also supplies its cursor shape and modeline indicator. These presentation
+The focused View state also supplies its cursor shape and modeline indicator. These presentation
 properties travel through the shared Scene and are rendered by both terminal and graphical
 frontends. A state may additionally supply pure document-position hints derived from the current
 document revision, Selection, and effective mode policy. The application validates and memoizes the
 derived labels, while Scene composition maps byte offsets to visible replacement spans; neither the
-ANSI nor Skia renderer calls scripting policy. A popup or echo-area interaction owns a beam cursor
-independently of the obscured document state.
+ANSI nor Skia renderer calls scripting policy. Popup and echo-area composition render the
+minibuffer View's caret as a beam cursor.
 
 Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
 first layer that recognizes that complete sequence decides whether it is a command or a prefix. A
@@ -142,8 +145,9 @@ complete sequence still takes precedence.
 
 `application.global` contains bindings that are valid independently of the focused text target,
 including `C-x C-c`. `editor.text-input` contains bindings whose command semantics apply to any
-focused editable text. `editor.default` inherits that map and adds document and buffer commands;
-interaction maps inherit and remap the same text commands without exposing document-local maps.
+focused editable text. `editor.default` inherits that map and adds document and buffer commands.
+Minibuffer interaction maps inherit the text commands directly without exposing document-local
+maps.
 
 Always-active override maps are resolved before a pending sequence. The built-in system override
 binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix, focused interaction, or transient
@@ -274,17 +278,19 @@ editor state.
 A command returns `CommandCompleted`, `InteractionRequest`, or a named `CommandDispatch`. A request
 describes a text prompt or candidate picker using prompt text, initial input, a history name, a
 candidate-provider name, an accept command ID, and typed arguments. The command loop returns the request to
-`EditorApplication`; `InteractionController` owns the active state while the frontend continues its
+`EditorApplication`; `InteractionController` creates the transient minibuffer Buffer/View/Window,
+records the originating command target, and owns provider state while the frontend continues its
 normal event loop.
 
-An interaction owns a single-line UTF-8 `TextInput` with a caret on an extended grapheme boundary.
-Text events insert at the caret and refresh candidates. Its local keymap inherits character, word,
-line-boundary, deletion, kill and yank bindings from `editor.text-input`, then remaps those semantic
-commands to the interaction target. Enter and Escape remain interaction-local. The picker child map
-adds `C-n`/Down/Tab and `C-p`/Up for candidate navigation. Submission returns a named command
-dispatch that the command loop follows, so the accepted command remains visible as the executed
-command. An accept command may return another request, which supports multi-step interactions
-without retaining a C++ closure.
+The minibuffer Buffer contains the single-line UTF-8 input and undo history, while its View owns the
+anchor-backed caret, selection, settings, InputState stack, and local keymap. Text commits and
+ordinary editor commands mutate that View through the same EditSession path as document editing;
+revision changes refresh candidates. Enter and Escape remain interaction-local. The picker child
+map adds `C-n`/Down/Tab and `C-p`/Up for candidate navigation. Submission destroys the transient
+Window, View, and Buffer and returns a named dispatch with the saved origin target. The command loop
+switches to that explicit target before invoking the accept command, so the accept callback sees the
+document context even though submission began in the minibuffer. An accept command may return
+another request, which supports multi-step interactions without retaining a C++ closure.
 
 Candidate providers return semantic values, labels, details, and filter text either immediately or
 through a cancellable worker job. Provider preparation runs on the editor thread and captures
@@ -316,9 +322,10 @@ The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.s
 `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
 keymap, the input state owning handler feedback, pending count/register/extras, formatted prefix,
-and last command. Interaction state includes prompt kind, input caret,
-provider, selection, generation, errors, and candidates. Buffer state includes resource and
-lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
+and last command. Interaction state includes the minibuffer Window/View/Buffer identities, origin
+target, prompt kind, input caret, provider, selection, generation, errors, and candidates. Buffer
+state includes resource and lifecycle data; Window state identifies each Window's bound View and
+Buffer. Input-state inspection
 reports the active state name, text-input policy, selection-after-edit policy, cursor shape, and
 indicator, plus whether it owns a handler, lifecycle callbacks, or a position-hints provider.
 Selection state reports whether a mark is active, the primary range, strategy metadata, and every

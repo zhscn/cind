@@ -1,5 +1,7 @@
 #include "editor/interaction.hpp"
 
+#include "editor/runtime.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <format>
@@ -84,8 +86,8 @@ InteractionProviderResult InteractionProviderRegistry::complete(std::string_view
     return found->second(context, query);
 }
 
-std::expected<void, std::string> InteractionController::start(InteractionRequest request,
-                                                              CommandContext& context) {
+std::expected<void, std::string>
+InteractionController::start(InteractionRequest request, CommandContext& context, KeymapId keymap) {
     if (!request.accept_command) {
         return std::unexpected("interaction request has no accept command");
     }
@@ -93,88 +95,61 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
         (request.provider.empty() || !providers_->contains(request.provider))) {
         return std::unexpected(std::format("unknown interaction provider '{}'", request.provider));
     }
-    cancel_pending();
-    std::string input = request.initial_input;
+    const CommandTarget origin = state_ ? state_->origin
+                                        : CommandTarget{.window = context.window_id(),
+                                                        .buffer = context.buffer_id(),
+                                                        .view = context.view_id()};
+    (void)cancel();
+    BufferId buffer;
+    ViewId view;
+    WindowId window;
+    try {
+        buffer = runtime_->buffers().create({.name = " *minibuffer*",
+                                             .initial_text = request.initial_input,
+                                             .kind = BufferKind::Minibuffer,
+                                             .resource_uri = std::nullopt,
+                                             .read_only = false});
+        view = runtime_->views().create(
+            buffer, TextOffset{static_cast<std::uint32_t>(request.initial_input.size())});
+        runtime_->views().get(view).keymaps().push_back(keymap);
+        window = runtime_->windows().create(view);
+    } catch (const std::exception& exception) {
+        if (window.valid()) {
+            (void)runtime_->windows().erase(window);
+        }
+        if (view.valid()) {
+            (void)runtime_->views().erase(view);
+        }
+        if (buffer.valid()) {
+            (void)runtime_->buffers().erase(buffer);
+        }
+        return std::unexpected(exception.what());
+    }
     state_.emplace(InteractionState{.request = std::move(request),
-                                    .input = TextInput(std::move(input)),
+                                    .origin = origin,
+                                    .window = window,
+                                    .buffer = buffer,
+                                    .view = view,
                                     .candidates = {},
                                     .selected = 0,
                                     .generation = 0,
                                     .loading = false,
                                     .error = {}});
-    refresh(context);
+    refresh();
     return {};
 }
 
-void InteractionController::insert(std::string_view text, CommandContext& context) {
-    if (!state_ || text.empty()) {
-        return;
-    }
-    if (state_->input.insert(text)) {
-        refresh(context);
-    }
+std::string InteractionController::input_text() const {
+    return state_ ? runtime_->buffers().get(state_->buffer).snapshot().content().to_string()
+                  : std::string();
 }
 
-bool InteractionController::erase_backward(CommandContext& context) {
-    if (!state_ || !state_->input.erase_backward()) {
-        return false;
-    }
-    refresh(context);
-    return true;
+TextOffset InteractionController::input_caret() const {
+    return state_ ? runtime_->views().caret(state_->view) : TextOffset{};
 }
 
-bool InteractionController::erase_forward(CommandContext& context) {
-    if (!state_ || !state_->input.erase_forward()) {
-        return false;
-    }
-    refresh(context);
-    return true;
-}
-
-bool InteractionController::move_backward() {
-    return state_ && state_->input.move_backward();
-}
-
-bool InteractionController::move_forward() {
-    return state_ && state_->input.move_forward();
-}
-
-bool InteractionController::move_word_backward() {
-    return state_ && state_->input.move_word_backward();
-}
-
-bool InteractionController::move_word_forward() {
-    return state_ && state_->input.move_word_forward();
-}
-
-bool InteractionController::move_to_start() {
-    return state_ && state_->input.move_to_start();
-}
-
-bool InteractionController::move_to_end() {
-    return state_ && state_->input.move_to_end();
-}
-
-bool InteractionController::kill_to_end(CommandContext& context) {
-    if (!state_) {
-        return false;
-    }
-    std::optional<std::string> removed = state_->input.take_to_end();
-    if (!removed) {
-        return false;
-    }
-    last_kill_ = std::move(*removed);
-    refresh(context);
-    return true;
-}
-
-bool InteractionController::yank(CommandContext& context) {
-    if (!state_ || last_kill_.empty()) {
-        return false;
-    }
-    state_->input.insert(last_kill_);
-    refresh(context);
-    return true;
+RevisionId InteractionController::input_revision() const {
+    return state_ ? runtime_->buffers().get(state_->buffer).snapshot().revision() : 0;
 }
 
 bool InteractionController::move_selection(int delta) {
@@ -201,26 +176,28 @@ bool InteractionController::select(std::size_t index) {
 }
 
 std::expected<InteractionSubmission, std::string> InteractionController::submit() {
-    if (!state_) {
+    InteractionState* active = state();
+    if (active == nullptr) {
         return std::unexpected("no interaction is active");
     }
-    std::string value = state_->input.text();
-    if (state_->request.kind == InteractionKind::Picker && !state_->loading &&
-        !state_->candidates.empty()) {
-        value = state_->candidates[state_->selected].value;
-    } else if (state_->request.kind == InteractionKind::Picker &&
-               !state_->request.allow_custom_input) {
-        state_->error = state_->loading ? "candidates are still loading" : "no matching candidate";
-        return std::unexpected(state_->error);
+    std::string value = input_text();
+    if (active->request.kind == InteractionKind::Picker && !active->loading &&
+        !active->candidates.empty()) {
+        value = active->candidates[active->selected].value;
+    } else if (active->request.kind == InteractionKind::Picker &&
+               !active->request.allow_custom_input) {
+        active->error = active->loading ? "candidates are still loading" : "no matching candidate";
+        return std::unexpected(active->error);
     }
 
     InteractionSubmission submission{
-        .accept_command = state_->request.accept_command,
-        .invocation = {.arguments = std::move(state_->request.arguments), .prefix = {}},
+        .accept_command = active->request.accept_command,
+        .invocation = {.arguments = std::move(active->request.arguments), .prefix = {}},
+        .target = active->origin,
     };
     submission.invocation.arguments.emplace_back(value);
-    if (!state_->request.history.empty() && !value.empty()) {
-        std::vector<std::string>& entries = histories_[state_->request.history];
+    if (!active->request.history.empty() && !value.empty()) {
+        std::vector<std::string>& entries = histories_[active->request.history];
         if (entries.empty() || entries.back() != value) {
             entries.push_back(value);
             constexpr std::size_t maximum_history = 100;
@@ -230,17 +207,37 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
         }
     }
     cancel_pending();
+    const WindowId window = active->window;
+    const ViewId view = active->view;
+    const BufferId buffer = active->buffer;
     state_.reset();
+    destroy_surface(window, view, buffer);
     return submission;
 }
 
-bool InteractionController::cancel() {
-    if (!state_) {
+bool InteractionController::cancel() noexcept {
+    InteractionState* active = state();
+    if (active == nullptr) {
         return false;
     }
     cancel_pending();
+    const WindowId window = active->window;
+    const ViewId view = active->view;
+    const BufferId buffer = active->buffer;
     state_.reset();
+    destroy_surface(window, view, buffer);
     return true;
+}
+
+void InteractionController::destroy_surface(WindowId window, ViewId view,
+                                            BufferId buffer) noexcept {
+    try {
+        (void)runtime_->windows().erase(window);
+        (void)runtime_->views().erase(view);
+        (void)runtime_->buffers().erase(buffer);
+    } catch (...) {
+        return;
+    }
 }
 
 const std::vector<std::string>& InteractionController::history(std::string_view name) const {
@@ -249,7 +246,7 @@ const std::vector<std::string>& InteractionController::history(std::string_view 
     return found == histories_.end() ? empty : found->second;
 }
 
-void InteractionController::refresh(CommandContext& context) {
+void InteractionController::refresh() {
     InteractionState* active = state();
     if (active == nullptr) {
         return;
@@ -266,10 +263,13 @@ void InteractionController::refresh(CommandContext& context) {
         return;
     }
     try {
+        const std::string query = input_text();
+        CommandContext context(*runtime_, state.origin.window, state.origin.buffer,
+                               state.origin.view);
         InteractionProviderResult result =
-            providers_->complete(state.request.provider, context, state.input.text());
+            providers_->complete(state.request.provider, context, query);
         if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
-            state.candidates = rank(std::move(*candidates), state.input.text());
+            state.candidates = rank(std::move(*candidates), query);
             state.selected = 0;
             return;
         }
@@ -286,7 +286,7 @@ void InteractionController::refresh(CommandContext& context) {
         };
         auto job =
             std::make_shared<Job>(Job{.generation = generation,
-                                      .query = state.input.text(),
+                                      .query = query,
                                       .work = std::move(std::get<InteractionCandidateWork>(result)),
                                       .controller = this});
         pending_task_ = async_runtime_->submit({

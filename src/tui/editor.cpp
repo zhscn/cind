@@ -423,12 +423,15 @@ private:
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
         const InteractionState* interaction = application_.interaction().state();
+        const std::string interaction_input =
+            interaction != nullptr ? application_.interaction().input_text() : std::string();
+        const std::size_t interaction_caret = application_.interaction().input_caret().value;
         const bool picker_active =
             interaction != nullptr && interaction->request.kind == InteractionKind::Picker;
         const bool any_prompt = interaction != nullptr || prompt_active_;
         const std::string echo_text =
             picker_active      ? std::string()
-            : interaction      ? interaction->request.prompt + interaction->input.text()
+            : interaction      ? interaction->request.prompt + interaction_input
             : prompt_active_   ? prompt_label_ + prompt_input_
             : message_.empty() ? "C-x C-s save  C-x C-f open  C-x b buffer  C-x C-c quit  "
                                  "C-s search  M-x commands  C-h b help"
@@ -436,10 +439,10 @@ private:
         std::optional<int> echo_cursor;
         std::optional<std::size_t> echo_cursor_byte;
         if (interaction != nullptr && !picker_active) {
-            echo_cursor = ui::display_width(interaction->request.prompt) +
-                          ui::display_width(std::string_view(interaction->input.text())
-                                                .substr(0, interaction->input.caret()));
-            echo_cursor_byte = interaction->request.prompt.size() + interaction->input.caret();
+            echo_cursor =
+                ui::display_width(interaction->request.prompt) +
+                ui::display_width(std::string_view(interaction_input).substr(0, interaction_caret));
+            echo_cursor_byte = interaction->request.prompt.size() + interaction_caret;
         } else if (any_prompt) {
             echo_cursor = ui::display_width(echo_text);
             echo_cursor_byte = echo_text.size();
@@ -458,8 +461,8 @@ private:
                                   ? std::nullopt
                                   : std::optional<std::size_t>(interaction->selected);
             popup_items.reserve(interaction->candidates.size());
-            popup_input = interaction->input.text();
-            popup_input_cursor = interaction->input.caret();
+            popup_input = interaction_input;
+            popup_input_cursor = interaction_caret;
             for (const InteractionCandidate& candidate : interaction->candidates) {
                 popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
             }

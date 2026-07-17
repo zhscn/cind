@@ -1324,6 +1324,8 @@ MotionMechanism motion_mechanism_from_scheme(SCM value, const char* caller, int 
         return MotionMechanism::BackwardCharacter;
     if (symbol_is(value, "forward-word"))
         return MotionMechanism::ForwardWord;
+    if (symbol_is(value, "forward-word-end"))
+        return MotionMechanism::ForwardWordEnd;
     if (symbol_is(value, "backward-word"))
         return MotionMechanism::BackwardWord;
     if (symbol_is(value, "forward-symbol"))

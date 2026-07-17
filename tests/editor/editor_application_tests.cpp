@@ -447,7 +447,7 @@ TEST_CASE("text input follows the focused input state policy") {
     CHECK(application.text_input_policy() == TextInputPolicy::Accept);
     CHECK_FALSE(application.handle_key(KeyStroke::character_key(U'z'), 10));
     application.insert_text("z");
-    CHECK(application.interaction().state()->input.text() == "z");
+    CHECK(application.interaction().input_text() == "z");
     CHECK(application.session().snapshot().content().to_string() == "text");
 }
 
@@ -1037,7 +1037,7 @@ TEST_CASE("scripted save-as policy configures and saves a file buffer") {
     send_keys(application, "C-x C-w");
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(application.interaction().state()->request.prompt == "Write file: ");
-    CHECK(application.interaction().state()->input.text().empty());
+    CHECK(application.interaction().input_text().empty());
     application.insert_text(path.string());
     send_keys(application, "RET");
     CHECK(application.last_command() == "file.save");
@@ -1434,7 +1434,7 @@ TEST_CASE("describe bindings and command palette use shared command state") {
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(application.interaction().state()->request.provider == "commands");
     REQUIRE(application.interaction().state()->candidates.size() > 2);
-    CHECK(application.input_focus() == "interaction");
+    CHECK(application.input_focus() == "minibuffer");
     REQUIRE(application.active_keymap_layers().size() == 2);
     CHECK(application.runtime()
               .keymaps()
@@ -1496,25 +1496,47 @@ TEST_CASE("interaction local keymap edits its own input") {
     const TextOffset document_caret = application.session().caret();
 
     send_keys(application, "M-x");
+    application.insert_text("👩‍💻");
+    send_keys(application, "Backspace");
+    CHECK(application.interaction().input_text().empty());
     application.insert_text("abc");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->input.text() == "abc");
-    CHECK(application.interaction().state()->input.caret() == 3);
+    CHECK(application.interaction().input_text() == "abc");
+    CHECK(application.interaction().input_caret() == TextOffset{3});
 
     send_keys(application, "C-b C-b");
-    CHECK(application.interaction().state()->input.caret() == 1);
+    CHECK(application.interaction().input_caret() == TextOffset{1});
     application.insert_text("X");
-    CHECK(application.interaction().state()->input.text() == "aXbc");
-    CHECK(application.interaction().state()->input.caret() == 2);
+    CHECK(application.interaction().input_text() == "aXbc");
+    CHECK(application.interaction().input_caret() == TextOffset{2});
     send_keys(application, "C-f");
-    CHECK(application.interaction().state()->input.caret() == 3);
+    CHECK(application.interaction().input_caret() == TextOffset{3});
     send_keys(application, "C-a C-d");
-    CHECK(application.interaction().state()->input.text() == "Xbc");
-    CHECK(application.interaction().state()->input.caret() == 0);
+    CHECK(application.interaction().input_text() == "Xbc");
+    CHECK(application.interaction().input_caret() == TextOffset{0});
+    send_keys(application, "C-/");
+    CHECK(application.interaction().input_text() == "aXbc");
+    CHECK(application.last_command() == "edit.undo");
+    send_keys(application, "C-M-/");
+    CHECK(application.interaction().input_text() == "Xbc");
+    CHECK(application.last_command() == "edit.redo");
     send_keys(application, "C-e");
-    CHECK(application.interaction().state()->input.caret() == 3);
+    CHECK(application.interaction().input_caret() == TextOffset{3});
     CHECK(application.session().caret() == document_caret);
 
+    send_keys(application, "C-g");
+}
+
+TEST_CASE("document and minibuffer share the ordinary kill ring") {
+    EditorApplication application = make_application("sample.cc", "alpha beta");
+    application.session().set_selection({.anchor = TextOffset{0}, .head = TextOffset{5}});
+
+    send_keys(application, "M-w");
+    send_keys(application, "M-x");
+    REQUIRE(application.interaction().active());
+    send_keys(application, "C-y");
+    CHECK(application.interaction().input_text() == "alpha");
+    CHECK(application.session().snapshot().content().to_string() == "alpha beta");
     send_keys(application, "C-g");
 }
 
@@ -1599,14 +1621,14 @@ TEST_CASE("focused interactions inherit and remap text editing commands") {
     send_keys(application, "C-a");
     send_keys(application, "M-f");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->input.caret() == 3);
-    CHECK(application.last_command() == "interaction.forward-word");
+    CHECK(application.interaction().input_caret() == TextOffset{3});
+    CHECK(application.last_command() == "cursor.forward-word");
 
     send_keys(application, "C-k");
-    CHECK(application.interaction().state()->input.text() == "foo");
-    CHECK(application.last_command() == "interaction.kill-line");
+    CHECK(application.interaction().input_text() == "foo");
+    CHECK(application.last_command() == "edit.kill-line");
     send_keys(application, "C-y");
-    CHECK(application.interaction().state()->input.text() == "foo bar");
+    CHECK(application.interaction().input_text() == "foo bar");
     CHECK(application.session().snapshot().content().to_string() == "document");
 }
 
@@ -1690,7 +1712,7 @@ TEST_CASE("minor mode keymaps use reverse activation precedence and sparse fallb
 
     send_keys(application, "M-x");
     REQUIRE(application.active_keymap_layers().size() == 2);
-    CHECK(application.active_keymap_layers().front().scope == "interaction");
+    CHECK(application.active_keymap_layers().front().scope == "minibuffer");
     CHECK(application.active_keymap_layers().back().scope == "global");
     send_keys(application, "C-g");
 

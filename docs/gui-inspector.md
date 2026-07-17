@@ -135,13 +135,13 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、count/register/extras prefix 和 last command |
 | `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape、modeline indicator、handler、on-enter/on-exit 和 position-hints provider 状态 |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/input-strategy/mode/file-mode-rule/project-provider 数量、对应 installation revision、outstanding async task 数量和最近一次 host 错误 |
-| `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
+| `editor.interaction` | minibuffer Window/View/Buffer、origin target、prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
 | `editor.projects` | project roots、discovery provider/marker、索引 revision、文件数、刷新状态和错误 |
 | `editor.location` | caret 所在 location-list 项的 source range 和目标文件位置 |
 | `editor.location_navigation` | 当前 location-list buffer、选中项和结果总数；跳到源码后仍保留 |
-| `editor.focus` | active window 和当前输入目标（window 或 interaction） |
+| `editor.focus` | active document window、当前输入目标以及 document/minibuffer focus stack |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor 的 cell 坐标、可见性和 beam/block/underline shape |
 | `scene.panes` | pane ID、cell rect 和 active 状态 |
@@ -193,7 +193,7 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 - `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、selection、连续行单位的
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
   command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
-  名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；
+  名称、parent chain 和 window/view/buffer/mode/editor/global/minibuffer 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
   Selection 记录 active mark、primary range 索引、anchored history depth、Scheme metadata，
@@ -468,8 +468,9 @@ response。
 - Window 列表包含且仅包含一个 active window，其 ID 与 `editor.active_window` 一致。
 - Workspace 的 pane 列表包含且仅包含一个 active pane；带 pane owner 的 region 必须引用
   已知 pane，并与 pane 的 active 状态一致。
-- Command keymap stack 的末层是 `global`；interaction 获得焦点时首层是 `interaction`，
-  document window 的 local/mode layers 不进入该焦点栈。
+- Command keymap stack 的末层是 `global`；minibuffer 获得焦点时首层是 `minibuffer`，
+  document window 的 local/mode layers 不进入该焦点栈。Interaction 的 origin window 与
+  active document window 一致。
 - Popup 的可见项位于 `[first_item, first_item + items.size())`，选中项使用全局索引并位于
   该区间内；可见项与 popup primitives 一一对应。
 - GUI active document layout 的可见行与 active TextArea region 一一对应；正文 cursor

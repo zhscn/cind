@@ -130,16 +130,20 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
     std::string interaction_echo;
+    const std::string interaction_input = application_.interaction().active()
+                                              ? application_.interaction().input_text()
+                                              : std::string();
+    const std::size_t interaction_caret = application_.interaction().input_caret().value;
     std::optional<int> echo_cursor;
     std::optional<std::size_t> echo_cursor_byte;
     const InteractionState* interaction = application_.interaction().state();
     const std::string_view echo = [&]() -> std::string_view {
         if (interaction != nullptr && interaction->request.kind != InteractionKind::Picker) {
-            interaction_echo = interaction->request.prompt + interaction->input.text();
-            echo_cursor = ui::display_width(interaction->request.prompt) +
-                          ui::display_width(std::string_view(interaction->input.text())
-                                                .substr(0, interaction->input.caret()));
-            echo_cursor_byte = interaction->request.prompt.size() + interaction->input.caret();
+            interaction_echo = interaction->request.prompt + interaction_input;
+            echo_cursor =
+                ui::display_width(interaction->request.prompt) +
+                ui::display_width(std::string_view(interaction_input).substr(0, interaction_caret));
+            echo_cursor_byte = interaction->request.prompt.size() + interaction_caret;
             return interaction_echo;
         }
         return preedit_.empty() ? std::string_view(application_.message())
@@ -159,8 +163,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                               ? std::nullopt
                               : std::optional<std::size_t>(interaction->selected);
         popup_items.reserve(interaction->candidates.size());
-        popup_input = interaction->input.text();
-        popup_input_cursor = interaction->input.caret();
+        popup_input = interaction_input;
+        popup_input_cursor = interaction_caret;
         for (const InteractionCandidate& candidate : interaction->candidates) {
             popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
         }
@@ -438,12 +442,25 @@ EditorStateSnapshot EditorModel::inspect() {
         .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
+        const std::string input = application_.interaction().input_text();
         interaction_state = {.active = true,
+                             .window_slot = interaction->window.slot,
+                             .window_generation = interaction->window.generation,
+                             .buffer_slot = interaction->buffer.slot,
+                             .buffer_generation = interaction->buffer.generation,
+                             .view_slot = interaction->view.slot,
+                             .view_generation = interaction->view.generation,
+                             .origin_window_slot = interaction->origin.window.slot,
+                             .origin_window_generation = interaction->origin.window.generation,
+                             .origin_buffer_slot = interaction->origin.buffer.slot,
+                             .origin_buffer_generation = interaction->origin.buffer.generation,
+                             .origin_view_slot = interaction->origin.view.slot,
+                             .origin_view_generation = interaction->origin.view.generation,
                              .kind = interaction->request.kind == InteractionKind::Picker ? "picker"
                                                                                           : "text",
                              .prompt = interaction->request.prompt,
-                             .input = interaction->input.text(),
-                             .input_cursor = interaction->input.caret(),
+                             .input = input,
+                             .input_cursor = application_.interaction().input_caret().value,
                              .history = interaction->request.history,
                              .provider = interaction->request.provider,
                              .allow_custom_input = interaction->request.allow_custom_input,
@@ -530,6 +547,10 @@ EditorStateSnapshot EditorModel::inspect() {
     const WindowId active_window = application_.window_id();
     const InputStateRegistry::Definition& input_state = application_.input_state();
     const View& active_view = application_.runtime().views().get(application_.view_id());
+    const View& focused_input_view =
+        application_.interaction().active()
+            ? application_.runtime().views().get(application_.interaction().state()->view)
+            : active_view;
     const ViewSelection view_selection = session.selection_model();
     SelectionStateSnapshot selection_state{
         .active = session.mark().has_value(),
@@ -546,12 +567,15 @@ EditorStateSnapshot EditorModel::inspect() {
              .granularity = std::string(selection_granularity_name(range.granularity))});
     }
     const std::optional<InputStrategyId> input_strategy =
-        active_view.input_strategy() ? active_view.input_strategy()
-                                     : application_.runtime().input_strategies().default_strategy();
+        focused_input_view.input_strategy()
+            ? focused_input_view.input_strategy()
+            : application_.runtime().input_strategies().default_strategy();
     PositionHintsStateSnapshot position_hints{
         .provider = static_cast<bool>(input_state.position_hints), .items = {}, .error = {}};
     PositionHintProviderResult position_hint_result =
-        application_.position_hints(application_.window_id());
+        application_.interaction().active()
+            ? PositionHintProviderResult{std::vector<PositionHint>{}}
+            : application_.position_hints(application_.window_id());
     if (position_hint_result) {
         position_hints.items.reserve(position_hint_result->size());
         for (const PositionHint& hint : *position_hint_result) {
@@ -591,7 +615,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .text_input_policy =
                 application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
             .selection_after_edit = std::string(selection_edit_policy_name(
-                application_.runtime().selection_edit_policy(application_.view_id()))),
+                application_.runtime().selection_edit_policy(focused_input_view.id()))),
             .input_state_handler = static_cast<bool>(input_state.handler),
             .input_state_on_enter = static_cast<bool>(input_state.on_enter),
             .input_state_on_exit = static_cast<bool>(input_state.on_exit),

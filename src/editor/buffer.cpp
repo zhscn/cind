@@ -80,6 +80,8 @@ std::string BufferRegistry::fallback_name(const BufferSpec& spec) {
         return "*generated*";
     case BufferKind::Process:
         return "*process*";
+    case BufferKind::Minibuffer:
+        return " *minibuffer*";
     }
     return "*buffer*";
 }

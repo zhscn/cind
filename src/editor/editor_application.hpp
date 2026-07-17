@@ -137,7 +137,7 @@ public:
     }
     std::vector<KeymapLayer> base_keymap_layers(WindowId window) const;
     std::string_view input_focus() const {
-        return interaction_.active() ? std::string_view("interaction") : std::string_view("window");
+        return interaction_.active() ? std::string_view("minibuffer") : std::string_view("window");
     }
     std::string pending_key_sequence_text() const;
     std::string pending_prefix_text() const;
@@ -279,6 +279,7 @@ private:
     std::vector<KeymapLayer> window_keymap_layers() const;
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
+    void refresh_interaction_after_edit(RevisionId before);
     CommandContext command_context();
     void after_edit();
     void save(BufferId buffer);
@@ -305,6 +306,7 @@ private:
     WindowId active_window_;
     WindowLayout window_layout_;
     InteractionController interaction_;
+    std::unique_ptr<EditSession> interaction_session_;
     BasicEditorCommands basic_commands_;
     SearchCommands search_commands_;
     CommandLoop command_loop_;

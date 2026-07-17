@@ -25,6 +25,18 @@ struct InteractionCandidateSnapshot {
 
 struct InteractionStateSnapshot {
     bool active = false;
+    std::uint32_t window_slot = 0;
+    std::uint32_t window_generation = 0;
+    std::uint32_t buffer_slot = 0;
+    std::uint32_t buffer_generation = 0;
+    std::uint32_t view_slot = 0;
+    std::uint32_t view_generation = 0;
+    std::uint32_t origin_window_slot = 0;
+    std::uint32_t origin_window_generation = 0;
+    std::uint32_t origin_buffer_slot = 0;
+    std::uint32_t origin_buffer_generation = 0;
+    std::uint32_t origin_view_slot = 0;
+    std::uint32_t origin_view_generation = 0;
     std::string kind;
     std::string prompt;
     std::string input;

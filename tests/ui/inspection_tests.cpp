@@ -56,7 +56,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .last_key = "text",
         .active_window_slot = 0,
         .active_window_generation = 1,
-        .input_focus = "interaction",
+        .input_focus = "minibuffer",
         .input_strategy = "emacs",
         .input_state = "emacs",
         .input_cursor_shape = "beam",
@@ -72,7 +72,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .command_loop =
             {.keymaps = {"interaction.picker", "application.global"},
              .layers = {{.name = "interaction.picker",
-                         .scope = "interaction",
+                         .scope = "minibuffer",
                          .parents = {"interaction.text"}},
                         {.name = "application.global", .scope = "global", .parents = {}}},
              .override_keymaps = {"editor.system"},
@@ -106,6 +106,18 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .last_error = std::nullopt},
         .interaction =
             {.active = true,
+             .window_slot = 1,
+             .window_generation = 1,
+             .buffer_slot = 1,
+             .buffer_generation = 1,
+             .view_slot = 1,
+             .view_generation = 1,
+             .origin_window_slot = 0,
+             .origin_window_generation = 1,
+             .origin_buffer_slot = 0,
+             .origin_buffer_generation = 1,
+             .origin_view_slot = 0,
+             .origin_view_generation = 1,
              .kind = "picker",
              .prompt = "Command: ",
              .input = {},
@@ -394,7 +406,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":43") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":44") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -462,7 +474,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");
     REQUIRE(command_loop.ok);
     CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
-    CHECK(command_loop.payload.find("\"scope\":\"interaction\"") != std::string::npos);
+    CHECK(command_loop.payload.find("\"scope\":\"minibuffer\"") != std::string::npos);
     CHECK(command_loop.payload.find("\"parents\":[\"interaction.text\"]") != std::string::npos);
     CHECK(command_loop.payload.find("\"override_keymaps\":[\"editor.system\"]") !=
           std::string::npos);
@@ -496,6 +508,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(interaction.ok);
     CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
     CHECK(interaction.payload.find("\"input_cursor\":0") != std::string::npos);
+    CHECK(interaction.payload.find("\"surface\":{\"window\":{\"slot\":1") != std::string::npos);
+    CHECK(interaction.payload.find("\"origin\":{\"window\":{\"slot\":0") != std::string::npos);
 
     const InspectionResponse popup_layout = run_inspection_query(hub, "get render.popup_layout");
     REQUIRE(popup_layout.ok);
@@ -536,7 +550,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
 
     const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
     REQUIRE(focus.ok);
-    CHECK(focus.payload.find("\"target\":\"interaction\"") != std::string::npos);
+    CHECK(focus.payload.find("\"target\":\"minibuffer\"") != std::string::npos);
+    CHECK(focus.payload.find("\"stack\":[{\"target\":\"window\"") != std::string::npos);
 
     const InspectionResponse view_tree = run_inspection_query(hub, "get scene.view_tree");
     REQUIRE(view_tree.ok);

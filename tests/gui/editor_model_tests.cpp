@@ -336,6 +336,11 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     EditorStateSnapshot state = model.inspect();
     CHECK(state.interaction.active);
     CHECK(state.interaction.prompt == "search: ");
+    CHECK(state.input_focus == "minibuffer");
+    CHECK(state.interaction.origin_window_slot == state.active_window_slot);
+    CHECK(state.interaction.origin_window_generation == state.active_window_generation);
+    CHECK(state.interaction.window_slot != state.interaction.origin_window_slot);
+    CHECK(state.interaction.buffer_slot != state.buffers.front().buffer_slot);
     CHECK(state.command_loop.last_command == "search.prompt");
     ui::Scene scene = compose_frame(model, 8, 80);
     const ui::Region* echo = scene.find(ui::RegionRole::EchoArea);

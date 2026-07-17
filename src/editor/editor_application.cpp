@@ -357,7 +357,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                },
            .cancel_async_task = [this](std::uint64_t task) { return script_async_.cancel(task); },
            .async_tasks = [this] { return script_async_.tasks(); }}),
-      interaction_(runtime_.interaction_providers()),
+      interaction_(runtime_, runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
           {.page_rows = [this] { return command_page_rows_; },
@@ -378,8 +378,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             if (InteractionState* active = interaction_.state();
                 active != nullptr && active->request.provider == "project-files" &&
                 session().buffer().project_id() == project) {
-                CommandContext context = command_context();
-                interaction_.refresh_candidates(context);
+                interaction_.refresh_candidates();
             }
         });
     register_input_states();
@@ -447,6 +446,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
 
 EditorApplication::~EditorApplication() {
     guile_.shutdown_async_tasks();
+    interaction_session_.reset();
+    (void)interaction_.cancel();
 }
 
 BufferId EditorApplication::buffer_id() const {
@@ -505,10 +506,11 @@ void EditorApplication::refresh_default_keymap() {
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     command_page_rows_ = std::max(1, page_rows);
     last_key_ = format_key_stroke(key);
-    runtime_.views().clear_input_feedback(view_id());
+    const ViewId focused_view = interaction_.active() ? interaction_.state()->view : view_id();
+    runtime_.views().clear_input_feedback(focused_view);
     sync_keymaps();
-    if (!interaction_.active()) {
-        const View& active_view = runtime_.views().get(view_id());
+    {
+        const View& active_view = runtime_.views().get(focused_view);
         if (const std::optional<InputStateId> state = active_view.input_states().top()) {
             const InputStateRegistry::Definition& definition =
                 runtime_.input_states().definition(*state);
@@ -542,8 +544,10 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                     if (handled->invocation.prefix.empty()) {
                         handled->invocation.prefix = command_loop_.pending_prefix();
                     }
+                    const RevisionId interaction_revision = interaction_.input_revision();
                     const bool consumed = handle_loop_result(
                         command_loop_.execute(handled->command, context, handled->invocation));
+                    refresh_interaction_after_edit(interaction_revision);
                     sync_keymaps();
                     return consumed;
                 }
@@ -563,6 +567,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
             }
         }
     }
+    const RevisionId interaction_revision = interaction_.input_revision();
     CommandContext context = command_context();
     const CommandPrefix text_prefix = command_loop_.pending_prefix();
     CommandLoopResult result = command_loop_.dispatch(key, context);
@@ -574,6 +579,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                                           !has_modifier(key.modifiers, KeyModifier::Super) &&
                                           text_input_policy() == TextInputPolicy::Accept;
     const bool consumed = handle_loop_result(std::move(result));
+    refresh_interaction_after_edit(interaction_revision);
     if (preserve_prefix_for_text) {
         command_loop_.set_pending_prefix(text_prefix);
     }
@@ -589,6 +595,14 @@ TextInputPolicy EditorApplication::text_input_policy() const {
 }
 
 const InputStateRegistry::Definition& EditorApplication::input_state() const {
+    if (const InteractionState* interaction = interaction_.state()) {
+        const std::optional<InputStateId> state =
+            runtime_.views().get(interaction->view).input_states().top();
+        if (!state) {
+            throw std::logic_error("focused minibuffer view has no input state");
+        }
+        return runtime_.input_states().definition(*state);
+    }
     return input_state(active_window_);
 }
 
@@ -605,12 +619,6 @@ void EditorApplication::insert_text(std::string_view text) {
     if (text.empty()) {
         return;
     }
-    if (interaction_.active()) {
-        CommandContext context = command_context();
-        interaction_.insert(text, context);
-        last_key_ = "text";
-        return;
-    }
     if (text_input_policy() == TextInputPolicy::Ignore) {
         return;
     }
@@ -618,7 +626,9 @@ void EditorApplication::insert_text(std::string_view text) {
     if (!prefix.empty()) {
         command_loop_.cancel_pending();
     }
-    if (session().buffer().read_only()) {
+    EditSession& target = interaction_session_ ? *interaction_session_ : session();
+    const RevisionId interaction_revision = interaction_.input_revision();
+    if (target.buffer().read_only()) {
         message_ = "buffer is read-only";
         return;
     }
@@ -649,20 +659,22 @@ void EditorApplication::insert_text(std::string_view text) {
         committed = repeated;
     }
     if (text.size() == 1 && static_cast<unsigned char>(text.front()) >= 0x20U) {
-        session().type_text(committed);
+        target.type_text(committed);
     } else {
-        session().insert_text(committed);
+        target.insert_text(committed);
     }
-    reset_preferred_column();
+    basic_commands_.reset_preferred_column(target.view_id());
     last_key_ = "text";
     after_edit();
-    if (runtime_.selection_edit_policy(view_id()) == SelectionEditPolicy::Collapse) {
-        session().clear_selection();
+    if (runtime_.selection_edit_policy(target.view_id()) == SelectionEditPolicy::Collapse) {
+        target.clear_selection();
     }
+    refresh_interaction_after_edit(interaction_revision);
 }
 
 void EditorApplication::reset_preferred_column() {
-    basic_commands_.reset_preferred_column(view_id());
+    basic_commands_.reset_preferred_column(interaction_.active() ? interaction_.state()->view
+                                                                 : view_id());
 }
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
@@ -1475,6 +1487,9 @@ const EditorApplication::ViewState* EditorApplication::find_view(WindowId window
 }
 
 EditSession& EditorApplication::session_for(ViewId view) {
+    if (interaction_session_ && interaction_session_->view_id() == view) {
+        return *interaction_session_;
+    }
     return *view_state_for(view).session;
 }
 
@@ -1883,8 +1898,13 @@ void EditorApplication::register_commands() {
                               .mode;
 
     define("keyboard.quit", [this](const CommandInvocation&) {
-        runtime_.views().reset_input_states(view_id());
+        if (const InteractionState* state = interaction_.state()) {
+            runtime_.views().reset_input_states(state->view);
+        } else {
+            runtime_.views().reset_input_states(view_id());
+        }
         command_loop_.cancel_pending();
+        interaction_session_.reset();
         if (interaction_.cancel()) {
             message_ = "cancelled";
             return;
@@ -1902,78 +1922,10 @@ void EditorApplication::register_commands() {
             if (!submission) {
                 return std::unexpected(CommandError{std::move(submission.error())});
             }
+            interaction_session_.reset();
             return CommandDispatch{.command = submission->accept_command,
-                                   .invocation = std::move(submission->invocation)};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.erase-backward",
-        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.erase_backward(context);
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.erase-forward",
-        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.erase_forward(context);
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.backward-character",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_backward();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.forward-character",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_forward();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.backward-word",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_word_backward();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.forward-word",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_word_forward();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.line-start",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_to_start();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.line-end",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_to_end();
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.kill-line",
-        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.kill_to_end(context);
-            return CommandCompleted{};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.yank",
-        [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.yank(context);
-            return CommandCompleted{};
+                                   .invocation = std::move(submission->invocation),
+                                   .target = submission->target};
         },
         interaction_enabled);
     runtime_.commands().define(
@@ -2085,7 +2037,7 @@ void EditorApplication::register_keymaps() {
     if (!text_input_keymap || !editor_keymap || !application_keymap) {
         throw std::logic_error("Guile keymap policy did not define its root keymaps");
     }
-    runtime_.keymaps().set_parent(interaction_text_keymap_, *text_input_keymap);
+    runtime_.keymaps().set_parent(interaction_text_keymap_, text_input_keymap);
     runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     keymap_ = *editor_keymap;
     application_keymap_ = *application_keymap;
@@ -2102,21 +2054,6 @@ void EditorApplication::register_keymaps() {
          std::initializer_list<std::pair<std::string_view, std::string_view>>{
              {"RET", "interaction.submit"}, {"ESC", "keyboard.quit"}}) {
         runtime_.keymaps().bind(interaction_text_keymap_, keys, command(name));
-    }
-    for (const auto& [source, target] :
-         std::initializer_list<std::pair<std::string_view, std::string_view>>{
-             {"edit.delete-backward", "interaction.erase-backward"},
-             {"edit.delete-forward", "interaction.erase-forward"},
-             {"cursor.backward-character", "interaction.backward-character"},
-             {"cursor.forward-character", "interaction.forward-character"},
-             {"cursor.backward-word", "interaction.backward-word"},
-             {"cursor.forward-word", "interaction.forward-word"},
-             {"cursor.line-start", "interaction.line-start"},
-             {"cursor.line-end", "interaction.line-end"},
-             {"edit.kill-line", "interaction.kill-line"},
-             {"edit.yank", "interaction.yank"},
-         }) {
-        runtime_.keymaps().bind_remap(interaction_text_keymap_, command(source), command(target));
     }
     for (std::string_view keys : {"C-n", "Down", "TAB"}) {
         runtime_.keymaps().bind(interaction_picker_keymap_, keys,
@@ -2145,7 +2082,7 @@ std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_i
     const View& view = runtime_.views().get(window.view_id());
     const Buffer& buffer = runtime_.buffers().get(view.buffer_id());
     append(window.keymaps(), "window");
-    append(view.keymaps(), "view");
+    append(view.keymaps(), buffer.kind() == BufferKind::Minibuffer ? "minibuffer" : "view");
     append(buffer.keymaps(), "buffer");
     for (auto mode = buffer.modes().minors().rbegin(); mode != buffer.modes().minors().rend();
          ++mode) {
@@ -2159,7 +2096,9 @@ std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_i
         append(runtime_.modes().effective_keymaps(*buffer.modes().major()),
                std::format("major-mode:{}", definition.name));
     }
-    append(std::span(&keymap_, 1), "editor");
+    if (buffer.kind() != BufferKind::Minibuffer) {
+        append(std::span(&keymap_, 1), "editor");
+    }
     append(std::span(&application_keymap_, 1), "global");
     return layers;
 }
@@ -2175,7 +2114,9 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
             }
         }
     };
-    const View& view = runtime_.views().get(view_id());
+    const WindowId focused_window =
+        interaction_.active() ? interaction_.state()->window : active_window_;
+    const View& view = runtime_.views().get(view_id(focused_window));
     const std::vector<InputStateId>& input_states = view.input_states().stack();
     for (auto state = input_states.rbegin(); state != input_states.rend(); ++state) {
         const InputStateRegistry::Definition& definition =
@@ -2188,22 +2129,13 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
             append(std::span(&layer, 1));
         }
     }
-    const std::vector<KeymapLayer> base = base_keymap_layers(active_window_);
+    const std::vector<KeymapLayer> base = base_keymap_layers(focused_window);
     append(base);
     return layers;
 }
 
 void EditorApplication::sync_keymaps() {
-    std::vector<KeymapLayer> layers;
-    if (const InteractionState* interaction = interaction_.state()) {
-        layers.push_back({.keymap = interaction->request.kind == InteractionKind::Picker
-                                        ? interaction_picker_keymap_
-                                        : interaction_text_keymap_,
-                          .scope = "interaction"});
-        layers.push_back({.keymap = application_keymap_, .scope = "global"});
-    } else {
-        layers = window_keymap_layers();
-    }
+    std::vector<KeymapLayer> layers = window_keymap_layers();
     const std::span<const KeymapLayer> active = command_loop_.keymap_layers();
     const bool changed =
         layers.size() != active.size() ||
@@ -2222,11 +2154,26 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
     }
     if (result.interaction) {
         CommandContext context = command_context();
+        const KeymapId interaction_keymap = result.interaction->kind == InteractionKind::Picker
+                                                ? interaction_picker_keymap_
+                                                : interaction_text_keymap_;
         std::expected<void, std::string> started =
-            interaction_.start(std::move(*result.interaction), context);
+            interaction_.start(std::move(*result.interaction), context, interaction_keymap);
         if (!started) {
             message_ = started.error();
         } else {
+            const InteractionState& state = *interaction_.state();
+            const std::optional<InputStateId> minibuffer_state =
+                runtime_.input_states().find("emacs");
+            if (!minibuffer_state) {
+                interaction_session_.reset();
+                (void)interaction_.cancel();
+                message_ = "minibuffer input state is unavailable";
+                return result.consumed;
+            }
+            runtime_.views().set_base_input_state(state.view, *minibuffer_state);
+            interaction_session_ =
+                std::make_unique<EditSession>(runtime_, state.buffer, state.view, CppIndentStyle{});
             message_.clear();
         }
     } else if (result.status == CommandLoopStatus::Error ||
@@ -2241,7 +2188,17 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
 }
 
 CommandContext EditorApplication::command_context() {
+    if (const InteractionState* interaction = interaction_.state()) {
+        return CommandContext(runtime_, interaction->window, interaction->buffer,
+                              interaction->view);
+    }
     return CommandContext(runtime_, active_window_, buffer_id(), view_id());
+}
+
+void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
+    if (interaction_.active() && interaction_.input_revision() != before) {
+        interaction_.refresh_candidates();
+    }
 }
 
 void EditorApplication::after_edit() {

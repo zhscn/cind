@@ -136,16 +136,18 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                                       const CommandInvocation& invocation,
                                       std::string key_sequence) {
     const CommandRegistry& commands = runtime_->commands();
-    const RevisionId initial_revision = context.buffer().snapshot().revision();
+    std::optional<CommandContext> targeted_context;
+    CommandContext* active_context = &context;
+    RevisionId initial_revision = active_context->buffer().snapshot().revision();
     CommandId current = command;
     CommandInvocation current_invocation = invocation;
     constexpr int maximum_dispatch_depth = 32;
     for (int depth = 0; depth < maximum_dispatch_depth; ++depth) {
-        if (!commands.enabled(current, context)) {
+        if (!commands.enabled(current, *active_context)) {
             const CommandResult disabled =
                 std::unexpected(CommandError{"command is disabled in this context"});
             if (std::optional<std::string> error =
-                    apply_selection_result(disabled, context, initial_revision)) {
+                    apply_selection_result(disabled, *active_context, initial_revision)) {
                 pending_prefix_ = {};
                 return {.status = CommandLoopStatus::Error,
                         .consumed = true,
@@ -164,14 +166,14 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
         }
         CommandResult result;
         try {
-            result = commands.invoke(current, context, current_invocation);
+            result = commands.invoke(current, *active_context, current_invocation);
         } catch (const std::exception& exception) {
             result = std::unexpected(CommandError{exception.what()});
         } catch (...) {
             result = std::unexpected(CommandError{"command failed with an unknown exception"});
         }
         if (!result) {
-            return finish(current, std::move(result), std::move(key_sequence), context,
+            return finish(current, std::move(result), std::move(key_sequence), *active_context,
                           initial_revision);
         }
         if (CommandDispatch* dispatch = std::get_if<CommandDispatch>(&*result)) {
@@ -180,13 +182,19 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
             }
             current = dispatch->command;
             current_invocation = std::move(dispatch->invocation);
+            if (dispatch->target) {
+                targeted_context.emplace(*runtime_, dispatch->target->window,
+                                         dispatch->target->buffer, dispatch->target->view);
+                active_context = &*targeted_context;
+                initial_revision = active_context->buffer().snapshot().revision();
+            }
             continue;
         }
-        return finish(current, std::move(result), std::move(key_sequence), context,
+        return finish(current, std::move(result), std::move(key_sequence), *active_context,
                       initial_revision);
     }
     return finish(current, std::unexpected(CommandError{"command dispatch depth exceeded"}),
-                  std::move(key_sequence), context, initial_revision);
+                  std::move(key_sequence), *active_context, initial_revision);
 }
 
 CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
@@ -307,7 +315,10 @@ std::optional<std::string> CommandLoop::apply_selection_result(const CommandResu
             return std::nullopt;
         }
         if (const ViewSelection* replacement = std::get_if<ViewSelection>(requested)) {
-            runtime_->views().set_selection(context.view_id(), *replacement);
+            ViewSelection selection{.ranges = replacement->ranges,
+                                    .primary = replacement->primary,
+                                    .metadata = replacement->metadata};
+            runtime_->views().set_selection(context.view_id(), std::move(selection));
             return std::nullopt;
         }
         if (edited &&

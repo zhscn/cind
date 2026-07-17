@@ -294,6 +294,18 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
 void append_interaction(std::string& output, const InteractionStateSnapshot& interaction) {
     output += "{\"active\":";
     append_bool(output, interaction.active);
+    output += std::format(",\"surface\":{{\"window\":{{\"slot\":{},\"generation\":{}}},"
+                          "\"buffer\":{{\"slot\":{},\"generation\":{}}},"
+                          "\"view\":{{\"slot\":{},\"generation\":{}}}}},"
+                          "\"origin\":{{\"window\":{{\"slot\":{},\"generation\":{}}},"
+                          "\"buffer\":{{\"slot\":{},\"generation\":{}}},"
+                          "\"view\":{{\"slot\":{},\"generation\":{}}}}}",
+                          interaction.window_slot, interaction.window_generation,
+                          interaction.buffer_slot, interaction.buffer_generation,
+                          interaction.view_slot, interaction.view_generation,
+                          interaction.origin_window_slot, interaction.origin_window_generation,
+                          interaction.origin_buffer_slot, interaction.origin_buffer_generation,
+                          interaction.origin_view_slot, interaction.origin_view_generation);
     output += ",\"kind\":";
     append_json_string(output, interaction.kind);
     output += ",\"prompt\":";
@@ -1300,7 +1312,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         }
     }
     const std::string_view expected_focus = frame.editor.interaction.active
-                                                ? std::string_view("interaction")
+                                                ? std::string_view("minibuffer")
                                                 : std::string_view("window");
     if (frame.editor.input_focus != expected_focus) {
         violations.emplace_back("editor input focus does not match interaction state");
@@ -1322,9 +1334,15 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         violations.emplace_back("command keymap names do not match layer state");
     }
     if (frame.editor.command_loop.layers.empty() ||
-        (expected_focus == "interaction") !=
-            (frame.editor.command_loop.layers.front().scope == "interaction")) {
+        (expected_focus == "minibuffer") !=
+            (frame.editor.command_loop.layers.front().scope == "minibuffer")) {
         violations.emplace_back("command keymap layers do not match input focus");
+    }
+    if (frame.editor.interaction.active &&
+        (frame.editor.interaction.origin_window_slot != frame.editor.active_window_slot ||
+         frame.editor.interaction.origin_window_generation !=
+             frame.editor.active_window_generation)) {
+        violations.emplace_back("minibuffer origin does not match the active document window");
     }
     if (frame.editor.command_loop.layers.empty() ||
         frame.editor.command_loop.layers.back().scope != "global") {
@@ -1988,6 +2006,16 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
             std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",
                         frame.editor.active_window_slot, frame.editor.active_window_generation);
         append_json_string(output, frame.editor.input_focus);
+        output += ",\"stack\":[{\"target\":\"window\",\"window\":{";
+        output += std::format("\"slot\":{},\"generation\":{}}}", frame.editor.active_window_slot,
+                              frame.editor.active_window_generation);
+        if (frame.editor.interaction.active) {
+            output += ",{\"target\":\"minibuffer\",\"window\":{";
+            output +=
+                std::format("\"slot\":{},\"generation\":{}}}", frame.editor.interaction.window_slot,
+                            frame.editor.interaction.window_generation);
+        }
+        output.push_back(']');
         output.push_back('}');
     } else if (path == "editor.input_state") {
         output = "{\"strategy\":";
@@ -2671,6 +2699,16 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " fraction=" << frame.render.damage.output_fraction
            << " reference-match=" << (frame.render.damage.full_reference_match ? "true" : "false")
            << '\n';
+    if (frame.editor.interaction.active) {
+        output << "      minibuffer window=" << frame.editor.interaction.window_slot << ':'
+               << frame.editor.interaction.window_generation
+               << " view=" << frame.editor.interaction.view_slot << ':'
+               << frame.editor.interaction.view_generation
+               << " buffer=" << frame.editor.interaction.buffer_slot << ':'
+               << frame.editor.interaction.buffer_generation
+               << " origin-window=" << frame.editor.interaction.origin_window_slot << ':'
+               << frame.editor.interaction.origin_window_generation << '\n';
+    }
     output << "    timings-us layout=" << frame.render.timings.layout_us
            << " compose=" << frame.render.timings.compose_us
            << " state=" << frame.render.timings.render_state_us
