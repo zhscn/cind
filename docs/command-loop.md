@@ -192,6 +192,11 @@ multi-range Selection for move or extend behavior. A thing returns inner and bou
 the effective major/minor mode policy maps semantic nouns to concrete definitions. Meow's `w/b`
 and `,`/`.` bindings consume these APIs without adding modal branches to the command loop.
 
+Selection verbs submit a typed Selection and one replacement per range to the native edit session.
+Character, line, and node ranges are resolved before mutation, checked for overlap, and committed
+as one transaction and undo node. The mechanism returns the collapsed post-edit Selection, so the
+strategy package remains responsible for the visible selection lifecycle.
+
 The keymap registry merges immediate continuations across ordered keymaps and their parents using
 the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is
 pending, the scene contains a popup listing the next keys and their semantic details. This is the

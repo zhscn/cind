@@ -51,6 +51,9 @@ struct GuileHostServices {
     std::function<std::vector<KeymapId>(WindowId)> base_keymap_layers;
     std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;
+    std::function<std::expected<ViewSelection, std::string>(ViewId, ViewSelection,
+                                                            std::vector<std::string>)>
+        replace_selection;
     std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> insert_text;
     std::function<std::optional<GuileTextRange>(ViewId)> soft_kill_range;

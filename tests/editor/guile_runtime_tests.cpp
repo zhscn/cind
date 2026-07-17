@@ -387,6 +387,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  runtime.views().set_selection(target, std::move(selection));
              },
          .clear_selection = [&](ViewId target) { runtime.views().clear_selection(target); },
+         .replace_selection = [](ViewId, ViewSelection selection, std::vector<std::string>)
+             -> std::expected<ViewSelection, std::string> { return selection; },
          .erase_range = [&](ViewId target,
                             GuileTextRange range) -> std::expected<void, std::string> {
              Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
@@ -441,7 +443,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 64);
+    CHECK(*installed == 65);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -794,7 +796,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 64);
+    CHECK(snapshot.scripted_commands == 65);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

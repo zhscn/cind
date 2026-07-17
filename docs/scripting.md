@@ -93,6 +93,7 @@ The native module exports:
 (view-selection host view-id)
 (set-selection! host view-id selection)
 (clear-selection! host view-id)
+(replace-selection! host view-id selection replacement-or-vector)
 (buffer-substring host buffer-id start end)
 (erase-range! host view-id start end)
 (insert-text! host view-id text)
@@ -240,7 +241,11 @@ across insertions and erasures, and moving the View caret moves the primary head
 the other ranges. Views that display the same Buffer retain independent selections.
 `buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
 native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
-caret reveal coherent. `soft-kill-range` is a syntax-aware range query and does not mutate text.
+caret reveal coherent. `replace-selection!` accepts either one replacement string for every range
+or a vector containing one string per range. It resolves character, line, and node granularities,
+rejects overlapping or block ranges, applies every replacement in one transaction, and returns the
+collapsed post-edit Selection with its primary index and metadata intact. `soft-kill-range` is a
+syntax-aware range query and does not mutate text.
 
 `define-thing!` creates or reconfigures a runtime-owned named noun definition. Patterns are
 `(pair open close)`, `(cst-node kind)`, `(char-class word-or-symbol)`, or

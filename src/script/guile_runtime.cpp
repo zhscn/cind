@@ -1737,6 +1737,56 @@ SCM clear_selection(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
+std::vector<std::string> selection_replacements_from_scheme(SCM value, std::size_t range_count,
+                                                            const char* caller, int position) {
+    if (scm_is_string(value)) {
+        return std::vector<std::string>(range_count, scheme_string(value));
+    }
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != range_count) {
+        scm_wrong_type_arg_msg(caller, position, value,
+                               "replacement string or one-string-per-range vector");
+    }
+    std::vector<std::string> replacements;
+    replacements.reserve(range_count);
+    for (std::size_t index = 0; index < range_count; ++index) {
+        const SCM replacement = scm_c_vector_ref(value, index);
+        if (!scm_is_string(replacement)) {
+            scm_wrong_type_arg_msg(caller, position, replacement, "replacement string");
+        }
+        replacements.push_back(scheme_string(replacement));
+    }
+    return replacements;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
+                      SCM replacements_value) {
+    HostLease& host = require_host(host_object, "replace-selection!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "replace-selection!", 2);
+    if (!host.services.replace_selection) {
+        scm_misc_error("replace-selection!", "selection edit capability is unavailable", SCM_EOL);
+    }
+    try {
+        ViewSelection selection =
+            view_selection_from_scheme(selection_value, "replace-selection!", 3);
+        std::vector<std::string> replacements = selection_replacements_from_scheme(
+            replacements_value, selection.ranges.size(), "replace-selection!", 4);
+        std::expected<ViewSelection, std::string> result =
+            host.services.replace_selection(view, std::move(selection), std::move(replacements));
+        if (!result) {
+            raise_host_error("replace-selection!", result.error());
+        }
+        return view_selection_value(*result);
+    } catch (const std::exception& exception) {
+        raise_host_error("replace-selection!", exception.what());
+    } catch (...) {
+        scm_misc_error("replace-selection!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -2546,6 +2596,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_selection));
     (void)scm_c_define_gsubr("clear-selection!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(clear_selection));
+    (void)scm_c_define_gsubr("replace-selection!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(replace_selection));
     (void)scm_c_define_gsubr("buffer-substring", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_substring));
     (void)scm_c_define_gsubr("erase-range!", 4, 0, 0, reinterpret_cast<scm_t_subr>(erase_range));
@@ -2599,26 +2651,27 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export(
-        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-        "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-        "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
-        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
-        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
-        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
-        "%define-mode!", "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
-        "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
-        "open-buffer-summaries", "project-root", "project-files", "path-relative", "path-filename",
-        "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "buffer-substring", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
-        "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-        "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+                 "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
+                 "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
+                 "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
+                 "set-base-input-state!", "push-input-state!", "pop-input-state!",
+                 "reset-input-states!", "view-input-states", "observe-input-state-changes!",
+                 "define-thing!", "define-motion!", "%define-mode!", "mode-properties",
+                 "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
+                 "observe-mode-policy-changes!", "enabled-command-names", "open-buffer-summaries",
+                 "project-root", "project-files", "path-relative", "path-filename",
+                 "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
+                 "directory-path?", "path-as-directory", "view-caret", "view-mark",
+                 "view-selection", "set-selection!", "clear-selection!", "replace-selection!",
+                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+                 "set-view-caret!", "reset-preferred-column!", "thing-selection",
+                 "motion-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+                 "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
+                 "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+                 "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
+                 "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {

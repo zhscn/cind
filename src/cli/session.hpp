@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -72,6 +73,11 @@ public:
     IndentDecision indent();
     // Erases a range as one undo unit; the caret settles at range.start.
     void erase(TextRange range);
+    // Replaces every range in one transaction. Replacements are positional:
+    // one string per range. The returned selection contains the collapsed
+    // post-edit positions and retains the input primary index and metadata.
+    ViewSelection replace_selection(ViewSelection selection,
+                                    std::span<const std::string> replacements);
     bool undo();
     bool redo();
 

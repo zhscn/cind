@@ -451,7 +451,14 @@
                (set-message! host "kill ring and clipboard are empty")))
         (command-completed)))
 
+    (define (delete-selection context invocation)
+      (let* ((view (context-view context))
+             (result (replace-selection! host view (view-selection host view) "")))
+        (request-redraw! host)
+        (command-completed/selection result)))
+
     (list (list "selection.toggle-mark" toggle-mark #f)
+          (list "edit.delete-selection" delete-selection #f)
           (list "edit.kill-region" kill-region #f)
           (list "edit.kill-line" kill-line #f)
           (list "edit.copy-region" copy-region #f)

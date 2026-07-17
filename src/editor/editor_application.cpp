@@ -172,6 +172,22 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    session_for(view).clear_selection();
                    view_state_for(view).selection_history.clear();
                },
+           .replace_selection = [this](ViewId view, ViewSelection selection,
+                                       std::vector<std::string> replacements)
+               -> std::expected<ViewSelection, std::string> {
+               try {
+                   EditSession& active = session_for(view);
+                   const RevisionId before = active.snapshot().revision();
+                   ViewSelection result =
+                       active.replace_selection(std::move(selection), replacements);
+                   if (active.snapshot().revision() != before) {
+                       after_edit(view);
+                   }
+                   return result;
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
            .erase_range = [this](ViewId view,
                                  GuileTextRange range) -> std::expected<void, std::string> {
                try {

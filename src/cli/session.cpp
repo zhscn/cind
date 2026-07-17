@@ -2,8 +2,12 @@
 
 #include "editor/cpp_mode.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <vector>
 
 namespace cind {
 
@@ -20,6 +24,34 @@ BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text)
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
     return buffer;
 }
+
+TextRange editable_range(const Text& text, const SelectionRange& selection) {
+    const TextRange ordered = selection.ordered();
+    if (ordered.end.value > text.size_bytes()) {
+        throw std::out_of_range("selection range is outside the document");
+    }
+    switch (selection.granularity) {
+    case SelectionGranularity::Character:
+    case SelectionGranularity::Node:
+        return ordered;
+    case SelectionGranularity::Line: {
+        const std::uint32_t first_line = text.position(ordered.start).line;
+        const TextOffset last_position =
+            ordered.empty() ? ordered.start : TextOffset{ordered.end.value - 1};
+        const std::uint32_t last_line = text.position(last_position).line;
+        return TextRange{text.line_start(first_line), text.line_range(last_line).end};
+    }
+    case SelectionGranularity::Block:
+        throw std::invalid_argument("block selection replacement requires rectangular geometry");
+    }
+    throw std::invalid_argument("unknown selection granularity");
+}
+
+struct PlannedSelectionEdit {
+    std::size_t selection_index = 0;
+    TextRange range;
+    std::string_view replacement;
+};
 
 } // namespace
 
@@ -105,6 +137,79 @@ void EditSession::erase(TextRange range) {
     analyzer_.apply(commit.change, commit.snapshot);
     set_caret(range.start);
     record_caret(before);
+}
+
+ViewSelection EditSession::replace_selection(ViewSelection selection,
+                                             std::span<const std::string> replacements) {
+    if (selection.ranges.empty()) {
+        throw std::invalid_argument("selection replacement requires at least one range");
+    }
+    if (selection.primary >= selection.ranges.size()) {
+        throw std::out_of_range("selection replacement primary range is outside the range list");
+    }
+    if (replacements.size() != selection.ranges.size()) {
+        throw std::invalid_argument("selection replacement requires one text per range");
+    }
+
+    const Text content = snapshot().content();
+    std::vector<PlannedSelectionEdit> edits;
+    edits.reserve(selection.ranges.size());
+    for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
+        edits.push_back({.selection_index = index,
+                         .range = editable_range(content, selection.ranges[index]),
+                         .replacement = replacements[index]});
+    }
+    std::ranges::sort(edits,
+                      [](const PlannedSelectionEdit& left, const PlannedSelectionEdit& right) {
+                          if (left.range.start != right.range.start) {
+                              return left.range.start < right.range.start;
+                          }
+                          return left.range.end < right.range.end;
+                      });
+    for (std::size_t index = 1; index < edits.size(); ++index) {
+        const PlannedSelectionEdit& previous = edits[index - 1];
+        const PlannedSelectionEdit& current = edits[index];
+        if (current.range.start < previous.range.end ||
+            current.range.start == previous.range.start) {
+            throw std::invalid_argument("selection replacement ranges must not overlap");
+        }
+    }
+
+    ViewSelection result = selection;
+    std::int64_t delta = 0;
+    for (const PlannedSelectionEdit& edit : edits) {
+        const std::int64_t replacement_size = static_cast<std::int64_t>(edit.replacement.size());
+        const std::int64_t position =
+            static_cast<std::int64_t>(edit.range.start.value) + delta + replacement_size;
+        if (position < 0 || position > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::length_error("selection replacement exceeds the text offset limit");
+        }
+        result.ranges[edit.selection_index] = {
+            .anchor = TextOffset{static_cast<std::uint32_t>(position)},
+            .head = TextOffset{static_cast<std::uint32_t>(position)},
+            .granularity = SelectionGranularity::Character};
+        delta += replacement_size - static_cast<std::int64_t>(edit.range.length());
+    }
+
+    const bool mutates = std::ranges::any_of(edits, [](const PlannedSelectionEdit& edit) {
+        return !edit.range.empty() || !edit.replacement.empty();
+    });
+    if (!mutates) {
+        return result;
+    }
+
+    const TextOffset before = caret();
+    EditTransaction transaction = mutable_document().begin_transaction();
+    for (auto edit = edits.rbegin(); edit != edits.rend(); ++edit) {
+        if (!edit->range.empty() || !edit->replacement.empty()) {
+            transaction.replace(edit->range, edit->replacement);
+        }
+    }
+    CommitResult commit = transaction.commit();
+    analyzer_.apply(commit.change, commit.snapshot);
+    set_caret(result.ranges[result.primary].head);
+    record_caret(before);
+    return result;
 }
 
 IndentDecision EditSession::indent() {

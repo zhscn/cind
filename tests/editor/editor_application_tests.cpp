@@ -402,6 +402,45 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
           SelectionGranularity::Node);
 }
 
+TEST_CASE("Guile selection verbs replace every range in one undo unit") {
+    EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
+    EditorRuntime& runtime = application.runtime();
+    runtime.views().set_selection(
+        application.view_id(),
+        ViewSelection{.ranges = {{.anchor = TextOffset{0},
+                                  .head = TextOffset{3},
+                                  .granularity = SelectionGranularity::Character},
+                                 {.anchor = TextOffset{4},
+                                  .head = TextOffset{4},
+                                  .granularity = SelectionGranularity::Line}},
+                      .primary = 1,
+                      .metadata = "(verb . delete)"});
+
+    const std::optional<CommandId> command = runtime.commands().find("edit.delete-selection");
+    REQUIRE(command.has_value());
+    CommandContext context(runtime, application.window_id(), application.buffer_id(),
+                           application.view_id());
+    CHECK(application.command_loop().execute(*command, context).status ==
+          CommandLoopStatus::Executed);
+    CHECK(application.session().snapshot().content() == "\nthree\n");
+    const ViewSelection result = application.session().selection_model();
+    CHECK(result == ViewSelection{.ranges = {{.anchor = TextOffset{0},
+                                              .head = TextOffset{0},
+                                              .granularity = SelectionGranularity::Character},
+                                             {.anchor = TextOffset{1},
+                                              .head = TextOffset{1},
+                                              .granularity = SelectionGranularity::Character}},
+                                  .primary = 1,
+                                  .metadata = "(verb . delete)"});
+
+    CHECK(application.session().undo());
+    CHECK(application.session().snapshot().content() == "one\ntwo\nthree\n");
+    CHECK_FALSE(application.session().undo());
+    CHECK(application.session().redo());
+    CHECK(application.session().snapshot().content() == "\nthree\n");
+    CHECK_FALSE(application.session().redo());
+}
+
 TEST_CASE("background saving is independent of a graphical event loop") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /
