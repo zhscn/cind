@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -246,6 +247,10 @@ struct RendererDeleter {
 
 struct TextureDeleter {
     void operator()(SDL_Texture* texture) const { SDL_DestroyTexture(texture); }
+};
+
+struct SurfaceDeleter {
+    void operator()(SDL_Surface* surface) const { SDL_DestroySurface(surface); }
 };
 
 class SdlWindow {
@@ -531,14 +536,122 @@ private:
         if (texture_ && texture_width_ == width && texture_height_ == height) {
             return;
         }
-        texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_STREAMING, width, height));
+        texture_.reset();
+        scroll_texture_.reset();
+        std::unique_ptr<SDL_Texture, TextureDeleter> primary(SDL_CreateTexture(
+            renderer_.get(), SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width, height));
+        std::unique_ptr<SDL_Texture, TextureDeleter> secondary(SDL_CreateTexture(
+            renderer_.get(), SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width, height));
+        const auto configure = [](SDL_Texture* texture) {
+            return texture != nullptr && SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE) &&
+                   SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+        };
+        if (configure(primary.get()) && configure(secondary.get())) {
+            texture_ = std::move(primary);
+            scroll_texture_ = std::move(secondary);
+        } else {
+            texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_ARGB8888,
+                                             SDL_TEXTUREACCESS_STREAMING, width, height));
+        }
         if (!texture_) {
             throw std::runtime_error(
                 std::format("SDL texture creation failed: {}", SDL_GetError()));
         }
         texture_width_ = width;
         texture_height_ = height;
+    }
+
+    bool translate_texture(const SkiaGridTranslation& translation, int pixel_width,
+                           int pixel_height, const std::byte* pixel_bytes, std::size_t row_bytes,
+                           RenderTimingSnapshot& timings) {
+        if (!scroll_texture_) {
+            return false;
+        }
+        SDL_Texture* const target = scroll_texture_.get();
+        if (!SDL_SetRenderTarget(renderer_.get(), target)) {
+            scroll_texture_.reset();
+            return false;
+        }
+
+        const int output_rows = translation.output_rows;
+        const int grid_bottom = translation.grid_output_bottom;
+        const int overlap_height = grid_bottom - std::abs(output_rows);
+        const float source_y = static_cast<float>(output_rows < 0 ? -output_rows : 0);
+        const float destination_y = static_cast<float>(output_rows > 0 ? output_rows : 0);
+        const SDL_FRect grid_source{.x = 0.0F,
+                                    .y = source_y,
+                                    .w = static_cast<float>(pixel_width),
+                                    .h = static_cast<float>(overlap_height)};
+        const SDL_FRect grid_destination{.x = 0.0F,
+                                         .y = destination_y,
+                                         .w = static_cast<float>(pixel_width),
+                                         .h = static_cast<float>(overlap_height)};
+        bool copied = SDL_RenderTexture(renderer_.get(), texture_.get(), &grid_source,
+                                        &grid_destination);
+        if (copied && grid_bottom < pixel_height) {
+            const SDL_FRect footer{.x = 0.0F,
+                                   .y = static_cast<float>(grid_bottom),
+                                   .w = static_cast<float>(pixel_width),
+                                   .h = static_cast<float>(pixel_height - grid_bottom)};
+            copied = SDL_RenderTexture(renderer_.get(), texture_.get(), &footer, &footer);
+        }
+        if (!SDL_SetRenderTarget(renderer_.get(), nullptr)) {
+            throw std::runtime_error(
+                std::format("SDL render target restore failed: {}", SDL_GetError()));
+        }
+        if (!copied || !SDL_FlushRenderer(renderer_.get())) {
+            scroll_texture_.reset();
+            return false;
+        }
+
+        const SDL_Rect exposed{
+            .x = 0,
+            .y = output_rows < 0 ? grid_bottom + output_rows : 0,
+            .w = pixel_width,
+            .h = std::abs(output_rows),
+        };
+        const std::size_t byte_offset = static_cast<std::size_t>(exposed.y) * row_bytes;
+        if (!SDL_UpdateTexture(target, &exposed, pixel_bytes + byte_offset,
+                               static_cast<int>(row_bytes))) {
+            scroll_texture_.reset();
+            return false;
+        }
+        std::swap(texture_, scroll_texture_);
+        timings.texture_scroll_reused = true;
+        timings.texture_copy_pixels =
+            static_cast<std::uint64_t>(pixel_width) *
+            static_cast<std::uint64_t>(pixel_height - exposed.h);
+        timings.uploaded_bytes += static_cast<std::uint64_t>(exposed.w) *
+                                  static_cast<std::uint64_t>(exposed.h) * sizeof(std::uint32_t);
+        ++timings.upload_rects;
+        return true;
+    }
+
+    bool texture_matches_pixels(const std::byte* expected, int pixel_width, int pixel_height,
+                                std::size_t row_bytes) const {
+        std::unique_ptr<SDL_Surface, SurfaceDeleter> captured(
+            SDL_RenderReadPixels(renderer_.get(), nullptr));
+        if (!captured) {
+            return false;
+        }
+        std::unique_ptr<SDL_Surface, SurfaceDeleter> converted(
+            SDL_ConvertSurface(captured.get(), SDL_PIXELFORMAT_ARGB8888));
+        if (!converted || converted->w != pixel_width || converted->h != pixel_height ||
+            converted->pitch < pixel_width * static_cast<int>(sizeof(std::uint32_t))) {
+            return false;
+        }
+        const auto* actual = static_cast<const std::byte*>(converted->pixels);
+        const std::size_t compared_row_bytes =
+            static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
+        for (int y = 0; y < pixel_height; ++y) {
+            if (std::memcmp(actual + static_cast<std::size_t>(y) *
+                                        static_cast<std::size_t>(converted->pitch),
+                            expected + static_cast<std::size_t>(y) * row_bytes,
+                            compared_row_bytes) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     float display_scale() const {
@@ -626,6 +739,7 @@ private:
         direct_scroll_pending_ = false;
 
         SkiaRenderDiagnostics render_diagnostics;
+        std::optional<SkiaGridTranslation> grid_translation;
         const auto raster_started = std::chrono::steady_clock::now();
         if (frame.animated()) {
             presenter_.render_animated(frame.layout(), frame.animation(), pixel_width, pixel_height,
@@ -635,9 +749,10 @@ private:
             presenter_.render(frame.layout(), pixel_width, pixel_height, pixels_.data(), row_bytes,
                               scale, inspection_ ? &render_diagnostics : nullptr);
         } else if (!frame.logical_damage().empty()) {
-            if (!presenter_.render_grid_translation_damage(
-                    frame.layout(), frame.scene_damage(), pixel_width, pixel_height, pixels_.data(),
-                    row_bytes, scale)) {
+            grid_translation = presenter_.render_grid_translation_damage(
+                frame.layout(), frame.scene_damage(), pixel_width, pixel_height, pixels_.data(),
+                row_bytes, scale);
+            if (!grid_translation) {
                 presenter_.render_damage(frame.layout(), pixel_width, pixel_height, pixels_.data(),
                                          row_bytes, frame.logical_damage(), scale);
             }
@@ -664,23 +779,28 @@ private:
         ensure_texture(pixel_width, pixel_height);
         const auto* pixel_bytes = reinterpret_cast<const std::byte*>(pixels_.data());
         const auto upload_started = std::chrono::steady_clock::now();
-        for (const FrameDamageRect& rect : frame.damage()) {
-            const SDL_Rect output_rect{.x = rect.output.x,
-                                       .y = rect.output.y,
-                                       .w = rect.output.width,
-                                       .h = rect.output.height};
-            const std::size_t byte_offset =
-                static_cast<std::size_t>(rect.output.y) * row_bytes +
-                static_cast<std::size_t>(rect.output.x) * sizeof(std::uint32_t);
-            if (!SDL_UpdateTexture(texture_.get(), &output_rect, pixel_bytes + byte_offset,
-                                   static_cast<int>(row_bytes))) {
-                throw std::runtime_error(
-                    std::format("SDL texture update failed: {}", SDL_GetError()));
+        const bool texture_translated =
+            grid_translation && translate_texture(*grid_translation, pixel_width, pixel_height,
+                                                  pixel_bytes, row_bytes, timings);
+        if (!texture_translated) {
+            for (const FrameDamageRect& rect : frame.damage()) {
+                const SDL_Rect output_rect{.x = rect.output.x,
+                                           .y = rect.output.y,
+                                           .w = rect.output.width,
+                                           .h = rect.output.height};
+                const std::size_t byte_offset =
+                    static_cast<std::size_t>(rect.output.y) * row_bytes +
+                    static_cast<std::size_t>(rect.output.x) * sizeof(std::uint32_t);
+                if (!SDL_UpdateTexture(texture_.get(), &output_rect, pixel_bytes + byte_offset,
+                                       static_cast<int>(row_bytes))) {
+                    throw std::runtime_error(
+                        std::format("SDL texture update failed: {}", SDL_GetError()));
+                }
+                timings.uploaded_bytes += static_cast<std::uint64_t>(rect.output.width) *
+                                          static_cast<std::uint64_t>(rect.output.height) *
+                                          sizeof(std::uint32_t);
+                ++timings.upload_rects;
             }
-            timings.uploaded_bytes += static_cast<std::uint64_t>(rect.output.width) *
-                                      static_cast<std::uint64_t>(rect.output.height) *
-                                      sizeof(std::uint32_t);
-            ++timings.upload_rects;
         }
         timings.upload_us =
             elapsed_microseconds(upload_started, std::chrono::steady_clock::now());
@@ -689,10 +809,21 @@ private:
             !SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr)) {
             throw std::runtime_error(std::format("SDL presentation failed: {}", SDL_GetError()));
         }
+        const auto render_submitted = std::chrono::steady_clock::now();
+        if (inspection_ && texture_translated) {
+            const auto texture_reference_started = render_submitted;
+            full_reference_match =
+                full_reference_match &&
+                texture_matches_pixels(pixel_bytes, pixel_width, pixel_height, row_bytes);
+            timings.reference_us += elapsed_microseconds(texture_reference_started,
+                                                         std::chrono::steady_clock::now());
+        }
+        const auto present_resumed = std::chrono::steady_clock::now();
         update_text_input_area(frame);
         SDL_RenderPresent(renderer_.get());
         const auto present_finished = std::chrono::steady_clock::now();
-        timings.present_us = elapsed_microseconds(present_started, present_finished);
+        timings.present_us = elapsed_microseconds(present_started, render_submitted) +
+                             elapsed_microseconds(present_resumed, present_finished);
         timings.total_us = elapsed_microseconds(frame_started, present_finished);
         rendered_scale_ = scale;
         if (editor_snapshot) {
@@ -1003,6 +1134,7 @@ private:
     std::unique_ptr<SDL_Window, WindowDeleter> window_;
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
+    std::unique_ptr<SDL_Texture, TextureDeleter> scroll_texture_;
     std::vector<std::uint32_t> pixels_;
     std::vector<std::uint32_t> diagnostic_pixels_;
     std::optional<PresentedFrame> presented_frame_;

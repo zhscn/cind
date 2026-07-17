@@ -2698,10 +2698,9 @@ void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width
                   storage.documents.empty() ? nullptr : &storage.documents.front());
 }
 
-bool SkiaPresenter::render_grid_translation_damage(const SkiaFrameLayout& layout,
-                                                   const ui::SceneDamage& damage, int pixel_width,
-                                                   int pixel_height, void* pixels,
-                                                   std::size_t row_bytes, float device_scale) {
+std::optional<SkiaGridTranslation> SkiaPresenter::render_grid_translation_damage(
+    const SkiaFrameLayout& layout, const ui::SceneDamage& damage, int pixel_width,
+    int pixel_height, void* pixels, std::size_t row_bytes, float device_scale) {
     const SkiaFrameLayout::Storage& storage = checked_layout(layout);
     validate_layout_viewport(
         {.width = storage.viewport_width, .height = storage.viewport_height},
@@ -2713,7 +2712,7 @@ bool SkiaPresenter::render_grid_translation_damage(const SkiaFrameLayout& layout
     if (damage.full_repaint || !damage.grid_transform_changed ||
         damage.grid_translation_rows == 0.0F || !damage.cell_rects.empty() ||
         !damage.cursor_cells.empty() || !scene.panes.empty() || has_overlay) {
-        return false;
+        return std::nullopt;
     }
     if (pixels == nullptr || pixel_width <= 0 || pixel_height <= 0 ||
         row_bytes < static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t)) {
@@ -2725,14 +2724,14 @@ bool SkiaPresenter::render_grid_translation_damage(const SkiaFrameLayout& layout
     const int output_rows = static_cast<int>(std::lround(output_translation));
     if (output_rows == 0 ||
         std::abs(output_translation - static_cast<float>(output_rows)) > 0.001F) {
-        return false;
+        return std::nullopt;
     }
     const float logical_grid_bottom = storage.pixel_layout->vertical().grid_clip_bottom();
     const int grid_output_bottom =
         std::clamp(static_cast<int>(std::ceil(logical_grid_bottom * device_scale)), 0,
                    pixel_height);
     if (std::abs(output_rows) >= grid_output_bottom) {
-        return false;
+        return std::nullopt;
     }
 
     auto* bytes = static_cast<std::byte*>(pixels);
@@ -2756,7 +2755,8 @@ bool SkiaPresenter::render_grid_translation_damage(const SkiaFrameLayout& layout
     }
     render_damage(layout, pixel_width, pixel_height, pixels, row_bytes,
                   std::span<const SkiaLogicalRect>(&exposed, 1), device_scale);
-    return true;
+    return SkiaGridTranslation{.output_rows = output_rows,
+                               .grid_output_bottom = grid_output_bottom};
 }
 
 void SkiaPresenter::render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,

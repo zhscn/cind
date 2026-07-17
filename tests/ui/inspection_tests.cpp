@@ -577,6 +577,12 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(damage.payload.find("\"output\":{\"x\":0,\"y\":0,\"width\":45") != std::string::npos);
     CHECK(damage.payload.find("\"full_reference_match\":true") != std::string::npos);
 
+    const InspectionResponse timings = run_inspection_query(hub, "get render.timings");
+    REQUIRE(timings.ok);
+    CHECK(timings.payload.find("\"texture_scroll_reused\":false") != std::string::npos);
+    CHECK(timings.payload.find("\"texture_copy_pixels\":0") != std::string::npos);
+    CHECK(timings.payload.find("\"shape_cache_hits\":0") != std::string::npos);
+
     const InspectionResponse primitive =
         run_inspection_query(hub, "get render.primitive.line:0/byte:0");
     REQUIRE(primitive.ok);

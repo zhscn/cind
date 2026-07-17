@@ -80,6 +80,11 @@ struct SkiaShapeCacheStats {
     std::size_t entries = 0;
 };
 
+struct SkiaGridTranslation {
+    int output_rows = 0;
+    int grid_output_bottom = 0;
+};
+
 enum class SkiaCursorOwner : std::uint8_t {
     None,
     Document,
@@ -309,12 +314,12 @@ public:
                        void* pixels, std::size_t row_bytes, std::span<const SkiaLogicalRect> damage,
                        float device_scale = 1.0F);
     // Reuses the retained raster when a fractional scroll translates otherwise unchanged grid
-    // content by a whole number of output pixels. Returns false when the frame needs normal damage
-    // rendering instead.
-    bool render_grid_translation_damage(const SkiaFrameLayout& layout,
-                                        const ui::SceneDamage& damage, int pixel_width,
-                                        int pixel_height, void* pixels, std::size_t row_bytes,
-                                        float device_scale = 1.0F);
+    // content by a whole number of output pixels. Returns no translation when the frame needs
+    // normal damage rendering instead.
+    std::optional<SkiaGridTranslation>
+    render_grid_translation_damage(const SkiaFrameLayout& layout, const ui::SceneDamage& damage,
+                                   int pixel_width, int pixel_height, void* pixels,
+                                   std::size_t row_bytes, float device_scale = 1.0F);
     void render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
                          int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
                          float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);

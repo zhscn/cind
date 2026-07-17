@@ -1070,11 +1070,13 @@ void append_render_timings(std::string& output, const RenderTimingSnapshot& timi
         "{{\"layout_us\":{},\"compose_us\":{},\"render_state_us\":{},\"inspect_us\":{},"
         "\"frame_build_us\":{},\"raster_us\":{},\"reference_us\":{},\"upload_us\":{},"
         "\"present_us\":{},\"total_us\":{},\"uploaded_bytes\":{},\"upload_rects\":{},"
+        "\"texture_scroll_reused\":{},\"texture_copy_pixels\":{},"
         "\"shape_cache_hits\":{},\"shape_cache_misses\":{},"
         "\"shape_cache_evictions\":{},\"shape_cache_entries\":{}}}",
         timings.layout_us, timings.compose_us, timings.render_state_us, timings.inspect_us,
         timings.frame_build_us, timings.raster_us, timings.reference_us, timings.upload_us,
         timings.present_us, timings.total_us, timings.uploaded_bytes, timings.upload_rects,
+        timings.texture_scroll_reused, timings.texture_copy_pixels,
         timings.shape_cache_hits, timings.shape_cache_misses, timings.shape_cache_evictions,
         timings.shape_cache_entries);
 }
@@ -2650,6 +2652,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " total=" << frame.render.timings.total_us
            << " uploaded-bytes=" << frame.render.timings.uploaded_bytes
            << " upload-rects=" << frame.render.timings.upload_rects
+           << " texture-scroll="
+           << (frame.render.timings.texture_scroll_reused ? "true" : "false")
+           << " copied-pixels=" << frame.render.timings.texture_copy_pixels
            << " shape-cache=" << frame.render.timings.shape_cache_hits << '/'
            << frame.render.timings.shape_cache_misses
            << " evictions=" << frame.render.timings.shape_cache_evictions

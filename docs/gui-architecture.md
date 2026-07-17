@@ -136,11 +136,13 @@ origins, colors and clipping remain frame-local.
 When only the fractional grid transform changes and maps to an integral output-pixel translation,
 the retained CPU raster is shifted in place and Skia repaints only the newly exposed strip. Frames
 with overlays, pane grids, changed cells or subpixel output translations use normal damage
-rendering. The current SDL streaming texture still uploads the full changed grid after this CPU
-reuse; reducing that transfer requires the planned tiled or ring-texture compositor.
+rendering. The SDL renderer keeps two target textures for the same safe path: it copies the retained
+grid overlap and fixed footer into the alternate texture, uploads only the exposed output rows, and
+then swaps the textures. Target creation, copy or update failure retains the current texture and
+falls back to normal damage upload.
 
-Static frames update only damaged ranges of the retained raster and the corresponding SDL streaming
-texture rectangles. Animated frames repaint the full raster because several Scene keyframes and a
+Static frames update only damaged ranges of the retained raster and the corresponding SDL texture
+rectangles. Animated frames repaint the full raster because several Scene keyframes and a
 transient view overlay contribute to one output. SDL composites the retained texture into the
 current swapchain image.
 

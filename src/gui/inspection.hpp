@@ -106,6 +106,8 @@ struct RenderTimingSnapshot {
     double total_us = 0.0;
     std::uint64_t uploaded_bytes = 0;
     std::size_t upload_rects = 0;
+    bool texture_scroll_reused = false;
+    std::uint64_t texture_copy_pixels = 0;
     std::uint64_t shape_cache_hits = 0;
     std::uint64_t shape_cache_misses = 0;
     std::uint64_t shape_cache_evictions = 0;

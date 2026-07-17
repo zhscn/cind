@@ -507,11 +507,22 @@ TEST_CASE("Skia presenter limits fractional scroll damage to the document grid")
     CHECK(rectangles.front().width == static_cast<float>(width));
     CHECK(rectangles.front().height == doctest::Approx(grid_height));
 
-    CHECK(presenter.render_grid_translation_damage(
+    const std::optional<SkiaGridTranslation> translation =
+        presenter.render_grid_translation_damage(
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height)),
-        damage, width, height, retained.data(), row_bytes));
+        damage, width, height, retained.data(), row_bytes);
+    REQUIRE(translation);
+    CHECK(translation->output_rows == -presenter.cell_height() / 2);
+    CHECK(translation->grid_output_bottom == static_cast<int>(grid_height));
     presenter.render(scene, width, height, reference.data(), row_bytes);
     CHECK(retained == reference);
+
+    Region popup{
+        RegionRole::Popup, {0, 1, 1, 8}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    scene.regions.push_back(std::move(popup));
+    CHECK_FALSE(presenter.render_grid_translation_damage(
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height)),
+        damage, width, height, retained.data(), row_bytes));
 }
 
 TEST_CASE("Skia presenter reuses shaped text runs across layouts") {
