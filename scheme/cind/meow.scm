@@ -534,31 +534,32 @@
   (define-keymap! host meow-motion-keymap #f)
   (define-keymap! host meow-insert-keymap #f)
   (define-input-state! host 'meow-normal
-    (vector meow-normal-keymap) 'ignore 'block "N" #f)
-  (set-input-state-position-hints!
-   host 'meow-normal
-   (lambda (context) (expand-position-hints host context)))
+    #:keymaps (vector meow-normal-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "N"
+    #:position-hints (lambda (context) (expand-position-hints host context)))
   (define-input-state! host 'meow-motion
-    (vector meow-motion-keymap) 'ignore 'block "M" #f)
+    #:keymaps (vector meow-motion-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "M")
   (define-input-state! host 'meow-insert
-    (vector meow-insert-keymap) 'accept 'beam "I" #f)
+    #:keymaps (vector meow-insert-keymap)
+    #:indicator "I")
   (define-input-state! host meow-keypad-state
-    (vector) 'ignore 'block "K"
-    (lambda (context key) (keypad-handle-key host context key)))
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "K"
+    #:handler (lambda (context key) (keypad-handle-key host context key))
+    #:on-exit (lambda (event) (remove-session! host (vector-ref event 1))))
   (define-input-state! host meow-numeric-state
-    (vector) 'ignore 'block "N"
-    (lambda (context key) (numeric-handle-key host context key)))
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "N"
+    #:handler (lambda (context key) (numeric-handle-key host context key))
+    #:on-exit (lambda (event) (remove-numeric-session! host (vector-ref event 1))))
   (define-input-strategy! host 'meow 'meow-normal 'meow-motion 'collapse)
-  (observe-input-state-changes!
-   host
-   (lambda (event)
-     (when (eq? (vector-ref event 0) 'pop)
-       (let ((view (vector-ref event 1))
-             (state (vector-ref event 2)))
-         (cond ((eq? state meow-keypad-state)
-                (remove-session! host view))
-               ((eq? state meow-numeric-state)
-                (remove-numeric-session! host view)))))))
   5)
 
 (define keypad-bindings

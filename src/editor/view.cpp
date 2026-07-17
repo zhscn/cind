@@ -21,6 +21,7 @@ ViewRegistry::~ViewRegistry() {
     }
     for (Slot& slot : slots_) {
         if (slot.value) {
+            slot.value->input_states_.release(*input_states_, slot.value->id());
             remove_anchors(*slot.value);
             slot.value.reset();
         }
@@ -167,7 +168,7 @@ bool ViewRegistry::erase(ViewId id) {
     if (view->attached_windows_ != 0) {
         return false;
     }
-    view->input_states_.reset(*input_states_, id);
+    view->input_states_.release(*input_states_, id);
     remove_anchors(*view);
     Slot& slot = slots_[id.slot];
     slot.value.reset();

@@ -1,8 +1,24 @@
 (define-module (cind input)
   #:use-module (cind command)
   #:use-module (cind host)
-  #:export (install-read-key-input-state!
+  #:export (define-input-state!
+            install-read-key-input-state!
             read-key-then!))
+
+(define* (define-input-state! host name
+                              #:key
+                              (keymaps (vector))
+                              (text-input 'accept)
+                              (cursor 'beam)
+                              (indicator "")
+                              (handler #f)
+                              (on-enter #f)
+                              (on-exit #f)
+                              (position-hints #f))
+  (let ((state (%define-input-state! host name keymaps text-input cursor indicator handler)))
+    (set-input-state-lifecycle! host name on-enter on-exit)
+    (set-input-state-position-hints! host name position-hints)
+    state))
 
 (define read-key-state 'input.read-key)
 
@@ -71,12 +87,9 @@
 
 (define (install-read-key-input-state! host)
   (define-input-state! host read-key-state
-    (vector) 'ignore 'block "KEY"
-    (lambda (context key) (handle-key host context key)))
-  (observe-input-state-changes!
-   host
-   (lambda (event)
-     (when (and (eq? (vector-ref event 0) 'pop)
-                (eq? (vector-ref event 2) read-key-state))
-       (remove-session! host (vector-ref event 1)))))
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "KEY"
+    #:handler (lambda (context key) (handle-key host context key))
+    #:on-exit (lambda (event) (remove-session! host (vector-ref event 1))))
   1)

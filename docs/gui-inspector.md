@@ -126,7 +126,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、count/register/extras prefix 和 last command |
-| `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape、modeline indicator 和 position-hints provider 状态 |
+| `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape、modeline indicator、handler、on-enter/on-exit 和 position-hints provider 状态 |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/input-strategy/mode 数量、对应 installation revision 和最近一次 host 错误 |
 | `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |

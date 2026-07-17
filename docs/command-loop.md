@@ -98,8 +98,11 @@ package-specific key-routing code.
 
 Push, pop and base replacement publish typed state-change events containing the View and the
 previous and next state identities. Resetting a stack emits one pop event per transient state and
-preserves the base. Destroying a View resets its transient states before releasing the View, so
-state observers receive symmetric exit events. An input state may also provide a key handler. The focused View's top handler
+preserves the base. Each state may own `on-enter` and `on-exit` policy over its stack-membership
+lifetime. Pushing a second transient state obscures the first without ending that lifetime; pop,
+base replacement, and View release perform state-local cleanup. Destroying a View resets its
+transients and exits its durable state before releasing the View. Lifecycle failures are contained
+as scripting diagnostics after the authoritative transition. An input state may also provide a key handler. The focused View's top handler
 runs after the always-active override layer and before ordinary layered lookup. It returns pass,
 consume, dispatch-command, pending feedback, or an error. Passing refreshes the state layers and
 continues through the command loop. Consuming and errors clear pending chords; dispatch-command
@@ -298,7 +301,7 @@ and last command. Interaction state includes prompt kind, input caret,
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
 lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
 reports the active state name, text-input policy, selection-after-edit policy, cursor shape, and
-indicator.
+indicator, plus whether it owns a handler, lifecycle callbacks, or a position-hints provider.
 Selection state reports whether a mark is active, the primary range, strategy metadata, and every
 directional range with its granularity.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible

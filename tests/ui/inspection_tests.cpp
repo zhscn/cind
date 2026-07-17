@@ -63,6 +63,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .input_state_indicator = "",
         .text_input_policy = "accept",
         .selection_after_edit = "collapse",
+        .input_state_handler = true,
+        .input_state_on_enter = true,
+        .input_state_on_exit = false,
         .position_hints = {.provider = true,
                            .items = {{.position = TextOffset{2}, .label = "1"}},
                            .error = std::nullopt},
@@ -381,7 +384,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":39") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":40") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -453,7 +456,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(input_state.payload ==
           "{\"strategy\":\"emacs\",\"name\":\"emacs\",\"cursor_shape\":\"beam\","
           "\"indicator\":\"\",\"text_input\":\"accept\","
-          "\"selection_after_edit\":\"collapse\",\"position_hints_provider\":true}");
+          "\"selection_after_edit\":\"collapse\",\"handler\":true,\"on_enter\":true,"
+          "\"on_exit\":false,\"position_hints_provider\":true}");
 
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);

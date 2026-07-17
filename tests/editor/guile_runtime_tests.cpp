@@ -147,14 +147,18 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStateId keypad = runtime.input_states().find("meow-keypad").value_or(InputStateId{});
     REQUIRE(keypad);
     CHECK(runtime.input_states().definition(keypad).handler);
+    CHECK(runtime.input_states().definition(keypad).on_exit);
+    CHECK_FALSE(runtime.input_states().definition(keypad).on_enter);
     const InputStateId numeric =
         runtime.input_states().find("meow-numeric").value_or(InputStateId{});
     REQUIRE(numeric);
     CHECK(runtime.input_states().definition(numeric).handler);
+    CHECK(runtime.input_states().definition(numeric).on_exit);
     const InputStateId read_key =
         runtime.input_states().find("input.read-key").value_or(InputStateId{});
     REQUIRE(read_key);
     CHECK(runtime.input_states().definition(read_key).handler);
+    CHECK(runtime.input_states().definition(read_key).on_exit);
     CHECK(runtime.input_states().definition(read_key).indicator == "KEY");
     const InputStrategyId meow =
         runtime.input_strategies().find("meow").value_or(InputStrategyId{});
@@ -177,6 +181,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStrategyId vim = runtime.input_strategies().find("vim").value_or(InputStrategyId{});
     const InputStateId structural =
         runtime.input_states().find("structural-node").value_or(InputStateId{});
+    const InputStateId vim_operator =
+        runtime.input_states().find("vim-operator").value_or(InputStateId{});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     const InputStrategyId toy_strategy =
@@ -186,8 +192,11 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     REQUIRE(vim);
     REQUIRE(helix);
     REQUIRE(structural);
+    REQUIRE(vim_operator);
     CHECK(runtime.input_states().definition(structural).indicator == "NODE");
     CHECK(runtime.input_states().definition(structural).text_input == TextInputPolicy::Ignore);
+    CHECK(runtime.input_states().definition(structural).on_exit);
+    CHECK(runtime.input_states().definition(vim_operator).on_exit);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(runtime.input_strategies().definition(emacs_strategy).selection_after_edit ==
           SelectionEditPolicy::Collapse);

@@ -111,11 +111,18 @@
   (define-keymap! host helix-select-keymap #f)
   (define-keymap! host helix-insert-keymap #f)
   (define-input-state! host 'hx-normal
-    (vector helix-normal-keymap) 'ignore 'block "NOR" #f)
+    #:keymaps (vector helix-normal-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "NOR")
   (define-input-state! host 'hx-select
-    (vector helix-select-keymap) 'ignore 'block "SEL" #f)
+    #:keymaps (vector helix-select-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "SEL")
   (define-input-state! host 'hx-insert
-    (vector helix-insert-keymap) 'accept 'beam "INS" #f)
+    #:keymaps (vector helix-insert-keymap)
+    #:indicator "INS")
   (define-input-strategy! host 'helix 'hx-normal 'hx-normal 'preserve)
   3)
 

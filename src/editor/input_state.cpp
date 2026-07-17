@@ -96,6 +96,29 @@ void InputStateRegistry::publish(const InputStateChange& change) const {
     }
 }
 
+void InputStateRegistry::enter(InputStateId state, const InputStateChange& change) const noexcept {
+    try {
+        if (const InputStateLifecycleHandler& callback = definition(state).on_enter) {
+            callback(change);
+        }
+    } catch (...) {
+        // The stack transition is already authoritative. Extension failures
+        // must not leave membership half-applied; scripting callbacks report
+        // their own diagnostics through the runtime snapshot.
+    }
+}
+
+void InputStateRegistry::exit(InputStateId state, const InputStateChange& change) const noexcept {
+    try {
+        if (const InputStateLifecycleHandler& callback = definition(state).on_exit) {
+            callback(change);
+        }
+    } catch (...) {
+        // See enter(): lifecycle policy observes a completed transition and
+        // cannot roll it back by throwing.
+    }
+}
+
 std::optional<InputStateId> ViewInputStates::base() const {
     return states_.empty() ? std::nullopt : std::optional(states_.front());
 }
@@ -114,8 +137,13 @@ void ViewInputStates::set_base(InputStateRegistry& registry, ViewId view, InputS
     }
     if (previous != state) {
         feedback_.reset();
-        registry.publish(
-            {.view = view, .kind = InputStateChangeKind::Base, .from = previous, .to = state});
+        const InputStateChange change{
+            .view = view, .kind = InputStateChangeKind::Base, .from = previous, .to = state};
+        if (previous) {
+            registry.exit(*previous, change);
+        }
+        registry.enter(state, change);
+        registry.publish(change);
     }
 }
 
@@ -127,8 +155,10 @@ void ViewInputStates::push(InputStateRegistry& registry, ViewId view, InputState
     const std::optional<InputStateId> previous = top();
     feedback_.reset();
     states_.push_back(state);
-    registry.publish(
-        {.view = view, .kind = InputStateChangeKind::Push, .from = previous, .to = state});
+    const InputStateChange change{
+        .view = view, .kind = InputStateChangeKind::Push, .from = previous, .to = state};
+    registry.enter(state, change);
+    registry.publish(change);
 }
 
 std::optional<InputStateId> ViewInputStates::pop(InputStateRegistry& registry, ViewId view) {
@@ -138,14 +168,29 @@ std::optional<InputStateId> ViewInputStates::pop(InputStateRegistry& registry, V
     const InputStateId removed = states_.back();
     feedback_.reset();
     states_.pop_back();
-    registry.publish(
-        {.view = view, .kind = InputStateChangeKind::Pop, .from = removed, .to = states_.back()});
+    const InputStateChange change{
+        .view = view, .kind = InputStateChangeKind::Pop, .from = removed, .to = states_.back()};
+    registry.exit(removed, change);
+    registry.publish(change);
     return removed;
 }
 
 void ViewInputStates::reset(InputStateRegistry& registry, ViewId view) {
     while (pop(registry, view)) {
     }
+}
+
+void ViewInputStates::release(InputStateRegistry& registry, ViewId view) {
+    reset(registry, view);
+    const std::optional<InputStateId> base_state = base();
+    if (!base_state) {
+        return;
+    }
+    states_.clear();
+    feedback_.reset();
+    registry.exit(
+        *base_state,
+        {.view = view, .kind = InputStateChangeKind::Pop, .from = base_state, .to = std::nullopt});
 }
 
 void ViewInputStates::set_feedback(InputFeedback feedback) {

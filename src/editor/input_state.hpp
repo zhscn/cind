@@ -76,6 +76,11 @@ struct InputStateHandlerAction {
 
 using InputStateHandlerResult = std::expected<InputStateHandlerAction, std::string>;
 using InputStateHandler = std::function<InputStateHandlerResult(CommandContext&, KeyStroke)>;
+// Lifecycle callbacks belong to stack membership rather than top-state
+// activation: enter runs when a state is inserted and exit runs when it is
+// removed. A transient state may therefore obscure another state without
+// ending the obscured state's lifetime.
+using InputStateLifecycleHandler = std::function<void(const InputStateChange&)>;
 using PositionHintProviderResult = std::expected<std::vector<PositionHint>, std::string>;
 // Position hints are presentation policy derived from the current document,
 // Selection, effective mode policy, and InputState. Providers are pure queries;
@@ -92,6 +97,8 @@ public:
         std::string indicator;
         InputStateHandler handler;
         PositionHintProvider position_hints;
+        InputStateLifecycleHandler on_enter;
+        InputStateLifecycleHandler on_exit;
     };
 
     using ListenerId = std::uint64_t;
@@ -114,6 +121,8 @@ public:
 private:
     friend class ViewInputStates;
 
+    void enter(InputStateId state, const InputStateChange& change) const noexcept;
+    void exit(InputStateId state, const InputStateChange& change) const noexcept;
     void publish(const InputStateChange& change) const;
     void validate(const Definition& definition) const;
 
@@ -140,6 +149,7 @@ private:
     void push(InputStateRegistry& registry, ViewId view, InputStateId state);
     std::optional<InputStateId> pop(InputStateRegistry& registry, ViewId view);
     void reset(InputStateRegistry& registry, ViewId view);
+    void release(InputStateRegistry& registry, ViewId view);
     void set_feedback(InputFeedback feedback);
     void clear_feedback() { feedback_.reset(); }
 

@@ -240,6 +240,14 @@
     (set-base-input-state! host (context-view context) 'vim-normal)
     (command-dispatch "edit.kill-region")))
 
+(define (operator-state-exit host event)
+  (let* ((view (vector-ref event 1))
+         (session (find-operator-session host view)))
+    (when session
+      (unless (vector-ref session 6)
+        (set-selection! host view (vector-ref session 2)))
+      (remove-operator-session! host view))))
+
 (define (digit-command-definitions host)
   (let loop ((digit 0)
              (definitions '()))
@@ -283,27 +291,25 @@
   (define-keymap! host vim-insert-keymap #f)
   (define-keymap! host vim-visual-keymap #f)
   (define-input-state! host 'vim-normal
-    (vector vim-normal-keymap) 'ignore 'block "N" #f)
+    #:keymaps (vector vim-normal-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "N")
   (define-input-state! host 'vim-insert
-    (vector vim-insert-keymap) 'accept 'beam "I" #f)
+    #:keymaps (vector vim-insert-keymap)
+    #:indicator "I")
   (define-input-state! host 'vim-visual
-    (vector vim-visual-keymap) 'ignore 'block "V" #f)
+    #:keymaps (vector vim-visual-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "V")
   (define-input-state! host vim-operator-state
-    (vector) 'ignore 'block "O"
-    (lambda (context key) (vim-operator-handler host context key)))
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "O"
+    #:handler (lambda (context key) (vim-operator-handler host context key))
+    #:on-exit (lambda (event) (operator-state-exit host event)))
   (define-input-strategy! host 'vim 'vim-normal 'vim-normal 'collapse)
-  (observe-input-state-changes!
-   host
-   (lambda (event)
-     (when (eq? (vector-ref event 0) 'pop)
-       (let ((view (vector-ref event 1))
-             (state (vector-ref event 2)))
-         (when (eq? state vim-operator-state)
-           (let ((session (find-operator-session host view)))
-             (when session
-               (unless (vector-ref session 6)
-                 (set-selection! host view (vector-ref session 2)))
-               (remove-operator-session! host view))))))))
   4)
 
 (define digit-bindings

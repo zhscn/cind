@@ -1028,10 +1028,10 @@ std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer,
             continue;
         }
         const ViewId view = (*it)->view;
-        it = views_.erase(it);
         if (!runtime_.views().erase(view)) {
             throw std::logic_error("view lifecycle registry is inconsistent");
         }
+        it = views_.erase(it);
     }
     buffers_.erase(found);
     if (!runtime_.buffers().erase(buffer)) {
@@ -1624,10 +1624,10 @@ void EditorApplication::destroy_window(WindowId window) {
             continue;
         }
         const ViewId view = (*iterator)->view;
-        iterator = views_.erase(iterator);
         if (!runtime_.views().erase(view)) {
             throw std::logic_error("view lifecycle registry is inconsistent");
         }
+        iterator = views_.erase(iterator);
     }
 }
 

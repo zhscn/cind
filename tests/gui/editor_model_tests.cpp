@@ -203,6 +203,9 @@ TEST_CASE("meow keypad feedback is exposed through the shared scene and inspecto
     CHECK(state.command_loop.pending_keys == "C-x");
     CHECK(state.command_loop.pending_keymap.empty());
     CHECK(state.command_loop.pending_input_state == "meow-keypad");
+    CHECK(state.input_state_handler);
+    CHECK_FALSE(state.input_state_on_enter);
+    CHECK(state.input_state_on_exit);
     const ui::Scene scene = compose_frame(model, 40, 80);
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
     REQUIRE(popup != nullptr);

@@ -556,6 +556,12 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.text_input_policy);
     output += ",\"selection_after_edit\":";
     append_json_string(output, editor.selection_after_edit);
+    output += ",\"input_state_handler\":";
+    append_bool(output, editor.input_state_handler);
+    output += ",\"input_state_on_enter\":";
+    append_bool(output, editor.input_state_on_enter);
+    output += ",\"input_state_on_exit\":";
+    append_bool(output, editor.input_state_on_exit);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
     output += ",\"scripting\":";
@@ -1947,6 +1953,12 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_json_string(output, frame.editor.text_input_policy);
         output += ",\"selection_after_edit\":";
         append_json_string(output, frame.editor.selection_after_edit);
+        output += ",\"handler\":";
+        append_bool(output, frame.editor.input_state_handler);
+        output += ",\"on_enter\":";
+        append_bool(output, frame.editor.input_state_on_enter);
+        output += ",\"on_exit\":";
+        append_bool(output, frame.editor.input_state_on_exit);
         output += ",\"position_hints_provider\":";
         append_bool(output, frame.editor.position_hints.provider);
         output.push_back('}');
@@ -2396,6 +2408,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << printable(frame.editor.input_state_indicator) << '"'
            << " text-input=" << printable(frame.editor.text_input_policy)
            << " selection-after-edit=" << printable(frame.editor.selection_after_edit)
+           << " handler=" << (frame.editor.input_state_handler ? "true" : "false")
+           << " on-enter=" << (frame.editor.input_state_on_enter ? "true" : "false")
+           << " on-exit=" << (frame.editor.input_state_on_exit ? "true" : "false")
            << " window:" << frame.editor.active_window_slot << ':'
            << frame.editor.active_window_generation << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""

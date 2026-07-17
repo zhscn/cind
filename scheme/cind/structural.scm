@@ -1,6 +1,7 @@
 (define-module (cind structural)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind input)
   #:export (install-structural-input-state!
             structural-command-definitions
             install-structural-keymap!))
@@ -99,15 +100,15 @@
 (define (install-structural-input-state! host)
   (define-keymap! host structural-keymap #f)
   (define-input-state! host structural-state
-    (vector structural-keymap) 'ignore 'block "NODE" #f)
-  (observe-input-state-changes!
-   host
-   (lambda (event)
-     (when (and (eq? (vector-ref event 0) 'pop)
-                (eq? (vector-ref event 2) structural-state))
-       (let ((view (vector-ref event 1)))
-         (clear-selection-history! host view)
-         (remove-session! host view)))))
+    #:keymaps (vector structural-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "NODE"
+    #:on-exit
+    (lambda (event)
+      (let ((view (vector-ref event 1)))
+        (clear-selection-history! host view)
+        (remove-session! host view))))
   1)
 
 (define bindings

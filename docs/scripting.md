@@ -59,7 +59,8 @@ The native module exports:
 (key-sequence-completions host keymap-names key-sequence)
 (set-input-feedback! host view-id sequence hints)
 (clear-input-feedback! host view-id)
-(define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
+(%define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
+(set-input-state-lifecycle! host state-name on-enter-or-#f on-exit-or-#f)
 (set-input-state-position-hints! host state-name provider-or-#f)
 (define-input-strategy! host name editing-state interface-state selection-after-edit)
 (set-default-input-strategy! host strategy-name)
@@ -162,10 +163,28 @@ keys by layer precedence, and applies the same one-pass remap as resolution. The
 transient translator inspect the command surface beneath itself without depending on an implicit
 focused application.
 
-`define-input-state!` creates or reconfigures a named state. `keymaps` is an ordered proper list or
-vector of keymap names; `text-input` is `accept` or `ignore`; `cursor` is `beam`, `block`, or
-`underline`; and `indicator` is presentation text. An optional handler receives a complete command
-context and canonical key notation. It returns `pass`, `consume`, `#(dispatch command-name)`,
+`(cind input)` exposes the state-definition interface:
+
+```scheme
+(define-input-state! host name
+  #:keymaps keymap-vector
+  #:text-input 'accept
+  #:cursor 'beam
+  #:indicator ""
+  #:handler #f
+  #:on-enter #f
+  #:on-exit #f
+  #:position-hints #f)
+```
+
+The procedure creates or reconfigures a named state. Keymaps are an ordered vector of keymap names;
+text input is `accept` or `ignore`; cursor shape is `beam`, `block`, or `underline`; and the
+indicator is presentation text. The defaults describe the Emacs state. `%define-input-state!`,
+`set-input-state-lifecycle!`, and `set-input-state-position-hints!` form its normalized native
+boundary.
+
+An optional handler receives a complete command context and canonical key notation. It returns
+`pass`, `consume`, `#(dispatch command-name)`,
 `#(dispatch command-name arguments)`, or `#(pending sequence hints)`. Dispatch arguments are typed
 command values, and a dispatch without an explicit prefix inherits the command loop's pending
 count, register, and extras. Pending consumes the key and publishes the supplied
@@ -173,6 +192,14 @@ count, register, and extras. Pending consumes the key and publishes the supplied
 prefixes. Handler errors are retained by the scripting runtime and consume the key without escaping
 into a frontend event loop. The system override map is resolved before a handler, so `C-g` remains
 an unconditional escape path.
+
+Lifecycle procedures receive the same
+`#(kind view-id from-state-or-#f to-state-or-#f)` value as state-change observers. `on-enter` runs
+after the state joins a View stack; `on-exit` runs after pop, durable-state replacement, or View
+release removes it. Lifecycle is stack membership, so pushing another transient state does not end
+the obscured state's session. Conditions become scripting diagnostics and cannot roll back the
+completed transition. Session ownership and cleanup therefore stay with the state definition
+throughout its stack-membership lifetime.
 
 `set-input-state-position-hints!` attaches an optional document-decoration query to an InputState.
 The provider receives a command context and returns a vector of `#(byte-offset label)` values.
@@ -202,7 +229,7 @@ defined by `(cind emacs)`; its empty state keymap list preserves the default Ema
 The focused document state's cursor shape and indicator flow through the frontend-independent Scene.
 Interactions temporarily present a beam cursor because their text input owns focus.
 
-`(cind input)` defines the shared `input.read-key` transient state and exposes
+`(cind input)` also defines the shared `input.read-key` transient state and exposes
 `(read-key-then! host view-id procedure #:sequence text #:hints vector)`. A strategy supplies a
 per-View continuation, display sequence, and hint vector;
 the helper pushes the state, captures exactly one canonical key, pops before invoking the

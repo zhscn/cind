@@ -553,6 +553,9 @@ EditorStateSnapshot EditorModel::inspect() {
                 application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
             .selection_after_edit = std::string(selection_edit_policy_name(
                 application_.runtime().selection_edit_policy(application_.view_id()))),
+            .input_state_handler = static_cast<bool>(input_state.handler),
+            .input_state_on_enter = static_cast<bool>(input_state.on_enter),
+            .input_state_on_exit = static_cast<bool>(input_state.on_exit),
             .position_hints = std::move(position_hints),
             .command_loop = std::move(command_state),
             .scripting = std::move(scripting_state),

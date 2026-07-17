@@ -231,7 +231,9 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
              ++position_hint_calls;
              CHECK(context.view_id() == application.view_id());
              return std::vector<PositionHint>{{.position = TextOffset{1}, .label = "1"}};
-         }});
+         },
+         .on_enter = {},
+         .on_exit = {}});
     const InputStateId transient = runtime.input_states().define(
         {.name = "test-transient",
          .keymaps = {transient_map},
@@ -266,7 +268,9 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
              }
              return InputStateHandlerAction{};
          },
-         .position_hints = {}});
+         .position_hints = {},
+         .on_enter = {},
+         .on_exit = {}});
     runtime.views().set_base_input_state(application.view_id(), base);
     runtime.views().push_input_state(application.view_id(), transient);
     REQUIRE(application.position_hints(application.window_id()).has_value());
@@ -345,7 +349,9 @@ TEST_CASE("text input follows the focused input state policy") {
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {},
-                                       .position_hints = {}});
+                                       .position_hints = {},
+                                       .on_enter = {},
+                                       .on_exit = {}});
     runtime.views().set_base_input_state(application.view_id(), normal);
 
     CHECK(application.text_input_policy() == TextInputPolicy::Ignore);
@@ -606,6 +612,13 @@ TEST_CASE("Guile Vim policy composes states prefixes operators and things") {
     send_keys(application, "C-g");
     CHECK(application.input_state().name == "vim-normal");
     CHECK_FALSE(application.session().active_selection().has_value());
+
+    send_keys(application, "d \" a w");
+    CHECK(application.input_state().name == "vim-normal");
+    CHECK(application.session().snapshot().content() == "<abc> two three");
+    REQUIRE(application.session().undo());
+    application.session().set_caret(TextOffset{0});
+    application.runtime().views().clear_selection(application.view_id());
 
     send_keys(application, "\" a d w");
     CHECK(application.session().snapshot().content() == "<abc> two three");
@@ -1218,6 +1231,22 @@ TEST_CASE("window commands maintain a split tree and independent view state") {
     send_keys(application, "C-x 1");
     CHECK(application.window_layout().leaves().size() == 1);
     CHECK(application.open_windows().front().active);
+}
+
+TEST_CASE("view release runs state lifecycle while its editor session is available") {
+    EditorApplication application = make_application("sample.cc", "one two\n");
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WindowId transient_window = application.window_layout().leaves().back();
+    REQUIRE(application.focus_window(transient_window));
+
+    send_keys(application, "C-c v d");
+    CHECK(application.input_state().name == "vim-operator");
+    REQUIRE(application.session().active_selection().has_value());
+
+    REQUIRE(application.delete_window());
+    CHECK(application.open_windows().size() == 1);
+    CHECK(application.runtime().windows().try_get(transient_window) == nullptr);
+    CHECK_FALSE(application.scripting().last_error.has_value());
 }
 
 TEST_CASE("deleting the sole window preserves the application focus target") {

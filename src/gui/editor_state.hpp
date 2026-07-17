@@ -182,6 +182,9 @@ struct EditorStateSnapshot {
     std::string input_state_indicator;
     std::string text_input_policy;
     std::string selection_after_edit;
+    bool input_state_handler = false;
+    bool input_state_on_enter = false;
+    bool input_state_on_exit = false;
     PositionHintsStateSnapshot position_hints;
     CommandLoopStateSnapshot command_loop;
     ScriptingStateSnapshot scripting;

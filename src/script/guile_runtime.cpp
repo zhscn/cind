@@ -37,6 +37,11 @@ struct ScriptPositionHintProvider {
     SCM procedure = SCM_UNDEFINED;
 };
 
+struct ScriptInputStateLifecycle {
+    SCM on_enter = SCM_BOOL_F;
+    SCM on_exit = SCM_BOOL_F;
+};
+
 struct ScriptInputStateObserver {
     SCM procedure = SCM_UNDEFINED;
     InputStateRegistry::ListenerId listener = 0;
@@ -54,6 +59,7 @@ struct GuileState {
     std::vector<ScriptProvider> providers;
     std::vector<ScriptInputState> input_states;
     std::vector<ScriptPositionHintProvider> position_hint_providers;
+    std::vector<ScriptInputStateLifecycle> input_state_lifecycles;
     std::vector<ScriptInputStateObserver> input_state_observers;
     std::vector<ScriptModePolicyObserver> mode_policy_observers;
     std::uint64_t command_revision = 0;
@@ -218,6 +224,9 @@ PositionHintProviderResult invoke_script_position_hints(const std::shared_ptr<Gu
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const InputStateChange& change);
+void invoke_script_input_state_lifecycle(const std::shared_ptr<GuileState>& state,
+                                         std::size_t lifecycle_index, EditorRuntime& runtime,
+                                         const InputStateChange& change, bool entering);
 void invoke_script_mode_policy_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const BufferModePolicyChange& change);
@@ -716,28 +725,30 @@ SCM clear_input_feedback(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes seven adjacent SCM arguments; validation preserves their semantic order.
+// The low-level Guile ABI fixes seven adjacent SCM arguments. The `(cind
+// input)` wrapper supplies the public keyword interface and state-local
+// optional capabilities.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM text_input_value,
                        SCM cursor_value, SCM indicator_value, SCM handler_value) {
     if (!scm_is_string(indicator_value)) {
-        scm_wrong_type_arg_msg("define-input-state!", 6, indicator_value, "string");
+        scm_wrong_type_arg_msg("%define-input-state!", 6, indicator_value, "string");
     }
     if (!scheme_false(handler_value) && !scheme_true(scm_procedure_p(handler_value))) {
-        scm_wrong_type_arg_msg("define-input-state!", 7, handler_value, "procedure or #f");
+        scm_wrong_type_arg_msg("%define-input-state!", 7, handler_value, "procedure or #f");
     }
     try {
-        HostLease& host = require_host(host_object, "define-input-state!");
-        const std::string name = scheme_name(name_value, "define-input-state!", 2);
+        HostLease& host = require_host(host_object, "%define-input-state!");
+        const std::string name = scheme_name(name_value, "%define-input-state!", 2);
         const std::vector<KeymapId> keymaps =
-            keymap_layers_from_scheme(host, keymaps_value, "define-input-state!");
+            keymap_layers_from_scheme(host, keymaps_value, "%define-input-state!");
         TextInputPolicy text_input;
         if (symbol_is(text_input_value, "accept")) {
             text_input = TextInputPolicy::Accept;
         } else if (symbol_is(text_input_value, "ignore")) {
             text_input = TextInputPolicy::Ignore;
         } else {
-            scm_wrong_type_arg_msg("define-input-state!", 4, text_input_value,
+            scm_wrong_type_arg_msg("%define-input-state!", 4, text_input_value,
                                    "'accept or 'ignore");
         }
         CursorShape cursor;
@@ -748,13 +759,13 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
         } else if (symbol_is(cursor_value, "underline")) {
             cursor = CursorShape::Underline;
         } else {
-            scm_wrong_type_arg_msg("define-input-state!", 5, cursor_value,
+            scm_wrong_type_arg_msg("%define-input-state!", 5, cursor_value,
                                    "'beam, 'block, or 'underline");
         }
 
         const std::shared_ptr<GuileState> state = host.state;
         if (!state || !state->active) {
-            scm_misc_error("define-input-state!", "Guile runtime has expired", SCM_EOL);
+            scm_misc_error("%define-input-state!", "Guile runtime has expired", SCM_EOL);
         }
         const std::size_t state_index = state->input_states.size();
         if (!scheme_false(handler_value)) {
@@ -781,7 +792,9 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
                                                       .cursor = cursor,
                                                       .indicator = scheme_string(indicator_value),
                                                       .handler = std::move(handler),
-                                                      .position_hints = {}};
+                                                      .position_hints = {},
+                                                      .on_enter = {},
+                                                      .on_exit = {}};
             const std::optional<InputStateId> existing = host.runtime->input_states().find(name);
             InputStateId id;
             if (existing) {
@@ -801,11 +814,98 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             throw;
         }
     } catch (const std::exception& exception) {
-        scm_misc_error("define-input-state!", exception.what(), SCM_EOL);
+        scm_misc_error("%define-input-state!", exception.what(), SCM_EOL);
     } catch (...) {
-        scm_misc_error("define-input-state!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("%define-input-state!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_value,
+                              SCM on_exit_value) {
+    if (!scheme_false(on_enter_value) && !scheme_true(scm_procedure_p(on_enter_value))) {
+        scm_wrong_type_arg_msg("set-input-state-lifecycle!", 3, on_enter_value, "procedure or #f");
+    }
+    if (!scheme_false(on_exit_value) && !scheme_true(scm_procedure_p(on_exit_value))) {
+        scm_wrong_type_arg_msg("set-input-state-lifecycle!", 4, on_exit_value, "procedure or #f");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-input-state-lifecycle!");
+        const std::string name = scheme_name(name_value, "set-input-state-lifecycle!", 2);
+        const std::optional<InputStateId> state_id = host.runtime->input_states().find(name);
+        if (!state_id) {
+            scm_misc_error("set-input-state-lifecycle!", "unknown input state: ~S",
+                           scm_list_1(name_value));
+        }
+        InputStateRegistry::Definition& definition =
+            host.runtime->input_states().definition_for_configuration(*state_id);
+        if (scheme_false(on_enter_value) && scheme_false(on_exit_value)) {
+            definition.on_enter = {};
+            definition.on_exit = {};
+            return SCM_UNSPECIFIED;
+        }
+
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("set-input-state-lifecycle!", "Guile runtime has expired", SCM_EOL);
+        }
+        const std::size_t lifecycle_index = state->input_state_lifecycles.size();
+        if (!scheme_false(on_enter_value)) {
+            (void)scm_gc_protect_object(on_enter_value);
+        }
+        if (!scheme_false(on_exit_value)) {
+            (void)scm_gc_protect_object(on_exit_value);
+        }
+        bool appended = false;
+        try {
+            const std::weak_ptr<GuileState> weak = state;
+            EditorRuntime* runtime = host.runtime;
+            InputStateLifecycleHandler on_enter =
+                scheme_false(on_enter_value)
+                    ? InputStateLifecycleHandler{}
+                    : InputStateLifecycleHandler{
+                          [weak, lifecycle_index, runtime](const InputStateChange& change) {
+                              if (const std::shared_ptr<GuileState> locked = weak.lock();
+                                  locked && locked->active) {
+                                  invoke_script_input_state_lifecycle(locked, lifecycle_index,
+                                                                      *runtime, change, true);
+                              }
+                          }};
+            InputStateLifecycleHandler on_exit =
+                scheme_false(on_exit_value)
+                    ? InputStateLifecycleHandler{}
+                    : InputStateLifecycleHandler{
+                          [weak, lifecycle_index, runtime](const InputStateChange& change) {
+                              if (const std::shared_ptr<GuileState> locked = weak.lock();
+                                  locked && locked->active) {
+                                  invoke_script_input_state_lifecycle(locked, lifecycle_index,
+                                                                      *runtime, change, false);
+                              }
+                          }};
+            state->input_state_lifecycles.push_back(
+                {.on_enter = on_enter_value, .on_exit = on_exit_value});
+            appended = true;
+            definition.on_enter = std::move(on_enter);
+            definition.on_exit = std::move(on_exit);
+        } catch (...) {
+            if (appended) {
+                state->input_state_lifecycles.pop_back();
+            }
+            if (!scheme_false(on_enter_value)) {
+                (void)scm_gc_unprotect_object(on_enter_value);
+            }
+            if (!scheme_false(on_exit_value)) {
+                (void)scm_gc_unprotect_object(on_exit_value);
+            }
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-input-state-lifecycle!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-input-state-lifecycle!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
 }
 
 // The provider is an optional capability of a named state rather than part of
@@ -2778,8 +2878,10 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_input_feedback));
     (void)scm_c_define_gsubr("clear-input-feedback!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(clear_input_feedback));
-    (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
+    (void)scm_c_define_gsubr("%define-input-state!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
+    (void)scm_c_define_gsubr("set-input-state-lifecycle!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_input_state_lifecycle));
     (void)scm_c_define_gsubr("set-input-state-position-hints!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_input_state_position_hints));
     (void)scm_c_define_gsubr("define-input-strategy!", 5, 0, 0,
@@ -2905,25 +3007,25 @@ void initialize_host_module(void*) {
         "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
         "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
         "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-        "clear-input-feedback!", "define-input-state!", "set-input-state-position-hints!",
-        "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
-        "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
-        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
-        "define-motion!", "%define-mode!", "mode-properties", "set-buffer-major-mode!",
-        "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
-        "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
-        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
-        "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
-        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
-        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
-        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
-        "request-redraw!", nullptr);
+        "clear-input-feedback!", "%define-input-state!", "set-input-state-lifecycle!",
+        "set-input-state-position-hints!", "define-input-strategy!", "set-default-input-strategy!",
+        "set-view-input-strategy!", "view-input-strategy", "set-base-input-state!",
+        "push-input-state!", "pop-input-state!", "reset-input-states!", "view-input-states",
+        "observe-input-state-changes!", "define-thing!", "define-motion!", "%define-mode!",
+        "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
+        "observe-mode-policy-changes!", "enabled-command-names", "open-buffer-summaries",
+        "project-root", "project-files", "path-relative", "path-filename", "active-key-bindings",
+        "buffer-id-by-name", "buffer-resource", "path-parent", "directory-path?",
+        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
+        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
+        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+        "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
+        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+        "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -3525,6 +3627,31 @@ void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state
     }
 }
 
+void invoke_script_input_state_lifecycle(const std::shared_ptr<GuileState>& state,
+                                         std::size_t lifecycle_index, EditorRuntime& runtime,
+                                         const InputStateChange& change, bool entering) {
+    if (std::this_thread::get_id() != state->owner || !state->active ||
+        lifecycle_index >= state->input_state_lifecycles.size()) {
+        state->last_error = "Guile input state lifecycle used outside its runtime";
+        return;
+    }
+    const ScriptInputStateLifecycle& lifecycle = state->input_state_lifecycles[lifecycle_index];
+    const SCM procedure = entering ? lifecycle.on_enter : lifecycle.on_exit;
+    if (scheme_false(procedure)) {
+        return;
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeInputStateObserver;
+    call.procedure = procedure;
+    call.input_state_change = &change;
+    call.runtime = &runtime;
+    const std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = std::format("Guile input state {} callback failed: {}",
+                                        entering ? "on-enter" : "on-exit", result.error());
+    }
+}
+
 void invoke_script_mode_policy_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const BufferModePolicyChange& change) {
@@ -3623,6 +3750,15 @@ public:
             (void)scm_gc_unprotect_object(provider.procedure);
         }
         state_->position_hint_providers.clear();
+        for (const ScriptInputStateLifecycle& lifecycle : state_->input_state_lifecycles) {
+            if (!scheme_false(lifecycle.on_enter)) {
+                (void)scm_gc_unprotect_object(lifecycle.on_enter);
+            }
+            if (!scheme_false(lifecycle.on_exit)) {
+                (void)scm_gc_unprotect_object(lifecycle.on_exit);
+            }
+        }
+        state_->input_state_lifecycles.clear();
         lease_->runtime = nullptr;
         lease_->state.reset();
         scm_foreign_object_set_x(host_, 0, nullptr);

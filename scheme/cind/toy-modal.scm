@@ -1,6 +1,7 @@
 (define-module (cind toy-modal)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind input)
   #:export (install-toy-modal-input-state!
             toy-modal-command-definitions
             install-toy-modal-keymap!))
@@ -10,7 +11,10 @@
 (define (install-toy-modal-input-state! host)
   (define-keymap! host toy-normal-keymap #f)
   (define-input-state! host 'toy-normal
-    (vector toy-normal-keymap) 'ignore 'block "N" #f)
+    #:keymaps (vector toy-normal-keymap)
+    #:text-input 'ignore
+    #:cursor 'block
+    #:indicator "N")
   (define-input-strategy! host 'toy-modal 'toy-normal 'emacs 'collapse)
   1)
 

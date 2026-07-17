@@ -260,7 +260,9 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
                                               .cursor = CursorShape::Block,
                                               .indicator = {},
                                               .handler = {},
-                                              .position_hints = {}});
+                                              .position_hints = {},
+                                              .on_enter = {},
+                                              .on_exit = {}});
     };
     const InputStateId normal = input_state("normal");
     const InputStateId motion = input_state("motion");
@@ -646,7 +648,9 @@ TEST_CASE("command completion owns selection results and strategy edit defaults"
                                                               .cursor = CursorShape::Beam,
                                                               .indicator = {},
                                                               .handler = {},
-                                                              .position_hints = {}});
+                                                              .position_hints = {},
+                                                              .on_enter = {},
+                                                              .on_exit = {}});
     const InputStrategyId collapse =
         runtime.input_strategies().define({.name = "selection-collapse",
                                            .editing = state,
@@ -1023,16 +1027,29 @@ TEST_CASE("keymaps compose explicit prefix maps and one-pass command remaps") {
 }
 
 TEST_CASE("input states are registered globally and stacked per view") {
+    std::vector<std::string> lifecycle;
     EditorRuntime runtime;
     const KeymapId normal_map = runtime.keymaps().define("state.normal");
     const KeymapId transient_map = runtime.keymaps().define("state.transient");
+    const auto entered = [&](std::string name) {
+        return [&, name = std::move(name)](const InputStateChange&) {
+            lifecycle.push_back("enter:" + name);
+        };
+    };
+    const auto exited = [&](std::string name) {
+        return [&, name = std::move(name)](const InputStateChange&) {
+            lifecycle.push_back("exit:" + name);
+        };
+    };
     const InputStateId emacs = runtime.input_states().define({.name = "emacs",
                                                               .keymaps = {},
                                                               .text_input = TextInputPolicy::Accept,
                                                               .cursor = CursorShape::Beam,
                                                               .indicator = "E",
                                                               .handler = {},
-                                                              .position_hints = {}});
+                                                              .position_hints = {},
+                                                              .on_enter = entered("emacs"),
+                                                              .on_exit = exited("emacs")});
     const InputStateId normal =
         runtime.input_states().define({.name = "normal",
                                        .keymaps = {normal_map},
@@ -1040,7 +1057,9 @@ TEST_CASE("input states are registered globally and stacked per view") {
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {},
-                                       .position_hints = {}});
+                                       .position_hints = {},
+                                       .on_enter = entered("normal"),
+                                       .on_exit = exited("normal")});
     const InputStateId transient =
         runtime.input_states().define({.name = "transient",
                                        .keymaps = {transient_map},
@@ -1048,7 +1067,9 @@ TEST_CASE("input states are registered globally and stacked per view") {
                                        .cursor = CursorShape::Underline,
                                        .indicator = "K",
                                        .handler = {},
-                                       .position_hints = {}});
+                                       .position_hints = {},
+                                       .on_enter = entered("transient"),
+                                       .on_exit = exited("transient")});
 
     const BufferId buffer = runtime.buffers().create({.name = "state-test",
                                                       .initial_text = {},
@@ -1089,6 +1110,8 @@ TEST_CASE("input states are registered globally and stacked per view") {
     CHECK(changes[3] ==
           InputStateChange{
               .view = left, .kind = InputStateChangeKind::Base, .from = emacs, .to = normal});
+    CHECK(lifecycle == std::vector<std::string>{"enter:emacs", "enter:normal", "enter:transient",
+                                                "exit:emacs", "enter:normal"});
 
     CHECK(runtime.views().pop_input_state(left) == transient);
     CHECK_FALSE(runtime.views().pop_input_state(left).has_value());
@@ -1102,12 +1125,14 @@ TEST_CASE("input states are registered globally and stacked per view") {
     runtime.views().set_base_input_state(disposable, normal);
     runtime.views().push_input_state(disposable, transient);
     changes.clear();
+    lifecycle.clear();
     REQUIRE(runtime.views().erase(disposable));
     REQUIRE(changes.size() == 1);
     CHECK(changes.front() == InputStateChange{.view = disposable,
                                               .kind = InputStateChangeKind::Pop,
                                               .from = transient,
                                               .to = normal});
+    CHECK(lifecycle == std::vector<std::string>{"exit:transient", "exit:normal"});
 
     CHECK(runtime.input_states().unsubscribe(listener));
     CHECK_FALSE(runtime.input_states().unsubscribe(listener));
