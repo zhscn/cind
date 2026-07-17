@@ -37,7 +37,8 @@
   (lambda (context invocation)
     (let* ((view (context-view context))
            (count (or (invocation-repeat-count invocation) 1))
-           (selected (motion-selection host view motion count extend?)))
+           (selected (motion-selection host view (view-selection host view)
+                                       motion count extend?)))
       (reset-preferred-column! host view)
       (request-redraw! host)
       (command-completed/selection selected))))
@@ -67,7 +68,9 @@
           (command-error "thing capture requires an extent and thing")
           (let* ((extent (string->symbol (vector-ref arguments 0)))
                  (thing (vector-ref arguments 1))
-                 (selected (thing-selection host (context-view context) thing extent)))
+                 (view (context-view context))
+                 (selected (thing-selection host view (view-selection host view)
+                                            thing extent)))
             (if selected
                 (command-completed/selection selected)
                 (command-error (string-append "no " thing

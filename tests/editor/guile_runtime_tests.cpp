@@ -126,8 +126,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 15);
-    CHECK(*second == 15);
+    CHECK(*first == 16);
+    CHECK(*second == 16);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -147,6 +147,10 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStateId keypad = runtime.input_states().find("meow-keypad").value_or(InputStateId{});
     REQUIRE(keypad);
     CHECK(runtime.input_states().definition(keypad).handler);
+    const InputStateId numeric =
+        runtime.input_states().find("meow-numeric").value_or(InputStateId{});
+    REQUIRE(numeric);
+    CHECK(runtime.input_states().definition(numeric).handler);
     const InputStateId read_key =
         runtime.input_states().find("input.read-key").value_or(InputStateId{});
     REQUIRE(read_key);
@@ -161,7 +165,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 15);
+    CHECK(guile.snapshot().scripted_input_states == 16);
     CHECK(guile.snapshot().scripted_input_strategies == 5);
     const InputStrategyId helix =
         runtime.input_strategies().find("helix").value_or(InputStrategyId{});
@@ -225,6 +229,7 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK(runtime.things().find("cind.angle").has_value());
     CHECK(runtime.things().find("cind.defun").has_value());
     CHECK(runtime.motions().find("cind.forward-word").has_value());
+    CHECK(runtime.motions().find("cind.forward-symbol").has_value());
     CHECK(runtime.modes().definition(special).parent == fundamental);
     CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
     const InputStrategyId emacs_strategy =
@@ -294,6 +299,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::optional<GuileTextRange> requested_soft_kill_range;
     std::optional<std::uint32_t> requested_motion_target;
     std::optional<ViewId> requested_motion_view;
+    std::optional<ViewSelection> requested_motion_source;
     std::optional<std::string> requested_motion;
     std::int64_t requested_motion_count = 0;
     bool requested_motion_extend = false;
@@ -460,25 +466,28 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
-         .thing_selection = [](ViewId, std::string_view,
+         .thing_selection = [](ViewId, const ViewSelection&, std::string_view,
                                bool) -> std::expected<std::optional<ViewSelection>, std::string> {
              return std::optional<ViewSelection>{};
          },
-         .motion_selection = [&](ViewId target, std::string_view motion, std::int64_t count,
+         .motion_selection = [&](ViewId target, const ViewSelection& source,
+                                 std::string_view motion, std::int64_t count,
                                  bool extend) -> std::expected<ViewSelection, std::string> {
              requested_motion_view = target;
+             requested_motion_source = source;
              requested_motion = motion;
              requested_motion_count = count;
              requested_motion_extend = extend;
              const TextOffset destination{requested_motion_target.value_or(0)};
-             return ViewSelection{.ranges = {{.anchor = destination,
-                                              .head = destination,
-                                              .granularity = SelectionGranularity::Character}},
-                                  .primary = 0,
-                                  .metadata = "()"};
+             ViewSelection result = source;
+             result.ranges[result.primary].head = destination;
+             if (!extend) {
+                 result.ranges[result.primary].anchor = destination;
+             }
+             return result;
          },
-         .expand_selection =
-             [](ViewId) -> std::expected<std::optional<ViewSelection>, std::string> {
+         .expand_selection = [](ViewId, const ViewSelection&)
+             -> std::expected<std::optional<ViewSelection>, std::string> {
              return std::optional<ViewSelection>{};
          },
          .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
@@ -497,7 +506,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 116);
+    CHECK(*installed == 133);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -685,13 +694,19 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(redraw_requested);
 
     redraw_requested = false;
-    runtime.views().set_caret(view, TextOffset{0});
+    const ViewSelection motion_source{.ranges = {{.anchor = TextOffset{0},
+                                                  .head = TextOffset{0},
+                                                  .granularity = SelectionGranularity::Character}},
+                                      .primary = 0,
+                                      .metadata = "((source . explicit))"};
+    runtime.views().set_selection(view, motion_source);
     runtime.views().get(view).viewport().preferred_column = 9;
     requested_motion_target = 2;
     CommandLoop motion_loop(runtime);
     CHECK(motion_loop.execute(require_command(runtime, "cursor.forward-expression"), context)
               .status == CommandLoopStatus::Executed);
     CHECK(requested_motion_view == std::optional<ViewId>{view});
+    CHECK(requested_motion_source == std::optional<ViewSelection>{motion_source});
     CHECK(requested_motion == std::optional<std::string>{"cind.forward-expression"});
     CHECK(requested_motion_count == 1);
     CHECK_FALSE(requested_motion_extend);
@@ -850,7 +865,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 116);
+    CHECK(snapshot.scripted_commands == 133);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

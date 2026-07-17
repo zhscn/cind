@@ -107,9 +107,9 @@ The native module exports:
 (soft-kill-range host view-id)
 (set-view-caret! host view-id offset)
 (reset-preferred-column! host view-id)
-(thing-selection host view-id thing-name inner-or-bounds)
-(motion-selection host view-id motion-name count extend?)
-(expand-node-selection host view-id)
+(thing-selection host view-id selection thing-name inner-or-bounds)
+(motion-selection host view-id selection motion-name count extend?)
+(expand-node-selection host view-id selection)
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
@@ -250,9 +250,10 @@ two-element start/end vectors. `view-selection` returns
 `primary` is the zero-based range index, and `metadata` is an arbitrary Scheme datum owned by the
 input strategy. A View without an active region returns one collapsed `char` range at the caret,
 while `view-mark` returns `#f`. The `(cind command)` module provides `selection-range` and
-`selection` constructors for this representation. `set-selection!` preserves range direction,
-primary identity, granularity, and metadata. `clear-selection!` collapses the model to its primary
-head and releases the active mark.
+`selection` constructors, field accessors, and `selection-with-ranges` / `selection-with-metadata`
+copy helpers for this representation. `set-selection!` preserves range direction, primary identity,
+granularity, and metadata. `clear-selection!` collapses the model to its primary head and releases
+the active mark.
 
 Selection endpoints are document anchors. Direct document transactions settle every endpoint
 across insertions and erasures, and moving the View caret moves the primary head without changing
@@ -276,17 +277,20 @@ index and metadata intact. `soft-kill-range` is a syntax-aware range query and d
 `(multi pattern ...)`. Pair evaluation prefers a matching CST group before textual fallback;
 `cst-node` resolves the innermost matching syntax node or literal token. `thing-selection` resolves
 a semantic mode binding before a concrete registry name and evaluates the requested inner or bounds
-extent at every range head. It preserves range order and the primary index, returning `#f` unless
-every range resolves. Returned metadata records the semantic name, concrete definition, and extent.
+extent at every head in the supplied Selection. It preserves range order and the primary index,
+returning `#f` unless every range resolves. Returned metadata records the semantic name, concrete
+definition, and extent.
 
-`define-motion!` maps a name to a native pure mechanism: forward/backward character, word, or
-expression, plus up-list. `motion-selection` transforms every range in the View's current
-Selection, applies a signed count, and either collapses each range at its destination or preserves
-its anchor for extension. Both APIs return the same full Selection value used by command results,
-so Scheme commands do not mutate the caret through a separate path. `reset-preferred-column!`
-clears vertical-motion affinity and `request-redraw!` requests caret reveal.
+`define-motion!` maps a name to a native pure mechanism: forward/backward character, word, symbol,
+or expression, plus up-list. `motion-selection` transforms every range in the supplied Selection,
+applies a signed count, and either collapses each range at its destination or preserves its anchor
+for extension. The View identifies the snapshot and effective mode; the Selection is explicit input
+data rather than hidden View state. Both APIs return the same full Selection value used by command
+results, so Scheme commands can compose noun operations without intermediate UI mutation.
+`reset-preferred-column!` clears vertical-motion affinity and `request-redraw!` requests caret
+reveal.
 
-`expand-node-selection` is a pure CST query over the complete current Selection. It replaces every
+`expand-node-selection` is a pure CST query over its complete Selection input. It replaces every
 range with its next enclosing syntactic range, preserves direction, primary identity and metadata,
 and marks each result with `node` granularity. It returns `#f` if any range has no enclosing node, so
 policy never observes a partially expanded multi-range Selection.
@@ -397,14 +401,18 @@ bind `SPC`, `x`, `c`, `g`, and `m` to a transient `meow-keypad` handler. The han
 unmodified keys against base layers, publishes completions, applies control-to-literal fallback,
 and finally tries the original key sequence for transparent interface bindings. Thus `x c`
 dispatches `C-x C-c`, `x b` falls back to `C-x b`, `m x` dispatches `M-x`, and interface keymaps
-remain available without package-specific routing. The normal map binds `"` to the shared
-single-key capture state. Its captured key replaces the invocation's register while preserving an
-already accumulated count and extra prefix values; cancellation removes the transient session and
-the pending prefix. Word motions use the shared motion registry, so a numeric prefix such as `3w`
-is handled by the same Selection transform as other schemes. `,` and `.` use the same capture
-state for inner and bounds selection. `char-thing-table-add!` owns the strategy's configurable
-character-to-semantic-thing table; the bundled table maps `a`, `w`, and `s` to the active mode's
-angle, word, and string definitions.
+remain available without package-specific routing. `SPC 0` through `SPC 9` resolve through the
+`C-c` leader to prefix commands and enter `meow-numeric`; subsequent digits are accumulated by that
+transient handler until an ordinary key falls through to the durable normal map. Normal-state
+digits instead expand the active directed Selection by the numbered position, with `0` selecting
+the tenth position. Word and symbol commands store their selection type and paired expansion
+motions in the Selection metadata, while the native motion registry remains a pure evaluator of an
+explicit Selection value. The normal map binds `"` to the shared single-key capture state. Its
+captured key replaces the invocation's register while preserving an already accumulated count and
+extra prefix values; cancellation removes the transient session and the pending prefix. `,` and `.`
+use the same capture state for inner and bounds selection. `char-thing-table-add!` owns the
+strategy's configurable character-to-semantic-thing table; the bundled table maps `a`, `w`, and `s`
+to the active mode's angle, word, and string definitions.
 
 `(cind helix)` is a selection-first modal strategy selected with `C-c h`. Its durable `hx-normal`,
 `hx-select`, and `hx-insert` states use separate declarative keymaps. Normal motions replace every

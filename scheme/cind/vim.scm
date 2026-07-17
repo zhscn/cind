@@ -97,12 +97,11 @@
   (vector 'dispatch "edit.kill-region"))
 
 (define (operator-motion host view session motion)
-  (set-selection! host view (vector-ref session 2))
-  (motion-selection host view motion (operator-count session) #t))
+  (motion-selection host view (vector-ref session 2)
+                    motion (operator-count session) #t))
 
 (define (operator-thing host view session thing extent)
-  (set-selection! host view (vector-ref session 2))
-  (thing-selection host view thing extent))
+  (thing-selection host view (vector-ref session 2) thing extent))
 
 (define (start-register-capture! host view sequence)
   (read-key-then!
@@ -183,7 +182,8 @@
            (original (view-selection host view)))
       (start-operator-session! host view original
                                (invocation-repeat-count invocation))
-      (let ((preview (motion-selection host view 'cind.forward-character 1 #t)))
+      (let ((preview (motion-selection host view original
+                                       'cind.forward-character 1 #t)))
         (set-selection! host view preview))
       (push-input-state! host view vim-operator-state)
       (set-input-feedback! host view "d" operator-hints)
@@ -230,7 +230,8 @@
   (lambda (context invocation)
     (let* ((view (context-view context))
            (count (or (invocation-repeat-count invocation) 1))
-           (selected (motion-selection host view motion count #t)))
+           (selected (motion-selection host view (view-selection host view)
+                                       motion count #t)))
       (request-redraw! host)
       (command-completed/selection selected))))
 
@@ -260,7 +261,8 @@
                (select-vim-state
                 host 'vim-visual
                 (lambda (view)
-                  (motion-selection host view 'cind.forward-character 1 #t)))
+                  (motion-selection host view (view-selection host view)
+                                    'cind.forward-character 1 #t)))
                #f)
          (list "vim.operator-delete" (operator-start-command host) #f)
          (list "vim.register-start" (register-start-command host) #f)

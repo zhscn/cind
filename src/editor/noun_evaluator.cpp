@@ -255,6 +255,10 @@ MotionMechanism reversed(MotionMechanism mechanism) {
         return MotionMechanism::BackwardWord;
     case MotionMechanism::BackwardWord:
         return MotionMechanism::ForwardWord;
+    case MotionMechanism::ForwardSymbol:
+        return MotionMechanism::BackwardSymbol;
+    case MotionMechanism::BackwardSymbol:
+        return MotionMechanism::ForwardSymbol;
     case MotionMechanism::ForwardExpression:
         return MotionMechanism::BackwardExpression;
     case MotionMechanism::BackwardExpression:
@@ -265,30 +269,31 @@ MotionMechanism reversed(MotionMechanism mechanism) {
     return mechanism;
 }
 
-TextOffset forward_word(const Text& text, TextOffset from) {
+TextOffset forward_word(const Text& text, TextOffset from, bool symbol_words = false) {
     const std::string content = text.to_string();
     std::size_t at = std::min<std::size_t>(from.value, content.size());
     if (at == content.size()) {
         return from;
     }
-    const CharacterClass initial = character_class(static_cast<unsigned char>(content[at]), false);
+    const CharacterClass initial =
+        character_class(static_cast<unsigned char>(content[at]), symbol_words);
     if (initial != CharacterClass::Whitespace) {
         while (at < content.size() &&
-               character_class(static_cast<unsigned char>(content[at]), false) == initial) {
+               character_class(static_cast<unsigned char>(content[at]), symbol_words) == initial) {
             ++at;
         }
     }
-    while (at < content.size() && character_class(static_cast<unsigned char>(content[at]), false) ==
-                                      CharacterClass::Whitespace) {
+    while (at < content.size() && character_class(static_cast<unsigned char>(content[at]),
+                                                  symbol_words) == CharacterClass::Whitespace) {
         ++at;
     }
     return TextOffset{static_cast<std::uint32_t>(at)};
 }
 
-TextOffset backward_word(const Text& text, TextOffset from) {
+TextOffset backward_word(const Text& text, TextOffset from, bool symbol_words = false) {
     const std::string content = text.to_string();
     std::size_t at = std::min<std::size_t>(from.value, content.size());
-    while (at > 0 && character_class(static_cast<unsigned char>(content[at - 1]), false) ==
+    while (at > 0 && character_class(static_cast<unsigned char>(content[at - 1]), symbol_words) ==
                          CharacterClass::Whitespace) {
         --at;
     }
@@ -296,9 +301,9 @@ TextOffset backward_word(const Text& text, TextOffset from) {
         return TextOffset{0};
     }
     const CharacterClass target =
-        character_class(static_cast<unsigned char>(content[at - 1]), false);
+        character_class(static_cast<unsigned char>(content[at - 1]), symbol_words);
     while (at > 0 &&
-           character_class(static_cast<unsigned char>(content[at - 1]), false) == target) {
+           character_class(static_cast<unsigned char>(content[at - 1]), symbol_words) == target) {
         --at;
     }
     return TextOffset{static_cast<std::uint32_t>(at)};
@@ -315,6 +320,10 @@ TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot
         return forward_word(snapshot.content(), from);
     case MotionMechanism::BackwardWord:
         return backward_word(snapshot.content(), from);
+    case MotionMechanism::ForwardSymbol:
+        return forward_word(snapshot.content(), from, true);
+    case MotionMechanism::BackwardSymbol:
+        return backward_word(snapshot.content(), from, true);
     case MotionMechanism::ForwardExpression:
         if (const std::optional<TextRange> range = sexp_forward(tree, from))
             return range->end;

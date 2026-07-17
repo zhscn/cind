@@ -17,7 +17,15 @@
             invocation-register
             invocation-prefix-extra
             selection
-            selection-range))
+            selection-range
+            selection-primary
+            selection-metadata
+            selection-ranges
+            selection-range-anchor
+            selection-range-head
+            selection-range-granularity
+            selection-with-metadata
+            selection-with-ranges))
 
 (define (completed-result tag values)
   (cond ((null? values) (vector tag))
@@ -94,6 +102,24 @@
 (define (selection-range anchor head granularity)
   (vector anchor head granularity))
 
+(define (selection-primary value)
+  (vector-ref value 1))
+
+(define (selection-metadata value)
+  (vector-ref value 2))
+
+(define (selection-ranges value)
+  (vector-ref value 3))
+
+(define (selection-range-anchor range)
+  (vector-ref range 0))
+
+(define (selection-range-head range)
+  (vector-ref range 1))
+
+(define (selection-range-granularity range)
+  (vector-ref range 2))
+
 (define (selection ranges . options)
   (let ((primary (if (pair? options) (car options) 0))
         (metadata (if (and (pair? options) (pair? (cdr options)))
@@ -102,3 +128,13 @@
     (if (and (pair? options) (pair? (cdr options)) (pair? (cddr options)))
         (error "selection accepts ranges, optional primary, and optional metadata")
         (vector 'selection primary metadata (list->vector ranges)))))
+
+(define (selection-with-metadata value metadata)
+  (selection (vector->list (selection-ranges value))
+             (selection-primary value)
+             metadata))
+
+(define (selection-with-ranges value ranges)
+  (selection ranges
+             (selection-primary value)
+             (selection-metadata value)))

@@ -1008,6 +1008,10 @@ MotionMechanism motion_mechanism_from_scheme(SCM value, const char* caller, int 
         return MotionMechanism::ForwardWord;
     if (symbol_is(value, "backward-word"))
         return MotionMechanism::BackwardWord;
+    if (symbol_is(value, "forward-symbol"))
+        return MotionMechanism::ForwardSymbol;
+    if (symbol_is(value, "backward-symbol"))
+        return MotionMechanism::BackwardSymbol;
     if (symbol_is(value, "forward-expression"))
         return MotionMechanism::ForwardExpression;
     if (symbol_is(value, "backward-expression"))
@@ -2036,20 +2040,22 @@ SCM reset_preferred_column(SCM host_object, SCM view_value) {
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM thing_selection(SCM host_object, SCM view_value, SCM thing_value, SCM extent_value) {
+SCM thing_selection(SCM host_object, SCM view_value, SCM selection_value, SCM thing_value,
+                    SCM extent_value) {
     HostLease& host = require_host(host_object, "thing-selection");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "thing-selection", 2);
-    const std::string name = scheme_name(thing_value, "thing-selection", 3);
+    const ViewSelection source = view_selection_from_scheme(selection_value, "thing-selection", 3);
+    const std::string name = scheme_name(thing_value, "thing-selection", 4);
     const bool bounds = symbol_is(extent_value, "bounds");
     if (!bounds && !symbol_is(extent_value, "inner")) {
-        scm_wrong_type_arg_msg("thing-selection", 4, extent_value, "'inner or 'bounds");
+        scm_wrong_type_arg_msg("thing-selection", 5, extent_value, "'inner or 'bounds");
     }
     if (!host.services.thing_selection) {
         scm_misc_error("thing-selection", "thing query capability is unavailable", SCM_EOL);
     }
     try {
         const std::expected<std::optional<ViewSelection>, std::string> selected =
-            host.services.thing_selection(view, name, bounds);
+            host.services.thing_selection(view, source, name, bounds);
         if (!selected) {
             raise_host_error("thing-selection", selected.error());
         }
@@ -2063,24 +2069,25 @@ SCM thing_selection(SCM host_object, SCM view_value, SCM thing_value, SCM extent
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM motion_selection(SCM host_object, SCM view_value, SCM motion_value, SCM count_value,
-                     SCM extend_value) {
+SCM motion_selection(SCM host_object, SCM view_value, SCM selection_value, SCM motion_value,
+                     SCM count_value, SCM extend_value) {
     HostLease& host = require_host(host_object, "motion-selection");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "motion-selection", 2);
-    const std::string name = scheme_name(motion_value, "motion-selection", 3);
+    const ViewSelection source = view_selection_from_scheme(selection_value, "motion-selection", 3);
+    const std::string name = scheme_name(motion_value, "motion-selection", 4);
     if (scm_is_signed_integer(count_value, std::numeric_limits<std::int64_t>::min(),
                               std::numeric_limits<std::int64_t>::max()) == 0) {
-        scm_wrong_type_arg_msg("motion-selection", 4, count_value, "signed 64-bit integer");
+        scm_wrong_type_arg_msg("motion-selection", 5, count_value, "signed 64-bit integer");
     }
     if (!scheme_boolean(extend_value)) {
-        scm_wrong_type_arg_msg("motion-selection", 5, extend_value, "boolean");
+        scm_wrong_type_arg_msg("motion-selection", 6, extend_value, "boolean");
     }
     if (!host.services.motion_selection) {
         scm_misc_error("motion-selection", "motion query capability is unavailable", SCM_EOL);
     }
     try {
         const std::expected<ViewSelection, std::string> selected = host.services.motion_selection(
-            view, name, scm_to_int64(count_value), scheme_true(extend_value));
+            view, source, name, scm_to_int64(count_value), scheme_true(extend_value));
         if (!selected) {
             raise_host_error("motion-selection", selected.error());
         }
@@ -2094,16 +2101,18 @@ SCM motion_selection(SCM host_object, SCM view_value, SCM motion_value, SCM coun
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM expand_node_selection(SCM host_object, SCM view_value) {
+SCM expand_node_selection(SCM host_object, SCM view_value, SCM selection_value) {
     HostLease& host = require_host(host_object, "expand-node-selection");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "expand-node-selection", 2);
+    const ViewSelection source =
+        view_selection_from_scheme(selection_value, "expand-node-selection", 3);
     if (!host.services.expand_selection) {
         scm_misc_error("expand-node-selection", "node expansion capability is unavailable",
                        SCM_EOL);
     }
     try {
         const std::expected<std::optional<ViewSelection>, std::string> selected =
-            host.services.expand_selection(view);
+            host.services.expand_selection(view, source);
         if (!selected) {
             raise_host_error("expand-node-selection", selected.error());
         }
@@ -2756,11 +2765,11 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_view_caret));
     (void)scm_c_define_gsubr("reset-preferred-column!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(reset_preferred_column));
-    (void)scm_c_define_gsubr("thing-selection", 4, 0, 0,
+    (void)scm_c_define_gsubr("thing-selection", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(thing_selection));
-    (void)scm_c_define_gsubr("motion-selection", 5, 0, 0,
+    (void)scm_c_define_gsubr("motion-selection", 6, 0, 0,
                              reinterpret_cast<scm_t_subr>(motion_selection));
-    (void)scm_c_define_gsubr("expand-node-selection", 2, 0, 0,
+    (void)scm_c_define_gsubr("expand-node-selection", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(expand_node_selection));
     (void)scm_c_define_gsubr("write-clipboard!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(write_clipboard));

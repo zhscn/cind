@@ -60,13 +60,14 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
     std::function<std::expected<void, std::string>(ViewId, std::vector<std::string>)> insert_text;
     std::function<std::optional<GuileTextRange>(ViewId)> soft_kill_range;
-    std::function<std::expected<std::optional<ViewSelection>, std::string>(ViewId, std::string_view,
-                                                                           bool)>
+    std::function<std::expected<std::optional<ViewSelection>, std::string>(
+        ViewId, const ViewSelection&, std::string_view, bool)>
         thing_selection;
-    std::function<std::expected<ViewSelection, std::string>(ViewId, std::string_view, std::int64_t,
-                                                            bool)>
+    std::function<std::expected<ViewSelection, std::string>(ViewId, const ViewSelection&,
+                                                            std::string_view, std::int64_t, bool)>
         motion_selection;
-    std::function<std::expected<std::optional<ViewSelection>, std::string>(ViewId)>
+    std::function<std::expected<std::optional<ViewSelection>, std::string>(ViewId,
+                                                                           const ViewSelection&)>
         expand_selection;
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
     std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;

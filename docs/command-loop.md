@@ -196,12 +196,13 @@ prefix in its immutable invocation and consumes the slot. Undefined input, error
 commands, interaction requests, and `keyboard.quit` also clear it. A single unbound key remains
 available to the platform text-input path.
 
-The bundled meow normal map binds decimal digits and `"` to Scheme prefix commands. Digits
-accumulate a count, `0` retains its line-start meaning when no count exists, and `"` pushes a
-single-key handler state that captures a named register without entering a second input loop. Count
-and register values compose in either order and travel through the shared invocation contract. The
-formatted prefix is projected into the echo area independently of pending keymap chords and
-transient-state feedback.
+The bundled meow normal map binds decimal digits to selection expansion. `SPC` dispatches through
+the configured `C-c` leader; `SPC 0` through `SPC 9` begin a transient numeric state in which
+following digits accumulate the command count. The first non-numeric key pops that state and is
+redispatched through the durable state maps with the count intact. `-` supplies the corresponding
+negative argument. `"` pushes a single-key handler state that captures a named register. Count and
+register values compose through the shared invocation contract. The formatted prefix is projected
+into the echo area independently of pending keymap chords and transient-state feedback.
 
 Thing and Motion registries are application-owned named mechanism tables. Scheme definitions select
 pair, CST-node, character-class, fallback, and directional motion mechanisms; evaluation receives

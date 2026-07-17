@@ -226,8 +226,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
                return GuileTextRange{range.start.value, range.end.value};
            },
-           .thing_selection = [this](ViewId view, std::string_view name, bool bounds)
-               -> std::expected<std::optional<ViewSelection>, std::string> {
+           .thing_selection =
+               [this](ViewId view, const ViewSelection& source, std::string_view name,
+                      bool bounds) -> std::expected<std::optional<ViewSelection>, std::string> {
                const Buffer& buffer = session_for(view).buffer();
                const EffectiveModePolicy policy = runtime_.modes().effective_policy(buffer.modes());
                std::string definition_name(name);
@@ -245,7 +246,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
                EditSession& active = session_for(view);
                const DocumentSnapshot snapshot = active.snapshot();
-               ViewSelection selected = active.selection_model();
+               ViewSelection selected = source;
                for (SelectionRange& range : selected.ranges) {
                    const std::optional<ThingMatch> match = evaluate_thing(
                        runtime_.things(), *thing, snapshot, active.analysis().tree, range.head);
@@ -258,7 +259,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                                name, definition_name, bounds ? "bounds" : "inner");
                return std::optional<ViewSelection>{std::move(selected)};
            },
-           .motion_selection = [this](ViewId view, std::string_view name, std::int64_t count,
+           .motion_selection = [this](ViewId view, const ViewSelection& source,
+                                      std::string_view name, std::int64_t count,
                                       bool extend) -> std::expected<ViewSelection, std::string> {
                const std::optional<MotionId> motion = runtime_.motions().find(name);
                if (!motion) {
@@ -266,14 +268,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
                EditSession& active = session_for(view);
                return evaluate_motion(runtime_.motions(), *motion, active.snapshot(),
-                                      active.analysis().tree, active.selection_model(), count,
-                                      extend);
+                                      active.analysis().tree, source, count, extend);
            },
-           .expand_selection =
-               [this](ViewId view) -> std::expected<std::optional<ViewSelection>, std::string> {
+           .expand_selection = [this](ViewId view, const ViewSelection& source)
+               -> std::expected<std::optional<ViewSelection>, std::string> {
                try {
                    const EditSession& active = session_for(view);
-                   return evaluate_node_expansion(active.analysis().tree, active.selection_model());
+                   return evaluate_node_expansion(active.analysis().tree, source);
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
                }

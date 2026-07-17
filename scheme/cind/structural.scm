@@ -41,8 +41,8 @@
     session))
 
 (define (expand-result host view)
-  (let ((current (view-selection host view))
-        (expanded (expand-node-selection host view)))
+  (let* ((current (view-selection host view))
+         (expanded (expand-node-selection host view current)))
     (if expanded
         (begin
           (push-selection-history! host view current)

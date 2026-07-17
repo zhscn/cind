@@ -349,17 +349,18 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
               .definition(runtime.views().get(application.view_id()).input_strategy().value())
               .name == "meow");
 
-    send_keys(application, "1 2");
+    send_keys(application, "SPC 1 2");
+    CHECK(application.input_state().name == "meow-numeric");
     CHECK(application.pending_prefix_text() == "12");
     CHECK(application.pending_command_text() == "12");
     CHECK(application.command_loop().pending_prefix().count == 12);
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{12});
+    CHECK(application.input_state().name == "meow-normal");
     CHECK(application.pending_prefix_text().empty());
-    send_keys(application, "0");
-    CHECK(application.session().caret() == TextOffset{0});
 
-    send_keys(application, "3");
+    application.session().set_caret(TextOffset{0});
+    send_keys(application, "SPC 3");
     send_keys(application, "\"");
     CHECK(application.input_state().name == "input.read-key");
     CHECK(application.pending_command_text() == "3 \"");
@@ -371,6 +372,10 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{3});
     CHECK(application.pending_command_text().empty());
+
+    send_keys(application, "- 2 l");
+    CHECK(application.session().caret() == TextOffset{1});
+    CHECK(application.input_state().name == "meow-normal");
 
     send_keys(application, "\"");
     CHECK(application.input_state().name == "input.read-key");
@@ -452,9 +457,34 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
     EditorRuntime& runtime = application.runtime();
     send_keys(application, "C-c m");
 
-    send_keys(application, "3 w");
+    send_keys(application, "SPC 3 w");
     CHECK(application.session().caret() == TextOffset{14});
     CHECK(application.pending_command_text().empty());
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 14));
+    CHECK(application.session().active_selection()->metadata.find("strategy . meow") !=
+          std::string::npos);
+
+    application.session().clear_selection();
+    application.session().set_caret(TextOffset{0});
+    send_keys(application, "w");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 4));
+    CHECK(application.session().active_selection()->metadata.find("type select . word") !=
+          std::string::npos);
+    send_keys(application, "2");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 14));
+    CHECK(application.session().active_selection()->metadata.find("type expand . word") !=
+          std::string::npos);
+
+    application.session().clear_selection();
+    application.session().set_caret(TextOffset{8});
+    send_keys(application, "[");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(8, 13));
+    CHECK(application.session().active_selection()->metadata.find("type expand . word") !=
+          std::string::npos);
 
     application.session().set_caret(TextOffset{21});
     send_keys(application, ",");
