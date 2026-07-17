@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "editor/resource_policy.hpp"
 #include "project/project_files.hpp"
 
 #include <chrono>
@@ -36,6 +37,12 @@ void touch(const fs::path& path) {
     file << "content";
 }
 
+const std::vector<ProjectDiscoveryProvider> kProviders{
+    {.name = "vcs", .markers = {".git"}},
+    {.name = "cmk", .markers = {"cmk.yaml"}},
+    {.name = "compdb", .markers = {"compile_commands.json"}},
+};
+
 } // namespace
 
 TEST_CASE("project discovery selects the closest marker above a file") {
@@ -45,11 +52,32 @@ TEST_CASE("project discovery selects the closest marker above a file") {
     const fs::path file = temporary.path() / "nested" / "src" / "main.cpp";
     touch(file);
 
-    const auto discovery = discover_project(file.string());
+    const auto discovery = discover_project(file.string(), kProviders);
     REQUIRE(discovery.has_value());
     REQUIRE(discovery->has_value());
     CHECK((*discovery)->root == (temporary.path() / "nested").string());
+    CHECK((*discovery)->provider == "vcs");
     CHECK((*discovery)->marker == ".git");
+}
+
+TEST_CASE("project discovery honors scripted provider precedence at one root") {
+    TemporaryDirectory temporary;
+    touch(temporary.path() / ".git" / "HEAD");
+    touch(temporary.path() / "project.scm");
+    const fs::path file = temporary.path() / "src" / "main.scm";
+    touch(file);
+    const std::vector<ProjectDiscoveryProvider> providers{
+        {.name = "vcs", .markers = {".git"}},
+        {.name = "scheme", .markers = {"project.scm"}},
+    };
+
+    const auto discovery = discover_project(file.string(), providers);
+
+    REQUIRE(discovery.has_value());
+    REQUIRE(discovery->has_value());
+    CHECK((*discovery)->provider == "scheme");
+    CHECK((*discovery)->marker == "project.scm");
+    CHECK(discover_project(file.string(), {}).value() == std::nullopt);
 }
 
 TEST_CASE("project scanning returns stable files and watchable directories") {
@@ -74,8 +102,8 @@ TEST_CASE("project discovery and scanning acknowledge cancellation") {
     touch(temporary.path() / "cmk.yaml");
     std::stop_source cancelled;
     cancelled.request_stop();
-    const auto discovery =
-        discover_project((temporary.path() / "src" / "main.cpp").string(), cancelled.get_token());
+    const auto discovery = discover_project((temporary.path() / "src" / "main.cpp").string(),
+                                            kProviders, cancelled.get_token());
     REQUIRE_FALSE(discovery.has_value());
     CHECK(discovery.error() == std::make_error_code(std::errc::operation_canceled));
     const auto index = scan_project_files(temporary.path().string(), 100, cancelled.get_token());

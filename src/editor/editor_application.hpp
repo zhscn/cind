@@ -271,6 +271,7 @@ private:
     void register_commands();
     void register_input_states();
     void register_modes();
+    void register_resource_policies();
     void register_interaction_providers();
     void register_keymaps();
     void sync_keymaps();
@@ -283,11 +284,13 @@ private:
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
                                                std::optional<LinePosition> position);
     void finish_open(std::string resource, std::string contents, CppIndentStyle style,
-                     std::string style_origin, const std::optional<ProjectDiscovery>& project);
+                     std::string style_origin, ModeId mode,
+                     const std::optional<ProjectDiscovery>& project);
     void fail_open(std::string_view resource, const std::exception_ptr& failure);
     void cancel_open(std::string_view resource);
     void finish_save(BufferId buffer, std::error_code error);
     void mark_saved(BufferId buffer, Text content);
+    ModeId mode_for_resource(std::string_view resource) const;
 
     EditorRuntime runtime_;
     GuileRuntime guile_;
@@ -309,7 +312,7 @@ private:
     KeymapId system_keymap_;
     KeymapId interaction_text_keymap_;
     KeymapId interaction_picker_keymap_;
-    ModeId cpp_mode_;
+    ModeId fundamental_mode_;
     ModeId special_mode_;
     ModeId location_list_mode_;
     int command_page_rows_ = 1;

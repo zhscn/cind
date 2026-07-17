@@ -15,6 +15,7 @@
             install-core-providers!
             install-input-states!
             install-core-modes!
+            install-core-resource-policies!
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!))
@@ -706,19 +707,36 @@
   (define-motion! host 'cind.forward-expression 'forward-expression)
   (define-motion! host 'cind.backward-expression 'backward-expression)
   (define-motion! host 'cind.up-list 'up-list)
+  (define-keymap! host 'scheme-mode-map #f)
   (define-major-mode! host 'fundamental-mode
     #:interaction-class 'editing)
   (define-major-mode! host 'prog-mode
     #:parent 'fundamental-mode
     #:interaction-class 'editing
-    #:things '((angle . cind.angle)
-               (defun . cind.defun)
-               (word . cind.word)
+    #:things '((word . cind.word)
                (symbol . cind.symbol)))
   (define-major-mode! host 'special-mode
     #:parent 'fundamental-mode
     #:interaction-class 'interface)
-  3)
+  (define-major-mode! host 'scheme-mode
+    #:parent 'prog-mode
+    #:keymap 'scheme-mode-map
+    #:interaction-class 'editing)
+  4)
+
+(define (install-core-resource-policies! host)
+  (define-file-mode-rule!
+    host 'cind.c-family 'cind.cpp
+    '(".c" ".h" ".cc" ".cpp" ".cxx" ".hh" ".hpp" ".hxx" ".inc" ".ipp" ".tpp")
+    '())
+  (define-file-mode-rule!
+    host 'cind.scheme 'scheme-mode
+    '(".scm" ".ss" ".sls" ".sld")
+    '())
+  (define-project-provider! host 'cind.vcs '(".git" ".hg" ".svn"))
+  (define-project-provider! host 'cind.cmk '("cmk.yaml"))
+  (define-project-provider! host 'cind.compilation-database '("compile_commands.json"))
+  5)
 
 (define control-x-bindings
   '(("C-s" . "file.save")
@@ -809,6 +827,11 @@
 (define application-bindings
   '(("C-x C-c" . "application.quit")))
 
+(define scheme-mode-bindings
+  '(("C-c C-e" . "scheme.eval-expression")
+    ("C-c C-r" . "scheme.eval-region")
+    ("C-c C-b" . "scheme.eval-buffer")))
+
 (define (bind-all! host keymap bindings)
   (let loop ((remaining bindings)
              (count 0))
@@ -827,11 +850,13 @@
   (define-keymap! host 'editor.control-x #f)
   (define-keymap! host 'editor.default #f)
   (define-keymap! host 'application.global #f)
+  (define-keymap! host 'scheme-mode-map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
   (+ 1
      (bind-all! host 'editor.control-x control-x-bindings)
      (bind-all! host 'editor.default editor-bindings)
      (bind-all! host 'application.global application-bindings)
+     (bind-all! host 'scheme-mode-map scheme-mode-bindings)
      (install-helix-keymaps! host)
      (install-meow-keymaps! host)
      (install-structural-keymap! host)

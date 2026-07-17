@@ -409,6 +409,10 @@ void append_projects(std::string& output, const std::vector<ProjectStateSnapshot
         append_json_string(output, project.name);
         output += ",\"roots\":";
         append_strings(output, project.roots);
+        output += ",\"discovery_provider\":";
+        append_json_string(output, project.discovery_provider);
+        output += ",\"discovery_marker\":";
+        append_json_string(output, project.discovery_marker);
         output += std::format(",\"file_count\":{},\"index_revision\":{},\"indexing\":",
                               project.file_count, project.index_revision);
         append_bool(output, project.indexing);
@@ -461,11 +465,13 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
         "\"scripted_providers\":{},\"binding_revision\":{},\"input_state_revision\":{},"
         "\"scripted_input_states\":{},\"scripted_input_strategies\":{},"
         "\"mode_revision\":{},\"scripted_modes\":{},"
-        "\"last_error\":",
+        "\"resource_policy_revision\":{},\"scripted_file_mode_rules\":{},"
+        "\"scripted_project_providers\":{},\"last_error\":",
         scripting.command_revision, scripting.scripted_commands, scripting.provider_revision,
         scripting.scripted_providers, scripting.binding_revision, scripting.input_state_revision,
         scripting.scripted_input_states, scripting.scripted_input_strategies,
-        scripting.mode_revision, scripting.scripted_modes);
+        scripting.mode_revision, scripting.scripted_modes, scripting.resource_policy_revision,
+        scripting.scripted_file_mode_rules, scripting.scripted_project_providers);
     if (scripting.last_error) {
         append_json_string(output, *scripting.last_error);
     } else {
@@ -1008,12 +1014,11 @@ void append_render_damage(std::string& output, const RenderDamageSnapshot& damag
     append_bool(output, damage.full_repaint);
     output += ",\"grid_transform_changed\":";
     append_bool(output, damage.grid_transform_changed);
-    output +=
-        std::format(",\"grid_translation_rows\":{},\"damaged_cells\":{},"
-                    "\"damaged_output_pixels\":{},"
-                    "\"output_fraction\":{},\"full_reference_match\":",
-                    damage.grid_translation_rows, damage.damaged_cells,
-                    damage.damaged_output_pixels, damage.output_fraction);
+    output += std::format(",\"grid_translation_rows\":{},\"damaged_cells\":{},"
+                          "\"damaged_output_pixels\":{},"
+                          "\"output_fraction\":{},\"full_reference_match\":",
+                          damage.grid_translation_rows, damage.damaged_cells,
+                          damage.damaged_output_pixels, damage.output_fraction);
     append_bool(output, damage.full_reference_match);
     output += ",\"rects\":[";
     for (std::size_t index = 0; index < damage.rects.size(); ++index) {
@@ -1078,9 +1083,8 @@ void append_render_timings(std::string& output, const RenderTimingSnapshot& timi
         timings.layout_us, timings.compose_us, timings.render_state_us, timings.inspect_us,
         timings.frame_build_us, timings.raster_us, timings.reference_us, timings.upload_us,
         timings.present_us, timings.total_us, timings.uploaded_bytes, timings.upload_rects,
-        timings.texture_scroll_reused, timings.texture_copy_pixels,
-        timings.shape_cache_hits, timings.shape_cache_misses, timings.shape_cache_evictions,
-        timings.shape_cache_entries);
+        timings.texture_scroll_reused, timings.texture_copy_pixels, timings.shape_cache_hits,
+        timings.shape_cache_misses, timings.shape_cache_evictions, timings.shape_cache_entries);
 }
 
 void append_render(std::string& output, const RenderStateSnapshot& render) {
@@ -2457,6 +2461,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " input-state-revision=" << frame.editor.scripting.input_state_revision
            << " modes=" << frame.editor.scripting.scripted_modes
            << " mode-revision=" << frame.editor.scripting.mode_revision
+           << " file-mode-rules=" << frame.editor.scripting.scripted_file_mode_rules
+           << " project-providers=" << frame.editor.scripting.scripted_project_providers
+           << " resource-policy-revision=" << frame.editor.scripting.resource_policy_revision
            << " extensions=" << frame.editor.scripting.extensions.size();
     if (frame.editor.scripting.last_error) {
         output << " error=\"" << printable(*frame.editor.scripting.last_error) << '"';
@@ -2634,8 +2641,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << '\n';
     }
     output << "    damage=" << (frame.render.damage.full_repaint ? "full" : "partial")
-           << " grid-transform="
-           << (frame.render.damage.grid_transform_changed ? "true" : "false")
+           << " grid-transform=" << (frame.render.damage.grid_transform_changed ? "true" : "false")
            << " translation-rows=" << frame.render.damage.grid_translation_rows
            << " rects=" << frame.render.damage.rects.size()
            << " cells=" << frame.render.damage.damaged_cells
@@ -2655,8 +2661,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " total=" << frame.render.timings.total_us
            << " uploaded-bytes=" << frame.render.timings.uploaded_bytes
            << " upload-rects=" << frame.render.timings.upload_rects
-           << " texture-scroll="
-           << (frame.render.timings.texture_scroll_reused ? "true" : "false")
+           << " texture-scroll=" << (frame.render.timings.texture_scroll_reused ? "true" : "false")
            << " copied-pixels=" << frame.render.timings.texture_copy_pixels
            << " shape-cache=" << frame.render.timings.shape_cache_hits << '/'
            << frame.render.timings.shape_cache_misses

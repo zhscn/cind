@@ -62,6 +62,9 @@ public:
     const View& view() const { return runtime_->views().get(view_id_); }
     CppIndentStyle& style() { return *style_; }
     const CppIndentStyle& style() const { return *style_; }
+    bool has_language_facet(LanguageFacet facet) const {
+        return runtime_->language_provider(buffer_id_, facet).has_value();
+    }
 
     void type_text(std::string_view text);
     // One-transaction insert at the caret, bypassing the typed-char pipeline.

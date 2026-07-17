@@ -25,6 +25,15 @@ BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text)
     return buffer;
 }
 
+IndentDecision unavailable_indent_decision() {
+    return {.target_column = 0,
+            .indentation_text = {},
+            .role = FormatRole::File,
+            .anchor = std::nullopt,
+            .preserve = true,
+            .trace = {"indentation provider unavailable"}};
+}
+
 TextRange editable_range(const Text& text, const SelectionRange& selection) {
     const TextRange ordered = selection.ordered();
     if (ordered.end.value > text.size_bytes()) {
@@ -100,6 +109,10 @@ void EditSession::record_caret(TextOffset before) {
 }
 
 void EditSession::type_text(std::string_view text) {
+    if (!has_language_facet(LanguageFacet::StructuralEditing)) {
+        insert_text(text);
+        return;
+    }
     // Character by character through the typed-char pipeline, exactly like
     // an editor delivering keystrokes; each character is one undo unit.
     for (char ch : text) {
@@ -172,6 +185,18 @@ void EditSession::insert_text(std::span<const std::string> replacements) {
 
 EnterResult EditSession::enter() {
     const TextOffset before = caret();
+    if (!has_language_facet(LanguageFacet::Indentation)) {
+        EditTransaction transaction = mutable_document().begin_transaction();
+        transaction.insert(before, "\n");
+        CommitResult commit = transaction.commit();
+        analyzer_.apply(commit.change, commit.snapshot);
+        set_caret(TextOffset{before.value + 1});
+        record_caret(before);
+        return {.handler = "PlainNewline",
+                .decision = unavailable_indent_decision(),
+                .caret = caret(),
+                .change = std::move(commit.change)};
+    }
     EnterResult result = press_enter(mutable_document(), before, *style_, analyzer_);
     set_caret(result.caret);
     record_caret(before);
@@ -281,6 +306,9 @@ std::vector<std::string> EditSession::selection_texts(const ViewSelection& selec
 }
 
 IndentDecision EditSession::indent() {
+    if (!has_language_facet(LanguageFacet::Indentation)) {
+        return unavailable_indent_decision();
+    }
     DocumentSnapshot snap = snapshot();
     const TextOffset caret_before = caret();
     const std::uint32_t line = snap.content().position(caret_before).line;
@@ -350,6 +378,9 @@ void EditSession::clamp_caret() {
 }
 
 IndentDecision EditSession::explain() const {
+    if (!has_language_facet(LanguageFacet::Indentation)) {
+        return unavailable_indent_decision();
+    }
     DocumentSnapshot snap = snapshot();
     return compute_line_indent(snap, analysis().tree, snap.content().position(caret()).line,
                                *style_);

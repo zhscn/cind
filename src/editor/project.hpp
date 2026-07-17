@@ -16,6 +16,8 @@ namespace cind {
 struct ProjectSpec {
     std::string name;
     std::vector<std::string> roots;
+    std::string discovery_provider;
+    std::string discovery_marker;
 };
 
 class Project {
@@ -23,6 +25,8 @@ public:
     ProjectId id() const { return id_; }
     const std::string& name() const { return name_; }
     const std::vector<std::string>& roots() const { return roots_; }
+    const std::string& discovery_provider() const { return discovery_provider_; }
+    const std::string& discovery_marker() const { return discovery_marker_; }
     const std::vector<std::string>& files() const { return files_; }
     bool indexing() const { return indexing_; }
     std::uint64_t index_revision() const { return index_revision_; }
@@ -35,11 +39,15 @@ private:
 
     Project(ProjectId id, ProjectSpec spec, const SettingRegistry& settings)
         : id_(id), name_(std::move(spec.name)), roots_(std::move(spec.roots)),
+          discovery_provider_(std::move(spec.discovery_provider)),
+          discovery_marker_(std::move(spec.discovery_marker)),
           settings_(settings, SettingScope::Project) {}
 
     ProjectId id_;
     std::string name_;
     std::vector<std::string> roots_;
+    std::string discovery_provider_;
+    std::string discovery_marker_;
     std::vector<std::string> files_;
     bool indexing_ = false;
     std::uint64_t index_revision_ = 0;

@@ -99,6 +99,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .scripted_input_strategies = 2,
                       .mode_revision = 2,
                       .scripted_modes = 3,
+                      .resource_policy_revision = 4,
+                      .scripted_file_mode_rules = 2,
+                      .scripted_project_providers = 3,
                       .last_error = std::nullopt},
         .interaction =
             {.active = true,
@@ -141,6 +144,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .project_generation = 1,
                       .name = "sample",
                       .roots = {"/tmp/sample"},
+                      .discovery_provider = "vcs",
+                      .discovery_marker = ".git",
                       .file_count = 12,
                       .index_revision = 3,
                       .indexing = false,
@@ -388,7 +393,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":41") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":42") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -408,6 +413,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
     CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
+    CHECK(snapshot.find("\"discovery_provider\":\"vcs\"") != std::string::npos);
+    CHECK(snapshot.find("\"discovery_marker\":\".git\"") != std::string::npos);
+    CHECK(snapshot.find("\"resource_policy_revision\":4") != std::string::npos);
+    CHECK(snapshot.find("\"scripted_file_mode_rules\":2") != std::string::npos);
+    CHECK(snapshot.find("\"scripted_project_providers\":3") != std::string::npos);
     CHECK(snapshot.find("\"things\":[{\"name\":\"defun\",\"definition\":\"cind.defun\"}]") !=
           std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);

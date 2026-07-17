@@ -9,13 +9,14 @@ EditorRuntime::ExtensionCheckpoint::ExtensionCheckpoint(const EditorRuntime& run
     : commands(runtime.commands_), keymaps(runtime.keymaps_), input_states(runtime.input_states_),
       input_strategies(runtime.input_strategies_), things(runtime.things_),
       motions(runtime.motions_), modes(runtime.modes_),
+      resource_policies(runtime.resource_policies_),
       interaction_providers(runtime.interaction_providers_),
       extensions_sealed(runtime.extensions_sealed_) {}
 
 EditorRuntime::EditorRuntime()
     : application_settings_(setting_definitions_, SettingScope::Application),
       languages_(setting_definitions_), input_states_(keymaps_), input_strategies_(input_states_),
-      modes_(setting_definitions_, languages_, keymaps_, input_states_),
+      modes_(setting_definitions_, languages_, keymaps_, input_states_), resource_policies_(modes_),
       buffers_(setting_definitions_, modes_), projects_(buffers_, setting_definitions_),
       views_(buffers_, setting_definitions_, input_states_, input_strategies_, modes_),
       windows_(views_) {}
@@ -27,6 +28,7 @@ void EditorRuntime::seal_extensions() {
     setting_definitions_.seal();
     languages_.seal();
     modes_.seal();
+    resource_policies_.seal();
     commands_.seal();
     keymaps_.seal();
     input_states_.seal();
@@ -85,6 +87,22 @@ SelectionEditPolicy EditorRuntime::selection_edit_policy(ViewId view_id) const {
                     : SelectionEditPolicy::Collapse;
 }
 
+std::optional<LanguageProviderId> EditorRuntime::language_provider(BufferId buffer_id,
+                                                                   LanguageFacet facet) const {
+    const Buffer& buffer = buffers_.get(buffer_id);
+    const std::optional<ModeId> major = buffer.modes().major();
+    if (!major) {
+        return std::nullopt;
+    }
+    return language_provider(*major, facet);
+}
+
+std::optional<LanguageProviderId> EditorRuntime::language_provider(ModeId mode,
+                                                                   LanguageFacet facet) const {
+    const std::optional<LanguageProfileId> language = modes_.definition(mode).language;
+    return language ? languages_.profile(*language).provider(facet) : std::nullopt;
+}
+
 void EditorRuntime::set_default_input_strategy(std::optional<InputStrategyId> strategy) {
     input_strategies_.set_default(strategy);
     views_.refresh_mode_input_states();
@@ -102,6 +120,7 @@ void EditorRuntime::restore_extensions(const ExtensionCheckpoint& checkpoint) {
     things_ = checkpoint.things;
     motions_ = checkpoint.motions;
     modes_ = checkpoint.modes;
+    resource_policies_ = checkpoint.resource_policies;
     interaction_providers_ = checkpoint.interaction_providers;
     extensions_sealed_ = checkpoint.extensions_sealed;
 }

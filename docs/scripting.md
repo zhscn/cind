@@ -37,9 +37,9 @@ scripting inspection snapshot. C++ exceptions raised by a host primitive are tra
 Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
-provider, input-state, input-strategy, and mode counts, command/provider/keymap/input-state/mode
-installation revisions, loaded extension paths, and the most recent error. This state is diagnostic
-and is not a plugin ABI.
+interaction-provider, input-state, input-strategy, mode, file-mode-rule and project-provider counts,
+their installation revisions, loaded extension paths, and the most recent error. This state is
+diagnostic and is not a plugin ABI.
 
 ## User initialization
 
@@ -55,8 +55,8 @@ them.
 An extension load checkpoints the registries and protected Scheme callback ownership before
 evaluation. Successful definitions become visible together. A Scheme condition or native bridge
 error restores commands, interaction providers, keymaps, input states and strategies, Things,
-motions, modes, listeners, counters, and protected callback vectors to the checkpoint. The failed
-condition is retained as the runtime's latest scripting diagnostic.
+motions, modes, resource policies, listeners, counters, and protected callback vectors to the
+checkpoint. The failed condition is retained as the runtime's latest scripting diagnostic.
 
 ## Host capabilities
 
@@ -97,6 +97,8 @@ The native module exports:
 (define-thing! host name pattern)
 (define-motion! host name mechanism)
 (%define-mode! host name kind parent keymap interaction-class initial-state things)
+(define-file-mode-rule! host rule-name mode-name suffixes filenames)
+(define-project-provider! host provider-name markers)
 (mode-properties host mode-name)
 (set-buffer-major-mode! host buffer-id mode-name-or-#f)
 (set-buffer-minor-mode! host buffer-id mode-name enabled?)
@@ -297,6 +299,23 @@ mode. A change to the effective interaction class or initial state rederives eve
 Buffer through that View's selected strategy while preserving its transient stack. Changes confined
 to semantic thing bindings preserve the View's durable and transient input states.
 
+`define-file-mode-rule!` registers a named declarative matcher containing a major mode, filename
+suffixes and exact filenames. Matching is case-sensitive and the most recently defined matching
+rule wins. Redefining a name replaces that rule and moves it to the highest precedence. File-backed
+buffers resolve these rules when they are created or receive a resource; unmatched files and
+scratch buffers use `fundamental-mode`. The bundled policy maps C-family suffixes to `cind.cpp` and
+Scheme suffixes to `scheme-mode`. `scheme-mode` derives from `prog-mode` and adds `C-c C-e`,
+`C-c C-r`, and `C-c C-b` for expression, region, and buffer evaluation. It uses plain-text input,
+newline, deletion and rendering semantics until a Scheme language profile supplies corresponding
+syntax, indentation and structural-editing facets. Commands consult those facets instead of
+implicitly applying the C++ analyzer to a language-less mode.
+
+`define-project-provider!` registers a named ordered set of single-component project markers.
+Provider definitions are copied before an asynchronous open begins. Native worker code searches
+the immutable snapshot and returns the provider, marker and root; it does not enter Guile. At one
+directory, the most recently defined provider has precedence, while a marker in a closer ancestor
+always wins over a farther one.
+
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
 four-element candidate vectors containing value, label, detail and filter text. The runtime
@@ -407,9 +426,10 @@ clipboard success. This result domain lets Scheme own kill-ring policy without m
 `buffer-resource` returns a buffer's resource path or `#f`. `path-parent`, `directory-path?` and
 `path-as-directory` expose platform filesystem syntax without embedding separator rules in Scheme.
 `set-buffer-resource!` normalizes a path, changes the buffer to file-backed storage, derives its
-display name and attaches the matching project. File commands use these primitives to keep prompt
-and save-as policy in Scheme. `save-buffer!` snapshots the identified buffer and schedules the
-native atomic-write pipeline without consulting frontend focus.
+display name, resolves its major mode through the resource-policy registry and attaches the
+matching project. File commands use these primitives to keep prompt and save-as policy in Scheme.
+`save-buffer!` snapshots the identified buffer and schedules the native atomic-write pipeline
+without consulting frontend focus.
 
 `open-buffer-ids` returns the application-owned buffers in lifecycle order. `kill-buffer!` applies
 the native buffer/view/window teardown contract and returns `#f` on success or an expected error
@@ -492,10 +512,11 @@ present a block cursor, and display `N` in the modeline. `i` selects the `emacs`
 View. The toy strategy maps interface Buffers to the Emacs state, demonstrating class-specific
 behavior without package-specific routing.
 
-`(cind core)` declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
-programming buffers have the `editing` interaction class; special buffers have `interface`.
-The built-in C++ mode derives from `prog-mode`, and generated location-list buffers derive from
-`special-mode`. The default Emacs strategy maps both classes to the `emacs` InputState.
+`(cind core)` declares `fundamental-mode`, `prog-mode`, `scheme-mode`, and `special-mode`.
+Fundamental and programming buffers have the `editing` interaction class; special buffers have
+`interface`. The built-in C++ and Scheme modes derive from `prog-mode`, and generated location-list
+buffers derive from `special-mode`. The default Emacs strategy maps both classes to the `emacs`
+InputState.
 `C-u` pushes the `emacs-universal` transient handler. Its state-local session owns the accumulation
 phase while the shared command prefix carries the resulting count. Repeated `C-u`, decimal digits,
 and `-` update that value; the first ordinary key pops the state and receives the prefix through its

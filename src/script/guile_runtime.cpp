@@ -76,6 +76,7 @@ struct GuileState {
     std::size_t input_state_definitions = 0;
     std::size_t input_strategy_definitions = 0;
     std::uint64_t mode_revision = 0;
+    std::uint64_t resource_policy_revision = 0;
     std::uint64_t binding_revision = 0;
     std::size_t mode_definitions = 0;
     std::optional<std::string> last_error;
@@ -93,6 +94,7 @@ struct HostLease {
     std::size_t input_states_installed = 0;
     std::size_t input_strategies_installed = 0;
     std::size_t modes_installed = 0;
+    std::size_t resource_policies_installed = 0;
 };
 
 std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& host,
@@ -120,6 +122,37 @@ std::string scheme_name(SCM value, const char* caller, int position) {
     }
     scm_wrong_type_arg_msg(caller, position, value, "symbol or string");
     return {};
+}
+
+bool scheme_true(SCM value);
+
+std::vector<std::string> string_sequence_from_scheme(SCM value, const char* caller, int position) {
+    std::vector<std::string> result;
+    if (scm_is_vector(value)) {
+        const std::size_t size = scm_c_vector_length(value);
+        result.reserve(size);
+        for (std::size_t index = 0; index < size; ++index) {
+            const SCM item = scm_c_vector_ref(value, index);
+            if (!scm_is_string(item)) {
+                scm_wrong_type_arg_msg(caller, position, item, "string");
+            }
+            result.push_back(scheme_string(item));
+        }
+        return result;
+    }
+    const long size = scm_ilength(value);
+    if (size < 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "proper list or vector of strings");
+    }
+    result.reserve(static_cast<std::size_t>(size));
+    for (SCM rest = value; !scheme_true(scm_null_p(rest)); rest = scm_cdr(rest)) {
+        const SCM item = scm_car(rest);
+        if (!scm_is_string(item)) {
+            scm_wrong_type_arg_msg(caller, position, item, "string");
+        }
+        result.push_back(scheme_string(item));
+    }
+    return result;
 }
 
 SCM name_symbol(std::string_view name) {
@@ -1396,6 +1429,50 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
     return SCM_BOOL_F;
 }
 // NOLINTEND(bugprone-easily-swappable-parameters)
+
+// The Guile ABI fixes five adjacent SCM arguments; the public Scheme policy
+// supplies declarative matcher lists.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_file_mode_rule(SCM host_object, SCM name_value, SCM mode_value, SCM suffixes_value,
+                          SCM filenames_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-file-mode-rule!");
+        const std::string name = scheme_name(name_value, "define-file-mode-rule!", 2);
+        const ModeId mode = require_mode(host, mode_value, "define-file-mode-rule!", 3);
+        std::vector<std::string> suffixes =
+            string_sequence_from_scheme(suffixes_value, "define-file-mode-rule!", 4);
+        std::vector<std::string> filenames =
+            string_sequence_from_scheme(filenames_value, "define-file-mode-rule!", 5);
+        host.runtime->resource_policies().define_file_mode(name, mode, std::move(suffixes),
+                                                           std::move(filenames));
+        ++host.resource_policies_installed;
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-file-mode-rule!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-file-mode-rule!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// Guile requires callbacks to expose one SCM parameter per Scheme argument.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_project_provider(SCM host_object, SCM name_value, SCM markers_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-project-provider!");
+        const std::string name = scheme_name(name_value, "define-project-provider!", 2);
+        std::vector<std::string> markers =
+            string_sequence_from_scheme(markers_value, "define-project-provider!", 3);
+        host.runtime->resource_policies().define_project_provider(name, std::move(markers));
+        ++host.resource_policies_installed;
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-project-provider!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-project-provider!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM mode_properties(SCM host_object, SCM mode_value) {
@@ -3213,6 +3290,10 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("define-motion!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_motion));
     (void)scm_c_define_gsubr("%define-mode!", 8, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
+    (void)scm_c_define_gsubr("define-file-mode-rule!", 5, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_file_mode_rule));
+    (void)scm_c_define_gsubr("define-project-provider!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_project_provider));
     (void)scm_c_define_gsubr("mode-properties", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(mode_properties));
     (void)scm_c_define_gsubr("set-buffer-major-mode!", 3, 0, 0,
@@ -3329,22 +3410,23 @@ void initialize_host_module(void*) {
         "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
         "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
         "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
-        "define-motion!", "%define-mode!", "mode-properties", "set-buffer-major-mode!",
-        "set-buffer-minor-mode!", "buffer-mode-policy", "buffer-mode-summary",
-        "observe-mode-policy-changes!", "enabled-command-names", "command-properties",
-        "open-buffer-summaries", "owned-user-modules", "project-root", "project-files",
-        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "path-parent", "directory-path?", "path-as-directory",
-        "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
-        "evaluate-scheme!", "move-caret-to-line!", "set-message!", "ensure-project-index!",
-        "open-file!", "start-project-search!", "set-buffer-resource!", "save-buffer!",
-        "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
-        "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
+        "define-motion!", "%define-mode!", "define-file-mode-rule!", "define-project-provider!",
+        "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
+        "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
+        "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
+        "project-files", "path-relative", "path-filename", "active-key-bindings",
+        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
+        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+        "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!", "set-message!",
+        "ensure-project-index!", "open-file!", "start-project-search!", "set-buffer-resource!",
+        "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
+        "delete-window!", "delete-other-windows!", "select-other-window!", "request-redraw!",
+        nullptr);
 }
 
 void initialize_guile() {
@@ -3363,6 +3445,7 @@ struct GuileCall {
         InstallKeymaps,
         InstallInputStates,
         InstallModes,
+        InstallResourcePolicies,
         InvokeCommand,
         InvokeProvider,
         InvokeInputHandler,
@@ -3750,6 +3833,11 @@ SCM call_body(void* data) {
                 scm_call_1(scm_c_public_ref("cind core", "install-core-modes!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallResourcePolicies:
+            call.result = scm_call_1(
+                scm_c_public_ref("cind core", "install-core-resource-policies!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InvokeCommand:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      command_invocation_value(*call.invocation));
@@ -3918,6 +4006,7 @@ std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& hos
     const std::size_t input_states = host.input_states_installed;
     const std::size_t input_strategies = host.input_strategies_installed;
     const std::size_t modes = host.modes_installed;
+    const std::size_t resource_policies = host.resource_policies_installed;
     const std::string previous_source = state->definition_source;
     state->definition_source = std::format("scheme:{}", request.source_name);
 
@@ -3944,6 +4033,9 @@ std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& hos
     }
     if (host.modes_installed != modes) {
         ++state->mode_revision;
+    }
+    if (host.resource_policies_installed != resource_policies) {
+        ++state->resource_policy_revision;
     }
 
     if (!evaluated) {
@@ -4385,6 +4477,26 @@ public:
         return call.count;
     }
 
+    std::expected<std::size_t, std::string> install_core_resource_policies() {
+        require_owner_thread();
+        lease_->resource_policies_installed = 0;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallResourcePolicies;
+        call.host = host_;
+        std::expected<SCM, std::string> result = run_guile_call(call);
+        if (!result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != lease_->resource_policies_installed) {
+            state_->last_error = "Guile resource policy returned an inconsistent definition count";
+            return std::unexpected(*state_->last_error);
+        }
+        ++state_->resource_policy_revision;
+        state_->last_error.reset();
+        return call.count;
+    }
+
     std::expected<void, std::string> load_extension(const std::string& input_path) {
         require_owner_thread();
         std::error_code error;
@@ -4410,6 +4522,7 @@ public:
         const std::size_t input_states_installed = lease_->input_states_installed;
         const std::size_t input_strategies_installed = lease_->input_strategies_installed;
         const std::size_t modes_installed = lease_->modes_installed;
+        const std::size_t resource_policies_installed = lease_->resource_policies_installed;
 
         GuileCall call;
         call.operation = GuileCall::Operation::LoadExtension;
@@ -4428,6 +4541,7 @@ public:
             lease_->input_states_installed = input_states_installed;
             lease_->input_strategies_installed = input_strategies_installed;
             lease_->modes_installed = modes_installed;
+            lease_->resource_policies_installed = resource_policies_installed;
             state_->last_error = loaded.error();
             return std::unexpected(*state_->last_error);
         }
@@ -4449,6 +4563,9 @@ public:
         }
         if (lease_->modes_installed != modes_installed) {
             ++state_->mode_revision;
+        }
+        if (lease_->resource_policies_installed != resource_policies_installed) {
+            ++state_->resource_policy_revision;
         }
         state_->last_error.reset();
         return {};
@@ -4484,6 +4601,11 @@ public:
                 .scripted_input_strategies = state_->input_strategy_definitions,
                 .mode_revision = state_->mode_revision,
                 .scripted_modes = state_->mode_definitions,
+                .resource_policy_revision = state_->resource_policy_revision,
+                .scripted_file_mode_rules =
+                    lease_->runtime->resource_policies().file_mode_rules().size(),
+                .scripted_project_providers =
+                    lease_->runtime->resource_policies().project_providers().size(),
                 .last_error = state_->last_error};
     }
 
@@ -4523,6 +4645,10 @@ std::expected<std::size_t, std::string> GuileRuntime::install_input_states() {
 
 std::expected<std::size_t, std::string> GuileRuntime::install_core_modes() {
     return impl_->install_core_modes();
+}
+
+std::expected<std::size_t, std::string> GuileRuntime::install_core_resource_policies() {
+    return impl_->install_core_resource_policies();
 }
 
 std::expected<void, std::string> GuileRuntime::load_extension(const std::string& path) {

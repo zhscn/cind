@@ -90,6 +90,10 @@ module with `host`, `(cind host)`, `(cind command)`, and `(cind input)` availabl
 Definitions made by the file are installed as one transaction. A condition aborts its registry
 changes and is reported in the editor message area and scripting inspector state.
 
+File mode and project discovery policy are also Scheme data. `define-file-mode-rule!` associates
+suffixes or exact filenames with a major mode, while `define-project-provider!` declares ancestor
+markers. Later rules have precedence and participate in the same extension transaction.
+
 The `C-h` prefix opens editor self-description commands. `C-h k` describes the command resolved by
 a key sequence, `C-h x` describes a command, `C-h b` lists active bindings, `C-h m` describes the
 current mode policy, and `C-h f`/`C-h v` describe Scheme functions and variables. Descriptions use a
@@ -99,6 +103,8 @@ read-only `*Help*` buffer in both graphical and terminal frontends.
 palette also exposes `scheme.eval-region` and `scheme.eval-buffer`; definitions made by any of the
 three commands remain available to later evaluations and to `describe-function` /
 `describe-variable`. Multiline output is shown in the reusable `*Scheme Evaluation*` buffer.
+Scheme source files use `scheme-mode`, with `C-c C-e`, `C-c C-r`, and `C-c C-b` bound to expression,
+region, and buffer evaluation.
 
 ## Build without the GUI
 

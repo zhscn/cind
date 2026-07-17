@@ -113,6 +113,10 @@ BasicEditorCommands::BasicEditorCommands(EditorRuntime& runtime, EditSessionReso
     define("edit.indent", [this](ViewId view, const CommandInvocation&) {
         reset_preferred_column(view);
         EditSession& active = session_(view);
+        if (!active.has_language_facet(LanguageFacet::Indentation)) {
+            hooks_.show_message("indentation unavailable for this mode");
+            return;
+        }
         const RevisionId revision = active.snapshot().revision();
         const TextOffset caret = active.caret();
         const IndentDecision decision = active.indent();
@@ -183,6 +187,10 @@ void BasicEditorCommands::move_line_boundary(ViewId view, bool end) {
 
 void BasicEditorCommands::soft_delete(ViewId view, bool forward) {
     EditSession& active = session_(view);
+    if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
+        raw_delete(view, forward);
+        return;
+    }
     const DocumentSnapshot snapshot = active.snapshot();
     const Text& text = snapshot.content();
     const TextOffset caret = active.caret();

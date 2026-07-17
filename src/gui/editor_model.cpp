@@ -404,22 +404,25 @@ EditorStateSnapshot EditorModel::inspect() {
         command_state.pending_keymap = runtime.keymaps().definition(*keymap).name;
     }
     GuileRuntimeSnapshot guile = application_.scripting();
-    ScriptingStateSnapshot scripting_state{.engine = std::move(guile.engine),
-                                           .version = std::move(guile.version),
-                                           .modules = std::move(guile.modules),
-                                           .extensions = std::move(guile.extensions),
-                                           .command_revision = guile.command_revision,
-                                           .scripted_commands = guile.scripted_commands,
-                                           .provider_revision = guile.provider_revision,
-                                           .scripted_providers = guile.scripted_providers,
-                                           .binding_revision = guile.binding_revision,
-                                           .input_state_revision = guile.input_state_revision,
-                                           .scripted_input_states = guile.scripted_input_states,
-                                           .scripted_input_strategies =
-                                               guile.scripted_input_strategies,
-                                           .mode_revision = guile.mode_revision,
-                                           .scripted_modes = guile.scripted_modes,
-                                           .last_error = std::move(guile.last_error)};
+    ScriptingStateSnapshot scripting_state{
+        .engine = std::move(guile.engine),
+        .version = std::move(guile.version),
+        .modules = std::move(guile.modules),
+        .extensions = std::move(guile.extensions),
+        .command_revision = guile.command_revision,
+        .scripted_commands = guile.scripted_commands,
+        .provider_revision = guile.provider_revision,
+        .scripted_providers = guile.scripted_providers,
+        .binding_revision = guile.binding_revision,
+        .input_state_revision = guile.input_state_revision,
+        .scripted_input_states = guile.scripted_input_states,
+        .scripted_input_strategies = guile.scripted_input_strategies,
+        .mode_revision = guile.mode_revision,
+        .scripted_modes = guile.scripted_modes,
+        .resource_policy_revision = guile.resource_policy_revision,
+        .scripted_file_mode_rules = guile.scripted_file_mode_rules,
+        .scripted_project_providers = guile.scripted_project_providers,
+        .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
         interaction_state = {.active = true,
@@ -488,6 +491,8 @@ EditorStateSnapshot EditorModel::inspect() {
                             .project_generation = project_id.generation,
                             .name = project.name(),
                             .roots = project.roots(),
+                            .discovery_provider = project.discovery_provider(),
+                            .discovery_marker = project.discovery_marker(),
                             .file_count = project.files().size(),
                             .index_revision = project.index_revision(),
                             .indexing = project.indexing(),

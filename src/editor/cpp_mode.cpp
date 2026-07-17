@@ -45,7 +45,8 @@ CppModeRegistration ensure_cpp_mode(EditorRuntime& runtime) {
     } else {
         runtime.modes().set_interaction_class(mode, InteractionClass::Editing);
     }
-    runtime.modes().set_things(mode, {{.name = "defun", .definition = "cind.defun"},
+    runtime.modes().set_things(mode, {{.name = "angle", .definition = "cind.angle"},
+                                      {.name = "defun", .definition = "cind.defun"},
                                       {.name = "string", .definition = "cind.string"}});
     return {dialect, language, mode};
 }

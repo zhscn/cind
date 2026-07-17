@@ -93,6 +93,34 @@ TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
     CHECK(runtime.application_settings().find(tab_width) != nullptr);
 }
 
+TEST_CASE("resource policies are named, ordered, transactional registry data") {
+    EditorRuntime runtime;
+    const ModeId text = runtime.modes().define("text", ModeKind::Major);
+    const ModeId scheme = runtime.modes().define("scheme", ModeKind::Major);
+    const ModeId minor = runtime.modes().define("minor", ModeKind::Minor);
+
+    runtime.resource_policies().define_file_mode("source", text, {".scm"});
+    runtime.resource_policies().define_file_mode("user-source", scheme, {".scm"});
+    CHECK(runtime.resource_policies().mode_for("init.scm") == scheme);
+    runtime.resource_policies().define_file_mode("user-source", text, {}, {"guix.scm"});
+    CHECK(runtime.resource_policies().mode_for("guix.scm") == text);
+    CHECK(runtime.resource_policies().mode_for("init.scm") == text);
+    CHECK_THROWS_AS(runtime.resource_policies().define_file_mode("bad", minor, {".bad"}),
+                    std::invalid_argument);
+
+    runtime.resource_policies().define_project_provider("vcs", {".git"});
+    const EditorRuntime::ExtensionCheckpoint checkpoint = runtime.checkpoint_extensions();
+    runtime.resource_policies().define_project_provider("user", {"project.scm"});
+    REQUIRE(runtime.resource_policies().project_providers().size() == 2);
+    runtime.restore_extensions(checkpoint);
+    REQUIRE(runtime.resource_policies().project_providers().size() == 1);
+    CHECK(runtime.resource_policies().project_providers().front().name == "vcs");
+
+    runtime.seal_extensions();
+    CHECK_THROWS_AS(runtime.resource_policies().define_project_provider("late", {"late"}),
+                    std::logic_error);
+}
+
 TEST_CASE("buffers expose validated semantic source locations") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "locations",
@@ -246,7 +274,8 @@ TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
     CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
     CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
     CHECK(runtime.modes().definition(cpp.mode).things ==
-          std::vector<ModeThingBinding>{{.name = "defun", .definition = "cind.defun"},
+          std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
+                                        {.name = "defun", .definition = "cind.defun"},
                                         {.name = "string", .definition = "cind.string"}});
     CHECK(ensure_cpp_mode(runtime).mode == cpp.mode);
 }
@@ -614,9 +643,14 @@ TEST_CASE("projects own tooling scope without owning editor windows") {
     const SettingId server = runtime.setting_definitions().define(
         "language.server", std::string("default"),
         SettingScope::Application | SettingScope::Project | SettingScope::Buffer);
-    const ProjectId outer = runtime.projects().create({.name = "outer", .roots = {"file:///work"}});
-    const ProjectId inner =
-        runtime.projects().create({.name = "inner", .roots = {"file:///work/sub"}});
+    const ProjectId outer = runtime.projects().create({.name = "outer",
+                                                       .roots = {"file:///work"},
+                                                       .discovery_provider = {},
+                                                       .discovery_marker = {}});
+    const ProjectId inner = runtime.projects().create({.name = "inner",
+                                                       .roots = {"file:///work/sub"},
+                                                       .discovery_provider = {},
+                                                       .discovery_marker = {}});
     runtime.projects().get(inner).settings().set(server, std::string("clangd"));
 
     const BufferId buffer = runtime.buffers().create({.name = "main.cc",

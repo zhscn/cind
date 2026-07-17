@@ -6,14 +6,17 @@ project owns roots, project-scoped settings and an immutable file-index snapshot
 
 ## Discovery and attachment
 
-Opening a file searches its ancestor directories for `.git`, `cmk.yaml` or
-`compile_commands.json`. The closest directory containing a marker becomes the project root. This
-search runs with the file read and style discovery on the async worker pool. The editor reuses a
-project with the same normalized root and assigns the opened buffer on the editor thread.
+Scheme registers named project providers as ordered marker sets. The bundled policy defines VCS
+markers (`.git`, `.hg`, `.svn`), `cmk.yaml`, and `compile_commands.json`. Opening a file snapshots
+the provider registry and searches ancestor directories on the async worker pool. The closest
+matching directory becomes the project root; at one directory, the most recently registered
+provider has precedence. The editor reuses a project with the same normalized root and assigns the
+opened buffer on the editor thread.
 
-Project discovery is provider policy rather than a responsibility of `ProjectRegistry`. Native and
-scripted discovery providers can therefore create the same validated `ProjectSpec` without giving
-the registry filesystem access.
+`ProjectRegistry` validates and owns projects without filesystem access. A discovered project
+retains its provider and matching marker as diagnostic metadata. Scheme changes declarative
+provider policy through `define-project-provider!`; native code owns path normalization,
+cancellation, filesystem queries, project attachment and indexing.
 
 ## File index
 

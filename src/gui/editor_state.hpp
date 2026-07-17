@@ -73,6 +73,8 @@ struct ProjectStateSnapshot {
     std::uint32_t project_generation = 0;
     std::string name;
     std::vector<std::string> roots;
+    std::string discovery_provider;
+    std::string discovery_marker;
     std::size_t file_count = 0;
     std::uint64_t index_revision = 0;
     bool indexing = false;
@@ -154,6 +156,9 @@ struct ScriptingStateSnapshot {
     std::size_t scripted_input_strategies = 0;
     std::uint64_t mode_revision = 0;
     std::size_t scripted_modes = 0;
+    std::uint64_t resource_policy_revision = 0;
+    std::size_t scripted_file_mode_rules = 0;
+    std::size_t scripted_project_providers = 0;
     std::optional<std::string> last_error;
 };
 

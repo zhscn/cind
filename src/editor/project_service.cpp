@@ -51,8 +51,10 @@ void ProjectService::attach_buffer(BufferId buffer,
             if (name.empty()) {
                 name = root.string();
             }
-            project =
-                runtime_->projects().create({.name = std::move(name), .roots = {discovery->root}});
+            project = runtime_->projects().create({.name = std::move(name),
+                                                   .roots = {discovery->root},
+                                                   .discovery_provider = discovery->provider,
+                                                   .discovery_marker = discovery->marker});
         }
     } else if (const std::optional<std::string>& resource =
                    runtime_->buffers().get(buffer).resource_uri()) {

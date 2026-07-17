@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "editor/command_loop.hpp"
+#include "editor/cpp_mode.hpp"
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -131,6 +132,7 @@ TEST_CASE("Guile extensions load in an isolated module") {
 
 TEST_CASE("failed Guile extension loads roll back every registration") {
     EditorRuntime runtime;
+    (void)runtime.modes().define("text-mode", ModeKind::Major);
     GuileRuntime guile(runtime);
     const SchemeFile extension("cind-guile-extension-failure.scm",
                                R"((define-command! host "user.partial"
@@ -138,6 +140,8 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
   #f)
 (define-keymap! host 'user.partial-map #f)
 (bind-key! host 'user.partial-map "C-c p" 'user.partial)
+(define-file-mode-rule! host 'user.partial-mode 'text-mode '(".partial") '())
+(define-project-provider! host 'user.partial-project '("partial.project"))
 (error "extension failed")
 )");
 
@@ -146,6 +150,8 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
     REQUIRE_FALSE(loaded.has_value());
     CHECK_FALSE(runtime.commands().find("user.partial").has_value());
     CHECK_FALSE(runtime.keymaps().find("user.partial-map").has_value());
+    CHECK(runtime.resource_policies().file_mode_rules().empty());
+    CHECK(runtime.resource_policies().project_providers().empty());
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.extensions.empty());
     REQUIRE(snapshot.last_error.has_value());
@@ -382,19 +388,19 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 3);
-    CHECK(*second == 3);
+    CHECK(*first == 4);
+    CHECK(*second == 4);
     const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
     const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
     const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
+    const ModeId scheme = runtime.modes().find("scheme-mode").value_or(ModeId{});
     REQUIRE(fundamental);
     REQUIRE(prog);
     REQUIRE(special);
+    REQUIRE(scheme);
     CHECK(runtime.modes().definition(prog).parent == fundamental);
     CHECK(runtime.modes().definition(prog).things ==
-          std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
-                                        {.name = "defun", .definition = "cind.defun"},
-                                        {.name = "word", .definition = "cind.word"},
+          std::vector<ModeThingBinding>{{.name = "word", .definition = "cind.word"},
                                         {.name = "symbol", .definition = "cind.symbol"}});
     CHECK(runtime.things().find("cind.angle").has_value());
     CHECK(runtime.things().find("cind.defun").has_value());
@@ -402,12 +408,41 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK(runtime.motions().find("cind.forward-symbol").has_value());
     CHECK(runtime.modes().definition(special).parent == fundamental);
     CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
+    CHECK(runtime.modes().definition(scheme).parent == prog);
+    CHECK(runtime.modes().definition(scheme).keymaps ==
+          std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
-    CHECK(guile.snapshot().scripted_modes == 3);
+    CHECK(guile.snapshot().scripted_modes == 4);
+}
+
+TEST_CASE("bundled Guile policy defines file modes and project discovery providers") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    REQUIRE(guile.install_input_states().has_value());
+    REQUIRE(guile.install_core_modes().has_value());
+    const ModeId cpp = ensure_cpp_mode(runtime).mode;
+
+    const std::expected<std::size_t, std::string> first = guile.install_core_resource_policies();
+    const std::expected<std::size_t, std::string> second = guile.install_core_resource_policies();
+
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    CHECK(*first == 5);
+    CHECK(*second == 5);
+    CHECK(runtime.resource_policies().mode_for("src/main.cpp") == cpp);
+    CHECK(runtime.resource_policies().mode_for("module.scm") ==
+          runtime.modes().find("scheme-mode"));
+    CHECK_FALSE(runtime.resource_policies().mode_for("README.md").has_value());
+    CHECK(runtime.resource_policies().file_mode_rules().size() == 2);
+    CHECK(runtime.resource_policies().project_providers().size() == 3);
+    const GuileRuntimeSnapshot snapshot = guile.snapshot();
+    CHECK(snapshot.resource_policy_revision == 2);
+    CHECK(snapshot.scripted_file_mode_rules == 2);
+    CHECK(snapshot.scripted_project_providers == 3);
 }
 
 TEST_CASE("bundled Guile commands return editor command actions") {
@@ -1013,8 +1048,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const CommandId project_search = require_command(runtime, "project.search");
     CHECK_FALSE(runtime.commands().enabled(project_search, context));
-    const ProjectId project =
-        runtime.projects().create({.name = "sample", .roots = {"/tmp/sample"}});
+    const ProjectId project = runtime.projects().create({.name = "sample",
+                                                         .roots = {"/tmp/sample"},
+                                                         .discovery_provider = {},
+                                                         .discovery_marker = {}});
     runtime.projects().assign(buffer, project);
     runtime.projects().replace_index(project,
                                      {"/tmp/sample/src/main.cpp", "/tmp/sample/include/main.hpp"});

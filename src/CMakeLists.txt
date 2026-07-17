@@ -69,6 +69,7 @@ add_library(cind_application STATIC
   editor/mode.cpp
   editor/noun.cpp
   editor/project.cpp
+  editor/resource_policy.cpp
   editor/runtime.cpp
   editor/settings.cpp
   editor/text_input.cpp

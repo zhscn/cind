@@ -76,7 +76,9 @@ lifetime. Captured output is bounded to 64 MiB per stream.
 
 File reads, directory enumeration and atomic saves run as worker tasks. Application startup opens
 its requested file asynchronously and replaces the temporary scratch buffer after the read, style
-discovery and project discovery complete. File save captures an immutable document snapshot and
+discovery and project discovery complete. Project discovery consumes an immutable snapshot of the
+Scheme-defined provider registry, so worker tasks never call Guile or read mutable editor state.
+File save captures an immutable document snapshot and
 performs the atomic file replacement as one worker task. Its completion marks that snapshot as the
 save point. Edits made while the write is in progress stay modified, so asynchronous completion
 cannot mark newer content as saved.

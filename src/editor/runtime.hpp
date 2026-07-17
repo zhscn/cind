@@ -9,6 +9,7 @@
 #include "editor/mode.hpp"
 #include "editor/noun.hpp"
 #include "editor/project.hpp"
+#include "editor/resource_policy.hpp"
 #include "editor/settings.hpp"
 #include "editor/view.hpp"
 #include "editor/window.hpp"
@@ -28,6 +29,7 @@ public:
         ThingRegistry things;
         MotionRegistry motions;
         ModeRegistry modes;
+        ResourcePolicyRegistry resource_policies;
         InteractionProviderRegistry interaction_providers;
         bool extensions_sealed = false;
 
@@ -52,6 +54,8 @@ public:
     const BufferRegistry& buffers() const { return buffers_; }
     ProjectRegistry& projects() { return projects_; }
     const ProjectRegistry& projects() const { return projects_; }
+    ResourcePolicyRegistry& resource_policies() { return resource_policies_; }
+    const ResourcePolicyRegistry& resource_policies() const { return resource_policies_; }
     ViewRegistry& views() { return views_; }
     const ViewRegistry& views() const { return views_; }
     WindowRegistry& windows() { return windows_; }
@@ -76,6 +80,8 @@ public:
 
     SettingsResolver settings_for(BufferId buffer, ViewId view) const;
     SelectionEditPolicy selection_edit_policy(ViewId view) const;
+    std::optional<LanguageProviderId> language_provider(BufferId buffer, LanguageFacet facet) const;
+    std::optional<LanguageProviderId> language_provider(ModeId mode, LanguageFacet facet) const;
     void set_default_input_strategy(std::optional<InputStrategyId> strategy);
     ExtensionCheckpoint checkpoint_extensions() const;
     void restore_extensions(const ExtensionCheckpoint& checkpoint);
@@ -93,6 +99,7 @@ private:
     ThingRegistry things_;
     MotionRegistry motions_;
     ModeRegistry modes_;
+    ResourcePolicyRegistry resource_policies_;
     BufferRegistry buffers_;
     ProjectRegistry projects_;
     ViewRegistry views_;

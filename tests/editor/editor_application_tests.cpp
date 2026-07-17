@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <variant>
 
@@ -44,6 +45,28 @@ private:
     std::mutex mutex_;
     std::condition_variable changed_;
     bool notified_ = false;
+};
+
+class TemporaryFile {
+public:
+    TemporaryFile(std::string name, std::string_view contents)
+        : path_(std::filesystem::temp_directory_path() / std::move(name)) {
+        std::ofstream output(path_, std::ios::binary | std::ios::trunc);
+        output << contents;
+        if (!output) {
+            throw std::runtime_error("cannot create temporary test file");
+        }
+    }
+
+    ~TemporaryFile() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
 };
 
 EditorApplication make_application(std::string path, std::string initial,
@@ -194,6 +217,59 @@ TEST_CASE("application modes join the scripted core hierarchy") {
     CHECK(modes.definition(locations).parent == special);
     CHECK(modes.effective_policy(application.session().buffer().modes()).interaction_class ==
           InteractionClass::Editing);
+}
+
+TEST_CASE("resource policy selects file modes without making scratch buffers C++") {
+    EditorApplication cpp = make_application("sample.cpp", "int value;\n");
+    EditorApplication scheme = make_application("sample.scm", "(define value 1)\n");
+    EditorApplication text = make_application("README.md", "text\n");
+    EditorApplication scratch = make_application({}, "text\n");
+
+    const auto major_name = [](const EditorApplication& application) {
+        const ModeId mode = application.session().buffer().modes().major().value_or(ModeId{});
+        return application.runtime().modes().definition(mode).name;
+    };
+    CHECK(major_name(cpp) == "cind.cpp");
+    CHECK(major_name(scheme) == "scheme-mode");
+    CHECK(major_name(text) == "fundamental-mode");
+    CHECK(major_name(scratch) == "fundamental-mode");
+    CHECK(scheme.syntax_tokens().empty());
+
+    send_keys(scheme, "C-c C-e");
+    REQUIRE(scheme.interaction().state() != nullptr);
+    CHECK(scheme.interaction().state()->request.prompt == "Eval: ");
+
+    EditorApplication plain_scheme = make_application("plain.scm", "{");
+    plain_scheme.session().set_caret(TextOffset{1});
+    send_keys(plain_scheme, "RET");
+    CHECK(plain_scheme.session().snapshot().content() == "{\n");
+    CHECK(plain_scheme.message().empty());
+    plain_scheme.insert_text("\"");
+    send_keys(plain_scheme, "Backspace");
+    CHECK(plain_scheme.session().snapshot().content() == "{\n");
+    send_keys(plain_scheme, "TAB");
+    CHECK(plain_scheme.message() == "indentation unavailable for this mode");
+}
+
+TEST_CASE("user initialization overrides file mode policy before the first buffer") {
+    TemporaryFile init(std::format("cind-mode-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((%define-mode! host 'user-notes 'major 'fundamental-mode #f
+                 'editing #f '())
+(define-file-mode-rule! host 'user-notes-rule 'user-notes '(".notes") '())
+)");
+    EditorApplication application({.path = "sample.notes",
+                                   .initial_text = "notes\n",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
+    CHECK(application.runtime().modes().definition(major).name == "user-notes");
+    CHECK(application.scripting().mode_revision == 2);
+    CHECK(application.scripting().resource_policy_revision == 2);
+    CHECK(application.scripting().scripted_file_mode_rules == 3);
 }
 
 TEST_CASE("per-view input states precede window layers and may handle keys") {
@@ -1017,6 +1093,35 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
     std::filesystem::remove(path, ignored);
 }
 
+TEST_CASE("asynchronous file open snapshots mode policy and skips unrelated style discovery") {
+    TemporaryFile source(std::format("cind-application-open-{}.scm", static_cast<long>(::getpid())),
+                         "(define value 1)\n");
+    WakeSignal wake;
+    EditorApplication application({
+        .path = source.path().string(),
+        .initial_text = std::nullopt,
+        .style = {},
+        .style_origin = "fallback",
+        .initial_line = 0,
+        .platform_services = {.write_clipboard = {},
+                              .read_clipboard = {},
+                              .wake_event_loop = [&wake] { wake.notify(); }},
+        .init_file = std::nullopt,
+    });
+    const ModeId fundamental =
+        application.runtime().modes().find("fundamental-mode").value_or(ModeId{});
+    REQUIRE(fundamental);
+    application.runtime().resource_policies().define_file_mode("late-test-rule", fundamental,
+                                                               {".scm"});
+
+    REQUIRE(wake.wait());
+    REQUIRE(application.poll_background_work());
+    const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
+    CHECK(application.runtime().modes().definition(major).name == "scheme-mode");
+    CHECK(application.style_origin() == "plain text");
+    CHECK(application.syntax_tokens().empty());
+}
+
 TEST_CASE("project discovery indexes files and feeds the project file picker") {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -1677,7 +1782,11 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     const std::filesystem::path first_path = directory / "first.cc";
     const std::filesystem::path second_path = directory / "second.cc";
     std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
+    std::filesystem::create_directories(directory / ".git", ignored);
+    {
+        std::ofstream head(directory / ".git" / "HEAD", std::ios::binary);
+        head << "ref: refs/heads/main\n";
+    }
     {
         std::ofstream second(second_path, std::ios::binary);
         second << "second";
@@ -1695,10 +1804,17 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
 
     const std::expected<void, std::string> opened = application.open_file(second_path.string());
     REQUIRE(opened.has_value());
+    application.runtime().resource_policies().define_project_provider("late-test-provider",
+                                                                      {".git"});
     REQUIRE(wake.wait());
     REQUIRE(application.poll_background_work());
     const BufferId second = application.buffer_id();
     CHECK(second != first);
+    REQUIRE(application.session().buffer().project_id().has_value());
+    const Project& project =
+        application.runtime().projects().get(*application.session().buffer().project_id());
+    CHECK(project.discovery_provider() == "cind.vcs");
+    CHECK(project.discovery_marker() == ".git");
     application.insert_text("B");
     application.session().view().viewport().left_column = 3;
 

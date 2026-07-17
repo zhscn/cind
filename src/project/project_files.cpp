@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <ranges>
 #include <string_view>
 
 namespace cind {
@@ -10,12 +11,6 @@ namespace cind {
 namespace {
 
 namespace fs = std::filesystem;
-
-constexpr std::array<std::string_view, 3> kProjectMarkers{
-    ".git",
-    "cmk.yaml",
-    "compile_commands.json",
-};
 
 bool excluded_directory(std::string_view name) {
     constexpr std::array<std::string_view, 8> excluded{
@@ -32,7 +27,8 @@ std::error_code cancelled_error() {
 } // namespace
 
 std::expected<std::optional<ProjectDiscovery>, std::error_code>
-discover_project(std::string path, const std::stop_token& cancellation) {
+discover_project(std::string path, std::span<const ProjectDiscoveryProvider> providers,
+                 const std::stop_token& cancellation) {
     std::error_code error;
     fs::path current = fs::absolute(fs::path(std::move(path)), error).lexically_normal();
     if (error) {
@@ -43,13 +39,16 @@ discover_project(std::string path, const std::stop_token& cancellation) {
         if (cancellation.stop_requested()) {
             return std::unexpected(cancelled_error());
         }
-        for (const std::string_view marker : kProjectMarkers) {
-            const bool exists = fs::exists(current / marker, error);
-            if (error) {
-                return std::unexpected(error);
-            }
-            if (exists) {
-                return ProjectDiscovery{.root = current.string(), .marker = std::string(marker)};
+        for (const ProjectDiscoveryProvider& provider : std::views::reverse(providers)) {
+            for (const std::string& marker : provider.markers) {
+                const bool exists = fs::exists(current / marker, error);
+                if (error) {
+                    return std::unexpected(error);
+                }
+                if (exists) {
+                    return ProjectDiscovery{
+                        .root = current.string(), .provider = provider.name, .marker = marker};
+                }
             }
         }
         const fs::path parent = current.parent_path();

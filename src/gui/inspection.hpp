@@ -224,7 +224,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 41;
+    static constexpr int schema_version = 42;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

@@ -105,6 +105,9 @@ struct GuileRuntimeSnapshot {
     std::size_t scripted_input_strategies = 0;
     std::uint64_t mode_revision = 0;
     std::size_t scripted_modes = 0;
+    std::uint64_t resource_policy_revision = 0;
+    std::size_t scripted_file_mode_rules = 0;
+    std::size_t scripted_project_providers = 0;
     std::optional<std::string> last_error;
 };
 
@@ -124,6 +127,7 @@ public:
     std::expected<std::size_t, std::string> install_default_keymaps();
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
+    std::expected<std::size_t, std::string> install_core_resource_policies();
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

@@ -48,11 +48,22 @@ std::string directory_input(const fs::path& path) {
     return result;
 }
 
+TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
+    const std::uint32_t line = text.position(caret).line;
+    const TextOffset content_end = text.line_content_end(line);
+    if (caret < content_end) {
+        return {caret, content_end};
+    }
+    const TextOffset line_end = text.line_range(line).end;
+    return caret < line_end ? TextRange{caret, line_end} : TextRange{caret, caret};
+}
+
 struct LoadedFileData {
     std::string resource;
     std::string contents;
     CppIndentStyle style;
     std::string style_origin;
+    ModeId mode;
     std::optional<ProjectDiscovery> project;
 };
 
@@ -109,6 +120,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                try {
                    runtime_.buffers().set_resource(buffer, *path, BufferKind::File);
                    runtime_.buffers().rename(buffer, fs::path(*path).filename().string());
+                   runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(),
+                                                                    mode_for_resource(*path));
                    runtime_.projects().assign(buffer, runtime_.projects().find_for_resource(*path));
                    return {};
                } catch (const std::exception& exception) {
@@ -251,7 +264,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                EditSession& active = session_for(view);
                const DocumentSnapshot snapshot = active.snapshot();
                const TextRange range =
-                   soft_kill_end(active.analysis().tree, snapshot.content(), active.caret());
+                   active.has_language_facet(LanguageFacet::StructuralEditing)
+                       ? soft_kill_end(active.analysis().tree, snapshot.content(), active.caret())
+                       : plain_kill_line_range(snapshot.content(), active.caret());
                if (range.empty()) {
                    return std::nullopt;
                }
@@ -298,6 +313,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(std::format("unknown motion '{}'", name));
                }
                EditSession& active = session_for(view);
+               const MotionMechanism mechanism = runtime_.motions().definition(*motion).mechanism;
+               if ((mechanism == MotionMechanism::ForwardExpression ||
+                    mechanism == MotionMechanism::BackwardExpression ||
+                    mechanism == MotionMechanism::UpList) &&
+                   !active.has_language_facet(LanguageFacet::StructuralEditing)) {
+                   return std::unexpected("structural motion is unavailable for the current mode");
+               }
                return evaluate_motion(runtime_.motions(), *motion, active.snapshot(),
                                       active.analysis().tree, source, count, extend);
            },
@@ -305,6 +327,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                -> std::expected<std::optional<ViewSelection>, std::string> {
                try {
                    const EditSession& active = session_for(view);
+                   if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
+                       return std::optional<ViewSelection>{};
+                   }
                    return evaluate_node_expansion(active.analysis().tree, source);
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
@@ -353,11 +378,16 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         });
     register_input_states();
     register_modes();
+    fundamental_mode_ = runtime_.modes().find("fundamental-mode").value_or(ModeId{});
+    if (!fundamental_mode_) {
+        throw std::logic_error("Guile mode policy did not define fundamental-mode");
+    }
     special_mode_ = runtime_.modes().find("special-mode").value_or(ModeId{});
     if (!special_mode_) {
         throw std::logic_error("Guile mode policy did not define special-mode");
     }
-    cpp_mode_ = ensure_cpp_mode(runtime_).mode;
+    (void)ensure_cpp_mode(runtime_);
+    register_resource_policies();
     register_commands();
     register_interaction_providers();
     register_keymaps();
@@ -382,8 +412,11 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         }
         initial_buffer.resource_uri = std::move(*path);
     }
+    const ModeId initial_mode = initial_buffer.resource_uri
+                                    ? mode_for_resource(*initial_buffer.resource_uri)
+                                    : fundamental_mode_;
     const BufferId initial = create_buffer(std::move(initial_buffer), spec.style,
-                                           std::move(spec.style_origin), cpp_mode_);
+                                           std::move(spec.style_origin), initial_mode);
     const ViewId initial_view = create_view({}, initial);
     active_window_ = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = active_window_;
@@ -657,9 +690,14 @@ EditorApplication::open_file(std::string_view input, WindowId target_window,
                                   .task = {}});
         PendingOpen& pending = pending_opens_.back();
         auto requested_resource = std::make_shared<const std::string>(resource);
+        const ModeId requested_mode = mode_for_resource(resource);
+        const bool load_cpp_style =
+            runtime_.language_provider(requested_mode, LanguageFacet::Indentation).has_value();
+        auto project_providers = std::make_shared<const std::vector<ProjectDiscoveryProvider>>(
+            runtime_.resource_policies().project_providers());
         pending.task = async_runtime_.submit({
-            .work = [this,
-                     requested_resource](const std::stop_token& cancellation) -> AsyncCompletion {
+            .work = [this, requested_resource, requested_mode, load_cpp_style,
+                     project_providers](const std::stop_token& cancellation) -> AsyncCompletion {
                 std::expected<FileReadResult, std::error_code> file =
                     read_file_contents(*requested_resource, cancellation);
                 if (!file) {
@@ -673,16 +711,19 @@ EditorApplication::open_file(std::string_view input, WindowId target_window,
                     .resource = *requested_resource,
                     .contents = std::move(file->contents),
                     .style = {},
-                    .style_origin = "llvm (fallback)",
+                    .style_origin = load_cpp_style ? "llvm (fallback)" : "plain text",
+                    .mode = requested_mode,
                     .project = std::nullopt,
                 });
-                if (std::optional<LoadedStyle> loaded_style =
-                        load_clang_format_style(fs::path(*requested_resource).parent_path())) {
-                    loaded_data->style = loaded_style->style;
-                    loaded_data->style_origin = loaded_style->config_path.filename().string();
+                if (load_cpp_style) {
+                    if (std::optional<LoadedStyle> loaded_style =
+                            load_clang_format_style(fs::path(*requested_resource).parent_path())) {
+                        loaded_data->style = loaded_style->style;
+                        loaded_data->style_origin = loaded_style->config_path.filename().string();
+                    }
                 }
                 std::expected<std::optional<ProjectDiscovery>, std::error_code> project =
-                    discover_project(*requested_resource, cancellation);
+                    discover_project(*requested_resource, *project_providers, cancellation);
                 if (!project &&
                     project.error() == std::make_error_code(std::errc::operation_canceled)) {
                     throw AsyncTaskCancelled();
@@ -693,7 +734,7 @@ EditorApplication::open_file(std::string_view input, WindowId target_window,
                 return [this, loaded_data] {
                     finish_open(std::move(loaded_data->resource), std::move(loaded_data->contents),
                                 loaded_data->style, std::move(loaded_data->style_origin),
-                                loaded_data->project);
+                                loaded_data->mode, loaded_data->project);
                 };
             },
             .cancelled = [this, requested_resource] { cancel_open(*requested_resource); },
@@ -712,7 +753,7 @@ EditorApplication::open_file(std::string_view input, WindowId target_window,
 }
 
 void EditorApplication::finish_open(std::string resource, std::string contents,
-                                    CppIndentStyle style, std::string style_origin,
+                                    CppIndentStyle style, std::string style_origin, ModeId mode,
                                     const std::optional<ProjectDiscovery>& project) {
     const auto pending = std::ranges::find_if(
         pending_opens_, [&](const PendingOpen& open) { return open.resource == resource; });
@@ -734,7 +775,7 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
                                               .kind = BufferKind::File,
                                               .resource_uri = resource,
                                               .read_only = false},
-                                   style, std::move(style_origin), cpp_mode_);
+                                   style, std::move(style_origin), mode);
         }
         project_service_->attach_buffer(buffer, project);
         const WindowId target = runtime_.windows().try_get(requested_window) != nullptr
@@ -1214,7 +1255,7 @@ std::string EditorApplication::pending_prefix_text() const {
 
 std::string EditorApplication::pending_command_text() const {
     const std::string prefix = pending_prefix_text();
-    const std::string keys = pending_key_sequence_text();
+    std::string keys = pending_key_sequence_text();
     if (prefix.empty()) {
         return keys;
     }
@@ -1495,6 +1536,15 @@ void EditorApplication::register_modes() {
     }
 }
 
+void EditorApplication::register_resource_policies() {
+    const std::expected<std::size_t, std::string> installed =
+        guile_.install_core_resource_policies();
+    if (!installed) {
+        throw std::runtime_error(
+            std::format("Guile resource policy failed: {}", installed.error()));
+    }
+}
+
 bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     if (runtime_.windows().try_get(window) == nullptr ||
         runtime_.buffers().try_get(buffer) == nullptr) {
@@ -1767,7 +1817,11 @@ BufferId EditorApplication::create_scratch_buffer() {
                                     .kind = BufferKind::Scratch,
                                     .resource_uri = std::nullopt,
                                     .read_only = false},
-                         CppIndentStyle{}, "llvm (fallback)", cpp_mode_);
+                         CppIndentStyle{}, "llvm (fallback)", fundamental_mode_);
+}
+
+ModeId EditorApplication::mode_for_resource(std::string_view resource) const {
+    return runtime_.resource_policies().mode_for(resource).value_or(fundamental_mode_);
 }
 
 void EditorApplication::register_commands() {
