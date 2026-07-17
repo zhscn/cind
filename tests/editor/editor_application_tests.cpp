@@ -1188,6 +1188,59 @@ TEST_CASE("default keymap follows Emacs movement search undo and prefix conventi
     CHECK(application.command_loop().pending_sequence().empty());
 }
 
+TEST_CASE("Emacs universal argument composes through a transient input state") {
+    EditorApplication application =
+        make_application("sample.cc", "abcdefghijklmnopqrstuvwxyz0123456789");
+
+    send_keys(application, "C-u");
+    CHECK(application.input_state().name == "emacs-universal");
+    CHECK(application.pending_prefix_text() == "4");
+    send_keys(application, "C-f");
+    CHECK(application.session().caret().value == 4);
+    CHECK(application.input_state().name == "emacs");
+    CHECK(application.pending_prefix_text().empty());
+
+    send_keys(application, "C-u C-u");
+    CHECK(application.input_state().name == "emacs-universal");
+    CHECK(application.pending_prefix_text() == "16");
+    CHECK(application.message() == "");
+    send_keys(application, "C-f");
+    CHECK(application.session().caret().value == 20);
+
+    application.session().set_caret(TextOffset{0});
+    send_keys(application, "C-u 1 2");
+    CHECK(application.pending_prefix_text() == "12");
+    CHECK(application.message() == "");
+    send_keys(application, "C-f");
+    CHECK(application.session().caret().value == 12);
+
+    send_keys(application, "C-u - 2 C-f");
+    CHECK(application.session().caret().value == 10);
+
+    send_keys(application, "C-u 3 C-g");
+    CHECK(application.input_state().name == "emacs");
+    CHECK(application.pending_prefix_text().empty());
+    CHECK(application.session().caret().value == 10);
+    send_keys(application, "C-u");
+    CHECK(application.input_state().name == "emacs-universal");
+    send_keys(application, "C-g");
+
+    EditorApplication insertion = make_application("sample.cc", "");
+    send_keys(insertion, "C-u 3");
+    CHECK_FALSE(insertion.handle_key(KeyStroke::character_key(U'x'), 10));
+    CHECK(insertion.pending_prefix_text() == "3");
+    insertion.insert_text("x");
+    CHECK(insertion.session().snapshot().content().to_string() == "xxx");
+    CHECK(insertion.pending_prefix_text().empty());
+
+    send_keys(insertion, "C-u -");
+    CHECK_FALSE(insertion.handle_key(KeyStroke::character_key(U'y'), 10));
+    insertion.insert_text("y");
+    CHECK(insertion.session().snapshot().content().to_string() == "xxx");
+    CHECK(insertion.message() == "negative repeat count is invalid for text input");
+    CHECK(insertion.pending_prefix_text().empty());
+}
+
 TEST_CASE("window commands maintain a split tree and independent view state") {
     EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
     const WindowId first = application.window_id();

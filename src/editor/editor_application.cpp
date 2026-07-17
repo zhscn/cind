@@ -480,7 +480,19 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
         }
     }
     CommandContext context = command_context();
-    const bool consumed = handle_loop_result(command_loop_.dispatch(key, context));
+    const CommandPrefix text_prefix = command_loop_.pending_prefix();
+    CommandLoopResult result = command_loop_.dispatch(key, context);
+    const bool preserve_prefix_for_text = result.status == CommandLoopStatus::NotHandled &&
+                                          !result.consumed && !text_prefix.empty() &&
+                                          key.code == KeyCode::Character && key.character >= U' ' &&
+                                          !has_modifier(key.modifiers, KeyModifier::Control) &&
+                                          !has_modifier(key.modifiers, KeyModifier::Alt) &&
+                                          !has_modifier(key.modifiers, KeyModifier::Super) &&
+                                          text_input_policy() == TextInputPolicy::Accept;
+    const bool consumed = handle_loop_result(std::move(result));
+    if (preserve_prefix_for_text) {
+        command_loop_.set_pending_prefix(text_prefix);
+    }
     sync_keymaps();
     return consumed;
 }
@@ -518,14 +530,44 @@ void EditorApplication::insert_text(std::string_view text) {
     if (text_input_policy() == TextInputPolicy::Ignore) {
         return;
     }
+    const CommandPrefix prefix = command_loop_.pending_prefix();
+    if (!prefix.empty()) {
+        command_loop_.cancel_pending();
+    }
     if (session().buffer().read_only()) {
         message_ = "buffer is read-only";
         return;
     }
+    const std::int64_t repeat_count = prefix.count.value_or(1);
+    if (repeat_count < 0) {
+        message_ = "negative repeat count is invalid for text input";
+        last_key_ = "text";
+        return;
+    }
+    if (repeat_count == 0) {
+        message_.clear();
+        last_key_ = "text";
+        return;
+    }
+    std::string repeated;
+    std::string_view committed = text;
+    if (repeat_count > 1) {
+        const auto count = static_cast<std::uint64_t>(repeat_count);
+        if (count > repeated.max_size() / text.size()) {
+            message_ = "repeated text exceeds the document size limit";
+            last_key_ = "text";
+            return;
+        }
+        repeated.reserve(static_cast<std::size_t>(count) * text.size());
+        for (std::uint64_t index = 0; index < count; ++index) {
+            repeated.append(text);
+        }
+        committed = repeated;
+    }
     if (text.size() == 1 && static_cast<unsigned char>(text.front()) >= 0x20U) {
-        session().type_text(text);
+        session().type_text(committed);
     } else {
-        session().insert_text(text);
+        session().insert_text(committed);
     }
     reset_preferred_column();
     last_key_ = "text";

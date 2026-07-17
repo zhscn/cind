@@ -433,6 +433,13 @@ behavior without package-specific routing.
 programming buffers have the `editing` interaction class; special buffers have `interface`.
 The built-in C++ mode derives from `prog-mode`, and generated location-list buffers derive from
 `special-mode`. The default Emacs strategy maps both classes to the `emacs` InputState.
+`C-u` pushes the `emacs-universal` transient handler. Its state-local session owns the accumulation
+phase while the shared command prefix carries the resulting count. Repeated `C-u`, decimal digits,
+and `-` update that value; the first ordinary key pops the state and receives the prefix through its
+`CommandInvocation`. `C-g` cancels both, while Backspace and Delete dispatch the raw deletion escape
+commands from the same transient policy. An unbound printable key carries the prefix into the paired
+text commit; the normalized text-input path consumes it and repeats the committed UTF-8 text for a
+positive count.
 
 `(cind meow)` is a modal strategy implemented entirely through public host mechanisms. `C-c m`
 selects it for the invoking View. Editing Buffers derive `meow-normal`, interface Buffers derive the

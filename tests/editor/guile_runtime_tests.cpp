@@ -126,8 +126,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 16);
-    CHECK(*second == 16);
+    CHECK(*first == 17);
+    CHECK(*second == 17);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -135,6 +135,13 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(definition.text_input == TextInputPolicy::Accept);
     CHECK(definition.cursor == CursorShape::Beam);
     CHECK_FALSE(definition.handler);
+    const InputStateId universal =
+        runtime.input_states().find("emacs-universal").value_or(InputStateId{});
+    REQUIRE(universal);
+    CHECK(runtime.input_states().definition(universal).handler);
+    CHECK(runtime.input_states().definition(universal).on_enter);
+    CHECK(runtime.input_states().definition(universal).on_exit);
+    CHECK(runtime.input_states().definition(universal).indicator == "ARG");
     CHECK(guile.snapshot().input_state_revision == 2);
     const InputStateId toy = runtime.input_states().find("toy-normal").value_or(InputStateId{});
     REQUIRE(toy);
@@ -174,7 +181,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     REQUIRE(meow_normal);
     CHECK(runtime.input_states().definition(meow_normal).position_hints);
     CHECK_FALSE(runtime.input_states().definition(keypad).position_hints);
-    CHECK(guile.snapshot().scripted_input_states == 16);
+    CHECK(guile.snapshot().scripted_input_states == 17);
     CHECK(guile.snapshot().scripted_input_strategies == 5);
     const InputStrategyId helix =
         runtime.input_strategies().find("helix").value_or(InputStrategyId{});
@@ -520,7 +527,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 133);
+    CHECK(*installed == 137);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -879,7 +886,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 133);
+    CHECK(snapshot.scripted_commands == 137);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

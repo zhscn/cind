@@ -201,7 +201,17 @@ A prefix command returns a complete replacement prefix value. Keymap layer refre
 value, and command dispatch chains inherit it. The next ordinary terminal command receives the
 prefix in its immutable invocation and consumes the slot. Undefined input, errors, disabled
 commands, interaction requests, and `keyboard.quit` also clear it. A single unbound key remains
-available to the platform text-input path.
+available to the platform text-input path. When that key is printable and the focused state accepts
+text, its prefix remains available until the paired text commit consumes it.
+
+The bundled Emacs map binds `C-u` to a transient `emacs-universal` handler. Its initial count is
+four, repeated `C-u` multiplies the count by four, decimal keys replace or extend the numeric
+argument, and `-` supplies a negative argument. The first ordinary key pops the handler and is
+redispatched through the durable state with the prefix intact. `C-g` removes the transient state
+and prefix together. Backspace and Delete in this state dispatch the explicit raw-deletion escape
+commands while retaining the same prefix lifecycle. An unbound printable key enters the normalized
+text-input path, which repeats the committed UTF-8 text by the positive count without synthesizing
+key events; zero inserts nothing and a negative count reports an input error.
 
 The bundled meow normal map binds decimal digits to selection expansion. `SPC` dispatches through
 the configured `C-c` leader; `SPC 0` through `SPC 9` begin a transient numeric state in which
@@ -213,8 +223,9 @@ into the echo area independently of pending keymap chords and transient-state fe
 
 An expandable Meow Selection publishes the next ten expansion destinations through the normal
 state's position-hint provider. Labels `1` through `9` and `0` correspond to expansion amounts one
-through ten. Keypad, numeric, register, and single-key capture states obscure these labels while
-they own input; returning to normal state derives them from the resulting Selection.
+through ten. Keypad, universal-argument, numeric, register, and single-key capture states obscure
+these labels while they own input; returning to normal state derives them from the resulting
+Selection.
 
 Thing and Motion registries are application-owned named mechanism tables. Scheme definitions select
 pair, CST-node, character-class, fallback, and directional motion mechanisms; evaluation receives
