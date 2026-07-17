@@ -88,6 +88,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .version = "3.0.9",
                       .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow",
                                   "cind core"},
+                      .extensions = {},
                       .command_revision = 1,
                       .scripted_commands = 29,
                       .provider_revision = 1,
@@ -468,6 +469,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind emacs\","
                                  "\"cind toy-modal\",\"cind meow\",\"cind core\"]") !=
           std::string::npos);
+    CHECK(scripting.payload.find("\"extensions\":[]") != std::string::npos);
     CHECK(scripting.payload.find("\"command_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_commands\":29") != std::string::npos);
     CHECK(scripting.payload.find("\"provider_revision\":1") != std::string::npos);

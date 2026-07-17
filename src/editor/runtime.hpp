@@ -20,6 +20,20 @@ namespace cind {
 // explicitly at every extension boundary.
 class EditorRuntime {
 public:
+    struct ExtensionCheckpoint {
+        CommandRegistry commands;
+        KeymapRegistry keymaps;
+        InputStateRegistry input_states;
+        InputStrategyRegistry input_strategies;
+        ThingRegistry things;
+        MotionRegistry motions;
+        ModeRegistry modes;
+        InteractionProviderRegistry interaction_providers;
+        bool extensions_sealed = false;
+
+        explicit ExtensionCheckpoint(const EditorRuntime& runtime);
+    };
+
     EditorRuntime();
 
     SettingRegistry& setting_definitions() { return setting_definitions_; }
@@ -63,6 +77,8 @@ public:
     SettingsResolver settings_for(BufferId buffer, ViewId view) const;
     SelectionEditPolicy selection_edit_policy(ViewId view) const;
     void set_default_input_strategy(std::optional<InputStrategyId> strategy);
+    ExtensionCheckpoint checkpoint_extensions() const;
+    void restore_extensions(const ExtensionCheckpoint& checkpoint);
 
 private:
     void append_mode_layers(std::vector<const SettingsLayer*>& layers, ModeId mode) const;

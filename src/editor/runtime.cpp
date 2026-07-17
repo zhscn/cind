@@ -5,6 +5,13 @@
 
 namespace cind {
 
+EditorRuntime::ExtensionCheckpoint::ExtensionCheckpoint(const EditorRuntime& runtime)
+    : commands(runtime.commands_), keymaps(runtime.keymaps_), input_states(runtime.input_states_),
+      input_strategies(runtime.input_strategies_), things(runtime.things_),
+      motions(runtime.motions_), modes(runtime.modes_),
+      interaction_providers(runtime.interaction_providers_),
+      extensions_sealed(runtime.extensions_sealed_) {}
+
 EditorRuntime::EditorRuntime()
     : application_settings_(setting_definitions_, SettingScope::Application),
       languages_(setting_definitions_), input_states_(keymaps_), input_strategies_(input_states_),
@@ -81,6 +88,22 @@ SelectionEditPolicy EditorRuntime::selection_edit_policy(ViewId view_id) const {
 void EditorRuntime::set_default_input_strategy(std::optional<InputStrategyId> strategy) {
     input_strategies_.set_default(strategy);
     views_.refresh_mode_input_states();
+}
+
+EditorRuntime::ExtensionCheckpoint EditorRuntime::checkpoint_extensions() const {
+    return ExtensionCheckpoint(*this);
+}
+
+void EditorRuntime::restore_extensions(const ExtensionCheckpoint& checkpoint) {
+    commands_ = checkpoint.commands;
+    keymaps_ = checkpoint.keymaps;
+    input_states_ = checkpoint.input_states;
+    input_strategies_ = checkpoint.input_strategies;
+    things_ = checkpoint.things;
+    motions_ = checkpoint.motions;
+    modes_ = checkpoint.modes;
+    interaction_providers_ = checkpoint.interaction_providers;
+    extensions_sealed_ = checkpoint.extensions_sealed;
 }
 
 } // namespace cind

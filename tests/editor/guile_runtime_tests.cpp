@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -62,7 +63,78 @@ std::vector<InteractionCandidate> complete_provider(EditorRuntime& runtime, std:
     return std::move(*candidates);
 }
 
+class SchemeFile {
+public:
+    SchemeFile(std::string name, std::string_view contents)
+        : path_(std::filesystem::temp_directory_path() / std::move(name)) {
+        std::ofstream output(path_, std::ios::binary | std::ios::trunc);
+        output << contents;
+        if (!output) {
+            throw std::runtime_error("cannot create temporary Scheme file");
+        }
+    }
+
+    ~SchemeFile() {
+        std::error_code error;
+        std::filesystem::remove(path_, error);
+    }
+
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
 } // namespace
+
+TEST_CASE("Guile extensions load in an isolated module") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    const SchemeFile extension("cind-guile-extension-success.scm",
+                               R"((define private-value 42)
+(define-command! host "user.answer"
+  (lambda (context invocation) (command-completed private-value))
+  #f)
+(define-keymap! host 'user.map #f)
+(bind-key! host 'user.map "C-c a" 'user.answer)
+)");
+
+    const std::expected<void, std::string> loaded = guile.load_extension(extension.path().string());
+
+    REQUIRE(loaded.has_value());
+    const CommandId command = require_command(runtime, "user.answer");
+    const KeymapId keymap = require_keymap(runtime, "user.map");
+    CHECK(resolve_command(runtime, keymap, "C-c a") == command);
+    const GuileRuntimeSnapshot snapshot = guile.snapshot();
+    REQUIRE(snapshot.extensions.size() == 1);
+    CHECK(snapshot.extensions.front() == extension.path().string());
+    CHECK(snapshot.command_revision == 1);
+    CHECK(snapshot.binding_revision == 1);
+    CHECK_FALSE(snapshot.last_error.has_value());
+}
+
+TEST_CASE("failed Guile extension loads roll back every registration") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    const SchemeFile extension("cind-guile-extension-failure.scm",
+                               R"((define-command! host "user.partial"
+  (lambda (context invocation) (command-completed))
+  #f)
+(define-keymap! host 'user.partial-map #f)
+(bind-key! host 'user.partial-map "C-c p" 'user.partial)
+(error "extension failed")
+)");
+
+    const std::expected<void, std::string> loaded = guile.load_extension(extension.path().string());
+
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK_FALSE(runtime.commands().find("user.partial").has_value());
+    CHECK_FALSE(runtime.keymaps().find("user.partial-map").has_value());
+    const GuileRuntimeSnapshot snapshot = guile.snapshot();
+    CHECK(snapshot.extensions.empty());
+    REQUIRE(snapshot.last_error.has_value());
+    CHECK(snapshot.last_error.value_or("").find("extension failed") != std::string::npos);
+}
 
 TEST_CASE("bundled Guile policy installs available default key bindings") {
     EditorRuntime runtime;
@@ -92,10 +164,10 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
-    CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind input", "cind emacs",
-                                                       "cind toy-modal", "cind meow", "cind vim",
-                                                       "cind helix", "cind structural",
-                                                       "cind core"});
+    CHECK(snapshot.modules ==
+          std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
+                                   "cind toy-modal", "cind meow", "cind vim", "cind helix",
+                                   "cind structural", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

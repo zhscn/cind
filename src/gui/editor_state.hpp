@@ -143,6 +143,7 @@ struct ScriptingStateSnapshot {
     std::string engine;
     std::string version;
     std::vector<std::string> modules;
+    std::vector<std::string> extensions;
     std::uint64_t command_revision = 0;
     std::size_t scripted_commands = 0;
     std::uint64_t provider_revision = 0;

@@ -1277,7 +1277,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
                 (void)SDL_PushEvent(&event);
             }};
     EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
-                       std::move(platform_services));
+                       std::move(platform_services), discover_user_init_file());
     SkiaPresenter presenter(std::move(font_family), font_size, {}, smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;

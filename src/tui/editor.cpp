@@ -170,14 +170,17 @@ public:
                                                   return {};
                                               },
                                               .read_clipboard = {},
-                                              .wake_event_loop = [this] { wakeup_.notify(); }}}),
+                                              .wake_event_loop = [this] { wakeup_.notify(); }},
+                        .init_file = discover_user_init_file()}),
           search_commands_(application_.search_commands()),
           command_loop_(application_.command_loop()), message_(application_.message()) {
         register_commands();
         application_.refresh_default_keymap();
         const DocumentSnapshot snap = session().snapshot();
         const Text& text = snap.content();
-        message_ = std::format("read {} lines", reported_lines(text));
+        if (message_.empty()) {
+            message_ = std::format("read {} lines", reported_lines(text));
+        }
     }
 
     int run() {

@@ -46,6 +46,7 @@ struct EditorApplicationSpec {
     std::string style_origin;
     std::uint32_t initial_line = 0;
     EditorPlatformServices platform_services;
+    std::optional<std::string> init_file;
 };
 
 struct OpenBufferSnapshot {

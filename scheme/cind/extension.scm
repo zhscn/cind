@@ -1,0 +1,14 @@
+(define-module (cind extension)
+  #:export (load-extension-file))
+
+(define (load-extension-file path host)
+  (let ((module (make-fresh-user-module)))
+    (module-use! module (resolve-interface '(cind command)))
+    (module-use! module (resolve-interface '(cind input)))
+    (module-use! module (resolve-interface '(cind host)))
+    (module-define! module 'host host)
+    (save-module-excursion
+     (lambda ()
+       (set-current-module module)
+       (primitive-load path)))
+    module))

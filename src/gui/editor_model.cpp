@@ -13,16 +13,17 @@ namespace cind::gui {
 
 EditorModel::EditorModel(std::string path, std::optional<std::string> initial, CppIndentStyle style,
                          std::string style_origin, std::uint32_t initial_line,
-                         EditorPlatformServices platform_services)
+                         EditorPlatformServices platform_services,
+                         std::optional<std::string> init_file)
     : application_({.path = std::move(path),
                     .initial_text = std::move(initial),
                     .style = style,
                     .style_origin = std::move(style_origin),
                     .initial_line = initial_line,
-                    .platform_services = std::move(platform_services)}) {
-    if (!application_.has_background_work()) {
-        application_.set_message(
-            "SDL3 · Skia · C-x C-s save · C-x C-c quit · M-x commands");
+                    .platform_services = std::move(platform_services),
+                    .init_file = std::move(init_file)}) {
+    if (!application_.has_background_work() && application_.message().empty()) {
+        application_.set_message("SDL3 · Skia · C-x C-s save · C-x C-c quit · M-x commands");
     }
 }
 
@@ -406,6 +407,7 @@ EditorStateSnapshot EditorModel::inspect() {
     ScriptingStateSnapshot scripting_state{.engine = std::move(guile.engine),
                                            .version = std::move(guile.version),
                                            .modules = std::move(guile.modules),
+                                           .extensions = std::move(guile.extensions),
                                            .command_revision = guile.command_revision,
                                            .scripted_commands = guile.scripted_commands,
                                            .provider_revision = guile.provider_revision,

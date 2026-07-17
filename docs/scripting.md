@@ -25,9 +25,10 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API; `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`,
-and `(cind toy-modal)` define input strategies; `(cind structural)` defines structural selection
-policy; and `(cind core)` composes the built-in editor policy.
+defines the public command value API; `(cind extension)` owns isolated source-file loading;
+`(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
+strategies; `(cind structural)` defines structural selection policy; and `(cind core)` composes the
+built-in editor policy.
 These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
 through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
 scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
@@ -35,8 +36,25 @@ Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 provider, input-state, input-strategy, and mode counts, command/provider/keymap/input-state/mode
-installation revisions, and the most recent error. This state is diagnostic and is not a plugin
-ABI.
+installation revisions, loaded extension paths, and the most recent error. This state is diagnostic
+and is not a plugin ABI.
+
+## User initialization
+
+Interactive frontends discover `cind/init.scm` under `XDG_CONFIG_HOME`, falling back to
+`~/.config/cind/init.scm`. Headless rendering and application tests opt in to an explicit init path
+so their behavior is independent of the invoking account.
+
+`(cind extension)` evaluates each source file in a fresh Guile module. The module imports
+`(cind host)`, `(cind command)`, and `(cind input)`, and binds the owning application's foreign host
+as `host`. File-private definitions remain module-local while registered closures retain access to
+them.
+
+An extension load checkpoints the registries and protected Scheme callback ownership before
+evaluation. Successful definitions become visible together. A Scheme condition or native bridge
+error restores commands, interaction providers, keymaps, input states and strategies, Things,
+motions, modes, listeners, counters, and protected callback vectors to the checkpoint. The failed
+condition is retained as the runtime's latest scripting diagnostic.
 
 ## Host capabilities
 

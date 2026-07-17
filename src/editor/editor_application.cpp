@@ -325,6 +325,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     cpp_mode_ = ensure_cpp_mode(runtime_).mode;
     register_commands();
     register_interaction_providers();
+    register_keymaps();
+    if (spec.init_file) {
+        if (std::expected<void, std::string> loaded = guile_.load_extension(*spec.init_file);
+            !loaded) {
+            message_ = std::format("init failed: {}", loaded.error());
+        }
+    }
 
     const bool deferred_initial_load = !spec.initial_text && !spec.path.empty();
     BufferSpec initial_buffer{
@@ -350,7 +357,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         apply_position(active_window_, {.line = spec.initial_line - 1, .byte_column = 0});
     }
 
-    register_keymaps();
     sync_keymaps();
     if (deferred_initial_load) {
         startup_placeholder_ = initial;

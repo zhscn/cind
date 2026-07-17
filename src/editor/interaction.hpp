@@ -36,6 +36,7 @@ public:
     using Complete = std::function<InteractionProviderResult(CommandContext&, std::string_view)>;
 
     void define(std::string name, Complete complete);
+    void configure(std::string_view name, Complete complete);
     bool contains(std::string_view name) const;
     InteractionProviderResult complete(std::string_view name, CommandContext& context,
                                        std::string_view query) const;

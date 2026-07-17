@@ -56,6 +56,20 @@ void InteractionProviderRegistry::define(std::string name, Complete complete) {
     }
 }
 
+void InteractionProviderRegistry::configure(std::string_view name, Complete complete) {
+    if (sealed_) {
+        throw std::logic_error("interaction provider registry is sealed");
+    }
+    if (!complete) {
+        throw std::invalid_argument("interaction provider implementation must not be empty");
+    }
+    const auto provider = providers_.find(std::string(name));
+    if (provider == providers_.end()) {
+        throw std::out_of_range("unknown interaction provider");
+    }
+    provider->second = std::move(complete);
+}
+
 bool InteractionProviderRegistry::contains(std::string_view name) const {
     return providers_.contains(std::string(name));
 }

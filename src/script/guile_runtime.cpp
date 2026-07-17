@@ -52,6 +52,11 @@ struct ScriptModePolicyObserver {
     ModeRegistry::ListenerId listener = 0;
 };
 
+struct LoadedExtension {
+    std::string path;
+    SCM module = SCM_UNDEFINED;
+};
+
 struct GuileState {
     std::thread::id owner;
     bool active = true;
@@ -62,6 +67,7 @@ struct GuileState {
     std::vector<ScriptInputStateLifecycle> input_state_lifecycles;
     std::vector<ScriptInputStateObserver> input_state_observers;
     std::vector<ScriptModePolicyObserver> mode_policy_observers;
+    std::vector<LoadedExtension> extensions;
     std::uint64_t command_revision = 0;
     std::uint64_t provider_revision = 0;
     std::uint64_t input_state_revision = 0;
@@ -269,17 +275,21 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
                     return locked && script_command_enabled(locked, command_index, context);
                 };
             }
-            const CommandId command = host.runtime->commands().define(
-                name,
+            CommandRegistry::Execute execute =
                 [weak, command_index](CommandContext& context,
                                       const CommandInvocation& invocation) -> CommandResult {
-                    const std::shared_ptr<GuileState> locked = weak.lock();
-                    if (!locked || !locked->active) {
-                        return std::unexpected(CommandError{"Guile command runtime has expired"});
-                    }
-                    return invoke_script_command(locked, command_index, context, invocation);
-                },
-                std::move(enabled));
+                const std::shared_ptr<GuileState> locked = weak.lock();
+                if (!locked || !locked->active) {
+                    return std::unexpected(CommandError{"Guile command runtime has expired"});
+                }
+                return invoke_script_command(locked, command_index, context, invocation);
+            };
+            const std::optional<CommandId> existing = host.runtime->commands().find(name);
+            const CommandId command =
+                existing ? *existing : host.runtime->commands().define(name, execute, enabled);
+            if (existing) {
+                host.runtime->commands().configure(command, std::move(execute), std::move(enabled));
+            }
             ++host.commands_installed;
             return scm_from_uint32(command.value);
         } catch (...) {
@@ -325,16 +335,20 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
             state->providers.push_back({.complete = complete_value});
             appended = true;
             const std::weak_ptr<GuileState> weak = state;
-            host.runtime->interaction_providers().define(
-                name,
+            InteractionProviderRegistry::Complete complete =
                 [weak, provider_index](CommandContext& context,
                                        std::string_view query) -> InteractionProviderResult {
-                    const std::shared_ptr<GuileState> locked = weak.lock();
-                    if (!locked || !locked->active) {
-                        throw std::runtime_error("Guile provider runtime has expired");
-                    }
-                    return invoke_script_provider(locked, provider_index, context, query);
-                });
+                const std::shared_ptr<GuileState> locked = weak.lock();
+                if (!locked || !locked->active) {
+                    throw std::runtime_error("Guile provider runtime has expired");
+                }
+                return invoke_script_provider(locked, provider_index, context, query);
+            };
+            if (host.runtime->interaction_providers().contains(name)) {
+                host.runtime->interaction_providers().configure(name, std::move(complete));
+            } else {
+                host.runtime->interaction_providers().define(name, std::move(complete));
+            }
             ++host.providers_installed;
             return scm_from_size_t(provider_index);
         } catch (...) {
@@ -3036,6 +3050,7 @@ void initialize_guile() {
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
+        LoadExtension,
         InstallCommands,
         InstallProviders,
         InstallKeymaps,
@@ -3070,6 +3085,50 @@ struct GuileCall {
     std::exception_ptr cpp_failure;
     std::string error;
 };
+
+void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
+    while (state.mode_policy_observers.size() > checkpoint.mode_policy_observers.size()) {
+        (void)scm_gc_unprotect_object(state.mode_policy_observers.back().procedure);
+        state.mode_policy_observers.pop_back();
+    }
+    while (state.input_state_observers.size() > checkpoint.input_state_observers.size()) {
+        (void)scm_gc_unprotect_object(state.input_state_observers.back().procedure);
+        state.input_state_observers.pop_back();
+    }
+    while (state.input_state_lifecycles.size() > checkpoint.input_state_lifecycles.size()) {
+        const ScriptInputStateLifecycle& lifecycle = state.input_state_lifecycles.back();
+        if (!scheme_false(lifecycle.on_enter)) {
+            (void)scm_gc_unprotect_object(lifecycle.on_enter);
+        }
+        if (!scheme_false(lifecycle.on_exit)) {
+            (void)scm_gc_unprotect_object(lifecycle.on_exit);
+        }
+        state.input_state_lifecycles.pop_back();
+    }
+    while (state.position_hint_providers.size() > checkpoint.position_hint_providers.size()) {
+        (void)scm_gc_unprotect_object(state.position_hint_providers.back().procedure);
+        state.position_hint_providers.pop_back();
+    }
+    while (state.input_states.size() > checkpoint.input_states.size()) {
+        const SCM handler = state.input_states.back().handler;
+        if (!scheme_false(handler)) {
+            (void)scm_gc_unprotect_object(handler);
+        }
+        state.input_states.pop_back();
+    }
+    while (state.providers.size() > checkpoint.providers.size()) {
+        (void)scm_gc_unprotect_object(state.providers.back().complete);
+        state.providers.pop_back();
+    }
+    while (state.commands.size() > checkpoint.commands.size()) {
+        const ScriptCommand& command = state.commands.back();
+        (void)scm_gc_unprotect_object(command.execute);
+        if (!scheme_false(command.enabled)) {
+            (void)scm_gc_unprotect_object(command.enabled);
+        }
+        state.commands.pop_back();
+    }
+}
 
 SCM command_context_value(const CommandContext& context) {
     const std::optional<ProjectId> project = context.project_id();
@@ -3341,6 +3400,10 @@ SCM call_body(void* data) {
         switch (call.operation) {
         case GuileCall::Operation::Load:
             call.result = scm_c_primitive_load(call.path.c_str());
+            break;
+        case GuileCall::Operation::LoadExtension:
+            call.result = scm_call_2(scm_c_public_ref("cind extension", "load-extension-file"),
+                                     scm_from_utf8_string(call.path.c_str()), call.host);
             break;
         case GuileCall::Operation::InstallCommands:
             call.result =
@@ -3699,8 +3762,8 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "input", "emacs", "toy-modal", "meow", "vim",
-                                        "helix", "structural", "core"}) {
+        for (std::string_view module : {"command", "input", "extension", "emacs", "toy-modal",
+                                        "meow", "vim", "helix", "structural", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3759,6 +3822,10 @@ public:
             }
         }
         state_->input_state_lifecycles.clear();
+        for (const LoadedExtension& extension : state_->extensions) {
+            (void)scm_gc_unprotect_object(extension.module);
+        }
+        state_->extensions.clear();
         lease_->runtime = nullptr;
         lease_->state.reset();
         scm_foreign_object_set_x(host_, 0, nullptr);
@@ -3873,11 +3940,88 @@ public:
         return call.count;
     }
 
+    std::expected<void, std::string> load_extension(const std::string& input_path) {
+        require_owner_thread();
+        std::error_code error;
+        const std::filesystem::path path =
+            std::filesystem::absolute(input_path, error).lexically_normal();
+        if (error) {
+            return std::unexpected(std::format("invalid extension path: {}", error.message()));
+        }
+        if (!std::filesystem::is_regular_file(path, error)) {
+            return std::unexpected(
+                error ? std::format("cannot inspect extension '{}': {}", path.string(),
+                                    error.message())
+                      : std::format("extension '{}' is not a file", path.string()));
+        }
+        std::string extension_path = path.string();
+        state_->extensions.reserve(state_->extensions.size() + 1);
+
+        EditorRuntime::ExtensionCheckpoint registries = lease_->runtime->checkpoint_extensions();
+        const GuileState state_checkpoint = *state_;
+        const std::size_t commands_installed = lease_->commands_installed;
+        const std::size_t providers_installed = lease_->providers_installed;
+        const std::size_t bindings_installed = lease_->bindings_installed;
+        const std::size_t input_states_installed = lease_->input_states_installed;
+        const std::size_t input_strategies_installed = lease_->input_strategies_installed;
+        const std::size_t modes_installed = lease_->modes_installed;
+
+        GuileCall call;
+        call.operation = GuileCall::Operation::LoadExtension;
+        call.path = extension_path;
+        call.host = host_;
+        std::expected<SCM, std::string> loaded = run_guile_call(call);
+        if (!loaded) {
+            discard_state_tail(*state_, state_checkpoint);
+            lease_->runtime->restore_extensions(registries);
+            *state_ = state_checkpoint;
+            lease_->commands_installed = commands_installed;
+            lease_->providers_installed = providers_installed;
+            lease_->bindings_installed = bindings_installed;
+            lease_->input_states_installed = input_states_installed;
+            lease_->input_strategies_installed = input_strategies_installed;
+            lease_->modes_installed = modes_installed;
+            state_->last_error = loaded.error();
+            return std::unexpected(*state_->last_error);
+        }
+
+        (void)scm_gc_protect_object(*loaded);
+        state_->extensions.push_back({.path = std::move(extension_path), .module = *loaded});
+        if (lease_->commands_installed != commands_installed) {
+            ++state_->command_revision;
+        }
+        if (lease_->providers_installed != providers_installed) {
+            ++state_->provider_revision;
+        }
+        if (lease_->bindings_installed != bindings_installed) {
+            ++binding_revision_;
+        }
+        if (lease_->input_states_installed != input_states_installed ||
+            lease_->input_strategies_installed != input_strategies_installed) {
+            ++state_->input_state_revision;
+        }
+        if (lease_->modes_installed != modes_installed) {
+            ++state_->mode_revision;
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
-                .modules = {"cind command", "cind input", "cind emacs", "cind toy-modal",
-                            "cind meow", "cind vim", "cind helix", "cind structural", "cind core"},
+                .modules = {"cind command", "cind input", "cind extension", "cind emacs",
+                            "cind toy-modal", "cind meow", "cind vim", "cind helix",
+                            "cind structural", "cind core"},
+                .extensions =
+                    [&] {
+                        std::vector<std::string> paths;
+                        paths.reserve(state_->extensions.size());
+                        for (const LoadedExtension& extension : state_->extensions) {
+                            paths.push_back(extension.path);
+                        }
+                        return paths;
+                    }(),
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,
@@ -3930,8 +4074,31 @@ std::expected<std::size_t, std::string> GuileRuntime::install_core_modes() {
     return impl_->install_core_modes();
 }
 
+std::expected<void, std::string> GuileRuntime::load_extension(const std::string& path) {
+    return impl_->load_extension(path);
+}
+
 GuileRuntimeSnapshot GuileRuntime::snapshot() const {
     return impl_->snapshot();
+}
+
+std::optional<std::string> discover_user_init_file() {
+    const char* config_home = std::getenv("XDG_CONFIG_HOME");
+    std::filesystem::path path;
+    if (config_home != nullptr && *config_home != '\0') {
+        path = std::filesystem::path(config_home) / "cind" / "init.scm";
+    } else {
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || *home == '\0') {
+            return std::nullopt;
+        }
+        path = std::filesystem::path(home) / ".config" / "cind" / "init.scm";
+    }
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error) {
+        return std::nullopt;
+    }
+    return path.lexically_normal().string();
 }
 
 } // namespace cind

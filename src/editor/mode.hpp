@@ -96,6 +96,8 @@ public:
                  KeymapRegistry& keymaps, const InputStateRegistry& input_states)
         : settings_(&settings), languages_(&languages), keymaps_(&keymaps),
           input_states_(&input_states) {}
+    ModeRegistry(const ModeRegistry& other);
+    ModeRegistry& operator=(const ModeRegistry& other);
 
     ModeId define(std::string name, ModeKind kind,
                   std::optional<LanguageProfileId> language = std::nullopt);

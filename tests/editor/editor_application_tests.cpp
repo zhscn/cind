@@ -52,7 +52,8 @@ EditorApplication make_application(std::string path, std::string initial,
                               .style = {},
                               .style_origin = "test",
                               .initial_line = 0,
-                              .platform_services = std::move(platform_services)});
+                              .platform_services = std::move(platform_services),
+                              .init_file = std::nullopt});
 }
 
 void send_keys(EditorApplication& application, std::string_view notation) {
@@ -997,6 +998,7 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
         .platform_services = {.write_clipboard = {},
                               .read_clipboard = {},
                               .wake_event_loop = [&wake] { wake.notify(); }},
+        .init_file = std::nullopt,
     });
     CHECK(application.session().buffer().kind() == BufferKind::Scratch);
     CHECK(application.has_background_work());
@@ -1040,6 +1042,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             .platform_services = {.write_clipboard = {},
                                   .read_clipboard = {},
                                   .wake_event_loop = [&wake] { wake.notify(); }},
+            .init_file = std::nullopt,
         });
         while (application.has_background_work()) {
             REQUIRE(wake.wait());

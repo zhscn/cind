@@ -157,6 +157,7 @@ public:
     };
 
     CommandId define(std::string name, Execute execute, Enabled enabled = {});
+    void configure(CommandId id, Execute execute, Enabled enabled = {});
     void seal() { sealed_ = true; }
     bool sealed() const { return sealed_; }
 

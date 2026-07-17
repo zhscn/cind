@@ -71,6 +71,25 @@ An optional `+LINE` argument selects the initial line. The GUI asks Fontconfig f
 Use `--inspect` to expose the GUI inspector for debugging self-drawn UI state. See
 [GUI inspector](docs/gui-inspector.md) for its commands and socket protocol.
 
+## Configuration
+
+The graphical and terminal editors load `cind/init.scm` from `XDG_CONFIG_HOME`, or from
+`~/.config/cind/init.scm` when `XDG_CONFIG_HOME` is unset. The file runs in an isolated Guile
+module with `host`, `(cind host)`, `(cind command)`, and `(cind input)` available:
+
+```scheme
+(define-command! host "user.hello"
+  (lambda (context invocation)
+    (set-message! host "hello from Scheme")
+    (command-completed))
+  #f)
+
+(bind-key! host 'editor.default "C-c h" 'user.hello)
+```
+
+Definitions made by the file are installed as one transaction. A condition aborts its registry
+changes and is reported in the editor message area and scripting inspector state.
+
 ## Build without the GUI
 
 The default build produces the terminal editor and command-line analysis tools without compiling

@@ -20,7 +20,8 @@ class EditorModel {
 public:
     EditorModel(std::string path, std::optional<std::string> initial, CppIndentStyle style,
                 std::string style_origin, std::uint32_t initial_line,
-                EditorPlatformServices platform_services = {});
+                EditorPlatformServices platform_services = {},
+                std::optional<std::string> init_file = std::nullopt);
 
     void layout_view(int rows, int columns, float visible_text_rows = 0.0F);
     ui::Scene compose(int rows, int columns, float visible_text_rows = 0.0F);

@@ -18,6 +18,8 @@ namespace cind {
 
 class EditorRuntime;
 
+std::optional<std::string> discover_user_init_file();
+
 struct GuileKeyBindingSummary {
     std::string keys;
     std::string command;
@@ -77,6 +79,7 @@ struct GuileRuntimeSnapshot {
     std::string engine;
     std::string version;
     std::vector<std::string> modules;
+    std::vector<std::string> extensions;
     std::uint64_t command_revision = 0;
     std::size_t scripted_commands = 0;
     std::uint64_t provider_revision = 0;
@@ -106,6 +109,7 @@ public:
     std::expected<std::size_t, std::string> install_default_keymaps();
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
+    std::expected<void, std::string> load_extension(const std::string& path);
     GuileRuntimeSnapshot snapshot() const;
 
 private:

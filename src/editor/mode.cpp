@@ -9,6 +9,36 @@
 
 namespace cind {
 
+ModeRegistry::ModeRegistry(const ModeRegistry& other)
+    : settings_(other.settings_), languages_(other.languages_), keymaps_(other.keymaps_),
+      input_states_(other.input_states_), by_name_(other.by_name_), listeners_(other.listeners_),
+      next_listener_(other.next_listener_), sealed_(other.sealed_) {
+    definitions_.reserve(other.definitions_.size());
+    for (const std::unique_ptr<Definition>& definition : other.definitions_) {
+        definitions_.push_back(std::make_unique<Definition>(*definition));
+    }
+}
+
+ModeRegistry& ModeRegistry::operator=(const ModeRegistry& other) {
+    if (this == &other) {
+        return *this;
+    }
+    settings_ = other.settings_;
+    languages_ = other.languages_;
+    keymaps_ = other.keymaps_;
+    input_states_ = other.input_states_;
+    definitions_.clear();
+    definitions_.reserve(other.definitions_.size());
+    for (const std::unique_ptr<Definition>& definition : other.definitions_) {
+        definitions_.push_back(std::make_unique<Definition>(*definition));
+    }
+    by_name_ = other.by_name_;
+    listeners_ = other.listeners_;
+    next_listener_ = other.next_listener_;
+    sealed_ = other.sealed_;
+    return *this;
+}
+
 ModeId ModeRegistry::define(std::string name, ModeKind kind,
                             std::optional<LanguageProfileId> language) {
     if (sealed_) {

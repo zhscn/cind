@@ -100,6 +100,15 @@ CommandId CommandRegistry::define(std::string name, Execute execute, Enabled ena
     return id;
 }
 
+void CommandRegistry::configure(CommandId id, Execute execute, Enabled enabled) {
+    if (sealed_) {
+        throw std::logic_error("command registry is sealed");
+    }
+    Definition& existing = definitions_.at(id.value);
+    existing.execute = std::move(execute);
+    existing.enabled = std::move(enabled);
+}
+
 const CommandRegistry::Definition& CommandRegistry::definition(CommandId id) const {
     if (!id.valid() || id.value >= definitions_.size()) {
         throw std::out_of_range("unknown command id");
