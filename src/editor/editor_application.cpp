@@ -1163,6 +1163,35 @@ std::vector<KeyBindingHint> EditorApplication::pending_key_hints() const {
     return result;
 }
 
+PositionHintProviderResult EditorApplication::position_hints(WindowId window) {
+    const ViewId view = view_id(window);
+    const std::optional<InputStateId> state = runtime_.views().get(view).input_states().top();
+    if (!state) {
+        return std::vector<PositionHint>{};
+    }
+    const PositionHintProvider& provider =
+        runtime_.input_states().definition(*state).position_hints;
+    if (!provider) {
+        return std::vector<PositionHint>{};
+    }
+    CommandContext context(runtime_, window, buffer_id(window), view);
+    PositionHintProviderResult result = provider(context);
+    if (!result) {
+        return result;
+    }
+    const std::uint32_t document_bytes = session(window).snapshot().content().size_bytes();
+    for (const PositionHint& hint : *result) {
+        if (hint.position.value > document_bytes) {
+            return std::unexpected(std::format("position hint at byte {} is past document end {}",
+                                               hint.position.value, document_bytes));
+        }
+        if (hint.label.empty()) {
+            return std::unexpected("position hint label must not be empty");
+        }
+    }
+    return result;
+}
+
 const std::string& EditorApplication::path() const {
     const Buffer& buffer = session().buffer();
     return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();

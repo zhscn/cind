@@ -94,6 +94,8 @@ SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
         return color(theme.faded);
     case ui::StyleClass::Popup:
         return color(theme.text);
+    case ui::StyleClass::PositionHint:
+        return color(theme.canvas);
     }
     return color(theme.text);
 }
@@ -182,6 +184,13 @@ struct DocumentRunLayout {
     SkRect layout_bounds;
 };
 
+struct DocumentHintLayout {
+    std::size_t primitive_index = 0;
+    const ui::Prim* primitive = nullptr;
+    PositionedText text;
+    SkRect layout_bounds;
+};
+
 struct DocumentLineLayout {
     int row = 0;
     float top = 0.0F;
@@ -189,6 +198,7 @@ struct DocumentLineLayout {
     float end_x = 0.0F;
     int end_column = 0;
     std::vector<DocumentRunLayout> runs;
+    std::vector<DocumentHintLayout> hints;
 };
 
 struct DocumentLayout {
@@ -736,7 +746,8 @@ struct SkiaPresenter::Impl {
                  .origin_x = layout.bounds.left(),
                  .end_x = layout.bounds.left(),
                  .end_column = 0,
-                 .runs = {}});
+                 .runs = {},
+                 .hints = {}});
         }
 
         for (std::size_t primitive_index = 0; primitive_index < region->primitives().size();
@@ -765,6 +776,29 @@ struct SkiaPresenter::Impl {
                                                    static_cast<float>(cell_height))});
             line.end_x = x + advance;
             line.end_column = std::max(line.end_column, end_column);
+        }
+
+        for (std::size_t primitive_index = 0; primitive_index < region->primitives().size();
+             ++primitive_index) {
+            const ui::Prim& primitive = region->primitives()[primitive_index];
+            if (primitive.kind != ui::PrimKind::PositionHint || primitive.row < 0 ||
+                primitive.row >= static_cast<int>(layout.lines.size())) {
+                continue;
+            }
+            DocumentLineLayout& line = layout.lines[static_cast<std::size_t>(primitive.row)];
+            const float x = document_x_at_column(layout, line, primitive.col);
+            const int span_columns =
+                std::max({1, primitive.span_cols, ui::display_width(primitive.text)});
+            const float end_x = document_x_at_column(layout, line, primitive.col + span_columns);
+            ShapedText shaped = shape_text(primitive.text);
+            const float width = std::max({layout.space_advance, shaped.advance, end_x - x});
+            line.hints.push_back({.primitive_index = primitive_index,
+                                  .primitive = &primitive,
+                                  .text = {.role = primitive.id,
+                                           .shaped = std::move(shaped),
+                                           .origin = SkPoint::Make(x, line.top)},
+                                  .layout_bounds = SkRect::MakeXYWH(
+                                      x, line.top, width, static_cast<float>(cell_height))});
         }
 
         const int cursor_row = scene.cursor_row - 1;
@@ -1038,6 +1072,67 @@ struct SkiaPresenter::Impl {
                         rendered.paint_bounds->width, rendered.paint_bounds->height);
                     rendered.row_overflow = extends_vertically(painted, layout_bounds);
                     rendered.column_overflow = extends_horizontally(painted, layout_bounds);
+                }
+                diagnostics->primitives.push_back(rendered);
+            }
+            for (const DocumentHintLayout& hint : line.hints) {
+                SkRect layout_bounds = hint.layout_bounds;
+                layout_bounds.offset(0.0F, grid_offset_y);
+                if (damage_bounds && !SkRect::Intersects(layout_bounds, *damage_bounds)) {
+                    continue;
+                }
+                const ui::Prim& primitive = *hint.primitive;
+                std::optional<SkRect> shape_bounds;
+                if (hint.text.shaped.blob) {
+                    shape_bounds = positioned_shape_bounds(hint.text);
+                    shape_bounds->offset(0.0F, grid_offset_y);
+                }
+                std::optional<PixelProbe> probe;
+                if (diagnostics) {
+                    SkRect probe_bounds = layout_bounds;
+                    if (shape_bounds) {
+                        probe_bounds.join(*shape_bounds);
+                    }
+                    probe = capture_probe(probe_bounds, raster);
+                }
+
+                SkPaint background;
+                background.setAntiAlias(false);
+                background.setColor(layout.region->active
+                                        ? color(theme.salient)
+                                        : SkColorSetA(color(theme.salient), 0xB0));
+                canvas.drawRect(layout_bounds, background);
+                if (hint.text.shaped.blob) {
+                    SkPaint paint;
+                    paint.setAntiAlias(true);
+                    paint.setColor(pane_foreground(primitive.style, layout.region->active, theme));
+                    canvas.drawTextBlob(hint.text.shaped.blob, hint.text.origin.x(),
+                                        hint.text.origin.y() + grid_offset_y, paint);
+                }
+
+                if (!diagnostics) {
+                    continue;
+                }
+                SkiaPrimitiveRenderDiagnostics rendered{
+                    .region_index = region_index,
+                    .primitive_index = hint.primitive_index,
+                    .layout_bounds = logical_rect(layout_bounds),
+                    .shape_bounds = std::nullopt,
+                    .paint_bounds = std::nullopt,
+                    .draw_bounds_cross_region_clip = false,
+                    .row_overflow = false,
+                    .column_overflow = false,
+                };
+                if (shape_bounds) {
+                    rendered.shape_bounds = logical_rect(*shape_bounds);
+                    SkRect region_bounds = layout.bounds;
+                    region_bounds.offset(0.0F, grid_offset_y);
+                    rendered.draw_bounds_cross_region_clip =
+                        extends_horizontally(*shape_bounds, region_bounds) ||
+                        extends_vertically(*shape_bounds, region_bounds);
+                }
+                if (probe) {
+                    rendered.paint_bounds = changed_pixel_bounds(*probe, raster);
                 }
                 diagnostics->primitives.push_back(rendered);
             }
@@ -2183,9 +2278,11 @@ std::optional<ui::ViewHit> SkiaPresenter::hit_test_view(const SkiaFrameLayout& l
             std::optional<std::size_t> content_index;
             for (std::size_t index = region.primitives().size(); index > 0; --index) {
                 const ui::Prim& primitive = region.primitives()[index - 1];
-                const int width = primitive.kind == ui::PrimKind::Text
-                                      ? std::max(1, ui::display_width(primitive.text))
-                                      : 1;
+                const int width =
+                    primitive.kind == ui::PrimKind::Text ||
+                            primitive.kind == ui::PrimKind::PositionHint
+                        ? std::max({1, primitive.span_cols, ui::display_width(primitive.text)})
+                        : 1;
                 if (primitive.row == local_cell.row && local_cell.column >= primitive.col &&
                     local_cell.column < primitive.col + width) {
                     content_index = index - 1;

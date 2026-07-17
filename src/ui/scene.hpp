@@ -42,6 +42,7 @@ enum class PrimKind : std::uint8_t {
     Text,
     ChangeBar,
     ChangeDeletion,
+    PositionHint,
 };
 
 // One painted primitive at a region-local position. Text is clipped, tabs are
@@ -50,9 +51,9 @@ struct Prim {
     Prim() = default;
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     Prim(int row, int col, std::string text, StyleClass style, bool selected,
-         PrimKind kind = PrimKind::Text, std::string id = {})
+         PrimKind kind = PrimKind::Text, std::string id = {}, int span_cols = 0)
         : row(row), col(col), text(std::move(text)), style(style), selected(selected), kind(kind),
-          id(std::move(id)) {}
+          id(std::move(id)), span_cols(span_cols) {}
 
     int row = 0; // region-local
     int col = 0;
@@ -61,6 +62,9 @@ struct Prim {
     bool selected = false;
     PrimKind kind = PrimKind::Text;
     std::string id;
+    // Explicit replacement width for non-layout decorations. Zero derives
+    // width from text. Position hints use this to cover a wide source glyph.
+    int span_cols = 0;
 
     bool operator==(const Prim&) const = default;
 };

@@ -142,6 +142,7 @@ public:
     std::string pending_command_text() const;
     std::string pending_input_state_name() const;
     std::vector<KeyBindingHint> pending_key_hints() const;
+    PositionHintProviderResult position_hints(WindowId window);
     std::size_t buffer_count() const { return buffers_.size(); }
 
     RevisionId revision() const { return session().snapshot().revision(); }

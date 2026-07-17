@@ -123,6 +123,8 @@ std::string_view prim_kind_name(ui::PrimKind kind) {
         return "change-bar";
     case ui::PrimKind::ChangeDeletion:
         return "change-deletion";
+    case ui::PrimKind::PositionHint:
+        return "position-hint";
     }
     return "unknown";
 }
@@ -2298,6 +2300,8 @@ std::string_view style_class_name(ui::StyleClass style) {
         return "message";
     case ui::StyleClass::Popup:
         return "popup";
+    case ui::StyleClass::PositionHint:
+        return "position-hint";
     }
     return "unknown";
 }

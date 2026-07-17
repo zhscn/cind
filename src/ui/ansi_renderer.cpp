@@ -3,6 +3,7 @@
 #include "ui/char_width.hpp"
 #include "ui/view_tree.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 
@@ -42,6 +43,8 @@ std::string_view sgr_of(StyleClass style) {
         return "";
     case StyleClass::Popup:
         return "\x1b[48;5;236m";
+    case StyleClass::PositionHint:
+        return "\x1b[30;44m";
     }
     return "";
 }
@@ -78,6 +81,10 @@ std::string render_ansi(const Scene& scene) {
             out += "\x1b[7m";
         }
         out += prim.text;
+        if (prim.kind == PrimKind::PositionHint) {
+            const int fill = std::max(0, prim.span_cols - display_width(prim.text));
+            out.append(static_cast<std::size_t>(fill), ' ');
+        }
         if (!sgr.empty() || prim.selected) {
             out += "\x1b[0m";
         }

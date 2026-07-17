@@ -3,6 +3,7 @@
 #include "editor/ids.hpp"
 #include "editor/keymap.hpp"
 #include "presentation/cursor_shape.hpp"
+#include "presentation/position_hint.hpp"
 
 #include <compare>
 #include <cstdint>
@@ -75,6 +76,8 @@ struct InputStateHandlerAction {
 
 using InputStateHandlerResult = std::expected<InputStateHandlerAction, std::string>;
 using InputStateHandler = std::function<InputStateHandlerResult(CommandContext&, KeyStroke)>;
+using PositionHintProviderResult = std::expected<std::vector<PositionHint>, std::string>;
+using PositionHintProvider = std::function<PositionHintProviderResult(CommandContext&)>;
 
 class InputStateRegistry {
 public:
@@ -85,6 +88,7 @@ public:
         CursorShape cursor = CursorShape::Beam;
         std::string indicator;
         InputStateHandler handler;
+        PositionHintProvider position_hints;
     };
 
     using ListenerId = std::uint64_t;

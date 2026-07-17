@@ -467,6 +467,10 @@ private:
         }
         const InputStateRegistry::Definition& active_input_state = application_.input_state();
         const std::vector<TextRange> active_selections = session().selected_ranges();
+        PositionHintProviderResult active_hint_result =
+            application_.position_hints(application_.window_id());
+        const std::vector<PositionHint> active_position_hints =
+            active_hint_result ? std::move(*active_hint_result) : std::vector<PositionHint>{};
         const std::string pending_command = application_.pending_command_text();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
@@ -502,12 +506,17 @@ private:
                 const InputStateRegistry::Definition& pane_input_state =
                     application_.input_state(placement.window);
                 const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
+                PositionHintProviderResult pane_hint_result =
+                    application_.position_hints(placement.window);
+                const std::vector<PositionHint> pane_position_hints =
+                    pane_hint_result ? std::move(*pane_hint_result) : std::vector<PositionHint>{};
                 ui::Scene pane_scene = ui::compose_editor_scene(
                     {.text = pane_snapshot.content(),
                      .tokens = application_.syntax_tokens(placement.window),
                      .signs = pane_signs,
                      .caret = pane_session.caret(),
                      .selections = pane_selections,
+                     .position_hints = pane_position_hints,
                      .rows = std::max(3, placement.rect.rows + 1),
                      .cols = std::max(1, placement.rect.columns),
                      .tab_width = pane_session.style().tab_width,
@@ -574,6 +583,7 @@ private:
                                           .signs = signs(),
                                           .caret = session().caret(),
                                           .selections = active_selections,
+                                          .position_hints = active_position_hints,
                                           .rows = size.rows,
                                           .cols = size.cols,
                                           .tab_width = tab_width(),
@@ -624,6 +634,7 @@ private:
                                       .signs = signs(),
                                       .caret = session().caret(),
                                       .selections = active_selections,
+                                      .position_hints = active_position_hints,
                                       .rows = size.rows,
                                       .cols = size.cols,
                                       .tab_width = tab_width(),

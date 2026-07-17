@@ -33,6 +33,10 @@ struct ScriptInputState {
     SCM handler = SCM_BOOL_F;
 };
 
+struct ScriptPositionHintProvider {
+    SCM procedure = SCM_UNDEFINED;
+};
+
 struct ScriptInputStateObserver {
     SCM procedure = SCM_UNDEFINED;
     InputStateRegistry::ListenerId listener = 0;
@@ -49,6 +53,7 @@ struct GuileState {
     std::vector<ScriptCommand> commands;
     std::vector<ScriptProvider> providers;
     std::vector<ScriptInputState> input_states;
+    std::vector<ScriptPositionHintProvider> position_hint_providers;
     std::vector<ScriptInputStateObserver> input_state_observers;
     std::vector<ScriptModePolicyObserver> mode_policy_observers;
     std::uint64_t command_revision = 0;
@@ -207,6 +212,9 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
                                                     std::size_t state_index, EditorRuntime& runtime,
                                                     CommandContext& context, KeyStroke key);
+PositionHintProviderResult invoke_script_position_hints(const std::shared_ptr<GuileState>& state,
+                                                        std::size_t provider_index,
+                                                        CommandContext& context);
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const InputStateChange& change);
@@ -537,6 +545,29 @@ std::vector<InputHint> input_hints_from_scheme(SCM hints_value, const char* call
     return hints;
 }
 
+std::vector<PositionHint> position_hints_from_scheme(SCM hints_value, const char* caller) {
+    if (!scm_is_vector(hints_value)) {
+        throw std::invalid_argument(
+            std::format("{} must return a vector of #(byte-offset label) hints", caller));
+    }
+    std::vector<PositionHint> hints;
+    const std::size_t count = scm_c_vector_length(hints_value);
+    hints.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM hint = scm_c_vector_ref(hints_value, index);
+        if (!scm_is_vector(hint) || scm_c_vector_length(hint) != 2 ||
+            scm_is_unsigned_integer(scm_c_vector_ref(hint, 0), 0,
+                                    std::numeric_limits<std::uint32_t>::max()) == 0 ||
+            !scm_is_string(scm_c_vector_ref(hint, 1))) {
+            throw std::invalid_argument(
+                std::format("{} hint must be #(byte-offset label)", caller));
+        }
+        hints.push_back({.position = TextOffset{scm_to_uint32(scm_c_vector_ref(hint, 0))},
+                         .label = scheme_string(scm_c_vector_ref(hint, 1))});
+    }
+    return hints;
+}
+
 // The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
@@ -749,7 +780,8 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
                                                       .text_input = text_input,
                                                       .cursor = cursor,
                                                       .indicator = scheme_string(indicator_value),
-                                                      .handler = std::move(handler)};
+                                                      .handler = std::move(handler),
+                                                      .position_hints = {}};
             const std::optional<InputStateId> existing = host.runtime->input_states().find(name);
             InputStateId id;
             if (existing) {
@@ -774,6 +806,63 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
         scm_misc_error("define-input-state!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
+}
+
+// The provider is an optional capability of a named state rather than part of
+// the fixed-arity state-definition ABI.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_input_state_position_hints(SCM host_object, SCM name_value, SCM provider_value) {
+    if (!scheme_false(provider_value) && !scheme_true(scm_procedure_p(provider_value))) {
+        scm_wrong_type_arg_msg("set-input-state-position-hints!", 3, provider_value,
+                               "procedure or #f");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-input-state-position-hints!");
+        const std::string name = scheme_name(name_value, "set-input-state-position-hints!", 2);
+        const std::optional<InputStateId> state_id = host.runtime->input_states().find(name);
+        if (!state_id) {
+            scm_misc_error("set-input-state-position-hints!", "unknown input state: ~S",
+                           scm_list_1(name_value));
+        }
+        InputStateRegistry::Definition& definition =
+            host.runtime->input_states().definition_for_configuration(*state_id);
+        if (scheme_false(provider_value)) {
+            definition.position_hints = {};
+            return SCM_UNSPECIFIED;
+        }
+
+        const std::shared_ptr<GuileState> state = host.state;
+        if (!state || !state->active) {
+            scm_misc_error("set-input-state-position-hints!", "Guile runtime has expired", SCM_EOL);
+        }
+        const std::size_t provider_index = state->position_hint_providers.size();
+        (void)scm_gc_protect_object(provider_value);
+        bool appended = false;
+        try {
+            state->position_hint_providers.push_back({.procedure = provider_value});
+            appended = true;
+            const std::weak_ptr<GuileState> weak = state;
+            definition.position_hints =
+                [weak, provider_index](CommandContext& context) -> PositionHintProviderResult {
+                const std::shared_ptr<GuileState> locked = weak.lock();
+                if (!locked || !locked->active) {
+                    return std::unexpected("Guile input state runtime has expired");
+                }
+                return invoke_script_position_hints(locked, provider_index, context);
+            };
+        } catch (...) {
+            if (appended) {
+                state->position_hint_providers.pop_back();
+            }
+            (void)scm_gc_unprotect_object(provider_value);
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-input-state-position-hints!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-input-state-position-hints!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
 }
 
 InputStateId require_input_state(HostLease& host, SCM value, const char* caller, int position) {
@@ -2691,6 +2780,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(clear_input_feedback));
     (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
+    (void)scm_c_define_gsubr("set-input-state-position-hints!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_input_state_position_hints));
     (void)scm_c_define_gsubr("define-input-strategy!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_strategy));
     (void)scm_c_define_gsubr("set-default-input-strategy!", 2, 0, 0,
@@ -2814,24 +2905,25 @@ void initialize_host_module(void*) {
         "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
         "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
         "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-        "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
-        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
-        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
-        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
-        "%define-mode!", "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
-        "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
-        "open-buffer-summaries", "project-root", "project-files", "path-relative", "path-filename",
-        "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
-        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
-        "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-        "select-other-window!", "request-redraw!", nullptr);
+        "clear-input-feedback!", "define-input-state!", "set-input-state-position-hints!",
+        "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
+        "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
+        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
+        "define-motion!", "%define-mode!", "mode-properties", "set-buffer-major-mode!",
+        "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
+        "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
+        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
+        "buffer-resource", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!",
+        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
+        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
+        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
+        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
+        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
+        "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -2850,6 +2942,7 @@ struct GuileCall {
         InvokeCommand,
         InvokeProvider,
         InvokeInputHandler,
+        InvokePositionHints,
         InvokeInputStateObserver,
         InvokeModePolicyObserver,
         CheckEnabled,
@@ -2870,6 +2963,7 @@ struct GuileCall {
     EditorRuntime* runtime = nullptr;
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
+    std::vector<PositionHint> position_hints;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -3185,6 +3279,11 @@ SCM call_body(void* data) {
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      scm_from_utf8_string(format_key_stroke(call.key).c_str()));
             break;
+        case GuileCall::Operation::InvokePositionHints:
+            call.result = scm_call_1(call.procedure, command_context_value(*call.context));
+            call.position_hints =
+                position_hints_from_scheme(call.result, "input state position-hints provider");
+            break;
         case GuileCall::Operation::InvokeInputStateObserver: {
             const InputStateChange& change = *call.input_state_change;
             const auto state_name = [&](std::optional<InputStateId> state) {
@@ -3385,6 +3484,28 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
                            "#(dispatch command [arguments]), or #(pending sequence hints)");
 }
 
+PositionHintProviderResult invoke_script_position_hints(const std::shared_ptr<GuileState>& state,
+                                                        std::size_t provider_index,
+                                                        CommandContext& context) {
+    if (std::this_thread::get_id() != state->owner || !state->active ||
+        provider_index >= state->position_hint_providers.size()) {
+        return std::unexpected(
+            "Guile input state position-hints provider used outside its runtime");
+    }
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokePositionHints;
+    call.procedure = state->position_hint_providers[provider_index].procedure;
+    call.context = &context;
+    const std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = result.error();
+        return std::unexpected(
+            std::format("Guile input state position-hints provider failed: {}", result.error()));
+    }
+    state->last_error.reset();
+    return std::move(call.position_hints);
+}
+
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const InputStateChange& change) {
@@ -3498,6 +3619,10 @@ public:
             }
         }
         state_->input_states.clear();
+        for (const ScriptPositionHintProvider& provider : state_->position_hint_providers) {
+            (void)scm_gc_unprotect_object(provider.procedure);
+        }
+        state_->position_hint_providers.clear();
         lease_->runtime = nullptr;
         lease_->state.reset();
         scm_foreign_object_set_x(host_, 0, nullptr);

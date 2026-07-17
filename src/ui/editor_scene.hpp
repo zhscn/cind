@@ -2,6 +2,7 @@
 
 #include "cpp_lexer/token_buffer.hpp"
 #include "document/text.hpp"
+#include "presentation/position_hint.hpp"
 #include "ui/line_signs.hpp"
 #include "ui/list_view.hpp"
 #include "ui/scene.hpp"
@@ -47,6 +48,7 @@ struct EditorSceneInput {
     const LineSigns& signs;
     TextOffset caret;
     std::span<const TextRange> selections;
+    std::span<const PositionHint> position_hints;
 
     int rows = 24;
     int cols = 80;

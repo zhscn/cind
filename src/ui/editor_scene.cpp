@@ -214,6 +214,39 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         }
     }
 
+    for (std::size_t index = 0; index < input.position_hints.size(); ++index) {
+        const PositionHint& hint = input.position_hints[index];
+        if (hint.position.value > input.text.size_bytes()) {
+            continue;
+        }
+        const LinePosition position = input.text.position(hint.position);
+        if (position.line < viewport.top_line) {
+            continue;
+        }
+        const std::uint32_t visible_row = position.line - viewport.top_line;
+        if (visible_row >= static_cast<std::uint32_t>(text_rows)) {
+            continue;
+        }
+        const int column =
+            display_column(input.text, hint.position, input.tab_width) - viewport.left_column;
+        if (column < 0 || column >= text_width) {
+            continue;
+        }
+        int source_width = 1;
+        const TextRange line_content = input.text.line_content_range(position.line);
+        if (hint.position < line_content.end) {
+            const std::string tail = input.text.substring({hint.position, line_content.end});
+            if (!tail.empty()) {
+                source_width = std::max(1, decode_grapheme(tail).width);
+            }
+        }
+        const int span_cols = std::max(source_width, std::max(1, display_width(hint.label)));
+        body.primitives().push_back({static_cast<int>(visible_row), column, hint.label,
+                                     StyleClass::PositionHint, false, PrimKind::PositionHint,
+                                     std::format("hint:{}/byte:{}", index, hint.position.value),
+                                     span_cols});
+    }
+
     status.set_status({.path = std::string(input.path),
                        .dirty = input.dirty,
                        .line = caret_position.line + 1,

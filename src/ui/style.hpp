@@ -21,9 +21,10 @@ enum class StyleClass : std::uint8_t {
     SignModified,
     SignDeleted,
     StatusBar,
-    StatusKey, // keystroke caption on the status bar
-    Message,   // message / prompt line
-    Popup,     // candidate and which-key popup rows
+    StatusKey,    // keystroke caption on the status bar
+    Message,      // message / prompt line
+    Popup,        // candidate and which-key popup rows
+    PositionHint, // transient document-position label supplied by input policy
 };
 
 // Layer-1 highlighting straight off the lexer: token kind -> style class.

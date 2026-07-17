@@ -124,7 +124,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                 if (row < 0 || row >= scene.rows) {
                     continue;
                 }
-                if (prim.kind != PrimKind::Text) {
+                if (prim.kind != PrimKind::Text && prim.kind != PrimKind::PositionHint) {
                     if (col >= 0 && col < scene.cols && contains(region.rect, row, col)) {
                         append_fragment(cells[cell_index(row, col, scene.cols)], {}, prim.style,
                                         prim.selected, prim.kind, 0, 1);
@@ -132,6 +132,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     continue;
                 }
 
+                const int primitive_col = col;
                 std::string_view text = prim.text;
                 while (!text.empty()) {
                     const GraphemeDecode grapheme = decode_grapheme(text);
@@ -150,6 +151,15 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     }
                     col += grapheme.width;
                     text.remove_prefix(static_cast<std::size_t>(grapheme.bytes));
+                }
+                const int explicit_width = std::max(prim.span_cols, col - primitive_col);
+                while (col < primitive_col + explicit_width) {
+                    if (col >= 0 && col < scene.cols && contains(region.rect, row, col)) {
+                        append_fragment(cells[cell_index(row, col, scene.cols)], {}, prim.style,
+                                        prim.selected, prim.kind, col - primitive_col,
+                                        explicit_width);
+                    }
+                    ++col;
                 }
             }
             if (region.rect.row >= 0 && region.rect.row < scene.rows && region.rect.col >= 0 &&

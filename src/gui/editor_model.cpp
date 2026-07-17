@@ -175,11 +175,16 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         .popup = popup_viewport_,
     };
     const std::vector<TextRange> active_selections = session.selected_ranges();
+    PositionHintProviderResult active_hint_result =
+        application_.position_hints(application_.window_id());
+    const std::vector<PositionHint> active_position_hints =
+        active_hint_result ? std::move(*active_hint_result) : std::vector<PositionHint>{};
     const ui::EditorSceneInput active_input{.text = snapshot.content(),
                                             .tokens = application_.syntax_tokens(),
                                             .signs = signs(application_.window_id()),
                                             .caret = session.caret(),
                                             .selections = active_selections,
+                                            .position_hints = active_position_hints,
                                             .rows = rows,
                                             .cols = columns,
                                             .visible_text_rows = visible_text_rows,
@@ -221,12 +226,16 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         const InputStateRegistry::Definition& pane_input_state =
             application_.input_state(placement.window);
         const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
+        PositionHintProviderResult pane_hint_result = application_.position_hints(placement.window);
+        const std::vector<PositionHint> pane_position_hints =
+            pane_hint_result ? std::move(*pane_hint_result) : std::vector<PositionHint>{};
         ui::Scene pane_scene = ui::compose_editor_scene(
             {.text = pane_snapshot.content(),
              .tokens = application_.syntax_tokens(placement.window),
              .signs = signs(placement.window),
              .caret = pane_session.caret(),
              .selections = pane_selections,
+             .position_hints = pane_position_hints,
              .rows = std::max(3, placement.rect.rows + 1),
              .cols = std::max(1, placement.rect.columns),
              .visible_text_rows = static_cast<float>(std::max(1, placement.rect.rows - 1)),

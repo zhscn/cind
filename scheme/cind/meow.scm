@@ -391,6 +391,39 @@
          (range (vector-ref ranges (selection-primary selected))))
     (< (selection-range-head range) (selection-range-anchor range))))
 
+(define (primary-head selected)
+  (let ((ranges (selection-ranges selected)))
+    (selection-range-head
+     (vector-ref ranges (selection-primary selected)))))
+
+(define (expand-hint-label amount)
+  (number->string (if (= amount 10) 0 amount)))
+
+(define (expand-position-hints host context)
+  (let* ((view (context-view context))
+         (current (view-selection host view))
+         (type (meow-selection-type current))
+         (motions (metadata-value (selection-metadata current) 'expand)))
+    (if (not (and (pair? type) (pair? motions)))
+        (vector)
+        (let ((motion (if (primary-backward? current)
+                          (car motions)
+                          (cdr motions))))
+          (let loop ((amount 1)
+                     (previous (primary-head current))
+                     (hints '()))
+            (if (> amount 10)
+                (list->vector (reverse hints))
+                (let* ((expanded
+                        (motion-selection host view current motion amount #t))
+                       (position (primary-head expanded)))
+                  (if (= position previous)
+                      (list->vector (reverse hints))
+                      (loop (+ amount 1)
+                            position
+                            (cons (vector position (expand-hint-label amount))
+                                  hints))))))))))
+
 (define (next-thing-command host type backward?)
   (let ((motions (thing-motions type)))
     (lambda (context invocation)
@@ -502,6 +535,9 @@
   (define-keymap! host meow-insert-keymap #f)
   (define-input-state! host 'meow-normal
     (vector meow-normal-keymap) 'ignore 'block "N" #f)
+  (set-input-state-position-hints!
+   host 'meow-normal
+   (lambda (context) (expand-position-hints host context)))
   (define-input-state! host 'meow-motion
     (vector meow-motion-keymap) 'ignore 'block "M" #f)
   (define-input-state! host 'meow-insert
