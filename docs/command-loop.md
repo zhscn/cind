@@ -215,6 +215,14 @@ Character, line, and node ranges are resolved before mutation, checked for overl
 as one transaction and undo node. The mechanism returns the collapsed post-edit Selection, so the
 strategy package remains responsible for the visible selection lifecycle.
 
+Text input targets every Selection head through the same transaction boundary. Typed ASCII input
+runs on-input indentation for all affected lines in that transaction; IME text, paste, and yank
+insert one shared string or positional strings at the heads. Coincident heads are deduplicated.
+Scheme kill entries retain one string per range, use a newline-separated projection for the platform
+clipboard, and restore positional entries when the yank target has the same range count. Region
+copy and kill resolve granularity through the native Selection mechanism rather than selecting only
+the primary range.
+
 The bundled `(cind structural)` policy pushes `structural-node` above the invoking View's durable
 state. Scheme owns the history lifecycle, while the View registry stores each complete Selection as
 anchors and settles it across transactions. The native noun mechanism computes one all-or-none CST

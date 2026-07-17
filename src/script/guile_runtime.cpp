@@ -1822,6 +1822,36 @@ std::vector<std::string> selection_replacements_from_scheme(SCM value, std::size
     return replacements;
 }
 
+std::vector<std::string> insertion_texts_from_scheme(SCM value, const char* caller, int position) {
+    if (scm_is_string(value)) {
+        return {scheme_string(value)};
+    }
+    if (!scm_is_vector(value) || scm_c_vector_length(value) == 0) {
+        scm_wrong_type_arg_msg(caller, position, value,
+                               "insertion string or non-empty vector of strings");
+    }
+    const std::size_t count = scm_c_vector_length(value);
+    std::vector<std::string> texts;
+    texts.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM text = scm_c_vector_ref(value, index);
+        if (!scm_is_string(text)) {
+            scm_wrong_type_arg_msg(caller, position, text, "insertion string");
+        }
+        texts.push_back(scheme_string(text));
+    }
+    return texts;
+}
+
+SCM string_vector_value(const std::vector<std::string>& values) {
+    SCM result = scm_c_make_vector(values.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        scm_c_vector_set_x(result, index,
+                           scm_from_utf8_stringn(values[index].data(), values[index].size()));
+    }
+    return result;
+}
+
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1847,6 +1877,30 @@ SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
         raise_host_error("replace-selection!", exception.what());
     } catch (...) {
         scm_misc_error("replace-selection!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
+    HostLease& host = require_host(host_object, "selection-texts");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "selection-texts", 2);
+    if (!host.services.selection_texts) {
+        scm_misc_error("selection-texts", "selection extraction capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        ViewSelection selection = view_selection_from_scheme(selection_value, "selection-texts", 3);
+        std::expected<std::vector<std::string>, std::string> result =
+            host.services.selection_texts(view, selection);
+        if (!result) {
+            raise_host_error("selection-texts", result.error());
+        }
+        return string_vector_value(*result);
+    } catch (const std::exception& exception) {
+        raise_host_error("selection-texts", exception.what());
+    } catch (...) {
+        scm_misc_error("selection-texts", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1908,17 +1962,14 @@ SCM erase_range(SCM host_object, SCM view_value, SCM start_value, SCM end_value)
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
-    if (!scm_is_string(text_value)) {
-        scm_wrong_type_arg_msg("insert-text!", 3, text_value, "string");
-    }
     HostLease& host = require_host(host_object, "insert-text!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "insert-text!", 2);
     if (!host.services.insert_text) {
         scm_misc_error("insert-text!", "text mutation capability is unavailable", SCM_EOL);
     }
     try {
-        const std::expected<void, std::string> inserted =
-            host.services.insert_text(view, scheme_string(text_value));
+        const std::expected<void, std::string> inserted = host.services.insert_text(
+            view, insertion_texts_from_scheme(text_value, "insert-text!", 3));
         if (!inserted) {
             raise_host_error("insert-text!", inserted.error());
         }
@@ -2693,6 +2744,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(selection_history_depth));
     (void)scm_c_define_gsubr("replace-selection!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(replace_selection));
+    (void)scm_c_define_gsubr("selection-texts", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(selection_texts));
     (void)scm_c_define_gsubr("buffer-substring", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_substring));
     (void)scm_c_define_gsubr("erase-range!", 4, 0, 0, reinterpret_cast<scm_t_subr>(erase_range));
@@ -2763,13 +2816,13 @@ void initialize_host_module(void*) {
         "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
         "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
-        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
-        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
-        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
-        "request-redraw!", nullptr);
+        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
+        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+        "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
+        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+        "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {

@@ -183,6 +183,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
+           .selection_texts = [this](ViewId view, const ViewSelection& selection)
+               -> std::expected<std::vector<std::string>, std::string> {
+               try {
+                   return session_for(view).selection_texts(selection);
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
            .erase_range = [this](ViewId view,
                                  GuileTextRange range) -> std::expected<void, std::string> {
                try {
@@ -194,11 +202,15 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .insert_text = [this](ViewId view,
-                                 std::string_view text) -> std::expected<void, std::string> {
+           .insert_text = [this](ViewId view, std::vector<std::string> replacements)
+               -> std::expected<void, std::string> {
                try {
-                   session_for(view).insert_text(text);
-                   after_edit();
+                   EditSession& active = session_for(view);
+                   const RevisionId before = active.snapshot().revision();
+                   active.insert_text(replacements);
+                   if (active.snapshot().revision() != before) {
+                       after_edit();
+                   }
                    return {};
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());

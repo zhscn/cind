@@ -53,6 +53,11 @@ struct PlannedSelectionEdit {
     std::string_view replacement;
 };
 
+struct PlannedCaretInsert {
+    TextOffset position;
+    std::string_view text;
+};
+
 } // namespace
 
 EditSession::EditSession(std::string initial_text, CppIndentStyle style)
@@ -99,8 +104,13 @@ void EditSession::type_text(std::string_view text) {
     // an editor delivering keystrokes; each character is one undo unit.
     for (char ch : text) {
         const TextOffset before = caret();
-        TypeCharResult result = type_char(mutable_document(), before, ch, *style_, analyzer_);
-        set_caret(result.caret);
+        const ViewSelection selection = selection_model();
+        std::vector<TextOffset> carets;
+        carets.reserve(selection.ranges.size());
+        for (const SelectionRange& range : selection.ranges) {
+            carets.push_back(range.head);
+        }
+        (void)type_chars(mutable_document(), carets, ch, *style_, analyzer_);
         record_caret(before);
     }
 }
@@ -109,12 +119,54 @@ void EditSession::insert_text(std::string_view text) {
     if (text.empty()) {
         return;
     }
+    const std::vector<std::string> replacements{std::string(text)};
+    insert_text(replacements);
+}
+
+void EditSession::insert_text(std::span<const std::string> replacements) {
+    const ViewSelection selection = selection_model();
+    if (replacements.empty() ||
+        (replacements.size() != 1 && replacements.size() != selection.ranges.size())) {
+        throw std::invalid_argument(
+            "caret insertion requires one text or one text per selection range");
+    }
+
+    std::vector<PlannedCaretInsert> inserts;
+    inserts.reserve(selection.ranges.size());
+    for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
+        inserts.push_back(
+            {.position = selection.ranges[index].head,
+             .text = replacements.size() == 1 ? replacements.front() : replacements[index]});
+    }
+    std::ranges::sort(inserts, [](const PlannedCaretInsert& left, const PlannedCaretInsert& right) {
+        return left.position < right.position;
+    });
+    std::vector<PlannedCaretInsert> unique;
+    unique.reserve(inserts.size());
+    for (const PlannedCaretInsert& insert : inserts) {
+        if (!unique.empty() && unique.back().position == insert.position) {
+            if (unique.back().text != insert.text) {
+                throw std::invalid_argument(
+                    "coincident selection heads require the same inserted text");
+            }
+            continue;
+        }
+        unique.push_back(insert);
+    }
+    if (std::ranges::none_of(
+            unique, [](const PlannedCaretInsert& insert) { return !insert.text.empty(); })) {
+        return;
+    }
+
     const TextOffset before = caret();
     EditTransaction tx = mutable_document().begin_transaction();
-    tx.insert(before, text);
+    for (auto insert = unique.rbegin(); insert != unique.rend(); ++insert) {
+        if (!insert->text.empty()) {
+            tx.insert(insert->position, insert->text);
+        }
+    }
     CommitResult commit = tx.commit();
     analyzer_.apply(commit.change, commit.snapshot);
-    set_caret(TextOffset{before.value + static_cast<std::uint32_t>(text.size())});
     record_caret(before);
 }
 
@@ -209,6 +261,22 @@ ViewSelection EditSession::replace_selection(ViewSelection selection,
     analyzer_.apply(commit.change, commit.snapshot);
     set_caret(result.ranges[result.primary].head);
     record_caret(before);
+    return result;
+}
+
+std::vector<std::string> EditSession::selection_texts(const ViewSelection& selection) const {
+    if (selection.ranges.empty()) {
+        throw std::invalid_argument("selection extraction requires at least one range");
+    }
+    if (selection.primary >= selection.ranges.size()) {
+        throw std::out_of_range("selection extraction primary range is outside the range list");
+    }
+    const Text content = snapshot().content();
+    std::vector<std::string> result;
+    result.reserve(selection.ranges.size());
+    for (const SelectionRange& range : selection.ranges) {
+        result.push_back(content.substring(editable_range(content, range)));
+    }
     return result;
 }
 

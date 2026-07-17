@@ -63,6 +63,15 @@ void send_keys(EditorApplication& application, std::string_view notation) {
     }
 }
 
+CommandId require_command(const EditorRuntime& runtime, std::string_view name) {
+    const std::optional<CommandId> command = runtime.commands().find(name);
+    if (!command) {
+        FAIL("missing command: ", name);
+        return {};
+    }
+    return *command;
+}
+
 } // namespace
 
 TEST_CASE("editor application owns normalized interaction dispatch") {
@@ -106,15 +115,51 @@ TEST_CASE("direct text input uses the active strategy selection edit policy") {
     application.session().set_selection(selection);
     application.insert_text("y");
 
+    CHECK(application.session().snapshot().content() == "abyxcyd");
     const ViewSelection expected{.ranges = {{.anchor = TextOffset{0},
                                              .head = TextOffset{3},
                                              .granularity = SelectionGranularity::Character},
                                             {.anchor = TextOffset{4},
-                                             .head = TextOffset{5},
+                                             .head = TextOffset{6},
                                              .granularity = SelectionGranularity::Node}},
                                  .primary = 0,
                                  .metadata = "(strategy . preserve)"};
     CHECK(application.session().active_selection() == expected);
+    CHECK(application.session().undo());
+    CHECK(application.session().snapshot().content() == "abxcd");
+    CHECK(application.session().redo());
+    CHECK(application.session().snapshot().content() == "abyxcyd");
+}
+
+TEST_CASE("typed character input reindents every selection head in one transaction") {
+    EditorApplication application =
+        make_application("sample.cc", "switch (x) {\n    case 1\n    case 2\n}\n");
+    EditorRuntime& runtime = application.runtime();
+    const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
+    REQUIRE(emacs);
+    const InputStrategyId preserve =
+        runtime.input_strategies().define({.name = "test-multi-input",
+                                           .editing = emacs,
+                                           .interface = emacs,
+                                           .selection_after_edit = SelectionEditPolicy::Preserve});
+    runtime.views().set_input_strategy(application.view_id(), preserve);
+    const std::string before = application.session().snapshot().content().to_string();
+    const TextOffset first{static_cast<std::uint32_t>(before.find("case 1") + 6)};
+    const TextOffset second{static_cast<std::uint32_t>(before.find("case 2") + 6)};
+    runtime.views().set_selection(application.view_id(),
+                                  ViewSelection{.ranges = {{.anchor = first, .head = first},
+                                                           {.anchor = second, .head = second}},
+                                                .primary = 1,
+                                                .metadata = "(input . multi)"});
+
+    application.insert_text(":");
+
+    CHECK(application.session().snapshot().content() == "switch (x) {\ncase 1:\ncase 2:\n}\n");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.size() == 2);
+    CHECK(application.session().undo());
+    CHECK(application.session().snapshot().content() == before);
+    CHECK_FALSE(application.session().undo());
 }
 
 TEST_CASE("frontend commands join the shared default keymap") {
@@ -712,6 +757,64 @@ TEST_CASE("Guile selection verbs replace every range in one undo unit") {
     CHECK(application.session().redo());
     CHECK(application.session().snapshot().content() == "\nthree\n");
     CHECK_FALSE(application.session().redo());
+}
+
+TEST_CASE("region commands preserve per-range kill entries and edit atomically") {
+    std::string clipboard;
+    EditorApplication application = make_application(
+        "sample.cc", "one\ntwo\nthree\n",
+        {.write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
+             clipboard = text;
+             return {};
+         },
+         .read_clipboard = {},
+         .wake_event_loop = {}});
+    EditorRuntime& runtime = application.runtime();
+    CommandContext context(runtime, application.window_id(), application.buffer_id(),
+                           application.view_id());
+    const ViewSelection regions{.ranges = {{.anchor = TextOffset{0},
+                                            .head = TextOffset{3},
+                                            .granularity = SelectionGranularity::Character},
+                                           {.anchor = TextOffset{4},
+                                            .head = TextOffset{7},
+                                            .granularity = SelectionGranularity::Line}},
+                                .primary = 0,
+                                .metadata = "(region . multi)"};
+
+    runtime.views().set_selection(application.view_id(), regions);
+    application.command_loop().set_pending_prefix(
+        {.count = std::nullopt, .register_name = "a", .extra = {}});
+    CHECK(application.command_loop()
+              .execute(require_command(runtime, "edit.copy-region"), context)
+              .status == CommandLoopStatus::Executed);
+    CHECK(clipboard == "one\ntwo\n");
+    CHECK_FALSE(application.session().active_selection().has_value());
+
+    runtime.views().set_selection(
+        application.view_id(),
+        ViewSelection{.ranges = {{.anchor = TextOffset{0}, .head = TextOffset{0}},
+                                 {.anchor = TextOffset{14}, .head = TextOffset{14}}},
+                      .primary = 1,
+                      .metadata = "(yank . multi)"});
+    application.command_loop().set_pending_prefix(
+        {.count = std::nullopt, .register_name = "a", .extra = {}});
+    CHECK(
+        application.command_loop().execute(require_command(runtime, "edit.yank"), context).status ==
+        CommandLoopStatus::Executed);
+    CHECK(application.session().snapshot().content() == "oneone\ntwo\nthree\ntwo\n");
+    CHECK(application.session().undo());
+    CHECK(application.session().snapshot().content() == "one\ntwo\nthree\n");
+    CHECK_FALSE(application.session().undo());
+
+    runtime.views().set_selection(application.view_id(), regions);
+    CHECK(application.command_loop()
+              .execute(require_command(runtime, "edit.kill-region"), context)
+              .status == CommandLoopStatus::Executed);
+    CHECK(application.session().snapshot().content() == "\nthree\n");
+    CHECK(clipboard == "one\ntwo\n");
+    CHECK(application.session().undo());
+    CHECK(application.session().snapshot().content() == "one\ntwo\nthree\n");
+    CHECK_FALSE(application.session().undo());
 }
 
 TEST_CASE("background saving is independent of a graphical event loop") {

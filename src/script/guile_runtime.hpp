@@ -54,8 +54,11 @@ struct GuileHostServices {
     std::function<std::expected<ViewSelection, std::string>(ViewId, ViewSelection,
                                                             std::vector<std::string>)>
         replace_selection;
+    std::function<std::expected<std::vector<std::string>, std::string>(ViewId,
+                                                                       const ViewSelection&)>
+        selection_texts;
     std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
-    std::function<std::expected<void, std::string>(ViewId, std::string_view)> insert_text;
+    std::function<std::expected<void, std::string>(ViewId, std::vector<std::string>)> insert_text;
     std::function<std::optional<GuileTextRange>(ViewId)> soft_kill_range;
     std::function<std::expected<std::optional<ViewSelection>, std::string>(ViewId, std::string_view,
                                                                            bool)>

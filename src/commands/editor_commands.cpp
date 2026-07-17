@@ -1,6 +1,9 @@
 #include "commands/editor_commands.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 
 namespace cind {
 
@@ -197,62 +200,162 @@ EnterResult press_enter(Document& document, TextOffset caret, const CppIndentSty
     return press_enter(document, caret, style, analyzer);
 }
 
-TypeCharResult type_char(Document& document, TextOffset caret, char ch, const CppIndentStyle& style,
-                         Analyzer& analyzer) {
+TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets, char ch,
+                           const CppIndentStyle& style, Analyzer& analyzer) {
+    if (carets.empty()) {
+        throw std::invalid_argument("typed character requires at least one caret");
+    }
     const Text old_text = document.snapshot().content();
     const RevisionId old_revision = document.revision();
-    EditTransaction tx = document.begin_transaction();
-    tx.insert(caret, std::string_view(&ch, 1));
+    std::vector<TextOffset> unique_carets(carets.begin(), carets.end());
+    std::ranges::sort(unique_carets);
+    unique_carets.erase(std::ranges::unique(unique_carets).begin(), unique_carets.end());
+    if (unique_carets.back().value > old_text.size_bytes()) {
+        throw std::out_of_range("typed character caret is outside the document");
+    }
 
-    TypeCharResult result;
-    result.caret = TextOffset{caret.value + 1};
+    EditTransaction tx = document.begin_transaction();
+    for (auto caret = unique_carets.rbegin(); caret != unique_carets.rend(); ++caret) {
+        tx.insert(*caret, std::string_view(&ch, 1));
+    }
+
+    struct InsertedCaret {
+        TextOffset character;
+        std::uint32_t line = 0;
+    };
+    std::vector<InsertedCaret> inserted;
+    inserted.reserve(unique_carets.size());
+    DocumentSnapshot spec = tx.speculative_snapshot();
+    for (std::size_t index = 0; index < unique_carets.size(); ++index) {
+        const std::uint64_t position =
+            static_cast<std::uint64_t>(unique_carets[index].value) + index;
+        if (position > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::length_error("typed character positions exceed the text offset limit");
+        }
+        const TextOffset character{static_cast<std::uint32_t>(position)};
+        inserted.push_back(
+            {.character = character, .line = spec.content().position(character).line});
+    }
+
+    struct PlannedIndent {
+        std::uint32_t line = 0;
+        TextEdit edit;
+        IndentDecision decision;
+    };
+    std::vector<PlannedIndent> planned_indents;
 
     std::optional<Analysis> spec_analysis;
-    std::vector<TextEdit> late;
     if (ch == '}' || ch == ':' || ch == '#') {
-        DocumentSnapshot spec = tx.speculative_snapshot();
-        const std::uint32_t line = spec.content().position(caret).line;
-        const TextOffset line_start = spec.content().line_start(line);
-        const std::string prefix = spec.substring(TextRange{line_start, caret});
-        const bool first_content = prefix.find_first_not_of(" \t") == std::string::npos;
-
-        // ':' may complete a label anywhere on the line; '}' and '#' only
-        // reindent when they are the line's first content.
-        if (ch == ':' || first_content) {
-            spec_analysis = speculative_analysis(analyzer, tx, old_text, old_revision, spec);
-            IndentDecision decision = compute_line_indent(spec, spec_analysis->tree, line, style);
-            const bool colon_completes_label =
-                decision.role == FormatRole::CaseLabel ||
-                decision.role == FormatRole::AccessSpecifierLabel ||
-                decision.role == FormatRole::ConstructorInitializerIntro;
-            if (!decision.preserve && (ch != ':' || colon_completes_label)) {
-                const std::string current = leading_whitespace_of(spec, line);
-                if (current != decision.indentation_text &&
-                    caret.value >= line_start.value + current.size()) {
-                    const TextRange ws_range{
-                        line_start,
-                        TextOffset{line_start.value + static_cast<std::uint32_t>(current.size())}};
-                    tx.replace(ws_range, decision.indentation_text);
-                    late.push_back(TextEdit{ws_range, decision.indentation_text});
-                    result.caret.value +=
-                        static_cast<std::uint32_t>(decision.indentation_text.size()) -
-                        static_cast<std::uint32_t>(current.size());
-                    decision.trace.insert(decision.trace.begin(),
-                                          "typed-char handler: reindent on input");
-                    result.reindented = true;
-                    result.decision = std::move(decision);
-                }
+        std::vector<std::uint32_t> candidate_lines;
+        for (const InsertedCaret& caret : inserted) {
+            const TextOffset line_start = spec.content().line_start(caret.line);
+            const std::string prefix = spec.substring(TextRange{line_start, caret.character});
+            const bool first_content = prefix.find_first_not_of(" \t") == std::string::npos;
+            if (ch == ':' || first_content) {
+                candidate_lines.push_back(caret.line);
             }
         }
+        std::ranges::sort(candidate_lines);
+        candidate_lines.erase(std::ranges::unique(candidate_lines).begin(), candidate_lines.end());
+
+        if (!candidate_lines.empty()) {
+            Analysis analysis = speculative_analysis(analyzer, tx, old_text, old_revision, spec);
+            for (const std::uint32_t line : candidate_lines) {
+                IndentDecision decision = compute_line_indent(spec, analysis.tree, line, style);
+                const bool applies = ch != ':' || decision.role == FormatRole::CaseLabel ||
+                                     decision.role == FormatRole::AccessSpecifierLabel ||
+                                     decision.role == FormatRole::ConstructorInitializerIntro;
+                if (!decision.preserve && applies) {
+                    const std::string current = leading_whitespace_of(spec, line);
+                    const TextOffset line_start = spec.content().line_start(line);
+                    const std::uint32_t content_start =
+                        line_start.value + static_cast<std::uint32_t>(current.size());
+                    const bool caret_after_indent = std::ranges::any_of(
+                        inserted, [line, content_start](const InsertedCaret& caret) {
+                            return caret.line == line && caret.character.value >= content_start;
+                        });
+                    if (current != decision.indentation_text && caret_after_indent) {
+                        const TextRange ws_range{
+                            line_start, TextOffset{line_start.value +
+                                                   static_cast<std::uint32_t>(current.size())}};
+                        decision.trace.insert(decision.trace.begin(),
+                                              "typed-char handler: reindent on input");
+                        planned_indents.push_back(
+                            {.line = line,
+                             .edit = TextEdit{ws_range, decision.indentation_text},
+                             .decision = std::move(decision)});
+                    }
+                }
+            }
+            spec_analysis = std::move(analysis);
+        }
+    }
+
+    for (auto indent = planned_indents.rbegin(); indent != planned_indents.rend(); ++indent) {
+        tx.replace(indent->edit.old_range, indent->edit.new_text);
     }
 
     CommitResult commit = tx.commit();
     if (spec_analysis) {
+        std::vector<TextEdit> late;
+        late.reserve(planned_indents.size());
+        for (const PlannedIndent& indent : planned_indents) {
+            late.push_back(indent.edit);
+        }
         adopt_committed(analyzer, std::move(*spec_analysis), std::move(late), commit);
     } else {
         analyzer.apply(commit.change, commit.snapshot);
     }
-    result.change = std::move(commit.change);
+
+    std::vector<TextOffset> unique_results;
+    std::vector<std::optional<IndentDecision>> unique_decisions;
+    unique_results.reserve(inserted.size());
+    unique_decisions.reserve(inserted.size());
+    for (const InsertedCaret& caret : inserted) {
+        std::int64_t position = static_cast<std::int64_t>(caret.character.value) + 1;
+        std::optional<IndentDecision> decision;
+        for (const PlannedIndent& indent : planned_indents) {
+            if (static_cast<std::int64_t>(indent.edit.old_range.end.value) <= position) {
+                position += static_cast<std::int64_t>(indent.edit.new_text.size()) -
+                            static_cast<std::int64_t>(indent.edit.old_range.length());
+            }
+            if (indent.line == caret.line) {
+                decision = indent.decision;
+            }
+        }
+        if (position < 0 || position > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::length_error("typed character result exceeds the text offset limit");
+        }
+        unique_results.push_back(TextOffset{static_cast<std::uint32_t>(position)});
+        unique_decisions.push_back(std::move(decision));
+    }
+
+    TypeCharsResult result{.carets = {}, .decisions = {}, .change = std::move(commit.change)};
+    result.carets.reserve(carets.size());
+    result.decisions.reserve(carets.size());
+    for (const TextOffset caret : carets) {
+        const auto found = std::ranges::lower_bound(unique_carets, caret);
+        const std::size_t index = static_cast<std::size_t>(found - unique_carets.begin());
+        result.carets.push_back(unique_results[index]);
+        result.decisions.push_back(unique_decisions[index]);
+    }
+    return result;
+}
+
+TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets, char ch,
+                           const CppIndentStyle& style) {
+    Analyzer analyzer;
+    return type_chars(document, carets, ch, style, analyzer);
+}
+
+TypeCharResult type_char(Document& document, TextOffset caret, char ch, const CppIndentStyle& style,
+                         Analyzer& analyzer) {
+    TypeCharsResult batch =
+        type_chars(document, std::span<const TextOffset>(&caret, 1), ch, style, analyzer);
+    TypeCharResult result{.reindented = batch.decisions.front().has_value(),
+                          .decision = batch.decisions.front().value_or(IndentDecision{}),
+                          .caret = batch.carets.front(),
+                          .change = std::move(batch.change)};
     return result;
 }
 

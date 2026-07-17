@@ -4,7 +4,10 @@
 #include "indentation/indentation_service.hpp"
 #include "syntax/analysis.hpp"
 
+#include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace cind {
 
@@ -41,6 +44,16 @@ struct TypeCharResult {
     DocumentChange change;
 };
 
+// Batch counterpart for true multi-caret input. Results preserve the input
+// caret order; coincident carets share one insertion and therefore settle at
+// the same position. Every insertion and any resulting line reindent are
+// committed in one transaction.
+struct TypeCharsResult {
+    std::vector<TextOffset> carets;
+    std::vector<std::optional<IndentDecision>> decisions;
+    DocumentChange change;
+};
+
 // On-typing reindent (design.md §10.3): insert `ch` at the caret and, when a
 // structural predicate holds, reindent the line in the same transaction —
 // ':' completing a case label / access specifier / ctor initializer intro,
@@ -50,5 +63,9 @@ TypeCharResult type_char(Document& document, TextOffset caret, char ch, const Cp
                          Analyzer& analyzer);
 TypeCharResult type_char(Document& document, TextOffset caret, char ch,
                          const CppIndentStyle& style);
+TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets, char ch,
+                           const CppIndentStyle& style, Analyzer& analyzer);
+TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets, char ch,
+                           const CppIndentStyle& style);
 
 } // namespace cind

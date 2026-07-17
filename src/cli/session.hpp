@@ -67,6 +67,9 @@ public:
     // One-transaction insert at the caret, bypassing the typed-char pipeline.
     // For multi-byte input (a UTF-8 code point is one undo unit) and pastes.
     void insert_text(std::string_view text);
+    // Inserts at every selection head in one transaction. One replacement is
+    // broadcast to all heads; otherwise the vector is positional by range.
+    void insert_text(std::span<const std::string> replacements);
     EnterResult enter();
     // Reindent the caret's line. On a blank line, the caret settles at the
     // resulting indentation even when the document text is already correct.
@@ -78,6 +81,9 @@ public:
     // post-edit positions and retains the input primary index and metadata.
     ViewSelection replace_selection(ViewSelection selection,
                                     std::span<const std::string> replacements);
+    // Extracts one text value per range using the same granularity rules as
+    // replace_selection.
+    std::vector<std::string> selection_texts(const ViewSelection& selection) const;
     bool undo();
     bool redo();
 

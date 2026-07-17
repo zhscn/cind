@@ -335,9 +335,6 @@
 (define (range-end range)
   (max (vector-ref range 0) (vector-ref range 1)))
 
-(define (selection-primary-range selection)
-  (vector-ref (vector-ref selection 3) (vector-ref selection 1)))
-
 (define (make-region-commands host)
   (let ((kill-ring '())
         (registers '()))
@@ -345,9 +342,9 @@
       (let ((entry (assoc name registers)))
         (and entry (cdr entry))))
 
-    (define (register-set! name text)
+    (define (register-set! name entry)
       (set! registers
-            (cons (cons name text)
+            (cons (cons name entry)
                   (let loop ((entries registers)
                              (kept '()))
                     (cond ((null? entries) (reverse kept))
@@ -355,19 +352,29 @@
                            (append (reverse kept) (cdr entries)))
                           (else (loop (cdr entries) (cons (car entries) kept))))))))
 
-    (define (remember-kill! text invocation)
+    (define (entry-clipboard-text entry)
+      (let loop ((index 0)
+                 (text ""))
+        (if (= index (vector-length entry))
+            text
+            (loop (+ index 1)
+                  (string-append text
+                                 (if (or (= index 0) (string-suffix?* "\n" text)) "" "\n")
+                                 (vector-ref entry index))))))
+
+    (define (remember-kill! entry invocation)
       (set! kill-ring
-            (cons text (take-at-most kill-ring (- kill-ring-limit 1))))
+            (cons entry (take-at-most kill-ring (- kill-ring-limit 1))))
       (let ((register (invocation-register invocation)))
-        (when register (register-set! register text)))
-      (write-clipboard! host text))
+        (when register (register-set! register entry)))
+      (write-clipboard! host (entry-clipboard-text entry)))
 
     (define (latest-kill invocation)
       (let ((register (invocation-register invocation)))
         (if register
-            (let ((text (register-ref register)))
-              (if text
-                  (vector text #f)
+            (let ((entry (register-ref register)))
+              (if entry
+                  (vector entry #f)
                   (vector #f (string-append "register " register " is empty"))))
             (if (pair? kill-ring)
                 (vector (car kill-ring) #f)
@@ -376,8 +383,9 @@
                        (error (vector-ref result 1)))
                   (if (and text (> (string-length text) 0))
                       (begin
-                        (set! kill-ring (list text))
-                        (vector text #f))
+                        (let ((entry (vector text)))
+                          (set! kill-ring (list entry))
+                          (vector entry #f)))
                       (vector #f error)))))))
 
     (define (toggle-mark context invocation)
@@ -397,21 +405,28 @@
       (let* ((buffer (context-buffer context))
              (view (context-view context))
              (text (buffer-substring host buffer
-                                     (range-start range) (range-end range)))
-             (clipboard-error (remember-kill! text invocation)))
+                                     (range-start range) (range-end range))))
         (erase-range! host view (range-start range) (range-end range))
-        (if clipboard-error
-            (set-message! host
-                          (string-append "killed internally; clipboard: "
-                                         clipboard-error)))
+        (let ((clipboard-error (remember-kill! (vector text) invocation)))
+          (if clipboard-error
+              (set-message! host
+                            (string-append "killed internally; clipboard: "
+                                           clipboard-error))))
         (command-completed)))
 
     (define (kill-region context invocation)
       (let ((view (context-view context)))
         (if (view-mark host view)
-            (kill-range! context
-                         (selection-primary-range (view-selection host view))
-                         invocation)
+            (let* ((selected (view-selection host view))
+                   (texts (selection-texts host view selected)))
+              (replace-selection! host view selected "")
+              (request-redraw! host)
+              (let ((clipboard-error (remember-kill! texts invocation)))
+                (if clipboard-error
+                    (set-message! host
+                                  (string-append "killed internally; clipboard: "
+                                                 clipboard-error))))
+              (command-completed))
             (begin
               (set-message! host "no active region")
               (command-completed)))))
@@ -428,10 +443,9 @@
             (begin
               (set-message! host "no active region")
               (command-completed))
-            (let* ((range (selection-primary-range (view-selection host view)))
-                   (text (buffer-substring host (context-buffer context)
-                                           (range-start range) (range-end range)))
-                   (clipboard-error (remember-kill! text invocation)))
+            (let* ((selected (view-selection host view))
+                   (texts (selection-texts host view selected))
+                   (clipboard-error (remember-kill! texts invocation)))
               (set-message! host
                             (if clipboard-error
                                 (string-append "copied internally; clipboard: "
@@ -441,10 +455,17 @@
 
     (define (yank context invocation)
       (let* ((result (latest-kill invocation))
-             (text (vector-ref result 0))
+             (entry (vector-ref result 0))
              (clipboard-error (vector-ref result 1)))
-        (cond (text
-               (insert-text! host (context-view context) text))
+        (cond (entry
+               (let* ((view (context-view context))
+                      (range-count
+                       (vector-length (vector-ref (view-selection host view) 3)))
+                      (entry-count (vector-length entry)))
+                 (insert-text! host view
+                               (cond ((= entry-count 1) (vector-ref entry 0))
+                                     ((= entry-count range-count) entry)
+                                     (else (entry-clipboard-text entry))))))
               (clipboard-error
                (set-message! host
                              (if (invocation-register invocation)

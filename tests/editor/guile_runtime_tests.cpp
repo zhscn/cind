@@ -404,8 +404,41 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  runtime.views().set_selection(target, std::move(selection));
              },
          .clear_selection = [&](ViewId target) { runtime.views().clear_selection(target); },
-         .replace_selection = [](ViewId, ViewSelection selection, std::vector<std::string>)
-             -> std::expected<ViewSelection, std::string> { return selection; },
+         .replace_selection = [&](ViewId target, ViewSelection selection,
+                                  std::vector<std::string> replacements)
+             -> std::expected<ViewSelection, std::string> {
+             Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
+             struct Edit {
+                 std::size_t index;
+                 TextRange range;
+                 std::string text;
+             };
+             std::vector<Edit> edits;
+             edits.reserve(selection.ranges.size());
+             for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
+                 edits.push_back({index, selection.ranges[index].ordered(), replacements[index]});
+             }
+             std::ranges::sort(edits, [](const Edit& left, const Edit& right) {
+                 return left.range.start < right.range.start;
+             });
+             EditTransaction transaction = target_buffer.begin_transaction();
+             for (auto edit = edits.rbegin(); edit != edits.rend(); ++edit) {
+                 transaction.replace(edit->range, edit->text);
+             }
+             (void)transaction.commit();
+             return selection;
+         },
+         .selection_texts = [&](ViewId target, const ViewSelection& selection)
+             -> std::expected<std::vector<std::string>, std::string> {
+             const DocumentSnapshot snapshot =
+                 runtime.buffers().get(runtime.views().get(target).buffer_id()).snapshot();
+             std::vector<std::string> texts;
+             texts.reserve(selection.ranges.size());
+             for (const SelectionRange& range : selection.ranges) {
+                 texts.push_back(snapshot.substring(range.ordered()));
+             }
+             return texts;
+         },
          .erase_range = [&](ViewId target,
                             GuileTextRange range) -> std::expected<void, std::string> {
              Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
@@ -416,14 +449,14 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .insert_text = [&](ViewId target,
-                            std::string_view text) -> std::expected<void, std::string> {
+                            std::vector<std::string> texts) -> std::expected<void, std::string> {
              Buffer& target_buffer = runtime.buffers().get(runtime.views().get(target).buffer_id());
              const TextOffset caret = runtime.views().caret(target);
              EditTransaction transaction = target_buffer.begin_transaction();
-             transaction.insert(caret, text);
+             transaction.insert(caret, texts.front());
              (void)transaction.commit();
-             runtime.views().set_caret(
-                 target, TextOffset{caret.value + static_cast<std::uint32_t>(text.size())});
+             runtime.views().set_caret(target, TextOffset{caret.value + static_cast<std::uint32_t>(
+                                                                            texts.front().size())});
              return {};
          },
          .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
