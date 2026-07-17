@@ -362,9 +362,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              },
          .base_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
          .set_selection =
-             [&](ViewId target, std::uint32_t anchor, std::uint32_t head) {
-                 runtime.views().set_selection(
-                     target, {.anchor = TextOffset{anchor}, .head = TextOffset{head}});
+             [&](ViewId target, ViewSelection selection) {
+                 runtime.views().set_selection(target, std::move(selection));
              },
          .clear_selection = [&](ViewId target) { runtime.views().clear_selection(target); },
          .erase_range = [&](ViewId target,

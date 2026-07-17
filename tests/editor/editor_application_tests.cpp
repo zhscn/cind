@@ -590,6 +590,16 @@ TEST_CASE("window commands maintain a split tree and independent view state") {
     const WindowId first = application.window_id();
     application.session().set_caret(TextOffset{4});
     application.session().view().viewport().top_line_offset = 0.25F;
+    const ViewSelection source_selection{
+        .ranges = {{.anchor = TextOffset{1},
+                    .head = TextOffset{4},
+                    .granularity = SelectionGranularity::Character},
+                   {.anchor = TextOffset{12},
+                    .head = TextOffset{8},
+                    .granularity = SelectionGranularity::Node}},
+        .primary = 0,
+        .metadata = "(thing . expression)"};
+    application.session().set_selection(source_selection);
 
     send_keys(application, "C-x 3");
     REQUIRE(application.open_windows().size() == 2);
@@ -600,6 +610,7 @@ TEST_CASE("window commands maintain a split tree and independent view state") {
     CHECK(application.window_id() == first);
     CHECK(application.session(second).caret() == TextOffset{4});
     CHECK(application.session(second).view().viewport().top_line_offset == doctest::Approx(0.25F));
+    CHECK(application.session(second).active_selection() == source_selection);
 
     send_keys(application, "C-x o");
     CHECK(application.window_id() == second);

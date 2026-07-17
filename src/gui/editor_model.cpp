@@ -174,11 +174,12 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                      .left_column = state.left_column},
         .popup = popup_viewport_,
     };
+    const std::vector<TextRange> active_selections = session.selected_ranges();
     const ui::EditorSceneInput active_input{.text = snapshot.content(),
                                             .tokens = application_.syntax_tokens(),
                                             .signs = signs(application_.window_id()),
                                             .caret = session.caret(),
-                                            .selection = session.selection(),
+                                            .selections = active_selections,
                                             .rows = rows,
                                             .cols = columns,
                                             .visible_text_rows = visible_text_rows,
@@ -219,12 +220,13 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         const bool active = placement.window == application_.window_id();
         const InputStateRegistry::Definition& pane_input_state =
             application_.input_state(placement.window);
+        const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
         ui::Scene pane_scene = ui::compose_editor_scene(
             {.text = pane_snapshot.content(),
              .tokens = application_.syntax_tokens(placement.window),
              .signs = signs(placement.window),
              .caret = pane_session.caret(),
-             .selection = pane_session.selection(),
+             .selections = pane_selections,
              .rows = std::max(3, placement.rect.rows + 1),
              .cols = std::max(1, placement.rect.columns),
              .visible_text_rows = static_cast<float>(std::max(1, placement.rect.rows - 1)),
@@ -477,6 +479,18 @@ EditorStateSnapshot EditorModel::inspect() {
     const WindowId active_window = application_.window_id();
     const InputStateRegistry::Definition& input_state = application_.input_state();
     const View& active_view = application_.runtime().views().get(application_.view_id());
+    const ViewSelection view_selection = session.selection_model();
+    SelectionStateSnapshot selection_state{.active = session.mark().has_value(),
+                                           .primary = view_selection.primary,
+                                           .metadata = view_selection.metadata,
+                                           .ranges = {}};
+    selection_state.ranges.reserve(view_selection.ranges.size());
+    for (const SelectionRange& range : view_selection.ranges) {
+        selection_state.ranges.push_back(
+            {.anchor = range.anchor,
+             .head = range.head,
+             .granularity = std::string(selection_granularity_name(range.granularity))});
+    }
     const std::optional<InputStrategyId> input_strategy =
         active_view.input_strategy() ? active_view.input_strategy()
                                      : application_.runtime().input_strategies().default_strategy();
@@ -488,6 +502,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .caret = caret,
             .caret_position = text.position(caret),
             .caret_display_column = ui::display_column(text, caret, session.style().tab_width),
+            .selection = std::move(selection_state),
             .viewport = {.top_line = view.top_line,
                          .top_line_offset = view.top_line_offset,
                          .left_column = view.left_column},

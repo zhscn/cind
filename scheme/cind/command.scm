@@ -9,7 +9,9 @@
             context-view
             context-project
             invocation-arguments
-            invocation-repeat-count))
+            invocation-repeat-count
+            selection
+            selection-range))
 
 (define (command-completed . values)
   (cond ((null? values) (vector 'completed))
@@ -58,3 +60,15 @@
 
 (define (invocation-repeat-count invocation)
   (vector-ref invocation 2))
+
+(define (selection-range anchor head granularity)
+  (vector anchor head granularity))
+
+(define (selection ranges . options)
+  (let ((primary (if (pair? options) (car options) 0))
+        (metadata (if (and (pair? options) (pair? (cdr options)))
+                      (cadr options)
+                      '())))
+    (if (and (pair? options) (pair? (cdr options)) (pair? (cddr options)))
+        (error "selection accepts ranges, optional primary, and optional metadata")
+        (vector 'selection primary metadata (list->vector ranges)))))

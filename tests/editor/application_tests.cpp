@@ -373,6 +373,83 @@ TEST_CASE("views keep independent positions backed by document anchors") {
     CHECK_FALSE(runtime.views().selection(right).has_value());
 }
 
+TEST_CASE("views retain typed multi-range selections through document edits") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "shared",
+                                                      .initial_text = "abcdef",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{0});
+
+    runtime.views().set_selection(
+        view, ViewSelection{.ranges = {{.anchor = TextOffset{4},
+                                        .head = TextOffset{1},
+                                        .granularity = SelectionGranularity::Character},
+                                       {.anchor = TextOffset{2},
+                                        .head = TextOffset{6},
+                                        .granularity = SelectionGranularity::Node}},
+                            .primary = 1,
+                            .metadata = "(thing . defun)"});
+
+    CHECK(runtime.views().caret(view) == TextOffset{6});
+    CHECK(runtime.views().mark(view) == TextOffset{2});
+    REQUIRE(runtime.views().active_selection(view).has_value());
+    CHECK(runtime.views().active_selection(view)->ranges[0].anchor == TextOffset{4});
+    CHECK(runtime.views().active_selection(view)->ranges[0].head == TextOffset{1});
+    CHECK(runtime.views().active_selection(view)->ranges[1].granularity ==
+          SelectionGranularity::Node);
+    CHECK(runtime.views().active_selection(view)->primary == 1);
+    CHECK(runtime.views().active_selection(view)->metadata == "(thing . defun)");
+
+    auto transaction = runtime.buffers().get(buffer).begin_transaction();
+    transaction.insert(TextOffset{0}, "X");
+    transaction.commit();
+
+    const ViewSelection settled = runtime.views().selection_model(view);
+    CHECK(settled.ranges[0].anchor == TextOffset{5});
+    CHECK(settled.ranges[0].head == TextOffset{2});
+    CHECK(settled.ranges[1].anchor == TextOffset{3});
+    CHECK(settled.ranges[1].head == TextOffset{7});
+
+    runtime.views().set_caret(view, TextOffset{4});
+    const ViewSelection moved = runtime.views().selection_model(view);
+    CHECK(moved.ranges[0] == settled.ranges[0]);
+    CHECK(moved.ranges[1].anchor == TextOffset{3});
+    CHECK(moved.ranges[1].head == TextOffset{4});
+
+    runtime.views().clear_selection(view);
+    CHECK_FALSE(runtime.views().active_selection(view).has_value());
+    CHECK(runtime.views().caret(view) == TextOffset{4});
+    const ViewSelection collapsed = runtime.views().selection_model(view);
+    REQUIRE(collapsed.ranges.size() == 1);
+    CHECK(collapsed.ranges[0].anchor == TextOffset{4});
+    CHECK(collapsed.ranges[0].head == TextOffset{4});
+    CHECK(collapsed.primary == 0);
+    CHECK(collapsed.metadata == "()");
+}
+
+TEST_CASE("view selections validate their non-empty primary range contract") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "shared",
+                                                      .initial_text = "abc",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+
+    CHECK_THROWS_AS(runtime.views().set_selection(view, ViewSelection{}), std::invalid_argument);
+    CHECK_THROWS_AS(
+        runtime.views().set_selection(
+            view, ViewSelection{.ranges = {{.anchor = TextOffset{0},
+                                            .head = TextOffset{1},
+                                            .granularity = SelectionGranularity::Character}},
+                                .primary = 1,
+                                .metadata = "()"}),
+        std::out_of_range);
+    CHECK(runtime.views().caret(view) == TextOffset{0});
+}
+
 TEST_CASE("windows bind views without merging buffer-relative display state") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "shared",

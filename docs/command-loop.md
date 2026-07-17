@@ -32,6 +32,13 @@ view. Switching buffers changes the active Window's View binding; returning to a
 that Window's cached View. Editing style is shared at buffer scope, so separate Views of a Buffer
 use the same language-editing policy.
 
+A View selection is a directional, anchor-backed list of ranges with one primary range. Each range
+records character, line, block, or syntax-node granularity. Strategy-owned Scheme metadata carries
+selection semantics without adding policy to the editor core. The primary head is the View caret;
+moving it preserves the other ranges. Document transactions settle all endpoints through edits,
+and a window split copies the full selection model into the new View. Scene composition highlights
+every non-empty range in both frontends.
+
 ## Normalized input
 
 `KeyStroke` represents a character or named key together with Control, Alt, Shift, and Super
@@ -210,7 +217,7 @@ module loading, error containment, and the development-service boundary.
 
 ## Inspection
 
-The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.scripting`,
+The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.selection`, `editor.scripting`,
 `editor.interaction`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
 `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
@@ -218,6 +225,8 @@ keymap, the input state owning handler feedback, repeat count, and last command.
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
 lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
 reports the active state name, text-input policy, cursor shape, and indicator.
+Selection state reports whether a mark is active, the primary range, strategy metadata, and every
+directional range with its granularity.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible
 item window, global item count and selection alongside its cell geometry, surface, and overlay
 anchor. Each frontend projects this semantic content into its native layout.

@@ -439,6 +439,25 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
     output.push_back('}');
 }
 
+void append_selection(std::string& output, const SelectionStateSnapshot& selection) {
+    output += "{\"active\":";
+    append_bool(output, selection.active);
+    output += std::format(",\"primary\":{},\"metadata\":", selection.primary);
+    append_json_string(output, selection.metadata);
+    output += ",\"ranges\":[";
+    for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const SelectionRangeStateSnapshot& range = selection.ranges[index];
+        output += std::format("{{\"anchor\":{},\"head\":{},\"granularity\":", range.anchor.value,
+                              range.head.value);
+        append_json_string(output, range.granularity);
+        output.push_back('}');
+    }
+    output += "]}";
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -449,6 +468,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
         ",\"caret\":{{\"byte\":{},\"line\":{},\"byte_column\":{},\"display_column\":{}}}",
         editor.caret.value, editor.caret_position.line, editor.caret_position.byte_column,
         editor.caret_display_column);
+    output += ",\"selection\":";
+    append_selection(output, editor.selection);
     output += std::format(
         ",\"viewport\":{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}},"
         "\"line_signs\":",
@@ -1114,6 +1135,17 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     if (frame.editor.caret.value > frame.editor.document_bytes) {
         violations.emplace_back("editor caret is past the document end");
+    }
+    if (frame.editor.selection.ranges.empty() ||
+        frame.editor.selection.primary >= frame.editor.selection.ranges.size()) {
+        violations.emplace_back("editor selection has no valid primary range");
+    }
+    for (const SelectionRangeStateSnapshot& range : frame.editor.selection.ranges) {
+        if (range.anchor.value > frame.editor.document_bytes ||
+            range.head.value > frame.editor.document_bytes) {
+            violations.emplace_back("editor selection range is past the document end");
+            break;
+        }
     }
     if (frame.editor.line_count > 0 && frame.editor.viewport.top_line >= frame.editor.line_count) {
         violations.emplace_back("editor viewport starts past the document end");
@@ -1795,6 +1827,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
             std::format("{{\"byte\":{},\"line\":{},\"byte_column\":{},\"display_column\":{}}}",
                         frame.editor.caret.value, frame.editor.caret_position.line,
                         frame.editor.caret_position.byte_column, frame.editor.caret_display_column);
+    } else if (path == "editor.selection") {
+        append_selection(output, frame.editor.selection);
     } else if (path == "editor.viewport") {
         output = std::format("{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}}",
                              frame.editor.viewport.top_line, frame.editor.viewport.top_line_offset,
@@ -2260,6 +2294,10 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    viewport=" << frame.editor.viewport.top_line << '+'
            << frame.editor.viewport.top_line_offset
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
+    output << "    selection active=" << (frame.editor.selection.active ? "true" : "false")
+           << " ranges=" << frame.editor.selection.ranges.size()
+           << " primary=" << frame.editor.selection.primary << " meta=\""
+           << printable(frame.editor.selection.metadata) << "\"\n";
     output << "    focus=" << printable(frame.editor.input_focus)
            << " strategy=" << printable(frame.editor.input_strategy)
            << " state=" << printable(frame.editor.input_state)

@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace cind {
 
@@ -25,9 +27,30 @@ public:
     TextOffset caret() const { return runtime_->views().caret(view_id_); }
     void set_caret(TextOffset caret);
     std::optional<TextRange> selection() const { return runtime_->views().selection(view_id_); }
+    ViewSelection selection_model() const { return runtime_->views().selection_model(view_id_); }
+    std::optional<ViewSelection> active_selection() const {
+        return runtime_->views().active_selection(view_id_);
+    }
+    std::vector<TextRange> selected_ranges() const {
+        std::vector<TextRange> result;
+        const std::optional<ViewSelection> active = active_selection();
+        if (!active) {
+            return result;
+        }
+        result.reserve(active->ranges.size());
+        for (const SelectionRange& range : active->ranges) {
+            if (const TextRange ordered = range.ordered(); !ordered.empty()) {
+                result.push_back(ordered);
+            }
+        }
+        return result;
+    }
     std::optional<TextOffset> mark() const { return runtime_->views().mark(view_id_); }
     void set_selection(SelectionEndpoints selection) {
         runtime_->views().set_selection(view_id_, selection);
+    }
+    void set_selection(ViewSelection selection) {
+        runtime_->views().set_selection(view_id_, std::move(selection));
     }
     void clear_selection() { runtime_->views().clear_selection(view_id_); }
     BufferId buffer_id() const { return buffer_id_; }

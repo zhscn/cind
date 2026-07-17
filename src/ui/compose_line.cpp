@@ -50,7 +50,9 @@ std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& 
         if (it != tokens.end() && it->range.start.value <= offset) {
             style = style_of(*it);
         }
-        const bool selected = in.selection && in.selection->contains(TextOffset{offset});
+        const bool selected = std::ranges::any_of(in.selections, [&](TextRange selection) {
+            return selection.contains(TextOffset{offset});
+        });
 
         const char c = in.text[at];
         if (c == '\t') {

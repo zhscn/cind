@@ -161,9 +161,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return result;
                },
            .set_selection =
-               [this](ViewId view, std::uint32_t anchor, std::uint32_t head) {
-                   session_for(view).set_selection(
-                       {.anchor = TextOffset{anchor}, .head = TextOffset{head}});
+               [this](ViewId view, ViewSelection selection) {
+                   session_for(view).set_selection(std::move(selection));
                    view_state_for(view).selection_history.clear();
                    reveal_caret_ = true;
                },
@@ -833,10 +832,7 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
     }
     EditSession& source = session(target);
     const ViewportState source_viewport = source.view().viewport();
-    const std::optional<SelectionEndpoints> source_selection =
-        source.selection().transform([](TextRange range) {
-            return SelectionEndpoints{.anchor = range.start, .head = range.end};
-        });
+    const std::optional<ViewSelection> source_selection = source.active_selection();
     const ViewId view = create_view({}, buffer_id(target), source.caret());
     runtime_.views().get(view).viewport() = source_viewport;
     if (source_selection) {

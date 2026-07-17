@@ -89,7 +89,7 @@ The native module exports:
 (view-caret host view-id)
 (view-mark host view-id)
 (view-selection host view-id)
-(set-selection! host view-id anchor head)
+(set-selection! host view-id selection)
 (clear-selection! host view-id)
 (buffer-substring host buffer-id start end)
 (erase-range! host view-id start end)
@@ -218,9 +218,20 @@ the document, resets vertical-motion state and requests caret reveal. `set-messa
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
 
-View and text capabilities expose byte offsets as unsigned integers and ranges as two-element
-start/end vectors. `view-caret`, `view-mark` and `view-selection` are immutable queries;
-`set-selection!` preserves anchor/head direction while `clear-selection!` releases the mark.
+View and text capabilities expose byte offsets as unsigned integers. Ordinary text ranges use
+two-element start/end vectors. `view-selection` returns
+`#(selection primary metadata ranges)`, where `ranges` is a non-empty vector of
+`#(anchor head granularity)` values. The granularity is `char`, `line`, `block`, or `node`;
+`primary` is the zero-based range index, and `metadata` is an arbitrary Scheme datum owned by the
+input strategy. A View without an active region returns one collapsed `char` range at the caret,
+while `view-mark` returns `#f`. The `(cind command)` module provides `selection-range` and
+`selection` constructors for this representation. `set-selection!` preserves range direction,
+primary identity, granularity, and metadata. `clear-selection!` collapses the model to its primary
+head and releases the active mark.
+
+Selection endpoints are document anchors. Direct document transactions settle every endpoint
+across insertions and erasures, and moving the View caret moves the primary head without changing
+the other ranges. Views that display the same Buffer retain independent selections.
 `buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
 native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
 caret reveal coherent. `soft-kill-range` is a syntax-aware range query and does not mutate text.

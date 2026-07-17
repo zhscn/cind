@@ -5,6 +5,7 @@
 #include "editor/ids.hpp"
 #include "editor/input_state.hpp"
 #include "editor/input_strategy.hpp"
+#include "editor/selection.hpp"
 #include "editor/settings.hpp"
 
 #include <cstdint>
@@ -22,11 +23,6 @@ struct ViewportState {
     float top_line_offset = 0.0F;
     int left_column = 0;
     std::optional<int> preferred_column;
-};
-
-struct SelectionEndpoints {
-    TextOffset anchor;
-    TextOffset head;
 };
 
 class View {
@@ -47,13 +43,25 @@ private:
     friend class ViewRegistry;
     friend class WindowRegistry;
 
+    struct AnchoredSelectionRange {
+        AnchorId anchor = 0;
+        AnchorId head = 0;
+        SelectionGranularity granularity = SelectionGranularity::Character;
+    };
+
+    struct AnchoredSelection {
+        std::vector<AnchoredSelectionRange> ranges;
+        std::size_t primary = 0;
+        std::string metadata = "()";
+    };
+
     View(ViewId id, BufferId buffer_id, AnchorId caret, const SettingRegistry& settings)
         : id_(id), buffer_id_(buffer_id), caret_(caret), settings_(settings, SettingScope::View) {}
 
     ViewId id_;
     BufferId buffer_id_;
     AnchorId caret_ = 0;
-    std::optional<AnchorId> mark_;
+    std::optional<AnchoredSelection> selection_;
     ViewportState viewport_;
     SettingsLayer settings_;
     std::vector<KeymapId> keymaps_;
@@ -84,7 +92,10 @@ public:
     void set_caret(ViewId id, TextOffset caret);
     std::optional<TextOffset> mark(ViewId id) const;
     std::optional<TextRange> selection(ViewId id) const;
+    ViewSelection selection_model(ViewId id) const;
+    std::optional<ViewSelection> active_selection(ViewId id) const;
     void set_selection(ViewId id, SelectionEndpoints selection);
+    void set_selection(ViewId id, ViewSelection selection);
     void clear_selection(ViewId id);
     void set_input_strategy(ViewId view, std::optional<InputStrategyId> strategy);
     void set_base_input_state(ViewId view, InputStateId state);
@@ -102,6 +113,7 @@ private:
     };
 
     void remove_anchors(View& view);
+    void remove_selection_anchors(View& view, AnchorId retained_head = 0);
     AnchorId make_anchor(Buffer& buffer, TextOffset offset, AnchorAffinity affinity);
     std::optional<InputStateId> effective_base_state(const View& view) const;
     void refresh_mode_input_state(View& view);

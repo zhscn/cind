@@ -3,7 +3,7 @@
 #include "cpp_lexer/token_buffer.hpp"
 #include "ui/style.hpp"
 
-#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,7 +32,7 @@ struct LineComposeInput {
     int tab_width = 4;
     int left_col = 0; // first visible display column
     int width = 80;   // visible columns in the text area
-    std::optional<TextRange> selection;
+    std::span<const TextRange> selections;
 };
 
 std::vector<Run> build_line_runs(const LineComposeInput& in, const TokenBuffer& tokens);

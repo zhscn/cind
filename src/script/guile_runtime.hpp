@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ids.hpp"
+#include "editor/selection.hpp"
 #include "editor/window.hpp"
 
 #include <cstddef>
@@ -54,7 +55,7 @@ struct GuileHostServices {
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<std::vector<KeymapId>(WindowId)> base_keymap_layers;
-    std::function<void(ViewId, std::uint32_t, std::uint32_t)> set_selection;
+    std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;
     std::function<std::expected<void, std::string>(ViewId, GuileTextRange)> erase_range;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> insert_text;

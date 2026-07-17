@@ -110,6 +110,19 @@ struct CommandLoopStateSnapshot {
     std::string last_command;
 };
 
+struct SelectionRangeStateSnapshot {
+    TextOffset anchor;
+    TextOffset head;
+    std::string granularity;
+};
+
+struct SelectionStateSnapshot {
+    bool active = false;
+    std::size_t primary = 0;
+    std::string metadata;
+    std::vector<SelectionRangeStateSnapshot> ranges;
+};
+
 struct ScriptingStateSnapshot {
     std::string engine;
     std::string version;
@@ -136,6 +149,7 @@ struct EditorStateSnapshot {
     TextOffset caret;
     LinePosition caret_position;
     int caret_display_column = 0;
+    SelectionStateSnapshot selection;
     ui::EditorViewport viewport;
     ui::LineSigns line_signs;
     int tab_width = 4;

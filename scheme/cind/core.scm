@@ -326,10 +326,13 @@
       (cons (car values) (take-at-most (cdr values) (- count 1)))))
 
 (define (range-start range)
-  (vector-ref range 0))
+  (min (vector-ref range 0) (vector-ref range 1)))
 
 (define (range-end range)
-  (vector-ref range 1))
+  (max (vector-ref range 0) (vector-ref range 1)))
+
+(define (selection-primary-range selection)
+  (vector-ref (vector-ref selection 3) (vector-ref selection 1)))
 
 (define (make-region-commands host)
   (let ((kill-ring '()))
@@ -359,7 +362,8 @@
               (clear-selection! host view)
               (set-message! host "mark cleared"))
             (begin
-              (set-selection! host view caret caret)
+              (set-selection!
+               host view (selection (list (selection-range caret caret 'char))))
               (set-message! host "mark set")))
         (command-completed)))
 
@@ -377,9 +381,10 @@
         (command-completed)))
 
     (define (kill-region context invocation)
-      (let ((range (view-selection host (context-view context))))
-        (if range
-            (kill-range! context range)
+      (let ((view (context-view context)))
+        (if (view-mark host view)
+            (kill-range! context
+                         (selection-primary-range (view-selection host view)))
             (begin
               (set-message! host "no active region")
               (command-completed)))))
@@ -391,15 +396,16 @@
             (command-completed))))
 
     (define (copy-region context invocation)
-      (let ((range (view-selection host (context-view context))))
-        (if (not range)
+      (let ((view (context-view context)))
+        (if (not (view-mark host view))
             (begin
               (set-message! host "no active region")
               (command-completed))
-            (let* ((text (buffer-substring host (context-buffer context)
+            (let* ((range (selection-primary-range (view-selection host view)))
+                   (text (buffer-substring host (context-buffer context)
                                            (range-start range) (range-end range)))
                    (clipboard-error (remember-kill! text)))
-              (clear-selection! host (context-view context))
+              (clear-selection! host view)
               (set-message! host
                             (if clipboard-error
                                 (string-append "copied internally; clipboard: "

@@ -40,6 +40,12 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .caret = TextOffset{3},
         .caret_position = {.line = 0, .byte_column = 3},
         .caret_display_column = 3,
+        .selection =
+            {.active = true,
+             .primary = 1,
+             .metadata = "(thing . defun)",
+             .ranges = {{.anchor = TextOffset{0}, .head = TextOffset{1}, .granularity = "char"},
+                        {.anchor = TextOffset{2}, .head = TextOffset{3}, .granularity = "node"}}},
         .viewport = {.top_line = 0, .left_column = 0},
         .line_signs = {.first = 0, .modified = 1},
         .tab_width = 4,
@@ -365,7 +371,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":34") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":35") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -387,6 +393,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
+    CHECK(snapshot.find("\"selection\":{\"active\":true,\"primary\":1") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
           std::string::npos);
@@ -399,6 +406,11 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse caret = run_inspection_query(hub, "get editor.caret");
     REQUIRE(caret.ok);
     CHECK(caret.payload == "{\"byte\":3,\"line\":0,\"byte_column\":3,\"display_column\":3}");
+
+    const InspectionResponse selection = run_inspection_query(hub, "get editor.selection");
+    REQUIRE(selection.ok);
+    CHECK(selection.payload.find("\"metadata\":\"(thing . defun)\"") != std::string::npos);
+    CHECK(selection.payload.find("\"granularity\":\"node\"") != std::string::npos);
 
     const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");
     REQUIRE(command_loop.ok);

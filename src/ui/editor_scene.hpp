@@ -46,7 +46,7 @@ struct EditorSceneInput {
     const TokenBuffer& tokens;
     const LineSigns& signs;
     TextOffset caret;
-    std::optional<TextRange> selection;
+    std::span<const TextRange> selections;
 
     int rows = 24;
     int cols = 80;

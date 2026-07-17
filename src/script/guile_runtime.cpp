@@ -1450,6 +1450,92 @@ SCM text_range_value(TextRange range) {
     return result;
 }
 
+SCM selection_granularity_value(SelectionGranularity granularity) {
+    switch (granularity) {
+    case SelectionGranularity::Character:
+        return scm_from_utf8_symbol("char");
+    case SelectionGranularity::Line:
+        return scm_from_utf8_symbol("line");
+    case SelectionGranularity::Block:
+        return scm_from_utf8_symbol("block");
+    case SelectionGranularity::Node:
+        return scm_from_utf8_symbol("node");
+    }
+    throw std::logic_error("unknown selection granularity");
+}
+
+SelectionGranularity selection_granularity_from_scheme(SCM value, const char* caller,
+                                                       int position) {
+    if (symbol_is(value, "char")) {
+        return SelectionGranularity::Character;
+    }
+    if (symbol_is(value, "line")) {
+        return SelectionGranularity::Line;
+    }
+    if (symbol_is(value, "block")) {
+        return SelectionGranularity::Block;
+    }
+    if (symbol_is(value, "node")) {
+        return SelectionGranularity::Node;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "char, line, block, or node symbol");
+    return SelectionGranularity::Character;
+}
+
+std::string scheme_datum_external(SCM value) {
+    return scheme_string(scm_object_to_string(value, SCM_UNDEFINED));
+}
+
+SCM view_selection_value(const ViewSelection& selection) {
+    SCM ranges = scm_c_make_vector(selection.ranges.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
+        const SelectionRange& range = selection.ranges[index];
+        SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(value, 0, scm_from_uint32(range.anchor.value));
+        scm_c_vector_set_x(value, 1, scm_from_uint32(range.head.value));
+        scm_c_vector_set_x(value, 2, selection_granularity_value(range.granularity));
+        scm_c_vector_set_x(ranges, index, value);
+    }
+    SCM result = scm_c_make_vector(4, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("selection"));
+    scm_c_vector_set_x(result, 1, scm_from_size_t(selection.primary));
+    scm_c_vector_set_x(result, 2, scm_c_read_string(selection.metadata.c_str()));
+    scm_c_vector_set_x(result, 3, ranges);
+    return result;
+}
+
+ViewSelection view_selection_from_scheme(SCM value, const char* caller, int position) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "selection") ||
+        scm_is_unsigned_integer(scm_c_vector_ref(value, 1), 0,
+                                std::numeric_limits<std::size_t>::max()) == 0 ||
+        !scm_is_vector(scm_c_vector_ref(value, 3))) {
+        scm_wrong_type_arg_msg(caller, position, value,
+                               "#(selection primary metadata ranges) value");
+    }
+    const SCM ranges_value = scm_c_vector_ref(value, 3);
+    const std::size_t range_count = scm_c_vector_length(ranges_value);
+    ViewSelection selection{.ranges = {},
+                            .primary = scm_to_size_t(scm_c_vector_ref(value, 1)),
+                            .metadata = scheme_datum_external(scm_c_vector_ref(value, 2))};
+    if (range_count == 0 || selection.primary >= range_count) {
+        scm_misc_error(caller, "selection requires a non-empty valid primary range", SCM_EOL);
+    }
+    selection.ranges.reserve(range_count);
+    for (std::size_t index = 0; index < range_count; ++index) {
+        const SCM range = scm_c_vector_ref(ranges_value, index);
+        if (!scm_is_vector(range) || scm_c_vector_length(range) != 3) {
+            scm_wrong_type_arg_msg(caller, position, range, "#(anchor head granularity) range");
+        }
+        selection.ranges.push_back(
+            {.anchor = text_offset_from_scheme(scm_c_vector_ref(range, 0), caller, position),
+             .head = text_offset_from_scheme(scm_c_vector_ref(range, 1), caller, position),
+             .granularity =
+                 selection_granularity_from_scheme(scm_c_vector_ref(range, 2), caller, position)});
+    }
+    return selection;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_caret(SCM host_object, SCM view_value) {
     try {
@@ -1484,8 +1570,7 @@ SCM view_selection(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-selection");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-selection", 2);
-        const std::optional<TextRange> selection = host.runtime->views().selection(view);
-        return selection ? text_range_value(*selection) : SCM_BOOL_F;
+        return view_selection_value(host.runtime->views().selection_model(view));
     } catch (const std::exception& exception) {
         raise_host_error("view-selection", exception.what());
     } catch (...) {
@@ -1494,19 +1579,16 @@ SCM view_selection(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM set_selection(SCM host_object, SCM view_value, SCM anchor_value, SCM head_value) {
+SCM set_selection(SCM host_object, SCM view_value, SCM selection_value) {
     HostLease& host = require_host(host_object, "set-selection!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-selection!", 2);
-    const TextOffset anchor = text_offset_from_scheme(anchor_value, "set-selection!", 3);
-    const TextOffset head = text_offset_from_scheme(head_value, "set-selection!", 4);
     if (!host.services.set_selection) {
         scm_misc_error("set-selection!", "selection mutation capability is unavailable", SCM_EOL);
     }
     try {
-        host.services.set_selection(view, anchor.value, head.value);
+        ViewSelection selection = view_selection_from_scheme(selection_value, "set-selection!", 3);
+        host.services.set_selection(view, std::move(selection));
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("set-selection!", exception.what());
@@ -2311,7 +2393,7 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("view-mark", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_mark));
     (void)scm_c_define_gsubr("view-selection", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(view_selection));
-    (void)scm_c_define_gsubr("set-selection!", 4, 0, 0,
+    (void)scm_c_define_gsubr("set-selection!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_selection));
     (void)scm_c_define_gsubr("clear-selection!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(clear_selection));

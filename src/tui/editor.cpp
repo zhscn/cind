@@ -472,6 +472,7 @@ private:
             }
         }
         const InputStateRegistry::Definition& active_input_state = application_.input_state();
+        const std::vector<TextRange> active_selections = session().selected_ranges();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
                 application_.window_layout().partition(size.rows - 1, size.cols);
@@ -505,12 +506,13 @@ private:
                 const bool active = placement.window == application_.window_id();
                 const InputStateRegistry::Definition& pane_input_state =
                     application_.input_state(placement.window);
+                const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
                 ui::Scene pane_scene = ui::compose_editor_scene(
                     {.text = pane_snapshot.content(),
                      .tokens = application_.syntax_tokens(placement.window),
                      .signs = pane_signs,
                      .caret = pane_session.caret(),
-                     .selection = pane_session.selection(),
+                     .selections = pane_selections,
                      .rows = std::max(3, placement.rect.rows + 1),
                      .cols = std::max(1, placement.rect.columns),
                      .tab_width = pane_session.style().tab_width,
@@ -576,7 +578,7 @@ private:
                                           .tokens = tokens(),
                                           .signs = signs(),
                                           .caret = session().caret(),
-                                          .selection = selection(),
+                                          .selections = active_selections,
                                           .rows = size.rows,
                                           .cols = size.cols,
                                           .tab_width = tab_width(),
@@ -626,7 +628,7 @@ private:
                                       .tokens = tokens(),
                                       .signs = signs(),
                                       .caret = session().caret(),
-                                      .selection = selection(),
+                                      .selections = active_selections,
                                       .rows = size.rows,
                                       .cols = size.cols,
                                       .tab_width = tab_width(),

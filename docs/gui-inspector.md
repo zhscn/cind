@@ -121,6 +121,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `frame.violations` | 跨层 invariant 违规 |
 | `editor` | 完整编辑器状态 |
 | `editor.caret` | caret 的 byte、line 和 column |
+| `editor.selection` | active mark、primary range、Scheme metadata 和带 granularity 的方向性 ranges |
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、repeat 和 last command |
@@ -176,12 +177,14 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 
 完整快照使用带版本号的 JSON schema。顶层包含：
 
-- `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的
+- `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、selection、连续行单位的
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
   command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
   名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
+  Selection 记录 active mark、primary range 索引、Scheme metadata，以及每个 range 的
+  anchor、head 和 `char`/`line`/`block`/`node` granularity。
 - `scene`：cell 网格、cursor、活动文本行、pane/divider、view tree、region 几何和语义
   内容。Scene region 使用 0-based cell 坐标并声明 vertical anchor、pane owner、active
   状态和局部 `content_offset_rows`；单 grid 的 `grid_offset_rows` 与 pane-grid 的局部偏移

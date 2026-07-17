@@ -206,7 +206,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                                          .tab_width = input.tab_width,
                                          .left_col = viewport.left_column,
                                          .width = text_width,
-                                         .selection = input.selection},
+                                         .selections = input.selections},
                                         input.tokens)) {
             const std::string id = std::format("line:{}/byte:{}", line, run.source_offset);
             body.primitives().push_back(

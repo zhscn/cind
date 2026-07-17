@@ -12,6 +12,7 @@
 #include "ui/text_position.hpp"
 #include "ui/view_tree.hpp"
 
+#include <span>
 #include <string>
 
 using namespace cind;
@@ -29,7 +30,8 @@ std::vector<Run> runs_of(const std::string& text, int left_col = 0, int width = 
                             .tab_width = tab_width,
                             .left_col = left_col,
                             .width = width,
-                            .selection = selection},
+                            .selections = selection ? std::span<const TextRange>(&*selection, 1)
+                                                    : std::span<const TextRange>()},
                            keepalive.back());
 }
 
@@ -91,7 +93,7 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .tokens = tokens,
                                  .signs = signs,
                                  .caret = TextOffset{0},
-                                 .selection = std::nullopt,
+                                 .selections = {},
                                  .rows = 6,
                                  .cols = 40,
                                  .visible_text_rows = 3.5F,
@@ -172,7 +174,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .tokens = tokens,
                                               .signs = {},
                                               .caret = TextOffset{4},
-                                              .selection = std::nullopt,
+                                              .selections = {},
                                               .rows = 8,
                                               .cols = 80,
                                               .visible_text_rows = 6.0F,
@@ -300,6 +302,28 @@ TEST_CASE("line runs: selection splits runs and marks them") {
     CHECK(runs[1].col == 2);
     CHECK(runs[2].text == "ef");
     CHECK(!runs[2].selected);
+}
+
+TEST_CASE("line runs: multiple selections share the same composition path") {
+    const std::vector<TextRange> selections{{TextOffset{1}, TextOffset{2}},
+                                            {TextOffset{4}, TextOffset{6}}};
+    const TokenBuffer tokens(lex(Text("abcdef")).tokens);
+    const std::vector<Run> runs = build_line_runs({.text = "abcdef",
+                                                   .start_offset = 0,
+                                                   .tab_width = 4,
+                                                   .left_col = 0,
+                                                   .width = 80,
+                                                   .selections = selections},
+                                                  tokens);
+    REQUIRE(runs.size() == 4);
+    CHECK(runs[0].text == "a");
+    CHECK_FALSE(runs[0].selected);
+    CHECK(runs[1].text == "b");
+    CHECK(runs[1].selected);
+    CHECK(runs[2].text == "cd");
+    CHECK_FALSE(runs[2].selected);
+    CHECK(runs[3].text == "ef");
+    CHECK(runs[3].selected);
 }
 
 TEST_CASE("line runs: CJK glyphs take two columns and clip correctly") {

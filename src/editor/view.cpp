@@ -82,13 +82,26 @@ ViewId ViewRegistry::create(BufferId buffer_id, TextOffset caret_offset) {
 }
 
 void ViewRegistry::remove_anchors(View& view) {
-    Buffer& buffer = buffers_->get(view.buffer_id_);
-    if (view.mark_) {
-        buffer.document_.remove_anchor(*view.mark_);
-        view.mark_.reset();
+    if (view.selection_) {
+        remove_selection_anchors(view);
+    } else {
+        buffers_->get(view.buffer_id_).document_.remove_anchor(view.caret_);
     }
-    buffer.document_.remove_anchor(view.caret_);
-    --buffer.attached_views_;
+    --buffers_->get(view.buffer_id_).attached_views_;
+}
+
+void ViewRegistry::remove_selection_anchors(View& view, AnchorId retained_head) {
+    if (!view.selection_) {
+        return;
+    }
+    Buffer& buffer = buffers_->get(view.buffer_id_);
+    for (const View::AnchoredSelectionRange& range : view.selection_->ranges) {
+        buffer.document_.remove_anchor(range.anchor);
+        if (range.head != retained_head) {
+            buffer.document_.remove_anchor(range.head);
+        }
+    }
+    view.selection_.reset();
 }
 
 bool ViewRegistry::erase(ViewId id) {
@@ -141,10 +154,11 @@ TextOffset ViewRegistry::caret(ViewId id) const {
 
 std::optional<TextOffset> ViewRegistry::mark(ViewId id) const {
     const View& view = get(id);
-    if (!view.mark_) {
+    if (!view.selection_) {
         return std::nullopt;
     }
-    return buffers_->get(view.buffer_id_).document_.anchor_offset(*view.mark_);
+    const View::AnchoredSelectionRange& primary = view.selection_->ranges[view.selection_->primary];
+    return buffers_->get(view.buffer_id_).document_.anchor_offset(primary.anchor);
 }
 
 void ViewRegistry::set_caret(ViewId id, TextOffset caret_offset) {
@@ -153,50 +167,111 @@ void ViewRegistry::set_caret(ViewId id, TextOffset caret_offset) {
     const AnchorId replacement = make_anchor(buffer, caret_offset, AnchorAffinity::AfterInsertion);
     buffer.document_.remove_anchor(view.caret_);
     view.caret_ = replacement;
+    if (view.selection_) {
+        view.selection_->ranges[view.selection_->primary].head = replacement;
+    }
 }
 
 std::optional<TextRange> ViewRegistry::selection(ViewId id) const {
+    const std::optional<ViewSelection> active = active_selection(id);
+    if (!active) {
+        return std::nullopt;
+    }
+    const TextRange primary = active->ranges[active->primary].ordered();
+    if (primary.empty()) {
+        return std::nullopt;
+    }
+    return primary;
+}
+
+ViewSelection ViewRegistry::selection_model(ViewId id) const {
+    if (std::optional<ViewSelection> active = active_selection(id)) {
+        return std::move(*active);
+    }
+    const TextOffset position = caret(id);
+    return {.ranges = {{.anchor = position,
+                        .head = position,
+                        .granularity = SelectionGranularity::Character}},
+            .primary = 0,
+            .metadata = "()"};
+}
+
+std::optional<ViewSelection> ViewRegistry::active_selection(ViewId id) const {
     const View& view = get(id);
-    if (!view.mark_) {
+    if (!view.selection_) {
         return std::nullopt;
     }
     const Buffer& buffer = buffers_->get(view.buffer_id_);
-    const TextOffset anchor = buffer.document_.anchor_offset(*view.mark_);
-    const TextOffset head = buffer.document_.anchor_offset(view.caret_);
-    if (anchor == head) {
-        return std::nullopt;
+    ViewSelection result{
+        .ranges = {}, .primary = view.selection_->primary, .metadata = view.selection_->metadata};
+    result.ranges.reserve(view.selection_->ranges.size());
+    for (const View::AnchoredSelectionRange& range : view.selection_->ranges) {
+        result.ranges.push_back({.anchor = buffer.document_.anchor_offset(range.anchor),
+                                 .head = buffer.document_.anchor_offset(range.head),
+                                 .granularity = range.granularity});
     }
-    return anchor < head ? TextRange{anchor, head} : TextRange{head, anchor};
+    return result;
 }
 
 void ViewRegistry::set_selection(ViewId id, SelectionEndpoints selection) {
+    set_selection(id, ViewSelection{.ranges = {selection}, .primary = 0, .metadata = "()"});
+}
+
+void ViewRegistry::set_selection(ViewId id, ViewSelection selection) {
     View& view = get(id);
     Buffer& buffer = buffers_->get(view.buffer_id_);
-    const AnchorId new_mark =
-        make_anchor(buffer, selection.anchor, AnchorAffinity::BeforeInsertion);
-    AnchorId new_caret = 0;
+    if (selection.ranges.empty()) {
+        throw std::invalid_argument("view selection requires at least one range");
+    }
+    if (selection.primary >= selection.ranges.size()) {
+        throw std::out_of_range("view selection primary range is outside the range list");
+    }
+
+    View::AnchoredSelection replacement{
+        .ranges = {}, .primary = selection.primary, .metadata = std::move(selection.metadata)};
+    replacement.ranges.reserve(selection.ranges.size());
     try {
-        new_caret = make_anchor(buffer, selection.head, AnchorAffinity::AfterInsertion);
+        for (const SelectionRange& range : selection.ranges) {
+            const AnchorId anchor =
+                make_anchor(buffer, range.anchor, AnchorAffinity::BeforeInsertion);
+            AnchorId head = 0;
+            try {
+                head = make_anchor(buffer, range.head, AnchorAffinity::AfterInsertion);
+                replacement.ranges.push_back(
+                    {.anchor = anchor, .head = head, .granularity = range.granularity});
+            } catch (...) {
+                buffer.document_.remove_anchor(anchor);
+                if (head != 0) {
+                    buffer.document_.remove_anchor(head);
+                }
+                throw;
+            }
+        }
     } catch (...) {
-        buffer.document_.remove_anchor(new_mark);
+        for (const View::AnchoredSelectionRange& range : replacement.ranges) {
+            buffer.document_.remove_anchor(range.anchor);
+            buffer.document_.remove_anchor(range.head);
+        }
         throw;
     }
-    if (view.mark_) {
-        buffer.document_.remove_anchor(*view.mark_);
+
+    if (view.selection_) {
+        remove_selection_anchors(view);
+    } else {
+        buffer.document_.remove_anchor(view.caret_);
     }
-    buffer.document_.remove_anchor(view.caret_);
-    view.mark_ = new_mark;
-    view.caret_ = new_caret;
+    view.caret_ = replacement.ranges[replacement.primary].head;
+    view.selection_ = std::move(replacement);
 }
 
 void ViewRegistry::clear_selection(ViewId id) {
     View& view = get(id);
-    if (!view.mark_) {
+    if (!view.selection_) {
         return;
     }
-    Buffer& buffer = buffers_->get(view.buffer_id_);
-    buffer.document_.remove_anchor(*view.mark_);
-    view.mark_.reset();
+    const AnchorId retained_head = view.selection_->ranges[view.selection_->primary].head;
+    remove_selection_anchors(view, retained_head);
+    view.caret_ = retained_head;
 }
 
 void ViewRegistry::set_input_strategy(ViewId view_id, std::optional<InputStrategyId> strategy) {
