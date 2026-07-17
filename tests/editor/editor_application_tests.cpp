@@ -295,6 +295,25 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     send_keys(application, "0");
     CHECK(application.session().caret() == TextOffset{0});
 
+    send_keys(application, "3");
+    send_keys(application, "\"");
+    CHECK(application.input_state().name == "meow-register");
+    CHECK(application.pending_command_text() == "3 \"");
+    send_keys(application, "a");
+    CHECK(application.input_state().name == "meow-normal");
+    CHECK(application.pending_command_text() == "3 \"a");
+    CHECK(application.command_loop().pending_prefix().register_name ==
+          std::optional<std::string>{"a"});
+    send_keys(application, "l");
+    CHECK(application.session().caret() == TextOffset{3});
+    CHECK(application.pending_command_text().empty());
+
+    send_keys(application, "\"");
+    CHECK(application.input_state().name == "meow-register");
+    send_keys(application, "C-g");
+    CHECK(application.input_state().name == "meow-normal");
+    CHECK(application.pending_command_text().empty());
+
     send_keys(application, "x");
     CHECK(application.input_state().name == "meow-keypad");
     CHECK(application.pending_key_sequence_text() == "C-x");

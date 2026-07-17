@@ -177,10 +177,12 @@ prefix in its immutable invocation and consumes the slot. Undefined input, error
 commands, interaction requests, and `keyboard.quit` also clear it. A single unbound key remains
 available to the platform text-input path.
 
-The bundled meow normal map binds decimal digits to Scheme prefix commands. Digits accumulate a
-count, `0` retains its line-start meaning when no count exists, and motion commands consume the
-count through the shared invocation contract. The formatted prefix is projected into the echo area
-independently of pending keymap chords and transient-state feedback.
+The bundled meow normal map binds decimal digits and `"` to Scheme prefix commands. Digits
+accumulate a count, `0` retains its line-start meaning when no count exists, and `"` pushes a
+single-key handler state that captures a named register without entering a second input loop. Count
+and register values compose in either order and travel through the shared invocation contract. The
+formatted prefix is projected into the echo area independently of pending keymap chords and
+transient-state feedback.
 
 The keymap registry merges immediate continuations across ordered keymaps and their parents using
 the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is

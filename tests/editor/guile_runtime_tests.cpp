@@ -124,8 +124,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 6);
-    CHECK(*second == 6);
+    CHECK(*first == 7);
+    CHECK(*second == 7);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -145,6 +145,10 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStateId keypad = runtime.input_states().find("meow-keypad").value_or(InputStateId{});
     REQUIRE(keypad);
     CHECK(runtime.input_states().definition(keypad).handler);
+    const InputStateId register_capture =
+        runtime.input_states().find("meow-register").value_or(InputStateId{});
+    REQUIRE(register_capture);
+    CHECK(runtime.input_states().definition(register_capture).handler);
     const InputStrategyId meow =
         runtime.input_strategies().find("meow").value_or(InputStrategyId{});
     REQUIRE(meow);
@@ -154,7 +158,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 6);
+    CHECK(guile.snapshot().scripted_input_states == 7);
     CHECK(guile.snapshot().scripted_input_strategies == 3);
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
@@ -414,7 +418,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 56);
+    CHECK(*installed == 58);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -734,6 +738,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(message == "mark cleared");
 
     runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
+    command_loop.set_pending_prefix({.count = std::nullopt, .register_name = "a", .extra = {}});
     CHECK(command_loop.execute(require_command(runtime, "edit.copy-region"), context).status ==
           CommandLoopStatus::Executed);
     CHECK(clipboard == "a");
@@ -757,9 +762,16 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "\n");
     CHECK(clipboard == "abc");
 
+    runtime.views().set_caret(view, TextOffset{0});
+    command_loop.set_pending_prefix({.count = std::nullopt, .register_name = "a", .extra = {}});
+    CHECK(command_loop.execute(require_command(runtime, "edit.yank"), context).status ==
+          CommandLoopStatus::Executed);
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "a\n");
+    CHECK(command_loop.pending_prefix().empty());
+
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 56);
+    CHECK(snapshot.scripted_commands == 58);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

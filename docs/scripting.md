@@ -319,9 +319,10 @@ movement, window layout and application quit policy, project file selection and 
 project-aware enabled predicates, key-help selection and message presentation, mark/region
 commands, structural expression/list movement, and kill/yank behavior. Each installed core policy
 owns a bounded kill ring in its Scheme closure. Copy and kill commands synchronize the newest entry
-with the platform clipboard; yank imports the clipboard when that ring is empty. File and project
-commands compose native storage, indexing and search capabilities without owning asynchronous
-state.
+with the platform clipboard and also write the invocation's named register when present. A yank
+with a named register reads that register; an unnamed yank reads the newest kill and imports the
+clipboard when the ring is empty. File and project commands compose native storage, indexing and
+search capabilities without owning asynchronous state.
 
 The `(cind core)` module owns the default Emacs-style editor and application keymaps. It defines the
 named maps and populates them after built-in commands exist. The `C-x` family is a named prefix map,
@@ -348,7 +349,10 @@ bind `SPC`, `x`, `c`, `g`, and `m` to a transient `meow-keypad` handler. The han
 unmodified keys against base layers, publishes completions, applies control-to-literal fallback,
 and finally tries the original key sequence for transparent interface bindings. Thus `x c`
 dispatches `C-x C-c`, `x b` falls back to `C-x b`, `m x` dispatches `M-x`, and interface keymaps
-remain available without package-specific routing.
+remain available without package-specific routing. The normal map binds `"` to a separate
+single-key handler state. Its captured key replaces the invocation's register while preserving an
+already accumulated count and extra prefix values; cancellation removes the transient session and
+the pending prefix.
 
 ## Scripted interaction providers
 

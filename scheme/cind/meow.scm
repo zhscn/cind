@@ -10,11 +10,13 @@
 (define meow-motion-keymap 'meow.motion)
 (define meow-insert-keymap 'meow.insert)
 (define meow-keypad-state 'meow-keypad)
+(define meow-register-state 'meow-register)
 
 ;; Each entry is #(host view translated-keys raw-keys pending-modifier).
 ;; The host capability is part of the key because Guile modules are process
 ;; global while editor runtimes are independent.
 (define keypad-sessions '())
+(define register-sessions '())
 
 (define (session-matches? entry host view)
   (and (eq? (vector-ref entry 0) host)
@@ -41,6 +43,30 @@
   (remove-session! host view)
   (set! keypad-sessions
         (cons (vector host view translated raw modifier) keypad-sessions)))
+
+;; Each entry is #(host view captured-register-or-#f).  Capturing the key before
+;; popping the state lets the synchronous state observer distinguish a normal
+;; completion from cancellation.
+(define (find-register-session host view)
+  (let loop ((sessions register-sessions))
+    (and (pair? sessions)
+         (let ((entry (car sessions)))
+           (if (session-matches? entry host view)
+               entry
+               (loop (cdr sessions)))))))
+
+(define (remove-register-session! host view)
+  (set! register-sessions
+        (let loop ((sessions register-sessions)
+                   (kept '()))
+          (cond ((null? sessions) (reverse kept))
+                ((session-matches? (car sessions) host view)
+                 (append (reverse kept) (cdr sessions)))
+                (else (loop (cdr sessions) (cons (car sessions) kept)))))))
+
+(define (start-register-session! host view)
+  (remove-register-session! host view)
+  (set! register-sessions (cons (vector host view #f) register-sessions)))
 
 (define (key-sequence keys)
   (string-join keys " "))
@@ -155,6 +181,45 @@
     (publish-feedback! host context translated display)
     (command-completed)))
 
+(define (register-handle-key host context key)
+  (let* ((view (context-view context))
+         (session (find-register-session host view)))
+    (cond ((not session)
+           (pop-input-state! host view)
+           (set-message! host "register capture session is missing")
+           'consume)
+          ((not (= (string-length key) 1))
+           (pop-input-state! host view)
+           (set-message! host (string-append "invalid register: " key))
+           'consume)
+          (else
+           (vector-set! session 2 key)
+           (pop-input-state! host view)
+           (vector 'dispatch "meow.register-commit")))))
+
+(define (register-start-command host)
+  (lambda (context invocation)
+    (let ((view (context-view context)))
+      (start-register-session! host view)
+      (push-input-state! host view meow-register-state)
+      (set-input-feedback! host view "\"" (vector))
+      (command-prefix (invocation-repeat-count invocation)
+                      (invocation-register invocation)
+                      (invocation-prefix-extra invocation)))))
+
+(define (register-commit-command host)
+  (lambda (context invocation)
+    (let* ((view (context-view context))
+           (session (find-register-session host view))
+           (register (and session (vector-ref session 2))))
+      (if (not register)
+          (command-error "register capture session is missing")
+          (begin
+            (remove-register-session! host view)
+            (command-prefix (invocation-repeat-count invocation)
+                            register
+                            (invocation-prefix-extra invocation)))))))
+
 (define (select-meow-state host state)
   (lambda (context invocation)
     (if state
@@ -195,7 +260,9 @@
          (list "meow.keypad-x" (keypad-command host 'x) #f)
          (list "meow.keypad-c" (keypad-command host 'c) #f)
          (list "meow.keypad-g" (keypad-command host 'g) #f)
-         (list "meow.keypad-m" (keypad-command host 'm) #f))
+         (list "meow.keypad-m" (keypad-command host 'm) #f)
+         (list "meow.register-start" (register-start-command host) #f)
+         (list "meow.register-commit" (register-commit-command host) #f))
    (digit-command-definitions)))
 
 (define (install-meow-input-states! host)
@@ -211,14 +278,23 @@
   (define-input-state! host meow-keypad-state
     (vector) 'ignore 'block "K"
     (lambda (context key) (keypad-handle-key host context key)))
+  (define-input-state! host meow-register-state
+    (vector) 'ignore 'block "R"
+    (lambda (context key) (register-handle-key host context key)))
   (define-input-strategy! host 'meow 'meow-normal 'meow-motion 'collapse)
   (observe-input-state-changes!
    host
    (lambda (event)
-     (when (and (eq? (vector-ref event 0) 'pop)
-                (eq? (vector-ref event 2) meow-keypad-state))
-       (remove-session! host (vector-ref event 1)))))
-  4)
+     (when (eq? (vector-ref event 0) 'pop)
+       (let ((view (vector-ref event 1))
+             (state (vector-ref event 2)))
+         (cond ((eq? state meow-keypad-state)
+                (remove-session! host view))
+               ((eq? state meow-register-state)
+                (let ((session (find-register-session host view)))
+                  (when (and session (not (vector-ref session 2)))
+                    (remove-register-session! host view)))))))))
+  5)
 
 (define keypad-bindings
   '(("SPC" . "meow.keypad-leader")
@@ -241,7 +317,8 @@
 
 (define normal-bindings
   (append keypad-bindings digit-bindings
-          '(("h" . "cursor.backward-character")
+          '(("\"" . "meow.register-start")
+            ("h" . "cursor.backward-character")
             ("j" . "cursor.next-line")
             ("k" . "cursor.previous-line")
             ("l" . "cursor.forward-character")
