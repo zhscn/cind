@@ -1,5 +1,6 @@
 (define-module (cind core)
   #:use-module (ice-9 optargs)
+  #:use-module (cind ares)
   #:use-module (cind command)
   #:use-module (cind development)
   #:use-module (cind emacs)
@@ -622,6 +623,7 @@
         (list "help.keys" help-keys #f))
    (introspection-command-definitions host)
    (development-command-definitions host)
+   (ares-command-definitions host)
    (make-region-commands host)
    (emacs-command-definitions host)
    (helix-command-definitions host)
@@ -640,6 +642,7 @@
               commands)
     (install-introspection-documentation! host)
     (install-development-documentation! host)
+    (install-ares-documentation! host)
     (length commands)))
 
 (define (core-providers host)

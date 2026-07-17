@@ -10,14 +10,17 @@
             evaluate-source))
 
 (define evaluation-buffer-name "*Scheme Evaluation*")
+(define evaluation-modules (make-weak-key-hash-table))
 
 (define (make-evaluation-module host)
-  (let ((module (make-fresh-user-module)))
-    (module-use! module (resolve-interface '(cind command)))
-    (module-use! module (resolve-interface '(cind input)))
-    (module-use! module (resolve-interface '(cind host)))
-    (module-define! module 'host host)
-    module))
+  (or (hashq-ref evaluation-modules host)
+      (let ((module (make-fresh-user-module)))
+        (module-use! module (resolve-interface '(cind command)))
+        (module-use! module (resolve-interface '(cind input)))
+        (module-use! module (resolve-interface '(cind host)))
+        (module-define! module 'host host)
+        (hashq-set! evaluation-modules host module)
+        module)))
 
 (define (read-source source source-name)
   (let ((port (open-input-string source)))

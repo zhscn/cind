@@ -214,6 +214,9 @@ HostLease& require_host(SCM object, const char* caller) {
     if (host == nullptr || host->runtime == nullptr) {
         scm_misc_error(caller, "editor host capability has expired", SCM_EOL);
     }
+    if (!host->state || !host->state->active || std::this_thread::get_id() != host->state->owner) {
+        scm_misc_error(caller, "editor host capability requires the editor thread", SCM_EOL);
+    }
     return *host;
 }
 
@@ -3461,6 +3464,7 @@ struct GuileCall {
         InstallInputStates,
         InstallModes,
         InstallResourcePolicies,
+        StopAres,
         InvokeCommand,
         InvokeProvider,
         InvokeInputHandler,
@@ -3852,6 +3856,9 @@ SCM call_body(void* data) {
             call.result = scm_call_1(
                 scm_c_public_ref("cind core", "install-core-resource-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
+            break;
+        case GuileCall::Operation::StopAres:
+            call.result = scm_call_1(scm_c_public_ref("cind ares", "stop-host-ares!"), call.host);
             break;
         case GuileCall::Operation::InvokeCommand:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
@@ -4307,7 +4314,7 @@ public:
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
              {"command", "input", "extension", "emacs", "toy-modal", "meow", "vim", "helix",
-              "structural", "development", "introspect", "core"}) {
+              "structural", "development", "ares", "introspect", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -4326,6 +4333,7 @@ public:
     }
 
     ~Impl() {
+        stop_ares_noexcept();
         for (const ScriptModePolicyObserver& observer : state_->mode_policy_observers) {
             (void)lease_->runtime->modes().unsubscribe(observer.listener);
             (void)scm_gc_unprotect_object(observer.procedure);
@@ -4596,7 +4604,8 @@ public:
                 .version = version_,
                 .modules = {"cind command", "cind input", "cind extension", "cind emacs",
                             "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                            "cind structural", "cind development", "cind introspect", "cind core"},
+                            "cind structural", "cind development", "cind ares", "cind introspect",
+                            "cind core"},
                 .extensions =
                     [&] {
                         std::vector<std::string> paths;
@@ -4625,6 +4634,18 @@ public:
     }
 
 private:
+    void stop_ares_noexcept() noexcept {
+        try {
+            GuileCall stop_ares;
+            stop_ares.operation = GuileCall::Operation::StopAres;
+            stop_ares.host = host_;
+            [[maybe_unused]] const std::expected<SCM, std::string> stopped =
+                run_guile_call(stop_ares);
+        } catch (...) {
+            state_->active = false;
+        }
+    }
+
     void require_owner_thread() const {
         if (std::this_thread::get_id() != state_->owner) {
             throw std::logic_error("Guile runtime must run on its editor thread");

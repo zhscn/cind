@@ -232,6 +232,51 @@ TEST_CASE("embedded Guile provides the vendored Scheme development runtime") {
     CHECK(result->values == std::vector<std::string>{"(\"3.0.11\" \"0.9.7\" \"1.4.3\")"});
 }
 
+TEST_CASE("Ares endpoint commands own the nREPL server lifecycle") {
+    EditorRuntime runtime;
+    std::string message;
+    GuileHostServices services;
+    services.set_message = [&](std::string value) { message = std::move(value); };
+    GuileRuntime guile(runtime, std::move(services));
+    REQUIRE(guile.install_core_commands().has_value());
+    const BufferId buffer = runtime.buffers().create({.name = "ares-test",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const std::filesystem::path port_file =
+        std::filesystem::temp_directory_path() / "cind-ares-endpoint-test.port";
+    std::error_code error;
+    std::filesystem::remove(port_file, error);
+
+    const CommandResult started = runtime.commands().invoke(
+        require_command(runtime, "scheme.ares-start"), context,
+        CommandInvocation{.arguments = {port_file.string()}, .prefix = {}});
+    REQUIRE(started.has_value());
+    CHECK(std::holds_alternative<CommandCompleted>(*started));
+    CHECK(message.find("Ares nREPL listening on 127.0.0.1:") != std::string::npos);
+    REQUIRE(std::filesystem::exists(port_file));
+    std::ifstream port_input(port_file);
+    std::uint32_t port = 0;
+    port_input >> port;
+    CHECK(port >= 49152);
+    CHECK(port <= 65535);
+
+    const CommandResult status = runtime.commands().invoke(
+        require_command(runtime, "scheme.ares-status"), context, CommandInvocation{});
+    REQUIRE(status.has_value());
+    CHECK(message.find(std::to_string(port)) != std::string::npos);
+
+    const CommandResult stopped = runtime.commands().invoke(
+        require_command(runtime, "scheme.ares-stop"), context, CommandInvocation{});
+    REQUIRE(stopped.has_value());
+    CHECK(message == "Ares nREPL is stopped");
+    CHECK_FALSE(std::filesystem::exists(port_file));
+}
+
 TEST_CASE("bundled Guile policy installs available default key bindings") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
@@ -263,8 +308,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.modules ==
           std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
                                    "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                                   "cind structural", "cind development", "cind introspect",
-                                   "cind core"});
+                                   "cind structural", "cind development", "cind ares",
+                                   "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -736,7 +781,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 150);
+    CHECK(*installed == 153);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1166,7 +1211,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 150);
+    CHECK(snapshot.scripted_commands == 153);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

@@ -20,18 +20,19 @@
 (define (socket-loop socket addr initial-context on-connection)
   "Adds input and output ports to @code{initial-context} and starts Ares
 loop inside a separate fiber."
-  (let loop ((id 1))
-    (match (accept socket SOCK_NONBLOCK)
-      ((client . addr)
-       (on-connection
-	client id
-	(lambda ()
-	  (setvbuf client 'block 1024)
-	  ;; Disable Nagle's algorithm.  We buffer ourselves.
-	  (setsockopt client IPPROTO_TCP TCP_NODELAY 1)
-	  (ares.loop:loop
-	   (ares.loop:add-ports initial-context client client))))
-       (loop (1+ id))))))
+  (false-if-exception
+   (let loop ((id 1))
+     (match (accept socket SOCK_NONBLOCK)
+       ((client . addr)
+        (on-connection
+	 client id
+	 (lambda ()
+	   (setvbuf client 'block 1024)
+	   ;; Disable Nagle's algorithm.  We buffer ourselves.
+	   (setsockopt client IPPROTO_TCP TCP_NODELAY 1)
+	   (ares.loop:loop
+	    (ares.loop:add-ports initial-context client client))))
+        (loop (1+ id)))))))
 
 (define (make-default-socket family addr port)
   "Creates a non-blocking server socket."
@@ -158,4 +159,3 @@ connection.  By default it runs thunk inside a new fiber."
 ;; server-thread
 ;; (cancel-thread server-thread)
 ;; (join-thread server-thread 1)
-

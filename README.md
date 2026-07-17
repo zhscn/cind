@@ -111,6 +111,12 @@ three commands remain available to later evaluations and to `describe-function` 
 Scheme source files use `scheme-mode`, with `C-c C-e`, `C-c C-r`, and `C-c C-b` bound to expression,
 region, and buffer evaluation.
 
+`M-x scheme.ares-start` starts an Ares nREPL endpoint on localhost and writes `.nrepl-port` in the
+active project root. `scheme.ares-status` reports its address, and `scheme.ares-stop` closes the
+listener and active scheduler. The endpoint uses the same application user module as `M-:`, so
+definitions are visible through both evaluation paths. Closing the editor stops the endpoint and
+removes its port file.
+
 ## Build without the GUI
 
 The default build produces the terminal editor and command-line analysis tools without compiling

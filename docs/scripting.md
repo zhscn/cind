@@ -618,7 +618,14 @@ Ares protocol results map onto existing editor mechanisms:
 | interrupt and session lifecycle | cancellable asynchronous operation |
 
 A standalone Ares process supplies project-wide Guile development without sharing editor memory.
-An in-process endpoint uses the same Guile VM as `GuileRuntime`, which makes `(cind host)` and loaded
-cind policy modules available for live inspection and evaluation. The in-process endpoint receives
-an explicit host capability and uses Ares fibers for evaluation; it does not call editor mechanisms
-from an evaluation fiber. Host requests are marshalled to the editor thread.
+The application endpoint uses the same Guile VM and persistent evaluation module as
+`GuileRuntime`, which makes `(cind host)`, the explicit `host` capability, loaded cind policy
+modules, and definitions created through `M-:` available for live inspection and evaluation. Ares
+owns its evaluation threads and Fibers scheduler. Native editor mechanisms retain their
+editor-thread checks, so evaluation threads cannot mutate editor state directly.
+
+`scheme.ares-start` binds a random unprivileged port on the loopback interface and publishes it as
+`.nrepl-port` in the active project root. `scheme.ares-status` reports the listener state and
+address. `scheme.ares-stop` closes the listener, terminates the scheduler and removes the port file.
+`GuileRuntime` performs the same stop operation during destruction. The controller is keyed by the
+host capability, so multiple editor applications do not share endpoint state.
