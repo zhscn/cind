@@ -466,12 +466,13 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
         "\"scripted_input_states\":{},\"scripted_input_strategies\":{},"
         "\"mode_revision\":{},\"scripted_modes\":{},"
         "\"resource_policy_revision\":{},\"scripted_file_mode_rules\":{},"
-        "\"scripted_project_providers\":{},\"last_error\":",
+        "\"scripted_project_providers\":{},\"outstanding_async_tasks\":{},\"last_error\":",
         scripting.command_revision, scripting.scripted_commands, scripting.provider_revision,
         scripting.scripted_providers, scripting.binding_revision, scripting.input_state_revision,
         scripting.scripted_input_states, scripting.scripted_input_strategies,
         scripting.mode_revision, scripting.scripted_modes, scripting.resource_policy_revision,
-        scripting.scripted_file_mode_rules, scripting.scripted_project_providers);
+        scripting.scripted_file_mode_rules, scripting.scripted_project_providers,
+        scripting.outstanding_async_tasks);
     if (scripting.last_error) {
         append_json_string(output, *scripting.last_error);
     } else {
@@ -2463,6 +2464,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " mode-revision=" << frame.editor.scripting.mode_revision
            << " file-mode-rules=" << frame.editor.scripting.scripted_file_mode_rules
            << " project-providers=" << frame.editor.scripting.scripted_project_providers
+           << " async-tasks=" << frame.editor.scripting.outstanding_async_tasks
            << " resource-policy-revision=" << frame.editor.scripting.resource_policy_revision
            << " extensions=" << frame.editor.scripting.extensions.size();
     if (frame.editor.scripting.last_error) {

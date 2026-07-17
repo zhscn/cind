@@ -102,6 +102,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                       .resource_policy_revision = 4,
                       .scripted_file_mode_rules = 2,
                       .scripted_project_providers = 3,
+                      .outstanding_async_tasks = 2,
                       .last_error = std::nullopt},
         .interaction =
             {.active = true,
@@ -418,6 +419,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"resource_policy_revision\":4") != std::string::npos);
     CHECK(snapshot.find("\"scripted_file_mode_rules\":2") != std::string::npos);
     CHECK(snapshot.find("\"scripted_project_providers\":3") != std::string::npos);
+    CHECK(snapshot.find("\"outstanding_async_tasks\":2") != std::string::npos);
     CHECK(snapshot.find("\"things\":[{\"name\":\"defun\",\"definition\":\"cind.defun\"}]") !=
           std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);

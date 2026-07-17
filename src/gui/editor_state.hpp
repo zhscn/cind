@@ -159,6 +159,7 @@ struct ScriptingStateSnapshot {
     std::uint64_t resource_policy_revision = 0;
     std::size_t scripted_file_mode_rules = 0;
     std::size_t scripted_project_providers = 0;
+    std::size_t outstanding_async_tasks = 0;
     std::optional<std::string> last_error;
 };
 

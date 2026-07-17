@@ -3,6 +3,7 @@
 #include "editor/ids.hpp"
 #include "editor/selection.hpp"
 #include "editor/window.hpp"
+#include "script/async_host.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -76,6 +77,11 @@ struct GuileHostServices {
         expand_selection;
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
     std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;
+    std::function<std::expected<std::uint64_t, std::string>(ScriptAsyncRequest,
+                                                            ScriptAsyncCallbacks)>
+        start_async_task;
+    std::function<bool(std::uint64_t)> cancel_async_task;
+    std::function<std::vector<ScriptAsyncTaskSummary>()> async_tasks;
 };
 
 struct GuileEvaluationResult {
@@ -108,6 +114,7 @@ struct GuileRuntimeSnapshot {
     std::uint64_t resource_policy_revision = 0;
     std::size_t scripted_file_mode_rules = 0;
     std::size_t scripted_project_providers = 0;
+    std::size_t outstanding_async_tasks = 0;
     std::optional<std::string> last_error;
 };
 
@@ -131,6 +138,10 @@ public:
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;
+
+    // Releases task callbacks while the application's async service is still
+    // alive. Safe to call repeatedly during owner-thread shutdown.
+    void shutdown_async_tasks() noexcept;
 
 private:
     class Impl;

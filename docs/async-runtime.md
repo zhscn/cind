@@ -56,8 +56,8 @@ does not claim that worker execution was preempted.
 Destroying the runtime requests cancellation, waits for active libuv requests, closes its async
 handle, stops directory watches, terminates child processes and joins the loop thread. Ready
 callbacks that have not been drained are discarded during shutdown. `EditorApplication` declares
-the runtime after the state captured by its callbacks so this shutdown completes before buffers
-and registries are destroyed.
+the script adapter and runtime after the state captured by their callbacks. The adapter cancels its
+tasks first, then runtime shutdown completes before buffers and registries are destroyed.
 
 ## Native handles
 
@@ -91,3 +91,20 @@ Modes and services can submit additional work through `EditorApplication::async_
 completion callbacks must validate any resource identity or revision they captured before applying
 results. Long-running work should check its cancellation token between independently safe units of
 work.
+
+## Script tasks
+
+`AsyncScriptHost` gives embedded languages one task namespace over native file reads, directory
+enumeration and child processes. Each request receives a stable integer ID and follows the same
+completed, cancelled or failed terminal path. The adapter retains the native `AsyncTaskId` or
+`AsyncProcessId` internally, so cancellation does not expose libuv handle types to language code.
+
+File and directory workers receive copied paths and limits. Process requests receive a copied
+executable, argument vector and working directory. No worker callback enters Guile or retains an
+`SCM` value. `AsyncRuntime::drain()` transfers a typed native result to the Guile bridge, which then
+invokes the protected Scheme callback on the editor thread. The task record is removed before the
+callback runs, allowing callbacks to start or cancel other tasks without re-entering a live record.
+
+Destroying the adapter makes its callbacks inert and requests cancellation of every native task.
+The Guile runtime independently releases its protected procedures, so undrained completion records
+cannot access an expired interpreter.

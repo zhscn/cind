@@ -7,11 +7,13 @@
 #include "script/guile_runtime.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 
 using namespace cind;
@@ -86,6 +88,27 @@ private:
     std::filesystem::path path_;
 };
 
+GuileHostServices async_services(AsyncScriptHost& host) {
+    GuileHostServices services;
+    services.start_async_task = [&host](ScriptAsyncRequest request,
+                                        ScriptAsyncCallbacks callbacks) {
+        return host.start(std::move(request), std::move(callbacks));
+    };
+    services.cancel_async_task = [&host](std::uint64_t task) { return host.cancel(task); };
+    services.async_tasks = [&host] { return host.tasks(); };
+    return services;
+}
+
+template <typename Predicate> void drain_until(AsyncRuntime& runtime, Predicate&& predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+        (void)runtime.drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    (void)runtime.drain();
+    REQUIRE(predicate());
+}
+
 } // namespace
 
 TEST_CASE("Guile extensions load in an isolated module") {
@@ -158,6 +181,25 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
     CHECK(snapshot.last_error.value_or("").find("extension failed") != std::string::npos);
 }
 
+TEST_CASE("failed Guile extension loads cancel tasks created during evaluation") {
+    AsyncRuntime async;
+    AsyncScriptHost async_host(async);
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime, async_services(async_host));
+    const SchemeFile extension("cind-guile-extension-async-failure.scm",
+                               R"((start-async-task!
+ host
+ (async-process "/bin/sh" '("-c" "sleep 30"))
+ (lambda (task result) #f))
+(error "extension failed"))");
+
+    const std::expected<void, std::string> loaded = guile.load_extension(extension.path().string());
+
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(guile.snapshot().outstanding_async_tasks == 0);
+    drain_until(async, [&] { return async_host.tasks().empty(); });
+}
+
 TEST_CASE("Guile evaluation keeps an application-local module and reports streams") {
     EditorRuntime runtime;
     GuileRuntime guile(runtime);
@@ -216,6 +258,77 @@ TEST_CASE("Guile evaluation keeps an application-local module and reports stream
     REQUIRE(failed.has_value());
     REQUIRE(failed->error.has_value());
     CHECK(failed->error.value_or("").find("evaluation failed") != std::string::npos);
+}
+
+TEST_CASE("Guile async tasks deliver typed results and cancellation on the editor thread") {
+    AsyncRuntime async;
+    AsyncScriptHost async_host(async);
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime, async_services(async_host));
+
+    const std::expected<GuileEvaluationResult, std::string> started =
+        guile.evaluate({.source = R"((define async-value #f)
+(start-async-task!
+ host
+ (async-process "/bin/sh" '("-c" "printf scheme; exit 4"))
+ (lambda (task result) (set! async-value result)))
+(async-task-summaries host))",
+                        .source_name = "async-test.scm"});
+    REQUIRE(started.has_value());
+    CHECK_FALSE(started->error.has_value());
+    CHECK(guile.snapshot().outstanding_async_tasks == 1);
+    drain_until(async, [&] { return guile.snapshot().outstanding_async_tasks == 0; });
+
+    const std::expected<GuileEvaluationResult, std::string> completed =
+        guile.evaluate({.source = "async-value", .source_name = "async-test.scm"});
+    REQUIRE(completed.has_value());
+    CHECK(completed->values == std::vector<std::string>{"#(process 4 0 \"scheme\" \"\")"});
+
+    const std::expected<GuileEvaluationResult, std::string> cancellation =
+        guile.evaluate({.source = R"((define cancelled-value #f)
+(define cancelled-task
+  (start-async-task!
+   host
+   (async-process "/bin/sh" '("-c" "sleep 30"))
+   (lambda (task result) (set! cancelled-value 'completed))
+   #:cancelled (lambda (task) (set! cancelled-value 'cancelled))))
+(cancel-async-task! host cancelled-task))",
+                        .source_name = "async-test.scm"});
+    REQUIRE(cancellation.has_value());
+    CHECK(cancellation->values == std::vector<std::string>{"#t"});
+    drain_until(async, [&] { return guile.snapshot().outstanding_async_tasks == 0; });
+    const std::expected<GuileEvaluationResult, std::string> cancelled =
+        guile.evaluate({.source = "cancelled-value", .source_name = "async-test.scm"});
+    REQUIRE(cancelled.has_value());
+    CHECK(cancelled->values == std::vector<std::string>{"cancelled"});
+
+    const std::expected<GuileEvaluationResult, std::string> failure =
+        guile.evaluate({.source = R"((define failure-value #f)
+(start-async-task!
+ host
+ (async-process "/cind/does/not/exist" '())
+ (lambda (task result) (set! failure-value 'completed))
+ #:failed (lambda (task message) (set! failure-value message))))",
+                        .source_name = "async-test.scm"});
+    REQUIRE(failure.has_value());
+    drain_until(async, [&] { return guile.snapshot().outstanding_async_tasks == 0; });
+    const std::expected<GuileEvaluationResult, std::string> failed =
+        guile.evaluate({.source = "failure-value", .source_name = "async-test.scm"});
+    REQUIRE(failed.has_value());
+    REQUIRE(failed->values.size() == 1);
+    CHECK(failed->values.front().find("cannot start process") != std::string::npos);
+
+    const std::expected<GuileEvaluationResult, std::string> shutdown_task =
+        guile.evaluate({.source = R"((start-async-task!
+ host
+ (async-process "/bin/sh" '("-c" "sleep 30"))
+ (lambda (task result) #f)))",
+                        .source_name = "async-test.scm"});
+    REQUIRE(shutdown_task.has_value());
+    CHECK(guile.snapshot().outstanding_async_tasks == 1);
+    guile.shutdown_async_tasks();
+    CHECK(guile.snapshot().outstanding_async_tasks == 0);
+    drain_until(async, [&] { return async_host.tasks().empty(); });
 }
 
 TEST_CASE("embedded Guile provides the vendored Scheme development runtime") {
@@ -306,9 +419,9 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
     CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
-                                   "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                                   "cind structural", "cind development", "cind ares",
+          std::vector<std::string>{"cind command", "cind input", "cind async", "cind extension",
+                                   "cind emacs", "cind toy-modal", "cind meow", "cind vim",
+                                   "cind helix", "cind structural", "cind development", "cind ares",
                                    "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
@@ -778,7 +891,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              }
              return clipboard.empty() ? std::optional<std::string>{}
                                       : std::optional<std::string>{clipboard};
-         }});
+         },
+         .start_async_task = {},
+         .cancel_async_task = {},
+         .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
     CHECK(*installed == 153);

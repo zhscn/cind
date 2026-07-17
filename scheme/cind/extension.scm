@@ -4,6 +4,7 @@
 (define (load-extension-file path host)
   (let ((module (make-fresh-user-module)))
     (module-use! module (resolve-interface '(cind command)))
+    (module-use! module (resolve-interface '(cind async)))
     (module-use! module (resolve-interface '(cind input)))
     (module-use! module (resolve-interface '(cind host)))
     (module-define! module 'host host)

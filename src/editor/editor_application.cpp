@@ -350,7 +350,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(std::move(read.error()));
                }
                return std::optional<std::string>{std::move(*read)};
-           }}),
+           },
+           .start_async_task =
+               [this](ScriptAsyncRequest request, ScriptAsyncCallbacks callbacks) {
+                   return script_async_.start(std::move(request), std::move(callbacks));
+               },
+           .cancel_async_task = [this](std::uint64_t task) { return script_async_.cancel(task); },
+           .async_tasks = [this] { return script_async_.tasks(); }}),
       interaction_(runtime_.interaction_providers()),
       basic_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
@@ -365,7 +371,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
               reveal_caret_ = true;
           }),
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
-      async_runtime_(std::move(platform_services_.wake_event_loop)) {
+      async_runtime_(std::move(platform_services_.wake_event_loop)), script_async_(async_runtime_) {
     interaction_.attach_async_runtime(async_runtime_);
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
@@ -437,6 +443,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             message_ = std::format("open failed: {}", opened.error());
         }
     }
+}
+
+EditorApplication::~EditorApplication() {
+    guile_.shutdown_async_tasks();
 }
 
 BufferId EditorApplication::buffer_id() const {

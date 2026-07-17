@@ -85,6 +85,7 @@ using KeyBindingHint = InputHint;
 class EditorApplication {
 public:
     explicit EditorApplication(EditorApplicationSpec spec);
+    ~EditorApplication();
 
     EditorRuntime& runtime() { return runtime_; }
     const EditorRuntime& runtime() const { return runtime_; }
@@ -323,9 +324,10 @@ private:
     bool reveal_caret_ = true;
     bool quit_armed_ = false;
     bool quit_ = false;
-    // Declared last so shutdown cancels and joins background work before any
-    // editor state captured by completion callbacks is destroyed.
+    // These are declared last so the script adapter first cancels its work,
+    // then the native runtime joins before captured editor state is destroyed.
     AsyncRuntime async_runtime_;
+    AsyncScriptHost script_async_;
 };
 
 } // namespace cind

@@ -25,7 +25,8 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API; `(cind extension)` owns isolated source-file loading;
+defines the public command value API; `(cind async)` defines cancellable native task composition;
+`(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
 strategies; `(cind structural)` defines structural selection policy; `(cind introspect)` derives
@@ -38,8 +39,8 @@ Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 interaction-provider, input-state, input-strategy, mode, file-mode-rule and project-provider counts,
-their installation revisions, loaded extension paths, and the most recent error. This state is
-diagnostic and is not a plugin ABI.
+their installation revisions, loaded extension paths, outstanding script task count, and the most
+recent error. This state is diagnostic and is not a plugin ABI.
 
 ## User initialization
 
@@ -48,9 +49,9 @@ Interactive frontends discover `cind/init.scm` under `XDG_CONFIG_HOME`, falling 
 so their behavior is independent of the invoking account.
 
 `(cind extension)` evaluates each source file in a fresh Guile module. The module imports
-`(cind host)`, `(cind command)`, and `(cind input)`, and binds the owning application's foreign host
-as `host`. File-private definitions remain module-local while registered closures retain access to
-them.
+`(cind host)`, `(cind command)`, `(cind async)`, and `(cind input)`, and binds the owning
+application's foreign host as `host`. File-private definitions remain module-local while registered
+closures retain access to them.
 
 An extension load checkpoints the registries and protected Scheme callback ownership before
 evaluation. Successful definitions become visible together. A Scheme condition or native bridge
@@ -161,7 +162,39 @@ The native module exports:
 (delete-other-windows! host window-id)
 (select-other-window! host window-id delta)
 (request-redraw! host)
+(%start-async-task! host request completed failed-or-#f cancelled-or-#f)
+(%cancel-async-task! host task-id)
+(%async-task-summaries host)
 ```
+
+`(cind async)` wraps the normalized native task procedures:
+
+```scheme
+(async-file-read path)
+(async-directory-list path [maximum-entries])
+(async-process executable arguments [working-directory])
+(start-async-task! host request completed
+                   #:key (failed #f) (cancelled #f))
+(cancel-async-task! host task-id)
+(async-task-summaries host)
+```
+
+`start-async-task!` returns a positive application-local task ID. `completed` receives the ID and a
+typed result. File reads produce `#(file-read path exists? contents)`. Directory enumeration
+produces `#(directory-list normalized-path entries)`, where each entry is
+`#(path name directory?)`. Processes produce
+`#(process exit-status termination-signal standard-output standard-error)`. A nonzero process exit
+status remains a completed result; Scheme policy interprets tool-specific statuses.
+
+`failed` receives the task ID and native error string. Without a failure procedure, the error is
+retained as the runtime's latest scripting diagnostic. `cancelled` receives the task ID after the
+native operation acknowledges cancellation. `cancel-async-task!` reports whether a live native
+task accepted the request. `async-task-summaries` returns outstanding `#(id kind)` records for
+introspection.
+
+All three terminal callbacks run on the editor thread after the frontend drains the native runtime.
+The bridge protects their procedures while the task is outstanding and removes the task before
+invocation. Scheme code never runs on the libuv loop or worker pool.
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
 immutable command context and invocation value. `enabled` receives the same context and is either a

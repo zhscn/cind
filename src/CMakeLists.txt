@@ -55,6 +55,12 @@ add_library(cind_indent STATIC
 )
 target_link_libraries(cind_indent PUBLIC cind_syntax)
 
+add_library(cind_script_async STATIC
+  script/async_host.cpp
+)
+target_include_directories(cind_script_async PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cind_script_async PUBLIC cind_async PRIVATE cind_indent)
+
 add_library(cind_application STATIC
   editor/buffer.cpp
   editor/command.cpp
@@ -81,6 +87,8 @@ target_link_libraries(cind_application PUBLIC cind_async cind_document PRIVATE P
 set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
 set(CIND_ARES_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/ares.scm")
 set(CIND_ARES_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/ares.scm")
+set(CIND_ASYNC_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/async.scm")
+set(CIND_ASYNC_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/async.scm")
 set(CIND_CORE_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/core.scm")
 set(CIND_CORE_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/core.scm")
 set(CIND_COMMAND_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/command.scm")
@@ -107,6 +115,7 @@ set(CIND_TOY_MODAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/toy-modal.sc
 set(CIND_TOY_MODAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/toy-modal.scm")
 add_custom_command(
   OUTPUT "${CIND_ARES_SCHEME_OUTPUT}"
+         "${CIND_ASYNC_SCHEME_OUTPUT}"
          "${CIND_CORE_SCHEME_OUTPUT}" "${CIND_COMMAND_SCHEME_OUTPUT}"
          "${CIND_DEVELOPMENT_SCHEME_OUTPUT}"
          "${CIND_EMACS_SCHEME_OUTPUT}" "${CIND_EXTENSION_SCHEME_OUTPUT}"
@@ -119,6 +128,8 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CIND_SCHEME_OUTPUT_DIR}/cind"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_ARES_SCHEME_SOURCE}" "${CIND_ARES_SCHEME_OUTPUT}"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${CIND_ASYNC_SCHEME_SOURCE}" "${CIND_ASYNC_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_CORE_SCHEME_SOURCE}" "${CIND_CORE_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -143,7 +154,7 @@ add_custom_command(
           "${CIND_VIM_SCHEME_SOURCE}" "${CIND_VIM_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_TOY_MODAL_SCHEME_SOURCE}" "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
-  DEPENDS "${CIND_ARES_SCHEME_SOURCE}"
+  DEPENDS "${CIND_ARES_SCHEME_SOURCE}" "${CIND_ASYNC_SCHEME_SOURCE}"
           "${CIND_CORE_SCHEME_SOURCE}" "${CIND_COMMAND_SCHEME_SOURCE}"
           "${CIND_DEVELOPMENT_SCHEME_SOURCE}"
           "${CIND_EMACS_SCHEME_SOURCE}" "${CIND_EXTENSION_SCHEME_SOURCE}"
@@ -157,6 +168,7 @@ add_custom_command(
 )
 add_custom_target(cind_scheme_resources
   DEPENDS "${CIND_ARES_SCHEME_OUTPUT}"
+          "${CIND_ASYNC_SCHEME_OUTPUT}"
           "${CIND_CORE_SCHEME_OUTPUT}" "${CIND_COMMAND_SCHEME_OUTPUT}"
           "${CIND_DEVELOPMENT_SCHEME_OUTPUT}"
           "${CIND_EMACS_SCHEME_OUTPUT}" "${CIND_EXTENSION_SCHEME_OUTPUT}"
@@ -180,7 +192,7 @@ target_compile_definitions(cind_guile PRIVATE
 )
 add_dependencies(cind_guile cind_scheme_resources cind_fibers_external)
 target_link_libraries(cind_guile
-  PUBLIC cind_application
+  PUBLIC cind_application cind_script_async
   PRIVATE Cind::Guile
 )
 

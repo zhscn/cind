@@ -2,6 +2,7 @@
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-13)
+  #:use-module (cind async)
   #:use-module (cind command)
   #:use-module (cind host)
   #:export (development-command-definitions
@@ -16,6 +17,7 @@
   (or (hashq-ref evaluation-modules host)
       (let ((module (make-fresh-user-module)))
         (module-use! module (resolve-interface '(cind command)))
+        (module-use! module (resolve-interface '(cind async)))
         (module-use! module (resolve-interface '(cind input)))
         (module-use! module (resolve-interface '(cind host)))
         (module-define! module 'host host)

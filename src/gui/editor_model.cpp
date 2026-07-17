@@ -422,6 +422,7 @@ EditorStateSnapshot EditorModel::inspect() {
         .resource_policy_revision = guile.resource_policy_revision,
         .scripted_file_mode_rules = guile.scripted_file_mode_rules,
         .scripted_project_providers = guile.scripted_project_providers,
+        .outstanding_async_tasks = guile.outstanding_async_tasks,
         .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
