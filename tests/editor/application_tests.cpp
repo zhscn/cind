@@ -541,8 +541,7 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
     CHECK_THROWS_AS([&] { (void)CommandContext(runtime, window, buffer, second); }(),
                     std::invalid_argument);
     CommandResult result = runtime.commands().invoke(
-        insert, context,
-        CommandInvocation{.arguments = {std::string("X")}, .repeat_count = std::nullopt});
+        insert, context, CommandInvocation{.arguments = {std::string("X")}, .prefix = {}});
     REQUIRE(result.has_value());
     CHECK(runtime.buffers().get(buffer).snapshot().content() == "Xab");
     CHECK(runtime.views().caret(first).value == 1);
@@ -553,8 +552,7 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
         [&] {
             (void)runtime.commands().invoke(
                 insert, context,
-                CommandInvocation{.arguments = {std::string("forbidden")},
-                                  .repeat_count = std::nullopt});
+                CommandInvocation{.arguments = {std::string("forbidden")}, .prefix = {}});
         }(),
         std::logic_error);
 }
@@ -675,7 +673,7 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     const CommandId base = runtime.commands().define(
         "base.command", [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
             ++base_calls;
-            received_repeat = invocation.repeat_count;
+            received_repeat = invocation.prefix.count;
             return CommandCompleted{};
         });
     int local_calls = 0;
@@ -742,6 +740,63 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     CHECK(runtime.keymaps().resolve(base_map, *parse_key_sequence("C-a")).kind ==
           KeymapMatchKind::Prefix);
     CHECK(runtime.keymaps().resolve(base_map, *parse_key_sequence("C-a C-b")).command == local);
+}
+
+TEST_CASE("command loop pending prefixes survive layer refresh and flow through dispatch chains") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "prefix",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+
+    const CommandPrefix expected{.count = 7,
+                                 .register_name = "a",
+                                 .extra = {{.name = "scope", .value = std::string("word")},
+                                           {.name = "flag", .value = true}}};
+    const CommandId set_prefix = runtime.commands().define(
+        "prefix.set", [expected](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandPrefixUpdate{.prefix = expected};
+        });
+    CommandPrefix received;
+    const CommandId target = runtime.commands().define(
+        "prefix.target",
+        [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
+            received = invocation.prefix;
+            return CommandCompleted{};
+        });
+    const CommandId relay = runtime.commands().define(
+        "prefix.relay", [target](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandDispatch{.command = target,
+                                   .invocation = {.arguments = {}, .prefix = {}}};
+        });
+    const KeymapId keymap = runtime.keymaps().define("prefix.map");
+    runtime.keymaps().bind(keymap, "p", set_prefix);
+    runtime.keymaps().bind(keymap, "r", relay);
+
+    CommandLoop loop(runtime);
+    const std::vector<KeymapLayer> layers{{.keymap = keymap, .scope = "test"}};
+    loop.set_keymap_layers(layers);
+    const KeyStroke prefix_key = parse_key_sequence("p")->front();
+    const KeyStroke relay_key = parse_key_sequence("r")->front();
+    const CommandLoopResult prefix_result = loop.dispatch(prefix_key, context);
+    CHECK(prefix_result.status == CommandLoopStatus::PrefixArgument);
+    CHECK(prefix_result.message == "7 \"a scope=word flag=true");
+    CHECK(loop.pending_prefix() == expected);
+
+    loop.set_keymap_layers(layers);
+    CHECK(loop.pending_prefix() == expected);
+    CHECK(loop.dispatch(relay_key, context).status == CommandLoopStatus::Executed);
+    CHECK(received == expected);
+    CHECK(loop.pending_prefix().empty());
+
+    CHECK(loop.dispatch(prefix_key, context).status == CommandLoopStatus::PrefixArgument);
+    CHECK(loop.dispatch(parse_key_sequence("z")->front(), context).status ==
+          CommandLoopStatus::NotHandled);
+    CHECK(loop.pending_prefix().empty());
 }
 
 TEST_CASE("command loop contains command exceptions") {

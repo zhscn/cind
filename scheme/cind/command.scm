@@ -3,6 +3,7 @@
             command-completed/preserve
             command-completed/collapse
             command-completed/selection
+            command-prefix
             command-error
             command-dispatch
             interaction
@@ -13,6 +14,8 @@
             context-project
             invocation-arguments
             invocation-repeat-count
+            invocation-register
+            invocation-prefix-extra
             selection
             selection-range))
 
@@ -35,6 +38,9 @@
         ((null? (cdr values))
          (vector 'completed-selection selection (car values)))
         (else (error "command-completed/selection accepts at most one value"))))
+
+(define (command-prefix count register extra)
+  (vector 'prefix count register extra))
 
 (define (command-error message)
   (vector 'error message))
@@ -78,6 +84,12 @@
 
 (define (invocation-repeat-count invocation)
   (vector-ref invocation 2))
+
+(define (invocation-register invocation)
+  (vector-ref invocation 3))
+
+(define (invocation-prefix-extra invocation)
+  (vector-ref invocation 4))
 
 (define (selection-range anchor head granularity)
   (vector anchor head granularity))

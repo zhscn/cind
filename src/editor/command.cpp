@@ -8,6 +8,43 @@
 
 namespace cind {
 
+namespace {
+
+std::string format_prefix_value(const SettingValue& value) {
+    if (const bool* boolean = std::get_if<bool>(&value)) {
+        return *boolean ? "true" : "false";
+    }
+    if (const std::int64_t* integer = std::get_if<std::int64_t>(&value)) {
+        return std::to_string(*integer);
+    }
+    if (const double* real = std::get_if<double>(&value)) {
+        return std::format("{}", *real);
+    }
+    return std::get<std::string>(value);
+}
+
+} // namespace
+
+std::string format_command_prefix(const CommandPrefix& prefix) {
+    std::string result;
+    const auto append = [&](std::string value) {
+        if (!result.empty()) {
+            result.push_back(' ');
+        }
+        result += std::move(value);
+    };
+    if (prefix.count) {
+        append(std::to_string(*prefix.count));
+    }
+    if (prefix.register_name) {
+        append(std::format("\"{}", *prefix.register_name));
+    }
+    for (const CommandPrefixExtra& extra : prefix.extra) {
+        append(std::format("{}={}", extra.name, format_prefix_value(extra.value)));
+    }
+    return result;
+}
+
 CommandContext::CommandContext(EditorRuntime& runtime, WindowId window, BufferId buffer,
                                ViewId view)
     : runtime_(&runtime), window_id_(window), buffer_id_(buffer), view_id_(view) {

@@ -14,7 +14,7 @@ namespace cind {
 namespace {
 
 int repeat_count(const CommandInvocation& invocation) {
-    const std::int64_t count = invocation.repeat_count.value_or(1);
+    const std::int64_t count = invocation.prefix.count.value_or(1);
     return static_cast<int>(
         std::clamp<std::int64_t>(count, -static_cast<std::int64_t>(std::numeric_limits<int>::max()),
                                  static_cast<std::int64_t>(std::numeric_limits<int>::max())));

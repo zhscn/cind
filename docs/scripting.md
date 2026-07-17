@@ -277,8 +277,11 @@ accepted; completion, cancellation and failure are applied later on the editor t
 
 A command context is an association list containing generational `window`, `buffer`, `view`, and
 optional `project` IDs. Each ID is a two-element vector of slot and generation. An invocation is a
-vector containing a typed argument vector and an optional repeat count. Command arguments use the
-same boolean, integer, real and string domain as `SettingValue`.
+`#(invocation arguments count register extra)` vector. `arguments` is the positional typed argument
+vector; `count` and `register` are values or `#f`; and `extra` is an association list from names to
+typed values. Command arguments and prefix extras use the same boolean, integer, real and string
+domain as `SettingValue`. `invocation-arguments`, `invocation-repeat-count`,
+`invocation-register`, and `invocation-prefix-extra` provide named accessors.
 
 A Scheme command imports `(cind command)` and returns one tagged vector through its constructors:
 
@@ -288,6 +291,7 @@ A Scheme command imports `(cind command)` and returns one tagged vector through 
 | `completed-preserve` | complete and preserve the current selection |
 | `completed-collapse` | complete and collapse the selection to its primary head |
 | `completed-selection` | complete with a full replacement Selection and optional typed value |
+| `prefix` | replace the command loop's pending count/register/extra slot |
 | `error` | return a command error string |
 | `dispatch` | continue through the named command pipeline |
 | `interaction` | request a text or picker interaction using a named provider and accept command |
@@ -298,6 +302,11 @@ the active InputStrategy policy only when the command chain changed its context 
 preserve, collapse, and replacement results apply independently of document revision. A dispatch
 chain is one command lifecycle: only its terminal completion selects the explicit result, while the
 initial and final Buffer revisions determine whether the strategy default applies.
+
+`command-prefix` constructs a prefix update from a count or `#f`, a register name or `#f`, and a
+proper extra association list. A prefix update remains pending across keymap-layer changes. The next
+ordinary command receives it; dispatch results inherit it through the terminal command. Terminal
+completion, interaction, failure, disabled lookup, undefined input, and keyboard quit consume it.
 
 The bridge validates the complete value before constructing a C++ command action. Named dispatch
 and accept commands are resolved through the invoking `EditorRuntime`; a script cannot inject a

@@ -165,7 +165,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             popup_items.push_back({.label = hint.key, .detail = detail});
         }
     }
-    const std::string pending_key = application_.pending_key_sequence_text();
+    const std::string pending_key = application_.pending_command_text();
     const InputStateRegistry::Definition& active_input_state = application_.input_state();
     const ViewportState& state = session.view().viewport();
     const ui::EditorSceneViewState view{
@@ -344,15 +344,18 @@ EditorStateSnapshot EditorModel::inspect() {
     const ViewportState& view = session.view().viewport();
     const CommandLoop& command_loop = application_.command_loop();
     const EditorRuntime& runtime = application_.runtime();
-    CommandLoopStateSnapshot command_state{.keymaps = {},
-                                           .layers = {},
-                                           .override_keymaps = {},
-                                           .pending_keys = application_.pending_key_sequence_text(),
-                                           .pending_keymap = {},
-                                           .pending_input_state =
-                                               application_.pending_input_state_name(),
-                                           .repeat_count = command_loop.repeat_count(),
-                                           .last_command = application_.last_command()};
+    CommandLoopStateSnapshot command_state{
+        .keymaps = {},
+        .layers = {},
+        .override_keymaps = {},
+        .pending_keys = application_.pending_key_sequence_text(),
+        .pending_keymap = {},
+        .pending_input_state = application_.pending_input_state_name(),
+        .repeat_count = command_loop.repeat_count(),
+        .register_name = command_loop.pending_prefix().register_name,
+        .prefix_extra = command_loop.pending_prefix().extra,
+        .prefix_text = application_.pending_prefix_text(),
+        .last_command = application_.last_command()};
     for (const KeymapLayer& layer : command_loop.keymap_layers()) {
         command_state.keymaps.push_back(runtime.keymaps().definition(layer.keymap).name);
         KeymapLayerStateSnapshot layer_state{.name =

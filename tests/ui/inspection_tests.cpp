@@ -73,6 +73,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .pending_keymap = "application.global",
              .pending_input_state = "",
              .repeat_count = 4,
+             .register_name = "a",
+             .prefix_extra = {{.name = "scope", .value = std::string("word")}},
+             .prefix_text = "4 \"a scope=word",
              .last_command = "edit.insert"},
         .scripting = {.engine = "guile",
                       .version = "3.0.9",
@@ -372,7 +375,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":36") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":37") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -394,6 +397,9 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
+    CHECK(snapshot.find("\"register\":\"a\"") != std::string::npos);
+    CHECK(snapshot.find("\"prefix_extra\":[{\"name\":\"scope\",\"value\":\"word\"}]") !=
+          std::string::npos);
     CHECK(snapshot.find("\"selection\":{\"active\":true,\"primary\":1") != std::string::npos);
     CHECK(snapshot.find("\"selection_after_edit\":\"collapse\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);

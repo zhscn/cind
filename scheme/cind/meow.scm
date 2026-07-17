@@ -166,14 +166,37 @@
   (lambda (context invocation)
     (keypad-start! host context start)))
 
+(define (prefix-digit-command digit)
+  (lambda (context invocation)
+    (let ((count (invocation-repeat-count invocation)))
+      (if (and (= digit 0) (not count))
+          (command-dispatch "cursor.line-start")
+          (command-prefix (+ (* (if count count 0) 10) digit)
+                          (invocation-register invocation)
+                          (invocation-prefix-extra invocation))))))
+
+(define (digit-command-definitions)
+  (let loop ((digit 0)
+             (definitions '()))
+    (if (> digit 9)
+        (reverse definitions)
+        (loop (+ digit 1)
+              (cons (list (string-append "meow.prefix-digit-"
+                                         (number->string digit))
+                          (prefix-digit-command digit)
+                          #f)
+                    definitions)))))
+
 (define (meow-command-definitions host)
-  (list (list "meow.normal-mode" (select-meow-state host #f) #f)
-        (list "meow.insert-mode" (select-meow-state host 'meow-insert) #f)
-        (list "meow.keypad-leader" (keypad-command host 'leader) #f)
-        (list "meow.keypad-x" (keypad-command host 'x) #f)
-        (list "meow.keypad-c" (keypad-command host 'c) #f)
-        (list "meow.keypad-g" (keypad-command host 'g) #f)
-        (list "meow.keypad-m" (keypad-command host 'm) #f)))
+  (append
+   (list (list "meow.normal-mode" (select-meow-state host #f) #f)
+         (list "meow.insert-mode" (select-meow-state host 'meow-insert) #f)
+         (list "meow.keypad-leader" (keypad-command host 'leader) #f)
+         (list "meow.keypad-x" (keypad-command host 'x) #f)
+         (list "meow.keypad-c" (keypad-command host 'c) #f)
+         (list "meow.keypad-g" (keypad-command host 'g) #f)
+         (list "meow.keypad-m" (keypad-command host 'm) #f))
+   (digit-command-definitions)))
 
 (define (install-meow-input-states! host)
   (define-keymap! host meow-normal-keymap #f)
@@ -204,13 +227,24 @@
     ("g" . "meow.keypad-g")
     ("m" . "meow.keypad-m")))
 
+(define digit-bindings
+  '(("0" . "meow.prefix-digit-0")
+    ("1" . "meow.prefix-digit-1")
+    ("2" . "meow.prefix-digit-2")
+    ("3" . "meow.prefix-digit-3")
+    ("4" . "meow.prefix-digit-4")
+    ("5" . "meow.prefix-digit-5")
+    ("6" . "meow.prefix-digit-6")
+    ("7" . "meow.prefix-digit-7")
+    ("8" . "meow.prefix-digit-8")
+    ("9" . "meow.prefix-digit-9")))
+
 (define normal-bindings
-  (append keypad-bindings
+  (append keypad-bindings digit-bindings
           '(("h" . "cursor.backward-character")
             ("j" . "cursor.next-line")
             ("k" . "cursor.previous-line")
             ("l" . "cursor.forward-character")
-            ("0" . "cursor.line-start")
             ("$" . "cursor.line-end")
             ("i" . "meow.insert-mode"))))
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/document.hpp"
+#include "editor/command.hpp"
 #include "ui/editor_scene.hpp"
 #include "ui/line_signs.hpp"
 
@@ -107,6 +108,9 @@ struct CommandLoopStateSnapshot {
     std::string pending_keymap;
     std::string pending_input_state;
     std::optional<std::int64_t> repeat_count;
+    std::optional<std::string> register_name;
+    std::vector<CommandPrefixExtra> prefix_extra;
+    std::string prefix_text;
     std::string last_command;
 };
 

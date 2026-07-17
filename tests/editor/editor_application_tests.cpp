@@ -276,7 +276,7 @@ TEST_CASE("text input follows the focused input state policy") {
 }
 
 TEST_CASE("Guile meow keypad translates through base layers and preserves the escape layer") {
-    EditorApplication application = make_application("sample.cc", "text");
+    EditorApplication application = make_application("sample.cc", "abcdefghijklmnop");
     EditorRuntime& runtime = application.runtime();
 
     send_keys(application, "C-c m");
@@ -284,6 +284,16 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     CHECK(runtime.input_strategies()
               .definition(runtime.views().get(application.view_id()).input_strategy().value())
               .name == "meow");
+
+    send_keys(application, "1 2");
+    CHECK(application.pending_prefix_text() == "12");
+    CHECK(application.pending_command_text() == "12");
+    CHECK(application.command_loop().pending_prefix().count == 12);
+    send_keys(application, "l");
+    CHECK(application.session().caret() == TextOffset{12});
+    CHECK(application.pending_prefix_text().empty());
+    send_keys(application, "0");
+    CHECK(application.session().caret() == TextOffset{0});
 
     send_keys(application, "x");
     CHECK(application.input_state().name == "meow-keypad");
@@ -740,8 +750,7 @@ TEST_CASE("scripted caret and message commands use application host capabilities
         runtime.commands().find("cursor.goto-line.accept").value_or(CommandId{});
     REQUIRE(goto_line);
     const CommandResult moved = runtime.commands().invoke(
-        goto_line, context,
-        CommandInvocation{.arguments = {std::string("2:2")}, .repeat_count = std::nullopt});
+        goto_line, context, CommandInvocation{.arguments = {std::string("2:2")}, .prefix = {}});
     REQUIRE(moved.has_value());
     CHECK(application.session().caret() == TextOffset{5});
     CHECK(application.reveal_caret());
@@ -750,8 +759,7 @@ TEST_CASE("scripted caret and message commands use application host capabilities
     REQUIRE(help);
     const CommandResult explained = runtime.commands().invoke(
         help, context,
-        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")},
-                          .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")}, .prefix = {}});
     REQUIRE(explained.has_value());
     CHECK(application.message() == "C-x C-s  file.save");
 }
@@ -1023,7 +1031,7 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     const CommandResult switched = application.runtime().commands().invoke(
         switch_buffer, switch_context,
         CommandInvocation{.arguments = {application.runtime().buffers().get(first).name()},
-                          .repeat_count = std::nullopt});
+                          .prefix = {}});
     INFO((switched ? std::string{} : switched.error().message));
     REQUIRE(switched.has_value());
     CHECK(application.session().snapshot().content().to_string() == "Afirst");

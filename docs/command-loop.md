@@ -167,12 +167,20 @@ strategy.
 
 One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap
 stack, always-active override maps, a pending multi-key sequence, its highest-precedence matching
-keymap, and an optional repeat count. Dispatch returns a structured status:
-not handled, prefix, executed, awaiting input, disabled, cancelled, or error.
+keymap, and a pending command prefix containing an optional count, register, and named typed
+extras. Dispatch returns a structured status: not handled, keymap prefix, command-prefix update,
+executed, awaiting input, disabled, cancelled, or error.
 
-An undefined key after a recognized prefix consumes the sequence and clears pending and repeat
-state. A single unbound key remains available to the platform text-input path. `C-g` invokes
-`keyboard.quit` from the system override map.
+A prefix command returns a complete replacement prefix value. Keymap layer refreshes retain that
+value, and command dispatch chains inherit it. The next ordinary terminal command receives the
+prefix in its immutable invocation and consumes the slot. Undefined input, errors, disabled
+commands, interaction requests, and `keyboard.quit` also clear it. A single unbound key remains
+available to the platform text-input path.
+
+The bundled meow normal map binds decimal digits to Scheme prefix commands. Digits accumulate a
+count, `0` retains its line-start meaning when no count exists, and motion commands consume the
+count through the shared invocation contract. The formatted prefix is projected into the echo area
+independently of pending keymap chords and transient-state feedback.
 
 The keymap registry merges immediate continuations across ordered keymaps and their parents using
 the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is
@@ -228,7 +236,8 @@ The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.s
 `editor.interaction`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
 `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
-keymap, the input state owning handler feedback, repeat count, and last command. Interaction state includes prompt kind, input caret,
+keymap, the input state owning handler feedback, pending count/register/extras, formatted prefix,
+and last command. Interaction state includes prompt kind, input caret,
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
 lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
 reports the active state name, text-input policy, selection-after-edit policy, cursor shape, and

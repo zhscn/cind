@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cind {
@@ -16,6 +17,7 @@ class EditorRuntime;
 enum class CommandLoopStatus : std::uint8_t {
     NotHandled,
     Prefix,
+    PrefixArgument,
     Executed,
     AwaitingInput,
     Disabled,
@@ -52,16 +54,19 @@ public:
 
     CommandLoopResult dispatch(KeyStroke key, CommandContext& context);
     std::optional<CommandLoopResult> dispatch_override(KeyStroke key, CommandContext& context);
+    CommandLoopResult execute(CommandId command, CommandContext& context);
     CommandLoopResult execute(CommandId command, CommandContext& context,
-                              const CommandInvocation& invocation = {});
+                              const CommandInvocation& invocation);
     void cancel_pending();
     std::span<const KeyStroke> pending_sequence() const { return pending_; }
     std::string pending_sequence_text() const { return format_key_sequence(pending_); }
     std::optional<KeymapId> pending_keymap() const { return pending_keymap_; }
     std::vector<KeymapCompletion> pending_completions() const;
 
-    void set_repeat_count(std::optional<std::int64_t> count) { repeat_count_ = count; }
-    std::optional<std::int64_t> repeat_count() const { return repeat_count_; }
+    const CommandPrefix& pending_prefix() const { return pending_prefix_; }
+    void set_pending_prefix(CommandPrefix prefix) { pending_prefix_ = std::move(prefix); }
+    void set_repeat_count(std::optional<std::int64_t> count) { pending_prefix_.count = count; }
+    std::optional<std::int64_t> repeat_count() const { return pending_prefix_.count; }
 
 private:
     CommandLoopResult invoke(CommandId command, CommandContext& context,
@@ -71,13 +76,14 @@ private:
     std::optional<std::string> apply_selection_result(const CommandResult& result,
                                                       CommandContext& context,
                                                       RevisionId initial_revision);
+    void cancel_key_sequence();
 
     EditorRuntime* runtime_;
     std::vector<KeymapId> override_keymaps_;
     std::vector<KeymapLayer> keymap_layers_;
     KeySequence pending_;
     std::optional<KeymapId> pending_keymap_;
-    std::optional<std::int64_t> repeat_count_;
+    CommandPrefix pending_prefix_;
 };
 
 } // namespace cind

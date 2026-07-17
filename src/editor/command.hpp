@@ -34,10 +34,28 @@ struct CommandId {
     friend constexpr auto operator<=>(CommandId, CommandId) = default;
 };
 
+struct CommandPrefixExtra {
+    std::string name;
+    SettingValue value;
+
+    friend bool operator==(const CommandPrefixExtra&, const CommandPrefixExtra&) = default;
+};
+
+struct CommandPrefix {
+    std::optional<std::int64_t> count;
+    std::optional<std::string> register_name;
+    std::vector<CommandPrefixExtra> extra;
+
+    bool empty() const { return !count && !register_name && extra.empty(); }
+    friend bool operator==(const CommandPrefix&, const CommandPrefix&) = default;
+};
+
 struct CommandInvocation {
     std::vector<SettingValue> arguments;
-    std::optional<std::int64_t> repeat_count;
+    CommandPrefix prefix;
 };
+
+std::string format_command_prefix(const CommandPrefix& prefix);
 
 struct CommandError {
     std::string message;
@@ -75,6 +93,12 @@ struct CommandDispatch {
     CommandInvocation invocation;
 };
 
+// Prefix commands replace the command loop's pending prefix slot. The next
+// ordinary command receives this value in its invocation and consumes it.
+struct CommandPrefixUpdate {
+    CommandPrefix prefix;
+};
+
 enum class InteractionKind : std::uint8_t {
     Text,
     Picker,
@@ -95,7 +119,8 @@ struct InteractionRequest {
     std::vector<SettingValue> arguments;
 };
 
-using CommandAction = std::variant<CommandCompleted, InteractionRequest, CommandDispatch>;
+using CommandAction =
+    std::variant<CommandCompleted, InteractionRequest, CommandDispatch, CommandPrefixUpdate>;
 using CommandResult = std::expected<CommandAction, CommandError>;
 
 class CommandContext {

@@ -59,6 +59,18 @@ void append_bool(std::string& output, bool value) {
     output += value ? "true" : "false";
 }
 
+void append_setting_value(std::string& output, const SettingValue& value) {
+    if (const bool* boolean = std::get_if<bool>(&value)) {
+        append_bool(output, *boolean);
+    } else if (const std::int64_t* integer = std::get_if<std::int64_t>(&value)) {
+        output += std::to_string(*integer);
+    } else if (const double* real = std::get_if<double>(&value)) {
+        output += std::format("{}", *real);
+    } else {
+        append_json_string(output, std::get<std::string>(value));
+    }
+}
+
 void append_strings(std::string& output, const std::vector<std::string>& values);
 
 std::string_view surface_class_name(ui::SurfaceClass surface) {
@@ -253,6 +265,25 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
     } else {
         output += "null";
     }
+    output += ",\"register\":";
+    if (command_loop.register_name) {
+        append_json_string(output, *command_loop.register_name);
+    } else {
+        output += "null";
+    }
+    output += ",\"prefix_extra\":[";
+    for (std::size_t index = 0; index < command_loop.prefix_extra.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"name\":";
+        append_json_string(output, command_loop.prefix_extra[index].name);
+        output += ",\"value\":";
+        append_setting_value(output, command_loop.prefix_extra[index].value);
+        output.push_back('}');
+    }
+    output += "],\"prefix_text\":";
+    append_json_string(output, command_loop.prefix_text);
     output += ",\"last_command\":";
     append_json_string(output, command_loop.last_command);
     output.push_back('}');
@@ -2314,7 +2345,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
            << printable(frame.editor.command_loop.pending_keymap) << "\" state=\""
-           << printable(frame.editor.command_loop.pending_input_state) << "\" last=\""
+           << printable(frame.editor.command_loop.pending_input_state) << "\" prefix=\""
+           << printable(frame.editor.command_loop.prefix_text) << "\" last=\""
            << printable(frame.editor.command_loop.last_command) << "\"\n";
     output << "    scripting=" << printable(frame.editor.scripting.engine) << ' '
            << printable(frame.editor.scripting.version)

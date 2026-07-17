@@ -18,7 +18,7 @@ void CommandLoop::set_keymap_layers(std::vector<KeymapLayer> layers) {
         }
     }
     keymap_layers_ = std::move(layers);
-    cancel_pending();
+    cancel_key_sequence();
 }
 
 void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
@@ -31,7 +31,7 @@ void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
         }
     }
     override_keymaps_ = std::move(keymaps);
-    cancel_pending();
+    cancel_key_sequence();
 }
 
 CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) {
@@ -59,9 +59,7 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
                 .interaction = std::nullopt};
     }
     if (match.kind == KeymapMatchKind::None) {
-        pending_.clear();
-        pending_keymap_.reset();
-        repeat_count_.reset();
+        cancel_pending();
         return {.status = CommandLoopStatus::NotHandled,
                 .consumed = continued_sequence,
                 .command = std::nullopt,
@@ -70,10 +68,8 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
                 .interaction = std::nullopt};
     }
 
-    pending_.clear();
-    pending_keymap_.reset();
-    CommandInvocation invocation{.arguments = {}, .repeat_count = repeat_count_};
-    repeat_count_.reset();
+    cancel_key_sequence();
+    CommandInvocation invocation{.arguments = {}, .prefix = pending_prefix_};
     return invoke(match.command, context, invocation, sequence_text);
 }
 
@@ -115,16 +111,25 @@ std::vector<KeymapCompletion> CommandLoop::pending_completions() const {
     return runtime_->keymaps().completions(layers, pending_);
 }
 
+CommandLoopResult CommandLoop::execute(CommandId command, CommandContext& context) {
+    cancel_key_sequence();
+    return invoke(command, context, {.arguments = {}, .prefix = pending_prefix_}, {});
+}
+
 CommandLoopResult CommandLoop::execute(CommandId command, CommandContext& context,
                                        const CommandInvocation& invocation) {
-    cancel_pending();
+    cancel_key_sequence();
     return invoke(command, context, invocation, {});
 }
 
-void CommandLoop::cancel_pending() {
+void CommandLoop::cancel_key_sequence() {
     pending_.clear();
     pending_keymap_.reset();
-    repeat_count_.reset();
+}
+
+void CommandLoop::cancel_pending() {
+    cancel_key_sequence();
+    pending_prefix_ = {};
 }
 
 CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context,
@@ -141,6 +146,7 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                 std::unexpected(CommandError{"command is disabled in this context"});
             if (std::optional<std::string> error =
                     apply_selection_result(disabled, context, initial_revision)) {
+                pending_prefix_ = {};
                 return {.status = CommandLoopStatus::Error,
                         .consumed = true,
                         .command = current,
@@ -148,6 +154,7 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                         .message = std::move(*error),
                         .interaction = std::nullopt};
             }
+            pending_prefix_ = {};
             return {.status = CommandLoopStatus::Disabled,
                     .consumed = true,
                     .command = current,
@@ -168,6 +175,9 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                           initial_revision);
         }
         if (CommandDispatch* dispatch = std::get_if<CommandDispatch>(&*result)) {
+            if (dispatch->invocation.prefix.empty()) {
+                dispatch->invocation.prefix = current_invocation.prefix;
+            }
             current = dispatch->command;
             current_invocation = std::move(dispatch->invocation);
             continue;
@@ -184,6 +194,7 @@ CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
                                       RevisionId initial_revision) {
     if (std::optional<std::string> error =
             apply_selection_result(result, context, initial_revision)) {
+        pending_prefix_ = {};
         return {.status = CommandLoopStatus::Error,
                 .consumed = true,
                 .command = command,
@@ -191,6 +202,49 @@ CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
                 .message = std::move(*error),
                 .interaction = std::nullopt};
     }
+    if (result) {
+        if (CommandPrefixUpdate* update = std::get_if<CommandPrefixUpdate>(&*result)) {
+            if (update->prefix.register_name && update->prefix.register_name->empty()) {
+                pending_prefix_ = {};
+                return {.status = CommandLoopStatus::Error,
+                        .consumed = true,
+                        .command = command,
+                        .key_sequence = std::move(key_sequence),
+                        .message = "command prefix register must not be empty",
+                        .interaction = std::nullopt};
+            }
+            for (std::size_t index = 0; index < update->prefix.extra.size(); ++index) {
+                if (update->prefix.extra[index].name.empty()) {
+                    pending_prefix_ = {};
+                    return {.status = CommandLoopStatus::Error,
+                            .consumed = true,
+                            .command = command,
+                            .key_sequence = std::move(key_sequence),
+                            .message = "command prefix extra name must not be empty",
+                            .interaction = std::nullopt};
+                }
+                for (std::size_t other = 0; other < index; ++other) {
+                    if (update->prefix.extra[other].name == update->prefix.extra[index].name) {
+                        pending_prefix_ = {};
+                        return {.status = CommandLoopStatus::Error,
+                                .consumed = true,
+                                .command = command,
+                                .key_sequence = std::move(key_sequence),
+                                .message = "command prefix extra names must be unique",
+                                .interaction = std::nullopt};
+                    }
+                }
+            }
+            pending_prefix_ = std::move(update->prefix);
+            return {.status = CommandLoopStatus::PrefixArgument,
+                    .consumed = true,
+                    .command = command,
+                    .key_sequence = std::move(key_sequence),
+                    .message = format_command_prefix(pending_prefix_),
+                    .interaction = std::nullopt};
+        }
+    }
+    pending_prefix_ = {};
     if (!result) {
         return {.status = CommandLoopStatus::Error,
                 .consumed = true,

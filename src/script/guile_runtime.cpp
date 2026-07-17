@@ -2556,11 +2556,23 @@ SCM command_invocation_value(const CommandInvocation& invocation) {
     for (std::size_t index = 0; index < invocation.arguments.size(); ++index) {
         scm_c_vector_set_x(arguments, index, setting_value(invocation.arguments[index]));
     }
-    SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    SCM extra = SCM_EOL;
+    for (auto iterator = invocation.prefix.extra.rbegin();
+         iterator != invocation.prefix.extra.rend(); ++iterator) {
+        extra = scm_cons(
+            scm_cons(scm_from_utf8_string(iterator->name.c_str()), setting_value(iterator->value)),
+            extra);
+    }
+    SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
     scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("invocation"));
     scm_c_vector_set_x(result, 1, arguments);
     scm_c_vector_set_x(
-        result, 2, invocation.repeat_count ? scm_from_int64(*invocation.repeat_count) : SCM_BOOL_F);
+        result, 2, invocation.prefix.count ? scm_from_int64(*invocation.prefix.count) : SCM_BOOL_F);
+    scm_c_vector_set_x(result, 3,
+                       invocation.prefix.register_name
+                           ? scm_from_utf8_string(invocation.prefix.register_name->c_str())
+                           : SCM_BOOL_F);
+    scm_c_vector_set_x(result, 4, extra);
     return result;
 }
 
@@ -2611,6 +2623,36 @@ bool symbol_is(SCM value, const char* expected) {
            scheme_true(scm_eq_p(value, scm_from_utf8_symbol(expected)));
 }
 
+CommandPrefix command_prefix_from_scheme(SCM count_value, SCM register_value, SCM extra_value,
+                                         const char* caller) {
+    CommandPrefix prefix;
+    if (!scheme_false(count_value)) {
+        if (scm_is_signed_integer(count_value, std::numeric_limits<std::int64_t>::min(),
+                                  std::numeric_limits<std::int64_t>::max()) == 0) {
+            scm_wrong_type_arg_msg(caller, 1, count_value, "integer or #f");
+        }
+        prefix.count = scm_to_int64(count_value);
+    }
+    if (!scheme_false(register_value)) {
+        prefix.register_name = scheme_name(register_value, caller, 2);
+    }
+    const long extra_count = scm_ilength(extra_value);
+    if (extra_count < 0) {
+        scm_wrong_type_arg_msg(caller, 3, extra_value, "proper association list");
+    }
+    prefix.extra.reserve(static_cast<std::size_t>(extra_count));
+    for (long index = 0; index < extra_count; ++index) {
+        const SCM entry = scm_car(extra_value);
+        if (!scm_is_pair(entry) || !setting_value_p(scm_cdr(entry))) {
+            scm_wrong_type_arg_msg(caller, 3, entry, "(name . setting-value) entry");
+        }
+        prefix.extra.push_back({.name = scheme_name(scm_car(entry), caller, 3),
+                                .value = setting_from_scheme(scm_cdr(entry))});
+        extra_value = scm_cdr(extra_value);
+    }
+    return prefix;
+}
+
 CommandResult command_result_from_scheme(SCM value, const CommandContext& context) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) == 0) {
         return std::unexpected(CommandError{"Guile command returned an invalid result"});
@@ -2650,6 +2692,14 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
             return std::unexpected(CommandError{exception.what()});
         }
     }
+    if (symbol_is(tag, "prefix")) {
+        if (size != 4) {
+            return std::unexpected(CommandError{"Guile command prefix result is malformed"});
+        }
+        return CommandPrefixUpdate{.prefix = command_prefix_from_scheme(
+                                       scm_c_vector_ref(value, 1), scm_c_vector_ref(value, 2),
+                                       scm_c_vector_ref(value, 3), "command-prefix")};
+    }
     if (symbol_is(tag, "error")) {
         if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {
             return std::unexpected(CommandError{"Guile error result is malformed"});
@@ -2668,9 +2718,8 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
         if (!command) {
             return std::unexpected(CommandError{std::format("unknown command '{}'", name)});
         }
-        return CommandDispatch{
-            .command = *command,
-            .invocation = {.arguments = std::move(arguments), .repeat_count = std::nullopt}};
+        return CommandDispatch{.command = *command,
+                               .invocation = {.arguments = std::move(arguments), .prefix = {}}};
     }
     if (symbol_is(tag, "interaction")) {
         if (size != 9 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||

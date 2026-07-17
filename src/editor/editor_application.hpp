@@ -138,6 +138,8 @@ public:
         return interaction_.active() ? std::string_view("interaction") : std::string_view("window");
     }
     std::string pending_key_sequence_text() const;
+    std::string pending_prefix_text() const;
+    std::string pending_command_text() const;
     std::string pending_input_state_name() const;
     std::vector<KeyBindingHint> pending_key_hints() const;
     std::size_t buffer_count() const { return buffers_.size(); }

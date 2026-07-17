@@ -414,7 +414,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 46);
+    CHECK(*installed == 56);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -463,7 +463,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const CommandResult accepted = runtime.commands().invoke(
         request->accept_command, context,
-        CommandInvocation{.arguments = {std::string("file.save")}, .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("file.save")}, .prefix = {}});
     REQUIRE(accepted.has_value());
     const auto* dispatch = std::get_if<CommandDispatch>(&*accepted);
     REQUIRE(dispatch != nullptr);
@@ -482,19 +482,18 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(runtime.commands().definition(open_request->accept_command).name == "file.open.accept");
 
     const std::string directory = std::string("/tmp") + std::filesystem::path::preferred_separator;
-    const CommandResult directory_result = runtime.commands().invoke(
-        open_request->accept_command, context,
-        CommandInvocation{.arguments = {directory}, .repeat_count = std::nullopt});
+    const CommandResult directory_result =
+        runtime.commands().invoke(open_request->accept_command, context,
+                                  CommandInvocation{.arguments = {directory}, .prefix = {}});
     REQUIRE(directory_result.has_value());
     const auto* directory_request = std::get_if<InteractionRequest>(&*directory_result);
     REQUIRE(directory_request != nullptr);
     CHECK(directory_request->initial_input == directory);
     CHECK_FALSE(file_opened);
 
-    const CommandResult opened =
-        runtime.commands().invoke(open_request->accept_command, context,
-                                  CommandInvocation{.arguments = {std::string("/tmp/example.cpp")},
-                                                    .repeat_count = std::nullopt});
+    const CommandResult opened = runtime.commands().invoke(
+        open_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("/tmp/example.cpp")}, .prefix = {}});
     REQUIRE(opened.has_value());
     REQUIRE(file_opened);
     CHECK(opened_window == window);
@@ -510,10 +509,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(save_as_request->initial_input.empty());
     CHECK(runtime.commands().definition(save_as_request->accept_command).name ==
           "file.save-as.accept");
-    const CommandResult save_as_accepted =
-        runtime.commands().invoke(save_as_request->accept_command, context,
-                                  CommandInvocation{.arguments = {std::string("/tmp/written.cpp")},
-                                                    .repeat_count = std::nullopt});
+    const CommandResult save_as_accepted = runtime.commands().invoke(
+        save_as_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("/tmp/written.cpp")}, .prefix = {}});
     REQUIRE(save_as_accepted.has_value());
     REQUIRE(buffer_resource_set);
     CHECK(resource_buffer == buffer);
@@ -524,7 +522,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const CommandResult switched = runtime.commands().invoke(
         require_command(runtime, "buffer.switch.accept"), context,
-        CommandInvocation{.arguments = {std::string("other")}, .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("other")}, .prefix = {}});
     REQUIRE(switched.has_value());
     REQUIRE(buffer_displayed);
     CHECK(displayed.first == window);
@@ -640,29 +638,28 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const CommandResult unknown_buffer = runtime.commands().invoke(
         require_command(runtime, "buffer.switch.accept"), context,
-        CommandInvocation{.arguments = {std::string("missing")}, .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("missing")}, .prefix = {}});
     REQUIRE_FALSE(unknown_buffer.has_value());
     CHECK(unknown_buffer.error().message == "unknown buffer 'missing'");
 
     const CommandResult moved_to_line = runtime.commands().invoke(
         require_command(runtime, "cursor.goto-line.accept"), context,
-        CommandInvocation{.arguments = {std::string("4:7")}, .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("4:7")}, .prefix = {}});
     REQUIRE(moved_to_line.has_value());
     REQUIRE(caret_moved);
     CHECK(std::get<0>(moved) == view);
     CHECK(std::get<1>(moved) == 3);
     CHECK(std::get<2>(moved) == 6);
 
-    const CommandResult invalid_line = runtime.commands().invoke(
-        require_command(runtime, "cursor.goto-line.accept"), context,
-        CommandInvocation{.arguments = {std::string("0")}, .repeat_count = std::nullopt});
+    const CommandResult invalid_line =
+        runtime.commands().invoke(require_command(runtime, "cursor.goto-line.accept"), context,
+                                  CommandInvocation{.arguments = {std::string("0")}, .prefix = {}});
     REQUIRE_FALSE(invalid_line.has_value());
     CHECK(invalid_line.error().message == "invalid line number");
 
     const CommandResult help = runtime.commands().invoke(
         require_command(runtime, "help.keys.accept"), context,
-        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")},
-                          .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("C-x C-s  file.save")}, .prefix = {}});
     REQUIRE(help.has_value());
     CHECK(message == "C-x C-s  file.save");
 
@@ -700,8 +697,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     opened_path.clear();
     const CommandResult file_accepted = runtime.commands().invoke(
         find_file_request->accept_command, context,
-        CommandInvocation{.arguments = {std::string("/tmp/sample/main.cpp")},
-                          .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("/tmp/sample/main.cpp")}, .prefix = {}});
     REQUIRE(file_accepted.has_value());
     REQUIRE(file_opened);
     CHECK(opened_window == window);
@@ -713,14 +709,14 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(search_request != nullptr);
     CHECK(runtime.commands().definition(search_request->accept_command).name ==
           "project.search.accept");
-    const CommandResult empty_search = runtime.commands().invoke(
-        search_request->accept_command, context,
-        CommandInvocation{.arguments = {std::string()}, .repeat_count = std::nullopt});
+    const CommandResult empty_search =
+        runtime.commands().invoke(search_request->accept_command, context,
+                                  CommandInvocation{.arguments = {std::string()}, .prefix = {}});
     REQUIRE_FALSE(empty_search.has_value());
     CHECK(empty_search.error().message == "project search query is empty");
     const CommandResult search_accepted = runtime.commands().invoke(
         search_request->accept_command, context,
-        CommandInvocation{.arguments = {std::string("needle")}, .repeat_count = std::nullopt});
+        CommandInvocation{.arguments = {std::string("needle")}, .prefix = {}});
     REQUIRE(search_accepted.has_value());
     REQUIRE(project_search_started);
     CHECK(searched_project == project);
@@ -763,7 +759,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 46);
+    CHECK(snapshot.scripted_commands == 56);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

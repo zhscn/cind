@@ -818,6 +818,9 @@ bool EditorApplication::focus_window(WindowId window) {
     if (!window_layout_.contains(window) || runtime_.windows().try_get(window) == nullptr) {
         return false;
     }
+    if (window != active_window_) {
+        command_loop_.cancel_pending();
+    }
     active_window_ = window;
     reveal_caret_ = true;
     quit_armed_ = false;
@@ -1057,6 +1060,19 @@ std::string EditorApplication::pending_key_sequence_text() const {
         return feedback->sequence;
     }
     return command_loop_.pending_sequence_text();
+}
+
+std::string EditorApplication::pending_prefix_text() const {
+    return format_command_prefix(command_loop_.pending_prefix());
+}
+
+std::string EditorApplication::pending_command_text() const {
+    const std::string prefix = pending_prefix_text();
+    const std::string keys = pending_key_sequence_text();
+    if (prefix.empty()) {
+        return keys;
+    }
+    return keys.empty() ? prefix : prefix + " " + keys;
 }
 
 std::string EditorApplication::pending_input_state_name() const {

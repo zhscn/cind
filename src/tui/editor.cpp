@@ -467,6 +467,7 @@ private:
         }
         const InputStateRegistry::Definition& active_input_state = application_.input_state();
         const std::vector<TextRange> active_selections = session().selected_ranges();
+        const std::string pending_command = application_.pending_command_text();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
                 application_.window_layout().partition(size.rows - 1, size.cols);
@@ -583,7 +584,7 @@ private:
                                           .last_key = application_.last_key(),
                                           .cursor_shape = active_input_state.cursor,
                                           .input_state_indicator = active_input_state.indicator,
-                                          .pending_key = {},
+                                          .pending_key = pending_command,
                                           .echo = echo_text,
                                           .echo_cursor_column = echo_cursor,
                                           .echo_cursor_byte = echo_cursor_byte,
@@ -633,7 +634,7 @@ private:
                                       .last_key = application_.last_key(),
                                       .cursor_shape = active_input_state.cursor,
                                       .input_state_indicator = active_input_state.indicator,
-                                      .pending_key = {},
+                                      .pending_key = pending_command,
                                       .echo = echo_text,
                                       .echo_cursor_column = echo_cursor,
                                       .echo_cursor_byte = echo_cursor_byte,

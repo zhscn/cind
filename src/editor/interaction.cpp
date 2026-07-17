@@ -171,8 +171,7 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
 
     InteractionSubmission submission{
         .accept_command = state_->request.accept_command,
-        .invocation = {.arguments = std::move(state_->request.arguments),
-                       .repeat_count = std::nullopt},
+        .invocation = {.arguments = std::move(state_->request.arguments), .prefix = {}},
     };
     submission.invocation.arguments.emplace_back(value);
     if (!state_->request.history.empty() && !value.empty()) {
