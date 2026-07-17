@@ -154,7 +154,8 @@ The default keymap follows Emacs conventions:
 - `C-/`, `C-_`, and `C-x u` undo, while `C-M-/` redoes;
 - `C-x C-f`, `C-x C-s`, `C-x C-w`, and `C-x C-c` open, save, write, and quit;
 - `C-x b`, `C-x k`, `C-x Left`, and `C-x Right` manage the active buffer;
-- `M-x` opens the command palette; `C-h b`, `C-h k`, `C-h x`, `C-h m`, `C-h f`, and `C-h v`
+- `M-x` opens the command palette and `M-:` evaluates a Scheme expression; `C-h b`, `C-h k`,
+  `C-h x`, `C-h m`, `C-h f`, and `C-h v`
   describe active bindings, keys, commands, modes, Scheme functions, and Scheme variables;
 - `C-M-f`, `C-M-b`, and `C-M-u` perform structural movement;
 - `M-g n`, `M-g p`, and `` C-x ` `` navigate the current location list across source buffers;

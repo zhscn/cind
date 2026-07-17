@@ -15,6 +15,7 @@
 (define bundled-module-names
   '((cind command)
     (cind input)
+    (cind development)
     (cind extension)
     (cind emacs)
     (cind toy-modal)
@@ -32,7 +33,7 @@
            (and (string? argument) argument)))))
 
 (define (display-help! host context text)
-  (display-help-buffer! host (context-window context) help-buffer-name text))
+  (display-generated-buffer! host (context-window context) help-buffer-name text))
 
 (define (vector->strings values)
   (let loop ((index 0) (result '()))
@@ -185,7 +186,7 @@
   (append
    (map (lambda (name) (vector (format #f "~s" name) (resolve-module name)))
         bundled-module-names)
-   (let ((extensions (loaded-extension-modules host)))
+  (let ((extensions (owned-user-modules host)))
      (let loop ((index 0) (result '()))
        (if (= index (vector-length extensions))
            (reverse result)

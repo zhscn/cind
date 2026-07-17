@@ -26,6 +26,7 @@ object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind extension)` owns isolated source-file loading;
+`(cind development)` owns interactive source evaluation and result presentation;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
 strategies; `(cind structural)` defines structural selection policy; `(cind introspect)` derives
 editor self-description from registry and module state; and `(cind core)` composes the built-in
@@ -105,7 +106,7 @@ The native module exports:
 (enabled-command-names host context)
 (command-properties host context command-name)
 (open-buffer-summaries host)
-(loaded-extension-modules host)
+(owned-user-modules host)
 (project-root host project-id)
 (project-files host project-id)
 (active-key-bindings host)
@@ -128,6 +129,8 @@ The native module exports:
 (replace-selection! host view-id selection replacement-or-vector)
 (selection-texts host view-id selection)
 (buffer-substring host buffer-id start end)
+(buffer-name host buffer-id)
+(buffer-text host buffer-id)
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)
 (soft-kill-range host view-id)
@@ -139,6 +142,8 @@ The native module exports:
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
+(display-generated-buffer! host window-id buffer-name text)
+(evaluate-scheme! host source source-name)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
 (ensure-project-index! host project-id)
@@ -154,7 +159,6 @@ The native module exports:
 (delete-other-windows! host window-id)
 (select-other-window! host window-id delta)
 (request-redraw! host)
-(display-help-buffer! host window-id buffer-name text)
 ```
 
 `define-command!` registers a Scheme procedure in `CommandRegistry`. `execute` receives an
@@ -306,9 +310,9 @@ platform-native relative, filename and parent calculations. These capabilities k
 selection and presentation in Scheme while C++ retains registry identity and filesystem syntax.
 
 `buffer-mode-summary` returns the current major mode, enabled minor modes, and effective policy;
-`mode-properties` describes each registered definition. `loaded-extension-modules` returns only the
-fresh modules retained by the owning `GuileRuntime`, so module inspection preserves application and
-extension isolation.
+`mode-properties` describes each registered definition. `owned-user-modules` returns only the
+fresh extension modules and persistent evaluation module retained by the owning `GuileRuntime`, so
+module inspection preserves application isolation.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
@@ -317,10 +321,30 @@ the document, resets vertical-motion state and requests caret reveal. `set-messa
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
 
-`display-help-buffer!` creates or replaces a named read-only generated buffer, assigns
+`display-generated-buffer!` creates or replaces a named read-only generated buffer, assigns
 `special-mode`, resets its cached View to the beginning, and displays it through the same Window and
-View lifecycle as any other buffer. Help is frontend-independent editor state rather than a
-renderer-owned overlay.
+View lifecycle as any other buffer. Help and evaluation results are frontend-independent editor
+state rather than renderer-owned overlays.
+
+## Interactive evaluation
+
+Each `GuileRuntime` owns a persistent fresh user module for editor-initiated evaluation. The module
+imports `(cind host)`, `(cind command)`, and `(cind input)`, and binds the application's capability
+as `host`. It is created on first use, protected for the runtime lifetime, and released before the
+host capability expires. Definitions are therefore shared by expression, region, and buffer
+evaluation within one application without becoming process-global or visible to another editor.
+
+`evaluate-scheme!` reads the complete source before evaluating it, associates reader locations with
+the supplied source name, evaluates forms in order, and returns a typed result containing rendered
+values, standard output, standard error, or a caught Scheme condition. Registry definitions made
+during evaluation record the source name and advance the same installation revisions as extension
+loading. The evaluation module is included in Scheme function and variable introspection after it
+is created.
+
+`scheme.eval-expression` uses the ordinary text interaction and history infrastructure;
+`scheme.eval-region` evaluates the primary active range; and `scheme.eval-buffer` reads the current
+Buffer snapshot. Single-line values use the message area. Stream output, multiple values, and
+buffer evaluation use the reusable `*Scheme Evaluation*` generated buffer.
 
 View and text capabilities expose byte offsets as unsigned integers. Ordinary text ranges use
 two-element start/end vectors. `view-selection` returns

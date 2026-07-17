@@ -33,7 +33,7 @@ struct GuileTextRange {
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
     std::function<std::expected<void, std::string>(WindowId, std::string, std::string)>
-        display_help_buffer;
+        display_generated_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
     std::function<void(std::string)> set_message;
@@ -78,6 +78,18 @@ struct GuileHostServices {
     std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;
 };
 
+struct GuileEvaluationResult {
+    std::vector<std::string> values;
+    std::string output;
+    std::string error_output;
+    std::optional<std::string> error;
+};
+
+struct GuileEvaluationRequest {
+    std::string_view source;
+    std::string_view source_name;
+};
+
 struct GuileRuntimeSnapshot {
     std::string engine;
     std::string version;
@@ -113,6 +125,7 @@ public:
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
     std::expected<void, std::string> load_extension(const std::string& path);
+    std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;
 
 private:

@@ -152,6 +152,66 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
     CHECK(snapshot.last_error.value_or("").find("extension failed") != std::string::npos);
 }
 
+TEST_CASE("Guile evaluation keeps an application-local module and reports streams") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> first =
+        guile.evaluate({.source = "(define answer 41)\n(display \"hello\\n\")\n(+ answer 1)\n",
+                        .source_name = "scratch.scm"});
+    REQUIRE(first.has_value());
+    CHECK_FALSE(first->error.has_value());
+    CHECK(first->values == std::vector<std::string>{"42"});
+    CHECK(first->output == "hello\n");
+    CHECK(first->error_output.empty());
+
+    const std::expected<GuileEvaluationResult, std::string> second =
+        guile.evaluate({.source = "answer", .source_name = "scratch.scm"});
+    REQUIRE(second.has_value());
+    CHECK(second->values == std::vector<std::string>{"41"});
+
+    {
+        EditorRuntime other_runtime;
+        GuileRuntime other(other_runtime);
+        const std::expected<GuileEvaluationResult, std::string> isolated =
+            other.evaluate({.source = "(defined? 'answer)", .source_name = "other.scm"});
+        REQUIRE(isolated.has_value());
+        CHECK(isolated->values == std::vector<std::string>{"#f"});
+    }
+
+    REQUIRE(guile.install_core_providers().has_value());
+    const BufferId buffer = runtime.buffers().create({.name = "evaluation-test",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const std::vector<InteractionCandidate> variables =
+        complete_provider(runtime, "scheme-variables", context);
+    CHECK(std::ranges::any_of(variables, [](const InteractionCandidate& candidate) {
+        return candidate.label == "answer" && candidate.detail == "*scheme-user*";
+    }));
+
+    const std::expected<GuileEvaluationResult, std::string> registration =
+        guile.evaluate({.source = R"((define-command! host "user.evaluated"
+  (lambda (context invocation) (command-completed answer))
+  #f))",
+                        .source_name = "scratch.scm"});
+    REQUIRE(registration.has_value());
+    CHECK_FALSE(registration->error.has_value());
+    const CommandId command = require_command(runtime, "user.evaluated");
+    CHECK(runtime.commands().definition(command).source == "scheme:scratch.scm");
+    CHECK(guile.snapshot().command_revision == 1);
+
+    const std::expected<GuileEvaluationResult, std::string> failed =
+        guile.evaluate({.source = "(error \"evaluation failed\")", .source_name = "scratch.scm"});
+    REQUIRE(failed.has_value());
+    REQUIRE(failed->error.has_value());
+    CHECK(failed->error.value_or("").find("evaluation failed") != std::string::npos);
+}
+
 TEST_CASE("bundled Guile policy installs available default key bindings") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
@@ -183,7 +243,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.modules ==
           std::vector<std::string>{"cind command", "cind input", "cind extension", "cind emacs",
                                    "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                                   "cind structural", "cind introspect", "cind core"});
+                                   "cind structural", "cind development", "cind introspect",
+                                   "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -423,8 +484,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              buffer_displayed = true;
              return {};
          },
-         .display_help_buffer = [&](WindowId target_window, std::string name,
-                                    std::string text) -> std::expected<void, std::string> {
+         .display_generated_buffer = [&](WindowId target_window, std::string name,
+                                         std::string text) -> std::expected<void, std::string> {
              displayed_help_window = target_window;
              help_name = std::move(name);
              help_text = std::move(text);
@@ -626,7 +687,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 146);
+    CHECK(*installed == 150);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1054,7 +1115,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 146);
+    CHECK(snapshot.scripted_commands == 150);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

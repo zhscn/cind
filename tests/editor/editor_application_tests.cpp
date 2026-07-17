@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -1410,6 +1411,63 @@ TEST_CASE("interaction local keymap edits its own input") {
     CHECK(application.session().caret() == document_caret);
 
     send_keys(application, "C-g");
+}
+
+TEST_CASE("Scheme expression evaluation uses the shared minibuffer command loop") {
+    EditorApplication application = make_application("sample.scm", "source\n");
+    const BufferId source = application.buffer_id();
+
+    send_keys(application, "M-:");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Eval: ");
+    CHECK(application.interaction().state()->request.history == "scheme-expression");
+    application.insert_text("(+ 1 2)");
+    send_keys(application, "RET");
+
+    CHECK_FALSE(application.interaction().active());
+    CHECK(application.buffer_id() == source);
+    CHECK(application.message() == "3");
+    CHECK(application.last_command() == "scheme.eval-expression.accept");
+}
+
+TEST_CASE("Scheme buffer and region evaluation share a persistent user module") {
+    const std::string source_text =
+        "(define buffer-value 9)\n(display \"loaded\\n\")\n(* buffer-value 2)\n";
+    EditorApplication application = make_application("sample.scm", source_text);
+    EditorRuntime& runtime = application.runtime();
+    const BufferId source = application.buffer_id();
+    const CommandId eval_buffer = require_command(runtime, "scheme.eval-buffer");
+    CommandContext buffer_context(runtime, application.window_id(), source, application.view_id());
+
+    const CommandResult evaluated = runtime.commands().invoke(eval_buffer, buffer_context);
+    REQUIRE(evaluated.has_value());
+    const BufferId result = application.buffer_id();
+    CHECK(result != source);
+    const Buffer& result_buffer = runtime.buffers().get(result);
+    CHECK(result_buffer.name() == "*Scheme Evaluation*");
+    CHECK(result_buffer.kind() == BufferKind::Generated);
+    CHECK(result_buffer.read_only());
+    const std::string result_text = result_buffer.snapshot().content().to_string();
+    CHECK(result_text.find("Output:\nloaded\n") != std::string::npos);
+    CHECK(result_text.find("Values:\n  18\n") != std::string::npos);
+
+    REQUIRE(application.switch_buffer(source));
+    const auto region_start = static_cast<std::uint32_t>(source_text.find("(* buffer-value 2)"));
+    application.session().set_selection(
+        {.anchor = TextOffset{region_start}, .head = TextOffset{region_start + 18}});
+    CommandContext region_context(runtime, application.window_id(), source, application.view_id());
+    const CommandResult region =
+        runtime.commands().invoke(require_command(runtime, "scheme.eval-region"), region_context);
+    REQUIRE(region.has_value());
+    CHECK(application.buffer_id() == source);
+    CHECK(application.message() == "18");
+
+    const CommandResult expression = runtime.commands().invoke(
+        require_command(runtime, "scheme.eval-expression.accept"), region_context,
+        CommandInvocation{.arguments = {std::string("(+ buffer-value 1)")}, .prefix = {}});
+    REQUIRE(expression.has_value());
+    CHECK(application.message() == "10");
+    CHECK(application.buffer_count() == 2);
 }
 
 TEST_CASE("application global prefix remains active while picker owns focus") {

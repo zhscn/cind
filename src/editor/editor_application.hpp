@@ -243,8 +243,8 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
-    std::expected<void, std::string> display_help_buffer(WindowId window, std::string name,
-                                                         std::string text);
+    std::expected<void, std::string> display_generated_buffer(WindowId window, std::string name,
+                                                              std::string text);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
     bool split_window(WindowId target, WindowSplitAxis axis);

@@ -95,6 +95,11 @@ a key sequence, `C-h x` describes a command, `C-h b` lists active bindings, `C-h
 current mode policy, and `C-h f`/`C-h v` describe Scheme functions and variables. Descriptions use a
 read-only `*Help*` buffer in both graphical and terminal frontends.
 
+`M-:` evaluates a Scheme expression in the application's persistent user module. The command
+palette also exposes `scheme.eval-region` and `scheme.eval-buffer`; definitions made by any of the
+three commands remain available to later evaluations and to `describe-function` /
+`describe-variable`. Multiline output is shown in the reusable `*Scheme Evaluation*` buffer.
+
 ## Build without the GUI
 
 The default build produces the terminal editor and command-line analysis tools without compiling

@@ -72,9 +72,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .display_help_buffer =
+           .display_generated_buffer =
                [this](WindowId window, std::string name, std::string text) {
-                   return display_help_buffer(window, std::move(name), std::move(text));
+                   return display_generated_buffer(window, std::move(name), std::move(text));
                },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
@@ -1515,7 +1515,7 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
 }
 
 std::expected<void, std::string>
-EditorApplication::display_help_buffer(WindowId window, std::string name, std::string text) {
+EditorApplication::display_generated_buffer(WindowId window, std::string name, std::string text) {
     try {
         BufferId buffer;
         if (const std::optional<BufferId> existing = runtime_.buffers().find_by_name(name)) {
@@ -1542,14 +1542,14 @@ EditorApplication::display_help_buffer(WindowId window, std::string name, std::s
                                               .kind = BufferKind::Generated,
                                               .resource_uri = std::nullopt,
                                               .read_only = true},
-                                   CppIndentStyle{}, "generated help", special_mode_);
+                                   CppIndentStyle{}, "generated", special_mode_);
         }
         if (!show_buffer(window, buffer)) {
-            return std::unexpected("help buffer cannot be displayed");
+            return std::unexpected("generated buffer cannot be displayed");
         }
         ViewState* view = find_view(window, buffer);
         if (view == nullptr) {
-            return std::unexpected("help buffer view was not created");
+            return std::unexpected("generated buffer view was not created");
         }
         runtime_.views().clear_selection(view->view);
         runtime_.views().set_caret(view->view, TextOffset{});

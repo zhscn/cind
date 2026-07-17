@@ -1,6 +1,7 @@
 (define-module (cind core)
   #:use-module (ice-9 optargs)
   #:use-module (cind command)
+  #:use-module (cind development)
   #:use-module (cind emacs)
   #:use-module (cind helix)
   #:use-module (cind host)
@@ -619,6 +620,7 @@
               #f)
         (list "help.keys" help-keys #f))
    (introspection-command-definitions host)
+   (development-command-definitions host)
    (make-region-commands host)
    (emacs-command-definitions host)
    (helix-command-definitions host)
@@ -636,6 +638,7 @@
                                  (list-ref definition 2)))
               commands)
     (install-introspection-documentation! host)
+    (install-development-documentation! host)
     (length commands)))
 
 (define (core-providers host)
@@ -738,6 +741,7 @@
 
 (define editor-bindings
   '(("M-x" . "command.palette")
+    ("M-:" . "scheme.eval-expression")
     ("C-g" . "keyboard.quit")
     ("C-s" . "search.prompt")
     ("C-r" . "search.backward-prompt")
