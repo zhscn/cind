@@ -164,6 +164,13 @@ same layered completions used by prefix help. Control-to-literal and transparent
 fallback remain Scheme policy. Multiple Views may independently use Emacs, meow, or another named
 strategy.
 
+The bundled `(cind vim)` strategy defines normal, insert, and visual durable states. Delete enters
+a transient operator state whose tentative character range is immediately published as the View
+Selection. Motion and text-object capture replace that preview through the shared Motion and Thing
+registries before dispatching the region verb. Decimal counts and single-key named registers remain
+in the command loop prefix slot across the operator state. `C-c v` selects the strategy from the
+default Emacs map.
+
 ## Command loop and prefix help
 
 One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap

@@ -3279,7 +3279,7 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "emacs", "toy-modal", "meow", "core"}) {
+        for (std::string_view module : {"command", "emacs", "toy-modal", "meow", "vim", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3440,21 +3440,21 @@ public:
     }
 
     GuileRuntimeSnapshot snapshot() const {
-        return {
-            .engine = "guile",
-            .version = version_,
-            .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind core"},
-            .command_revision = state_->command_revision,
-            .scripted_commands = state_->commands.size(),
-            .provider_revision = state_->provider_revision,
-            .scripted_providers = state_->providers.size(),
-            .binding_revision = binding_revision_,
-            .input_state_revision = state_->input_state_revision,
-            .scripted_input_states = state_->input_state_definitions,
-            .scripted_input_strategies = state_->input_strategy_definitions,
-            .mode_revision = state_->mode_revision,
-            .scripted_modes = state_->mode_definitions,
-            .last_error = state_->last_error};
+        return {.engine = "guile",
+                .version = version_,
+                .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind vim",
+                            "cind core"},
+                .command_revision = state_->command_revision,
+                .scripted_commands = state_->commands.size(),
+                .provider_revision = state_->provider_revision,
+                .scripted_providers = state_->providers.size(),
+                .binding_revision = binding_revision_,
+                .input_state_revision = state_->input_state_revision,
+                .scripted_input_states = state_->input_state_definitions,
+                .scripted_input_strategies = state_->input_strategy_definitions,
+                .mode_revision = state_->mode_revision,
+                .scripted_modes = state_->mode_definitions,
+                .last_error = state_->last_error};
     }
 
 private:

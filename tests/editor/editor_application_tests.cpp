@@ -402,6 +402,71 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
           SelectionGranularity::Node);
 }
 
+TEST_CASE("Guile Vim policy composes states prefixes operators and things") {
+    std::string clipboard;
+    EditorPlatformServices platform{
+        .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
+            clipboard = text;
+            return {};
+        },
+        .read_clipboard = [&]() -> std::expected<std::string, std::string> { return clipboard; },
+        .wake_event_loop = {}};
+    EditorApplication application =
+        make_application("sample.cc", "one <abc> two three", std::move(platform));
+
+    send_keys(application, "C-c v");
+    CHECK(application.input_state().name == "vim-normal");
+    const std::optional<InputStrategyId> strategy =
+        application.runtime().views().get(application.view_id()).input_strategy();
+    REQUIRE(strategy.has_value());
+    CHECK(application.runtime().input_strategies().definition(*strategy).name == "vim");
+
+    send_keys(application, "2 w");
+    CHECK(application.session().caret() == TextOffset{5});
+    application.session().set_caret(TextOffset{0});
+    application.runtime().views().clear_selection(application.view_id());
+
+    send_keys(application, "d");
+    CHECK(application.input_state().name == "vim-operator");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 1));
+    send_keys(application, "C-g");
+    CHECK(application.input_state().name == "vim-normal");
+    CHECK_FALSE(application.session().active_selection().has_value());
+
+    send_keys(application, "\" a d w");
+    CHECK(application.session().snapshot().content() == "<abc> two three");
+    CHECK(clipboard == "one ");
+    application.session().set_caret(
+        TextOffset{application.session().snapshot().content().size_bytes()});
+    send_keys(application, "\" a p");
+    CHECK(application.session().snapshot().content() == "<abc> two threeone ");
+
+    REQUIRE(application.session().undo());
+    REQUIRE(application.session().undo());
+    application.session().set_caret(TextOffset{6});
+    application.runtime().views().clear_selection(application.view_id());
+    send_keys(application, "d i a");
+    CHECK(application.session().snapshot().content() == "one <> two three");
+
+    REQUIRE(application.session().undo());
+    application.session().set_caret(TextOffset{0});
+    application.runtime().views().clear_selection(application.view_id());
+    send_keys(application, "v w");
+    CHECK(application.input_state().name == "vim-visual");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 4));
+    send_keys(application, "d");
+    CHECK(application.input_state().name == "vim-normal");
+    CHECK(application.session().snapshot().content() == "<abc> two three");
+
+    send_keys(application, "i");
+    CHECK(application.input_state().name == "vim-insert");
+    application.insert_text("X");
+    send_keys(application, "ESC");
+    CHECK(application.input_state().name == "vim-normal");
+}
+
 TEST_CASE("Guile selection verbs replace every range in one undo unit") {
     EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
     EditorRuntime& runtime = application.runtime();

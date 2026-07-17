@@ -5,6 +5,7 @@
   #:use-module (cind host)
   #:use-module (cind meow)
   #:use-module (cind toy-modal)
+  #:use-module (cind vim)
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
@@ -593,6 +594,7 @@
         (list "help.keys" help-keys #f))
    (make-region-commands host)
    (meow-command-definitions host)
+   (vim-command-definitions host)
    (toy-modal-command-definitions host)))
 
 (define (install-core-commands! host)
@@ -629,6 +631,7 @@
 (define (install-input-states! host)
   (+ (install-emacs-input-state! host)
      (install-meow-input-states! host)
+     (install-vim-input-states! host)
      (install-toy-modal-input-state! host)))
 
 (define* (define-major-mode! host name
@@ -725,6 +728,7 @@
     ("C-c s" . "selection.contract")
     ("C-c n" . "toy-modal.enter-normal")
     ("C-c m" . "meow.normal-mode")
+    ("C-c v" . "vim.enter-normal")
     ("M-g g" . "cursor.goto-line")
     ("M-g n" . "location.next-error")
     ("M-g p" . "location.previous-error")
@@ -772,4 +776,5 @@
      (bind-all! host 'editor.default editor-bindings)
      (bind-all! host 'application.global application-bindings)
      (install-meow-keymaps! host)
+     (install-vim-keymaps! host)
      (install-toy-modal-keymap! host)))

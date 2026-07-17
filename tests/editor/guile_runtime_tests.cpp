@@ -93,7 +93,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
     CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind emacs",
-                                                       "cind toy-modal", "cind meow", "cind core"});
+                                                       "cind toy-modal", "cind meow", "cind vim",
+                                                       "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -124,8 +125,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 8);
-    CHECK(*second == 8);
+    CHECK(*first == 13);
+    CHECK(*second == 13);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -162,14 +163,16 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 8);
-    CHECK(guile.snapshot().scripted_input_strategies == 3);
+    CHECK(guile.snapshot().scripted_input_states == 13);
+    CHECK(guile.snapshot().scripted_input_strategies == 4);
+    const InputStrategyId vim = runtime.input_strategies().find("vim").value_or(InputStrategyId{});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     const InputStrategyId toy_strategy =
         runtime.input_strategies().find("toy-modal").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
     REQUIRE(toy_strategy);
+    REQUIRE(vim);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(runtime.input_strategies().definition(emacs_strategy).selection_after_edit ==
           SelectionEditPolicy::Collapse);
@@ -179,6 +182,9 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_strategies().state(emacs_strategy, InteractionClass::Interface) == emacs);
     CHECK(runtime.input_strategies().state(toy_strategy, InteractionClass::Editing) == toy);
     CHECK(runtime.input_strategies().state(toy_strategy, InteractionClass::Interface) == emacs);
+    CHECK(runtime.input_states()
+              .definition(runtime.input_strategies().state(vim, InteractionClass::Editing))
+              .name == "vim-normal");
 }
 
 TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
@@ -443,7 +449,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 65);
+    CHECK(*installed == 96);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -796,7 +802,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 65);
+    CHECK(snapshot.scripted_commands == 96);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

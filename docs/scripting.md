@@ -25,11 +25,12 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API; `(cind emacs)`, `(cind meow)`, and `(cind toy-modal)` define
-input strategies; and `(cind core)` composes the built-in editor policy. These modules are loaded
-before application keymaps are configured. Calls from C++ enter Guile through a condition boundary;
-a Scheme condition becomes a C++ error value and is retained in the scripting inspection snapshot.
-C++ exceptions raised by a host primitive are translated into Scheme conditions.
+defines the public command value API; `(cind emacs)`, `(cind meow)`, `(cind vim)`, and
+`(cind toy-modal)` define input strategies; and `(cind core)` composes the built-in editor policy.
+These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
+through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
+scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
+Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 provider, input-state, input-strategy, and mode counts, command/provider/keymap/input-state/mode
