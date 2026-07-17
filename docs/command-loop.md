@@ -91,8 +91,9 @@ and named thing bindings. Named input strategies map both interaction classes to
 Each View may select its own strategy or inherit the application default. A mode-specific initial
 state takes precedence over that mapping; otherwise the effective interaction class selects the
 durable state. Mode policy changes publish the Buffer identity and before/after policies, then
-rederive the base state of every View displaying that Buffer through its selected strategy while
-preserving each View's transient state stack. This makes a
+changes to the effective interaction class or initial state rederive the base state of every View
+displaying that Buffer through its selected strategy while preserving each View's transient state
+stack. Semantic thing changes leave the View's input posture intact. This makes a
 minor mode that changes an interface into editable text sufficient to change modal behavior without
 package-specific key-routing code.
 

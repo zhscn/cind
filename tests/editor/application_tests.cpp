@@ -359,6 +359,53 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     CHECK(runtime.modes().unsubscribe(listener));
 }
 
+TEST_CASE("semantic mode policy changes preserve the view input state stack") {
+    EditorRuntime runtime;
+    const auto input_state = [&](std::string name) {
+        return runtime.input_states().define({.name = std::move(name),
+                                              .keymaps = {},
+                                              .text_input = TextInputPolicy::Ignore,
+                                              .cursor = CursorShape::Block,
+                                              .indicator = {},
+                                              .handler = {},
+                                              .position_hints = {},
+                                              .on_enter = {},
+                                              .on_exit = {}});
+    };
+    const InputStateId normal = input_state("normal");
+    const InputStateId insert = input_state("insert");
+    const InputStateId capture = input_state("capture");
+    runtime.set_default_input_strategy(runtime.input_strategies().define(
+        {.name = "modal", .editing = normal, .interface = normal}));
+
+    const ModeId programming = runtime.modes().define("programming", ModeKind::Major);
+    runtime.modes().set_interaction_class(programming, InteractionClass::Editing);
+    const ModeId semantic = runtime.modes().define("semantic", ModeKind::Minor);
+    runtime.modes().set_things(semantic, {{.name = "item", .definition = "cind.word"}});
+
+    const BufferId buffer = runtime.buffers().create({.name = "source",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    BufferModes& modes = runtime.buffers().get(buffer).modes();
+    modes.set_major(runtime.modes(), programming);
+    const ViewId view = runtime.views().create(buffer);
+    runtime.views().set_base_input_state(view, insert);
+    runtime.views().push_input_state(view, capture);
+
+    REQUIRE(modes.enable_minor(runtime.modes(), semantic));
+    CHECK(runtime.views().get(view).input_states().stack() ==
+          std::vector<InputStateId>{insert, capture});
+    CHECK(runtime.modes().effective_policy(modes).things ==
+          std::vector<ModeThingBinding>{{.name = "item", .definition = "cind.word"}});
+
+    REQUIRE(modes.disable_minor(semantic));
+    CHECK(runtime.views().get(view).input_states().stack() ==
+          std::vector<InputStateId>{insert, capture});
+    CHECK(runtime.modes().effective_policy(modes).things.empty());
+}
+
 TEST_CASE("buffers have stable identities and outlive their views") {
     EditorRuntime runtime;
     const BufferId first = runtime.buffers().create({.name = "main.cc",

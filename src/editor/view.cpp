@@ -11,8 +11,12 @@ ViewRegistry::ViewRegistry(BufferRegistry& buffers, const SettingRegistry& setti
                            InputStrategyRegistry& input_strategies, ModeRegistry& modes)
     : buffers_(&buffers), settings_(&settings), input_states_(&input_states),
       input_strategies_(&input_strategies), modes_(&modes) {
-    mode_listener_ = modes_->subscribe(
-        [this](const BufferModePolicyChange& change) { refresh_mode_input_states(change.buffer); });
+    mode_listener_ = modes_->subscribe([this](const BufferModePolicyChange& change) {
+        if (change.before.interaction_class != change.after.interaction_class ||
+            change.before.initial_state != change.after.initial_state) {
+            refresh_mode_input_states(change.buffer);
+        }
+    });
 }
 
 ViewRegistry::~ViewRegistry() {

@@ -257,11 +257,12 @@ declared metadata together with the effective keymap names.
 
 `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode state.
 `buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy changes
-rederive every View of the Buffer through that View's selected strategy and notify procedures
-registered through `observe-mode-policy-changes!` with
+notify procedures registered through `observe-mode-policy-changes!` with
 `#(kind buffer-id mode-name-or-#f before-policy after-policy)`. A mode's explicit initial state
 precedes the class mapping, and the most recently enabled minor-mode declaration precedes the major
-mode.
+mode. A change to the effective interaction class or initial state rederives every View of the
+Buffer through that View's selected strategy while preserving its transient stack. Changes confined
+to semantic thing bindings preserve the View's durable and transient input states.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
