@@ -213,6 +213,34 @@ TEST_CASE("meow keypad feedback is exposed through the shared scene and inspecto
     }));
 }
 
+TEST_CASE("meow expansion hints share editor state Scene and inspector projections") {
+    EditorModel model("sample.cc", "one two three four five six seven eight nine ten eleven twelve",
+                      CppIndentStyle{}, "test", 1);
+    CHECK(model.handle_key(KeyStroke::character_key(U'c', KeyModifier::Control), 8));
+    CHECK(model.handle_key(KeyStroke::character_key(U'm'), 8));
+    CHECK(model.handle_key(KeyStroke::character_key(U'w'), 8));
+
+    const EditorStateSnapshot state = model.inspect();
+    CHECK(state.input_state == "meow-normal");
+    CHECK(state.position_hints.provider);
+    REQUIRE(state.position_hints.items.size() == 10);
+    CHECK(state.position_hints.items.front().label == "1");
+    CHECK(state.position_hints.items.back().label == "0");
+
+    const ui::Scene scene = compose_frame(model, 8, 80);
+    const ui::Region* body = scene.find(ui::RegionRole::TextArea);
+    REQUIRE(body != nullptr);
+    CHECK(std::ranges::count_if(body->primitives(), [](const ui::Prim& primitive) {
+              return primitive.kind == ui::PrimKind::PositionHint;
+          }) == 10);
+
+    CHECK(model.handle_key(KeyStroke::character_key(U'x'), 8));
+    const EditorStateSnapshot transient = model.inspect();
+    CHECK(transient.input_state == "meow-keypad");
+    CHECK_FALSE(transient.position_hints.provider);
+    CHECK(transient.position_hints.items.empty());
+}
+
 TEST_CASE("caret reveal moves a fractional row to the top edge") {
     EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
     compose_frame(model, 6, 80, 3.5F);

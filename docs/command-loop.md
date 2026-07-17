@@ -122,8 +122,11 @@ an unbound editing key cannot mutate the document behind a popup.
 
 The focused document state also supplies its cursor shape and modeline indicator. These presentation
 properties travel through the shared Scene and are rendered by both terminal and graphical
-frontends. A popup or echo-area interaction owns a beam cursor independently of the obscured
-document state.
+frontends. A state may additionally supply pure document-position hints derived from the current
+document revision, Selection, and effective mode policy. The application validates and memoizes the
+derived labels, while Scene composition maps byte offsets to visible replacement spans; neither the
+ANSI nor Skia renderer calls scripting policy. A popup or echo-area interaction owns a beam cursor
+independently of the obscured document state.
 
 Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
 first layer that recognizes that complete sequence decides whether it is a command or a prefix. A
@@ -203,6 +206,11 @@ redispatched through the durable state maps with the count intact. `-` supplies 
 negative argument. `"` pushes a single-key handler state that captures a named register. Count and
 register values compose through the shared invocation contract. The formatted prefix is projected
 into the echo area independently of pending keymap chords and transient-state feedback.
+
+An expandable Meow Selection publishes the next ten expansion destinations through the normal
+state's position-hint provider. Labels `1` through `9` and `0` correspond to expansion amounts one
+through ten. Keypad, numeric, register, and single-key capture states obscure these labels while
+they own input; returning to normal state derives them from the resulting Selection.
 
 Thing and Motion registries are application-owned named mechanism tables. Scheme definitions select
 pair, CST-node, character-class, fallback, and directional motion mechanisms; evaluation receives

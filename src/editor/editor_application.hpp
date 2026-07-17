@@ -210,10 +210,19 @@ private:
     };
 
     struct ViewState {
+        struct PositionHintCache {
+            InputStateId input_state;
+            RevisionId revision = 0;
+            ViewSelection selection;
+            EffectiveModePolicy mode_policy;
+            PositionHintProviderResult result;
+        };
+
         WindowId window;
         BufferId buffer;
         ViewId view;
         std::unique_ptr<EditSession> session;
+        std::optional<PositionHintCache> position_hints;
     };
 
     BufferState& active_buffer();

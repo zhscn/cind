@@ -259,7 +259,8 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
                                               .text_input = TextInputPolicy::Ignore,
                                               .cursor = CursorShape::Block,
                                               .indicator = {},
-                                              .handler = {}});
+                                              .handler = {},
+                                              .position_hints = {}});
     };
     const InputStateId normal = input_state("normal");
     const InputStateId motion = input_state("motion");
@@ -644,7 +645,8 @@ TEST_CASE("command completion owns selection results and strategy edit defaults"
                                                               .text_input = TextInputPolicy::Accept,
                                                               .cursor = CursorShape::Beam,
                                                               .indicator = {},
-                                                              .handler = {}});
+                                                              .handler = {},
+                                                              .position_hints = {}});
     const InputStrategyId collapse =
         runtime.input_strategies().define({.name = "selection-collapse",
                                            .editing = state,
@@ -1029,21 +1031,24 @@ TEST_CASE("input states are registered globally and stacked per view") {
                                                               .text_input = TextInputPolicy::Accept,
                                                               .cursor = CursorShape::Beam,
                                                               .indicator = "E",
-                                                              .handler = {}});
+                                                              .handler = {},
+                                                              .position_hints = {}});
     const InputStateId normal =
         runtime.input_states().define({.name = "normal",
                                        .keymaps = {normal_map},
                                        .text_input = TextInputPolicy::Ignore,
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
-                                       .handler = {}});
+                                       .handler = {},
+                                       .position_hints = {}});
     const InputStateId transient =
         runtime.input_states().define({.name = "transient",
                                        .keymaps = {transient_map},
                                        .text_input = TextInputPolicy::Ignore,
                                        .cursor = CursorShape::Underline,
                                        .indicator = "K",
-                                       .handler = {}});
+                                       .handler = {},
+                                       .position_hints = {}});
 
     const BufferId buffer = runtime.buffers().create({.name = "state-test",
                                                       .initial_text = {},

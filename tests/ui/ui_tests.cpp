@@ -12,6 +12,7 @@
 #include "ui/text_position.hpp"
 #include "ui/view_tree.hpp"
 
+#include <algorithm>
 #include <span>
 #include <string>
 
@@ -94,6 +95,7 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .signs = signs,
                                  .caret = TextOffset{0},
                                  .selections = {},
+                                 .position_hints = {},
                                  .rows = 6,
                                  .cols = 40,
                                  .visible_text_rows = 3.5F,
@@ -175,6 +177,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .signs = {},
                                               .caret = TextOffset{4},
                                               .selections = {},
+                                              .position_hints = {},
                                               .rows = 8,
                                               .cols = 80,
                                               .visible_text_rows = 6.0F,
@@ -231,6 +234,52 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     REQUIRE(popup_target);
     CHECK(popup_target->kind == HitTargetKind::PopupItem);
     CHECK(popup_target->popup_item == 1);
+}
+
+TEST_CASE("position hints replace document cells without changing text layout") {
+    const Text text("a中b\n");
+    const TokenBuffer tokens(lex(text).tokens);
+    const std::vector<PositionHint> hints{{.position = TextOffset{1}, .label = "1"}};
+    const Scene scene = compose_editor_scene({.text = text,
+                                              .tokens = tokens,
+                                              .signs = {},
+                                              .caret = TextOffset{4},
+                                              .selections = {},
+                                              .position_hints = hints,
+                                              .rows = 4,
+                                              .cols = 40,
+                                              .visible_text_rows = 2.0F,
+                                              .tab_width = 4,
+                                              .path = "sample.cc",
+                                              .dirty = false,
+                                              .revision = 1,
+                                              .style_origin = {},
+                                              .last_key = {},
+                                              .input_state_indicator = "N",
+                                              .pending_key = {},
+                                              .echo = {},
+                                              .echo_cursor_column = std::nullopt,
+                                              .echo_cursor_byte = std::nullopt,
+                                              .popup_title = {},
+                                              .popup_items = {},
+                                              .popup_selection = std::nullopt,
+                                              .popup_input = std::nullopt,
+                                              .popup_input_cursor = std::nullopt},
+                                             {});
+
+    const Region* body = scene.find(RegionRole::TextArea);
+    REQUIRE(body != nullptr);
+    const auto hint = std::ranges::find_if(body->primitives(), [](const Prim& primitive) {
+        return primitive.kind == PrimKind::PositionHint;
+    });
+    REQUIRE(hint != body->primitives().end());
+    CHECK(hint->row == 0);
+    CHECK(hint->col == 1);
+    CHECK(hint->text == "1");
+    CHECK(hint->style == StyleClass::PositionHint);
+    CHECK(hint->span_cols == 2);
+    CHECK(hint->id == "hint:0/byte:1");
+    CHECK(render_ansi(scene).find("\x1b[30;44m1 \x1b[0m") != std::string::npos);
 }
 
 TEST_CASE("view layers define paint order independently of region storage order") {

@@ -221,8 +221,17 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     const KeymapId transient_map = runtime.keymaps().define("test.state.transient-map");
     runtime.keymaps().bind(base_map, "z", base_command);
     runtime.keymaps().bind(transient_map, "z", transient_command);
+    int position_hint_calls = 0;
     const InputStateId base = runtime.input_states().define(
-        {.name = "test-base", .keymaps = {base_map}, .indicator = "B", .handler = {}});
+        {.name = "test-base",
+         .keymaps = {base_map},
+         .indicator = "B",
+         .handler = {},
+         .position_hints = [&](CommandContext& context) -> PositionHintProviderResult {
+             ++position_hint_calls;
+             CHECK(context.view_id() == application.view_id());
+             return std::vector<PositionHint>{{.position = TextOffset{1}, .label = "1"}};
+         }});
     const InputStateId transient = runtime.input_states().define(
         {.name = "test-transient",
          .keymaps = {transient_map},
@@ -256,9 +265,13 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
                                    {.key = "4", .detail = "window", .prefix = true}}}};
              }
              return InputStateHandlerAction{};
-         }});
+         },
+         .position_hints = {}});
     runtime.views().set_base_input_state(application.view_id(), base);
     runtime.views().push_input_state(application.view_id(), transient);
+    REQUIRE(application.position_hints(application.window_id()).has_value());
+    CHECK(application.position_hints(application.window_id())->empty());
+    CHECK(position_hint_calls == 0);
 
     CHECK(application.handle_key(KeyStroke::character_key(U'z'), 10));
     CHECK(selected == 2);
@@ -298,6 +311,20 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     CHECK(runtime.views().pop_input_state(application.view_id()) == transient);
     CHECK(application.handle_key(KeyStroke::character_key(U'z'), 10));
     CHECK(selected == 1);
+    const PositionHintProviderResult first_hints =
+        application.position_hints(application.window_id());
+    REQUIRE(first_hints.has_value());
+    CHECK(*first_hints == std::vector<PositionHint>{{.position = TextOffset{1}, .label = "1"}});
+    CHECK(position_hint_calls == 1);
+    CHECK(application.position_hints(application.window_id()) == first_hints);
+    CHECK(position_hint_calls == 1);
+
+    application.session().set_caret(TextOffset{2});
+    REQUIRE(application.position_hints(application.window_id()).has_value());
+    CHECK(position_hint_calls == 2);
+    application.insert_text("!");
+    REQUIRE(application.position_hints(application.window_id()).has_value());
+    CHECK(position_hint_calls == 3);
 }
 
 TEST_CASE("text input follows the focused input state policy") {
@@ -317,7 +344,8 @@ TEST_CASE("text input follows the focused input state policy") {
                                        .text_input = TextInputPolicy::Ignore,
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
-                                       .handler = {}});
+                                       .handler = {},
+                                       .position_hints = {}});
     runtime.views().set_base_input_state(application.view_id(), normal);
 
     CHECK(application.text_input_policy() == TextInputPolicy::Ignore);
@@ -453,7 +481,8 @@ TEST_CASE("Guile meow keypad supports literal and transparent base-layer fallbac
 }
 
 TEST_CASE("Guile meow motions and things consume shared noun registries") {
-    EditorApplication application = make_application("sample.cc", "one two three vector<int>");
+    EditorApplication application = make_application(
+        "sample.cc", "one two three vector<int> four five six seven eight nine ten eleven");
     EditorRuntime& runtime = application.runtime();
     send_keys(application, "C-c m");
 
@@ -472,11 +501,35 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
     CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 4));
     CHECK(application.session().active_selection()->metadata.find("type select . word") !=
           std::string::npos);
+    const PositionHintProviderResult first_hints =
+        application.position_hints(application.window_id());
+    REQUIRE(first_hints.has_value());
+    REQUIRE(first_hints->size() == 10);
+    CHECK(first_hints->front().label == "1");
+    CHECK(first_hints->front().position.value > 4);
+    CHECK((*first_hints)[1].label == "2");
+    CHECK((*first_hints)[1].position > first_hints->front().position);
+    CHECK(first_hints->back().label == "0");
+    CHECK(application.position_hints(application.window_id()) == first_hints);
     send_keys(application, "2");
     REQUIRE(application.session().active_selection().has_value());
     CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 14));
     CHECK(application.session().active_selection()->metadata.find("type expand . word") !=
           std::string::npos);
+    const PositionHintProviderResult expanded_hints =
+        application.position_hints(application.window_id());
+    REQUIRE(expanded_hints.has_value());
+    REQUIRE_FALSE(expanded_hints->empty());
+    CHECK(expanded_hints->front().position.value > 14);
+
+    send_keys(application, "x");
+    REQUIRE(application.position_hints(application.window_id()).has_value());
+    CHECK(application.position_hints(application.window_id())->empty());
+    send_keys(application, "C-g");
+    REQUIRE(application.position_hints(application.window_id()).has_value());
+    CHECK(application.position_hints(application.window_id())->empty());
+    send_keys(application, "w");
+    REQUIRE_FALSE(application.position_hints(application.window_id())->empty());
 
     application.session().clear_selection();
     application.session().set_caret(TextOffset{8});

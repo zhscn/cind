@@ -1174,22 +1174,61 @@ PositionHintProviderResult EditorApplication::position_hints(WindowId window) {
     if (!provider) {
         return std::vector<PositionHint>{};
     }
+    ViewState& view_state = view_state_for(view);
+    const DocumentSnapshot snapshot = view_state.session->snapshot();
+    const ViewSelection selection = view_state.session->selection_model();
+    const EffectiveModePolicy mode_policy =
+        runtime_.modes().effective_policy(view_state.session->buffer().modes());
+    if (view_state.position_hints && view_state.position_hints->input_state == *state &&
+        view_state.position_hints->revision == snapshot.revision() &&
+        view_state.position_hints->selection == selection &&
+        view_state.position_hints->mode_policy == mode_policy) {
+        return view_state.position_hints->result;
+    }
+
     CommandContext context(runtime_, window, buffer_id(window), view);
     PositionHintProviderResult result = provider(context);
     if (!result) {
-        return result;
+        view_state.position_hints = ViewState::PositionHintCache{.input_state = *state,
+                                                                 .revision = snapshot.revision(),
+                                                                 .selection = selection,
+                                                                 .mode_policy = mode_policy,
+                                                                 .result = result};
+        return view_state.position_hints->result;
     }
-    const std::uint32_t document_bytes = session(window).snapshot().content().size_bytes();
+    const std::optional<InputStateId> current_state =
+        runtime_.views().get(view).input_states().top();
+    const DocumentSnapshot current_snapshot = view_state.session->snapshot();
+    const ViewSelection current_selection = view_state.session->selection_model();
+    const EffectiveModePolicy current_mode_policy =
+        runtime_.modes().effective_policy(view_state.session->buffer().modes());
+    if (current_state != state || current_snapshot.revision() != snapshot.revision() ||
+        current_selection != selection || current_mode_policy != mode_policy) {
+        return std::unexpected("position hint provider mutated its query context");
+    }
+
+    const std::uint32_t document_bytes = snapshot.content().size_bytes();
+    std::optional<std::string> validation_error;
     for (const PositionHint& hint : *result) {
         if (hint.position.value > document_bytes) {
-            return std::unexpected(std::format("position hint at byte {} is past document end {}",
-                                               hint.position.value, document_bytes));
+            validation_error = std::format("position hint at byte {} is past document end {}",
+                                           hint.position.value, document_bytes);
+            break;
         }
         if (hint.label.empty()) {
-            return std::unexpected("position hint label must not be empty");
+            validation_error = "position hint label must not be empty";
+            break;
         }
     }
-    return result;
+    if (validation_error) {
+        result = std::unexpected(std::move(*validation_error));
+    }
+    view_state.position_hints = ViewState::PositionHintCache{.input_state = *state,
+                                                             .revision = snapshot.revision(),
+                                                             .selection = selection,
+                                                             .mode_policy = mode_policy,
+                                                             .result = std::move(result)};
+    return view_state.position_hints->result;
 }
 
 const std::string& EditorApplication::path() const {

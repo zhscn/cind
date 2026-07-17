@@ -509,6 +509,18 @@ EditorStateSnapshot EditorModel::inspect() {
     const std::optional<InputStrategyId> input_strategy =
         active_view.input_strategy() ? active_view.input_strategy()
                                      : application_.runtime().input_strategies().default_strategy();
+    PositionHintsStateSnapshot position_hints{
+        .provider = static_cast<bool>(input_state.position_hints), .items = {}, .error = {}};
+    PositionHintProviderResult position_hint_result =
+        application_.position_hints(application_.window_id());
+    if (position_hint_result) {
+        position_hints.items.reserve(position_hint_result->size());
+        for (const PositionHint& hint : *position_hint_result) {
+            position_hints.items.push_back({.position = hint.position, .label = hint.label});
+        }
+    } else {
+        position_hints.error = std::move(position_hint_result.error());
+    }
     return {.path = application_.path(),
             .revision = snapshot.revision(),
             .document_bytes = text.size_bytes(),
@@ -541,6 +553,7 @@ EditorStateSnapshot EditorModel::inspect() {
                 application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
             .selection_after_edit = std::string(selection_edit_policy_name(
                 application_.runtime().selection_edit_policy(application_.view_id()))),
+            .position_hints = std::move(position_hints),
             .command_loop = std::move(command_state),
             .scripting = std::move(scripting_state),
             .interaction = std::move(interaction_state),

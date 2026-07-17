@@ -128,6 +128,17 @@ struct SelectionStateSnapshot {
     std::vector<SelectionRangeStateSnapshot> ranges;
 };
 
+struct PositionHintStateSnapshot {
+    TextOffset position;
+    std::string label;
+};
+
+struct PositionHintsStateSnapshot {
+    bool provider = false;
+    std::vector<PositionHintStateSnapshot> items;
+    std::optional<std::string> error;
+};
+
 struct ScriptingStateSnapshot {
     std::string engine;
     std::string version;
@@ -171,6 +182,7 @@ struct EditorStateSnapshot {
     std::string input_state_indicator;
     std::string text_input_policy;
     std::string selection_after_edit;
+    PositionHintsStateSnapshot position_hints;
     CommandLoopStateSnapshot command_loop;
     ScriptingStateSnapshot scripting;
     InteractionStateSnapshot interaction;

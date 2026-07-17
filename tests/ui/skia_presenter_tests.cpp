@@ -134,6 +134,42 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
     CHECK(hit.column == scene.cursor_col - 1);
 }
 
+TEST_CASE("Skia position hints overlay shaped document cells without extending the line") {
+    SkiaTheme theme;
+    SkiaPresenter presenter("monospace", 16.0F, theme);
+    Scene scene;
+    scene.rows = 2;
+    scene.cols = 20;
+    scene.cursor_visible = false;
+    Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
+    body.primitives().push_back(
+        {0, 0, "abc", StyleClass::Text, false, PrimKind::Text, "line:0/byte:0"});
+    body.primitives().push_back(
+        {0, 1, "1", StyleClass::PositionHint, false, PrimKind::PositionHint, "hint:0", 1});
+    scene.regions.push_back(std::move(body));
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(scene, width, height, pixels.data(), row_bytes, 1.0F, &diagnostics);
+
+    REQUIRE(diagnostics.document_layout);
+    const SkiaDocumentLayoutDiagnostics& document = *diagnostics.document_layout;
+    REQUIRE(document.lines.size() == 1);
+    CHECK(document.lines.front().run_count == 1);
+    REQUIRE(diagnostics.primitives.size() == 2);
+    const SkiaPrimitiveRenderDiagnostics& hint = diagnostics.primitives.back();
+    CHECK(hint.primitive_index == 1);
+    CHECK(hint.layout_bounds.x > document.lines.front().origin_x);
+    CHECK(hint.layout_bounds.x < document.lines.front().origin_x + document.lines.front().advance);
+    CHECK(hint.layout_bounds.width >= static_cast<float>(presenter.cell_width()) - 1.0F);
+    REQUIRE(hint.paint_bounds);
+    const int sample_x = static_cast<int>(std::ceil(hint.layout_bounds.x));
+    CHECK(pixels[static_cast<std::size_t>(sample_x)] == theme.salient);
+}
+
 TEST_CASE("Skia presenter derives beam block and underline geometry from the Scene") {
     SkiaPresenter presenter("monospace", 16.0F);
     Scene scene;

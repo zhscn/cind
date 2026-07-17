@@ -492,6 +492,28 @@ void append_selection(std::string& output, const SelectionStateSnapshot& selecti
     output += "]}";
 }
 
+void append_position_hints(std::string& output, const PositionHintsStateSnapshot& hints) {
+    output += "{\"provider\":";
+    append_bool(output, hints.provider);
+    output += ",\"items\":[";
+    for (std::size_t index = 0; index < hints.items.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const PositionHintStateSnapshot& hint = hints.items[index];
+        output += std::format("{{\"byte\":{},\"label\":", hint.position.value);
+        append_json_string(output, hint.label);
+        output.push_back('}');
+    }
+    output += "],\"error\":";
+    if (hints.error) {
+        append_json_string(output, *hints.error);
+    } else {
+        output += "null";
+    }
+    output.push_back('}');
+}
+
 void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     output += "{\"path\":";
     append_json_string(output, editor.path);
@@ -504,6 +526,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
         editor.caret_display_column);
     output += ",\"selection\":";
     append_selection(output, editor.selection);
+    output += ",\"position_hints\":";
+    append_position_hints(output, editor.position_hints);
     output += std::format(
         ",\"viewport\":{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}},"
         "\"line_signs\":",
@@ -570,6 +594,7 @@ void append_prim(std::string& output, const ui::Region& region, const ui::Prim& 
     append_json_string(output, prim_kind_name(prim.kind));
     output += ",\"selected\":";
     append_bool(output, prim.selected);
+    output += std::format(",\"span_cols\":{}", prim.span_cols);
     output.push_back('}');
 }
 
@@ -1180,6 +1205,20 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
         if (range.anchor.value > frame.editor.document_bytes ||
             range.head.value > frame.editor.document_bytes) {
             violations.emplace_back("editor selection range is past the document end");
+            break;
+        }
+    }
+    if (!frame.editor.position_hints.provider &&
+        (!frame.editor.position_hints.items.empty() || frame.editor.position_hints.error)) {
+        violations.emplace_back("editor position hints exist without an active provider");
+    }
+    for (const PositionHintStateSnapshot& hint : frame.editor.position_hints.items) {
+        if (hint.position.value > frame.editor.document_bytes) {
+            violations.emplace_back("editor position hint is past the document end");
+            break;
+        }
+        if (hint.label.empty()) {
+            violations.emplace_back("editor position hint label is empty");
             break;
         }
     }
@@ -1865,6 +1904,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
                         frame.editor.caret_position.byte_column, frame.editor.caret_display_column);
     } else if (path == "editor.selection") {
         append_selection(output, frame.editor.selection);
+    } else if (path == "editor.position_hints") {
+        append_position_hints(output, frame.editor.position_hints);
     } else if (path == "editor.viewport") {
         output = std::format("{{\"top_line\":{},\"top_line_offset\":{},\"left_column\":{}}}",
                              frame.editor.viewport.top_line, frame.editor.viewport.top_line_offset,
@@ -1906,6 +1947,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_json_string(output, frame.editor.text_input_policy);
         output += ",\"selection_after_edit\":";
         append_json_string(output, frame.editor.selection_after_edit);
+        output += ",\"position_hints_provider\":";
+        append_bool(output, frame.editor.position_hints.provider);
         output.push_back('}');
     } else if (path == "scene") {
         append_scene(output, frame.scene);
@@ -2339,6 +2382,13 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " primary=" << frame.editor.selection.primary
            << " history=" << frame.editor.selection.history_depth << " meta=\""
            << printable(frame.editor.selection.metadata) << "\"\n";
+    output << "    position-hints provider="
+           << (frame.editor.position_hints.provider ? "true" : "false")
+           << " items=" << frame.editor.position_hints.items.size();
+    if (frame.editor.position_hints.error) {
+        output << " error=\"" << printable(*frame.editor.position_hints.error) << '"';
+    }
+    output << '\n';
     output << "    focus=" << printable(frame.editor.input_focus)
            << " strategy=" << printable(frame.editor.input_strategy)
            << " state=" << printable(frame.editor.input_state)

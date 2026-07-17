@@ -77,6 +77,9 @@ struct InputStateHandlerAction {
 using InputStateHandlerResult = std::expected<InputStateHandlerAction, std::string>;
 using InputStateHandler = std::function<InputStateHandlerResult(CommandContext&, KeyStroke)>;
 using PositionHintProviderResult = std::expected<std::vector<PositionHint>, std::string>;
+// Position hints are presentation policy derived from the current document,
+// Selection, effective mode policy, and InputState. Providers are pure queries;
+// the application memoizes their result across equivalent presentation frames.
 using PositionHintProvider = std::function<PositionHintProviderResult(CommandContext&)>;
 
 class InputStateRegistry {

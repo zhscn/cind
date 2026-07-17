@@ -63,6 +63,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .input_state_indicator = "",
         .text_input_policy = "accept",
         .selection_after_edit = "collapse",
+        .position_hints = {.provider = true,
+                           .items = {{.position = TextOffset{2}, .label = "1"}},
+                           .error = std::nullopt},
         .command_loop =
             {.keymaps = {"interaction.picker", "application.global"},
              .layers = {{.name = "interaction.picker",
@@ -161,6 +164,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     body.set_document_mapping({.first_line = 0, .first_display_column = 0});
     body.primitives().push_back(
         {0, 0, "int", StyleClass::Keyword, false, PrimKind::Text, "line:0/byte:0"});
+    body.primitives().push_back(
+        {0, 2, "1", StyleClass::PositionHint, false, PrimKind::PositionHint, "hint:0", 1});
     Region status{RegionRole::StatusBar,  {1, 0, 1, 10},     {}, SurfaceClass::Status,
                   VerticalAnchor::Bottom, "editor/modeline", 7};
     status.set_status(Region::StatusContent{
@@ -376,7 +381,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":38") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":39") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -406,6 +411,10 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"selection\":{\"active\":true,\"primary\":1") != std::string::npos);
     CHECK(snapshot.find("\"history_depth\":2") != std::string::npos);
     CHECK(snapshot.find("\"selection_after_edit\":\"collapse\"") != std::string::npos);
+    CHECK(snapshot.find("\"position_hints\":{\"provider\":true,\"items\":[{\"byte\":2,"
+                        "\"label\":\"1\"}],\"error\":null}") != std::string::npos);
+    CHECK(snapshot.find("\"kind\":\"position-hint\",\"selected\":false,\"span_cols\":1") !=
+          std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
           std::string::npos);
@@ -425,6 +434,12 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(selection.payload.find("\"history_depth\":2") != std::string::npos);
     CHECK(selection.payload.find("\"granularity\":\"node\"") != std::string::npos);
 
+    const InspectionResponse position_hints =
+        run_inspection_query(hub, "get editor.position_hints");
+    REQUIRE(position_hints.ok);
+    CHECK(position_hints.payload ==
+          "{\"provider\":true,\"items\":[{\"byte\":2,\"label\":\"1\"}],\"error\":null}");
+
     const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");
     REQUIRE(command_loop.ok);
     CHECK(command_loop.payload.find("\"last_command\":\"edit.insert\"") != std::string::npos);
@@ -438,7 +453,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(input_state.payload ==
           "{\"strategy\":\"emacs\",\"name\":\"emacs\",\"cursor_shape\":\"beam\","
           "\"indicator\":\"\",\"text_input\":\"accept\","
-          "\"selection_after_edit\":\"collapse\"}");
+          "\"selection_after_edit\":\"collapse\",\"position_hints_provider\":true}");
 
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);

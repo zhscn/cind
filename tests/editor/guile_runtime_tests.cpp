@@ -165,6 +165,11 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
+    const InputStateId meow_normal =
+        runtime.input_states().find("meow-normal").value_or(InputStateId{});
+    REQUIRE(meow_normal);
+    CHECK(runtime.input_states().definition(meow_normal).position_hints);
+    CHECK_FALSE(runtime.input_states().definition(keypad).position_hints);
     CHECK(guile.snapshot().scripted_input_states == 16);
     CHECK(guile.snapshot().scripted_input_strategies == 5);
     const InputStrategyId helix =

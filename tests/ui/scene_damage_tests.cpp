@@ -84,6 +84,33 @@ TEST_CASE("scene damage follows grapheme width and visual style") {
     CHECK(styled.cell_rects.front().cols == 4);
 }
 
+TEST_CASE("scene damage tracks position hint replacement spans") {
+    SceneDamageTracker tracker;
+    Scene scene = text_scene("a中b");
+    REQUIRE(tracker.update(scene).full_repaint);
+
+    scene.regions.front().primitives().push_back(
+        {0, 1, "1", StyleClass::PositionHint, false, PrimKind::PositionHint, "hint:0", 2});
+    const SceneDamage added = tracker.update(scene);
+    REQUIRE_FALSE(added.full_repaint);
+    REQUIRE(added.cell_rects.size() == 1);
+    CHECK(added.cell_rects.front().col == 1);
+    CHECK(added.cell_rects.front().cols == 2);
+
+    CHECK(tracker.update(scene).cell_rects.empty());
+    scene.regions.front().primitives().back().text = "2";
+    const SceneDamage relabeled = tracker.update(scene);
+    REQUIRE(relabeled.cell_rects.size() == 1);
+    CHECK(relabeled.cell_rects.front().col == 1);
+    CHECK(relabeled.cell_rects.front().cols == 1);
+
+    scene.regions.front().primitives().pop_back();
+    const SceneDamage removed = tracker.update(scene);
+    REQUIRE(removed.cell_rects.size() == 1);
+    CHECK(removed.cell_rects.front().col == 1);
+    CHECK(removed.cell_rects.front().cols == 2);
+}
+
 TEST_CASE("scene damage requests full repaint for geometry and broad changes") {
     SceneDamageTracker tracker;
     CHECK(tracker.update(text_scene("a")).full_repaint);

@@ -60,6 +60,7 @@ The native module exports:
 (set-input-feedback! host view-id sequence hints)
 (clear-input-feedback! host view-id)
 (define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
+(set-input-state-position-hints! host state-name provider-or-#f)
 (define-input-strategy! host name editing-state interface-state selection-after-edit)
 (set-default-input-strategy! host strategy-name)
 (set-view-input-strategy! host view-id strategy-name-or-#f)
@@ -172,6 +173,17 @@ count, register, and extras. Pending consumes the key and publishes the supplied
 prefixes. Handler errors are retained by the scripting runtime and consume the key without escaping
 into a frontend event loop. The system override map is resolved before a handler, so `C-g` remains
 an unconditional escape path.
+
+`set-input-state-position-hints!` attaches an optional document-decoration query to an InputState.
+The provider receives a command context and returns a vector of `#(byte-offset label)` values.
+Only the top state contributes hints, so a transient state naturally obscures the durable state's
+decorations. Providers are pure queries over the context's document snapshot, complete Selection,
+effective mode policy, and InputState. The application memoizes a validated result for that tuple;
+document edits, Selection changes, mode-policy changes, and state transitions derive a new result.
+Offsets must be inside the document and labels must be non-empty. Provider conditions and malformed
+results become inspection-visible errors rather than escaping through a frontend render loop.
+Position hints enter the frontend-independent Scene as replacement decorations. Their explicit cell
+span covers the source grapheme without changing document shaping, cursor placement, or line layout.
 
 An input strategy is a named mapping from the `editing` and `interface` interaction classes to
 durable states. Its `selection-after-edit` policy is `collapse` or `preserve` and applies when a
