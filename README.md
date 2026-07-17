@@ -22,6 +22,13 @@ Skia and its WebKit-maintained CMake build files are included in `third_party/sk
 GUI does not require a separate Skia checkout, GN, depot_tools, or an external source directory.
 CMake downloads doctest when tests are enabled, so the initial configure requires network access.
 
+On macOS with Homebrew, install the native dependencies with:
+
+```sh
+brew install cmake ninja pkgconf utf8proc libuv guile sdl3 freetype fontconfig \
+  icu4c@78 jpeg-turbo libpng harfbuzz
+```
+
 ## Build the GUI
 
 Configure and build with standard CMake commands:
@@ -31,6 +38,15 @@ cmake -S . -B build-gui -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCIND_BUILD_GUI=ON
 cmake --build build-gui -j
+```
+
+Homebrew installs ICU as a keg-only dependency. On macOS, add its prefix while configuring:
+
+```sh
+cmake -S . -B build-gui -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCIND_BUILD_GUI=ON \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix icu4c@78)"
 ```
 
 The first GUI build compiles the vendored Skia library and can take longer than subsequent builds.

@@ -1,13 +1,17 @@
 cmake_minimum_required(VERSION 3.28)
 project(cind LANGUAGES CXX)
 
+if (CIND_BUILD_GUI AND APPLE)
+  enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_compile_options(-Wall -Wextra -Wconversion -Wshadow)
 
-option(CIND_BUILD_GUI "Build the Skia/SDL3 Wayland editor frontend" OFF)
+option(CIND_BUILD_GUI "Build the Skia/SDL3 graphical editor frontend" OFF)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Utf8Proc REQUIRED IMPORTED_TARGET libutf8proc)

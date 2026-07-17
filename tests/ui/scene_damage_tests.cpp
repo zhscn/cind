@@ -132,7 +132,11 @@ TEST_CASE("scene damage requests full repaint for geometry and broad changes") {
     Scene shifted = text_scene("abcdefghijkl");
     CHECK(offset_tracker.update(shifted).full_repaint);
     shifted.grid_offset_rows = -0.5F;
-    CHECK(offset_tracker.update(shifted).full_repaint);
+    const SceneDamage offset = offset_tracker.update(shifted);
+    CHECK_FALSE(offset.full_repaint);
+    CHECK(offset.grid_transform_changed);
+    CHECK(offset.grid_translation_rows == doctest::Approx(-0.5F));
+    CHECK(offset.cell_rects.empty());
 }
 
 TEST_CASE("scene damage tracks active line and overlay geometry") {

@@ -291,12 +291,16 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
     const std::vector<Rect> next_overlay_rects = overlay_rects(scene);
     const std::vector<Rect> next_footer_rects = footer_rects(scene);
     const std::size_t total_cells = next_cells.size();
+    const bool grid_transform_changed =
+        initialized_ && std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F;
     const bool geometry_changed = rows_ != scene.rows || cols_ != scene.cols ||
-                                  std::abs(grid_offset_rows_ - scene.grid_offset_rows) > 0.0001F ||
                                   !same_rects(overlay_rects_, next_overlay_rects) ||
                                   !same_rects(footer_rects_, next_footer_rects);
 
     SceneDamage damage;
+    damage.grid_transform_changed = grid_transform_changed;
+    damage.grid_translation_rows =
+        grid_transform_changed ? scene.grid_offset_rows - grid_offset_rows_ : 0.0F;
     if (force_full_repaint || !initialized_ || geometry_changed) {
         damage.full_repaint = true;
         damage.damaged_cells = total_cells;
@@ -308,7 +312,8 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
                 ++damage.damaged_cells;
             }
         }
-        if (total_cells > 0 && damage.damaged_cells * 2 >= total_cells) {
+        if (!grid_transform_changed && total_cells > 0 &&
+            damage.damaged_cells * 2 >= total_cells) {
             damage.full_repaint = true;
         } else {
             damage.cell_rects = coalesce_cells(dirty, scene);

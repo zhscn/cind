@@ -22,7 +22,7 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial, C
                     .platform_services = std::move(platform_services)}) {
     if (!application_.has_background_work()) {
         application_.set_message(
-            "SDL3 Wayland · Skia · C-x C-s save · C-x C-c quit · M-x commands");
+            "SDL3 · Skia · C-x C-s save · C-x C-c quit · M-x commands");
     }
 }
 
@@ -330,7 +330,7 @@ void EditorModel::click(const ui::HitTarget& target) {
     application_.show_caret();
 }
 
-void EditorModel::scroll_lines(int delta) {
+void EditorModel::scroll_lines(float delta) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
     const int last_line = static_cast<int>(snapshot.content().line_count()) - 1;
@@ -343,6 +343,25 @@ void EditorModel::scroll_lines(int delta) {
     viewport.top_line = static_cast<std::uint32_t>(integral);
     viewport.top_line_offset = static_cast<float>(clamped - integral);
     application_.hide_caret();
+}
+
+EditorRenderState EditorModel::render_state() {
+    EditSession& session = application_.session();
+    const DocumentSnapshot snapshot = session.snapshot();
+    const ViewportState& viewport = session.view().viewport();
+    const WindowId window = application_.window_id();
+    const ViewId view = application_.view_id();
+    const BufferId buffer = application_.buffer_id(window);
+    return {.revision = snapshot.revision(),
+            .viewport = {.top_line = viewport.top_line,
+                         .top_line_offset = viewport.top_line_offset,
+                         .left_column = viewport.left_column},
+            .window_slot = window.slot,
+            .window_generation = window.generation,
+            .view_slot = view.slot,
+            .view_generation = view.generation,
+            .buffer_slot = buffer.slot,
+            .buffer_generation = buffer.generation};
 }
 
 EditorStateSnapshot EditorModel::inspect() {

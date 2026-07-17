@@ -127,6 +127,18 @@ pixels. `SkiaPresenter::damage_rects` projects scene damage through the prepared
 text damage conservatively for shaped glyph ink. `GuiFrameController` converts logical damage into
 outward-rounded physical output rectangles.
 
+Fractional changes to the single-grid transform are tracked separately from geometry changes. They
+invalidate the clipped document grid while retaining bottom-anchored chrome; resize, region
+geometry changes and explicit force requests still invalidate the full frame. Text shaping uses
+bounded per-font run caches, so unchanged strings reuse immutable `SkTextBlob` data while layout
+origins, colors and clipping remain frame-local.
+
+When only the fractional grid transform changes and maps to an integral output-pixel translation,
+the retained CPU raster is shifted in place and Skia repaints only the newly exposed strip. Frames
+with overlays, pane grids, changed cells or subpixel output translations use normal damage
+rendering. The current SDL streaming texture still uploads the full changed grid after this CPU
+reuse; reducing that transfer requires the planned tiled or ring-texture compositor.
+
 Static frames update only damaged ranges of the retained raster and the corresponding SDL streaming
 texture rectangles. Animated frames repaint the full raster because several Scene keyframes and a
 transient view overlay contribute to one output. SDL composites the retained texture into the
@@ -170,7 +182,7 @@ echo and popup content into terminal cells. Skia shapes the same content in logi
 use fractional positioning, clipping, shadows and native font fallback. Backend-specific layout
 objects do not enter the editor runtime or command APIs.
 
-SDL is a platform shell rather than a widget toolkit in this design. It owns the Wayland window,
+SDL is a platform shell rather than a widget toolkit in this design. It owns the platform window,
 scale, input method, clipboard integration, renderer and texture upload. Scene composition and hit
 semantics remain valid for another window-system or graphics backend.
 

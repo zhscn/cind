@@ -3,6 +3,9 @@
 #include "gui/inspect_server.hpp"
 #include "gui/inspection.hpp"
 #include "gui/skia_presenter.hpp"
+#if defined(__APPLE__)
+#include "gui/mac_scroll_bridge.hpp"
+#endif
 
 #include <SDL3/SDL.h>
 
@@ -35,7 +38,16 @@ namespace cind::gui {
 
 namespace {
 
+#if defined(__APPLE__)
+constexpr float wheel_lines_per_step = 1.0F;
+#else
 constexpr float wheel_lines_per_step = 3.0F;
+#endif
+
+double elapsed_microseconds(std::chrono::steady_clock::time_point started,
+                            std::chrono::steady_clock::time_point finished) {
+    return std::chrono::duration<double, std::micro>(finished - started).count();
+}
 
 class HeadlessWakeup {
 public:
@@ -186,12 +198,17 @@ std::optional<KeyStroke> editor_key(SDL_Scancode scancode, SDL_Keymod modifiers)
 class SdlRuntime {
 public:
     SdlRuntime() {
+#if defined(__APPLE__)
+        SDL_SetHint(SDL_HINT_MAC_SCROLL_MOMENTUM, "1");
+#else
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+#endif
         if (!SDL_Init(SDL_INIT_VIDEO)) {
             throw std::runtime_error(
                 std::format("SDL video initialization failed: {}", SDL_GetError()));
         }
         initialized_ = true;
+#if !defined(__APPLE__)
         const char* driver = SDL_GetCurrentVideoDriver();
         if (!driver || std::string_view(driver) != "wayland") {
             SDL_Quit();
@@ -199,6 +216,7 @@ public:
             throw std::runtime_error(
                 std::format("SDL selected '{}' instead of Wayland", driver ? driver : "none"));
         }
+#endif
     }
 
     ~SdlRuntime() {
@@ -237,7 +255,7 @@ public:
         : editor_(editor), presenter_(presenter), frame_controller_(presenter),
           inspection_(inspection), background_event_(background_event) {
         constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-        window_.reset(SDL_CreateWindow("cind · Skia · Wayland", 1100, 760, flags));
+        window_.reset(SDL_CreateWindow("cind · Skia", 1100, 760, flags));
         if (!window_) {
             throw std::runtime_error(std::format("SDL window creation failed: {}", SDL_GetError()));
         }
@@ -252,6 +270,30 @@ public:
         if (!SDL_StartTextInput(window_.get())) {
             throw std::runtime_error(std::format("SDL text input failed: {}", SDL_GetError()));
         }
+#if defined(__APPLE__)
+        mac_scroll_event_ = SDL_RegisterEvents(1);
+        if (mac_scroll_event_ == 0) {
+            throw std::runtime_error(
+                std::format("SDL scroll event allocation failed: {}", SDL_GetError()));
+        }
+        void* native_window = SDL_GetPointerProperty(SDL_GetWindowProperties(window_.get()),
+                                                     SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+        mac_scroll_monitor_ = install_mac_scroll_monitor(
+            native_window,
+            [](MacScrollDelta delta, void* context) {
+                static_cast<SdlWindow*>(context)->queue_mac_scroll(delta);
+            },
+            this);
+        if (mac_scroll_monitor_ == nullptr) {
+            throw std::runtime_error("failed to install the macOS precision scroll monitor");
+        }
+#endif
+    }
+
+    ~SdlWindow() {
+#if defined(__APPLE__)
+        uninstall_mac_scroll_monitor(mac_scroll_monitor_);
+#endif
     }
 
     void run() {
@@ -291,21 +333,13 @@ private:
         bool repaint = false;
     };
 
-    static FrameIdentity frame_identity(const EditorStateSnapshot& editor) {
-        for (const OpenWindowStateSnapshot& window : editor.windows) {
-            if (!window.active) {
-                continue;
-            }
-            return {.window_slot = window.window_slot,
-                    .window_generation = window.window_generation,
-                    .view_slot = window.view_slot,
-                    .view_generation = window.view_generation,
-                    .buffer_slot = window.buffer_slot,
-                    .buffer_generation = window.buffer_generation,
-                    .revision = editor.revision};
-        }
-        return {.window_slot = editor.active_window_slot,
-                .window_generation = editor.active_window_generation,
+    static FrameIdentity frame_identity(const EditorRenderState& editor) {
+        return {.window_slot = editor.window_slot,
+                .window_generation = editor.window_generation,
+                .view_slot = editor.view_slot,
+                .view_generation = editor.view_generation,
+                .buffer_slot = editor.buffer_slot,
+                .buffer_generation = editor.buffer_generation,
                 .revision = editor.revision};
     }
 
@@ -331,6 +365,19 @@ private:
         if (event.type == background_event_) {
             return {true, false};
         }
+#if defined(__APPLE__)
+        if (event.type == mac_scroll_event_) {
+            const float lines = pending_mac_scroll_lines_;
+            pending_mac_scroll_lines_ = 0.0F;
+            mac_scroll_event_queued_ = false;
+            last_mac_scroll_lines_ = lines;
+            if (lines != 0.0F) {
+                editor_.scroll_lines(lines);
+                direct_scroll_pending_ = true;
+            }
+            return {true, lines != 0.0F};
+        }
+#endif
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -377,14 +424,19 @@ private:
             if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
                 amount = -amount;
             }
-            wheel_scroll_accumulator_ -= amount * wheel_lines_per_step;
-            const int lines = static_cast<int>(wheel_scroll_accumulator_);
-            if (lines != 0) {
+#if defined(__APPLE__)
+            const float lines = amount * wheel_lines_per_step;
+#else
+            const float lines = -amount * wheel_lines_per_step;
+#endif
+            if (lines != 0.0F) {
                 editor_.scroll_lines(lines);
-                wheel_scroll_accumulator_ -= static_cast<float>(lines);
+#if defined(__APPLE__)
+                direct_scroll_pending_ = true;
+#endif
             }
             const bool handled = amount != 0.0F;
-            return {handled, lines != 0};
+            return {handled, handled};
         }
         default:
             return {};
@@ -395,6 +447,11 @@ private:
         if (event.type == background_event_) {
             return "background-ready";
         }
+#if defined(__APPLE__)
+        if (event.type == mac_scroll_event_) {
+            return "mac-scroll";
+        }
+#endif
         switch (event.type) {
         case SDL_EVENT_QUIT:
             return "quit";
@@ -428,6 +485,11 @@ private:
     }
 
     std::string event_detail(const SDL_Event& event) const {
+#if defined(__APPLE__)
+        if (event.type == mac_scroll_event_) {
+            return std::format("lines={}", last_mac_scroll_lines_);
+        }
+#endif
         switch (event.type) {
         case SDL_EVENT_KEY_DOWN:
             return std::format(
@@ -454,7 +516,8 @@ private:
                 target->popup_item ? std::to_string(*target->popup_item) : "none");
         }
         case SDL_EVENT_MOUSE_WHEEL:
-            return std::format("delta=({}, {}) direction={}", event.wheel.x, event.wheel.y,
+            return std::format("delta=({}, {}) ticks=({}, {}) direction={}", event.wheel.x,
+                               event.wheel.y, event.wheel.integer_x, event.wheel.integer_y,
                                static_cast<int>(event.wheel.direction));
         case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -484,6 +547,8 @@ private:
     }
 
     void paint() {
+        const auto frame_started = std::chrono::steady_clock::now();
+        RenderTimingSnapshot timings;
         int pixel_width = 0;
         int pixel_height = 0;
         if (!SDL_GetRenderOutputSize(renderer_.get(), &pixel_width, &pixel_height) ||
@@ -504,8 +569,15 @@ private:
             std::clamp(text_height / cell_height, 1.0F, static_cast<float>(rows_ - 2));
         page_rows_ = std::clamp(static_cast<int>(std::floor(text_height / cell_height + 0.0001F)),
                                 1, rows_ - 2);
+        const auto layout_started = std::chrono::steady_clock::now();
         editor_.layout_view(rows_, columns_, visible_text_rows);
+        const auto layout_finished = std::chrono::steady_clock::now();
+        timings.layout_us = elapsed_microseconds(layout_started, layout_finished);
+
+        const auto compose_started = layout_finished;
         ui::Scene scene = editor_.compose(rows_, columns_, visible_text_rows);
+        const auto compose_finished = std::chrono::steady_clock::now();
+        timings.compose_us = elapsed_microseconds(compose_started, compose_finished);
 
         const std::size_t pixel_count =
             static_cast<std::size_t>(pixel_width) * static_cast<std::size_t>(pixel_height);
@@ -518,21 +590,43 @@ private:
             throw std::runtime_error("SDL texture pitch exceeds the supported range");
         }
 
-        EditorStateSnapshot editor_snapshot = editor_.inspect();
-        const float scroll_top = static_cast<float>(editor_snapshot.viewport.top_line) +
-                                 editor_snapshot.viewport.top_line_offset;
+        const auto state_started = std::chrono::steady_clock::now();
+        const EditorRenderState editor_state = editor_.render_state();
+        const auto state_finished = std::chrono::steady_clock::now();
+        timings.render_state_us = elapsed_microseconds(state_started, state_finished);
+        std::optional<EditorStateSnapshot> editor_snapshot;
+        if (inspection_) {
+            const auto inspect_started = std::chrono::steady_clock::now();
+            editor_snapshot = editor_.inspect();
+            timings.inspect_us =
+                elapsed_microseconds(inspect_started, std::chrono::steady_clock::now());
+        }
+        const float scroll_top = static_cast<float>(editor_state.viewport.top_line) +
+                                 editor_state.viewport.top_line_offset;
+        const SkiaShapeCacheStats shape_cache_before = presenter_.shape_cache_stats();
+        const auto build_started = std::chrono::steady_clock::now();
         PresentedFrame frame = frame_controller_.build({.scene = std::move(scene),
-                                                        .identity = frame_identity(editor_snapshot),
+                                                        .identity = frame_identity(editor_state),
                                                         .scroll_top = scroll_top,
                                                         .logical_width = logical_output_width_,
                                                         .logical_height = logical_output_height_,
                                                         .output_width = pixel_width,
                                                         .output_height = pixel_height,
                                                         .display_scale = scale,
+                                                        .animate_scroll = !direct_scroll_pending_,
                                                         .geometry_changed = geometry_changed,
                                                         .now = FrameClock::now()});
+        timings.frame_build_us =
+            elapsed_microseconds(build_started, std::chrono::steady_clock::now());
+        const SkiaShapeCacheStats shape_cache_after = presenter_.shape_cache_stats();
+        timings.shape_cache_hits = shape_cache_after.hits - shape_cache_before.hits;
+        timings.shape_cache_misses = shape_cache_after.misses - shape_cache_before.misses;
+        timings.shape_cache_evictions = shape_cache_after.evictions - shape_cache_before.evictions;
+        timings.shape_cache_entries = shape_cache_after.entries;
+        direct_scroll_pending_ = false;
 
         SkiaRenderDiagnostics render_diagnostics;
+        const auto raster_started = std::chrono::steady_clock::now();
         if (frame.animated()) {
             presenter_.render_animated(frame.layout(), frame.animation(), pixel_width, pixel_height,
                                        pixels_.data(), row_bytes, scale,
@@ -541,11 +635,18 @@ private:
             presenter_.render(frame.layout(), pixel_width, pixel_height, pixels_.data(), row_bytes,
                               scale, inspection_ ? &render_diagnostics : nullptr);
         } else if (!frame.logical_damage().empty()) {
-            presenter_.render_damage(frame.layout(), pixel_width, pixel_height, pixels_.data(),
-                                     row_bytes, frame.logical_damage(), scale);
+            if (!presenter_.render_grid_translation_damage(
+                    frame.layout(), frame.scene_damage(), pixel_width, pixel_height, pixels_.data(),
+                    row_bytes, scale)) {
+                presenter_.render_damage(frame.layout(), pixel_width, pixel_height, pixels_.data(),
+                                         row_bytes, frame.logical_damage(), scale);
+            }
         }
+        timings.raster_us =
+            elapsed_microseconds(raster_started, std::chrono::steady_clock::now());
 
         bool full_reference_match = true;
+        const auto reference_started = std::chrono::steady_clock::now();
         if (inspection_ && frame.animated()) {
             diagnostic_pixels_.resize(pixel_count);
             presenter_.render_animated(frame.layout(), frame.animation(), pixel_width, pixel_height,
@@ -557,9 +658,12 @@ private:
                               row_bytes, scale, &render_diagnostics);
             full_reference_match = diagnostic_pixels_ == pixels_;
         }
+        timings.reference_us =
+            elapsed_microseconds(reference_started, std::chrono::steady_clock::now());
 
         ensure_texture(pixel_width, pixel_height);
         const auto* pixel_bytes = reinterpret_cast<const std::byte*>(pixels_.data());
+        const auto upload_started = std::chrono::steady_clock::now();
         for (const FrameDamageRect& rect : frame.damage()) {
             const SDL_Rect output_rect{.x = rect.output.x,
                                        .y = rect.output.y,
@@ -573,22 +677,35 @@ private:
                 throw std::runtime_error(
                     std::format("SDL texture update failed: {}", SDL_GetError()));
             }
+            timings.uploaded_bytes += static_cast<std::uint64_t>(rect.output.width) *
+                                      static_cast<std::uint64_t>(rect.output.height) *
+                                      sizeof(std::uint32_t);
+            ++timings.upload_rects;
         }
+        timings.upload_us =
+            elapsed_microseconds(upload_started, std::chrono::steady_clock::now());
+        const auto present_started = std::chrono::steady_clock::now();
         if (!SDL_RenderClear(renderer_.get()) ||
             !SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr)) {
             throw std::runtime_error(std::format("SDL presentation failed: {}", SDL_GetError()));
         }
         update_text_input_area(frame);
         SDL_RenderPresent(renderer_.get());
+        const auto present_finished = std::chrono::steady_clock::now();
+        timings.present_us = elapsed_microseconds(present_started, present_finished);
+        timings.total_us = elapsed_microseconds(frame_started, present_finished);
         rendered_scale_ = scale;
-        publish_inspection(std::move(editor_snapshot), frame, render_diagnostics,
-                           full_reference_match);
+        if (editor_snapshot) {
+            publish_inspection(std::move(*editor_snapshot), frame, render_diagnostics,
+                               full_reference_match, timings);
+        }
         frame_controller_.did_present(frame);
         presented_frame_ = std::move(frame);
     }
 
     void publish_inspection(EditorStateSnapshot editor_snapshot, const PresentedFrame& frame,
-                            const SkiaRenderDiagnostics& diagnostics, bool full_reference_match) {
+                            const SkiaRenderDiagnostics& diagnostics, bool full_reference_match,
+                            const RenderTimingSnapshot& timings) {
         if (!inspection_) {
             return;
         }
@@ -726,6 +843,8 @@ private:
         }
         RenderDamageSnapshot render_damage{
             .full_repaint = frame.full_presentation_repaint(),
+            .grid_transform_changed = frame.scene_damage().grid_transform_changed,
+            .grid_translation_rows = frame.scene_damage().grid_translation_rows,
             .damaged_cells = frame.scene_damage().damaged_cells,
             .damaged_output_pixels = 0,
             .output_fraction = 0.0,
@@ -790,6 +909,7 @@ private:
             .pixel_hash = hash_pixels(),
             .animation = animation,
             .damage = std::move(render_damage),
+            .timings = timings,
             .document_layout = std::move(document_layout),
             .popup_layout = std::move(popup_layout),
             .echo_layout = std::move(echo_layout),
@@ -849,11 +969,37 @@ private:
         return std::nullopt;
     }
 
+#if defined(__APPLE__)
+    void queue_mac_scroll(MacScrollDelta delta) {
+        const float lines = delta.precise
+                                ? delta.y / static_cast<float>(presenter_.cell_height())
+                                : delta.y * wheel_lines_per_step;
+        pending_mac_scroll_lines_ += lines;
+        if (mac_scroll_event_queued_) {
+            return;
+        }
+        SDL_Event event{};
+        event.type = mac_scroll_event_;
+        if (!SDL_PushEvent(&event)) {
+            pending_mac_scroll_lines_ = 0.0F;
+            return;
+        }
+        mac_scroll_event_queued_ = true;
+    }
+#endif
+
     EditorModel& editor_;
     SkiaPresenter& presenter_;
     GuiFrameController frame_controller_;
     InspectionHub* inspection_ = nullptr;
     Uint32 background_event_ = 0;
+#if defined(__APPLE__)
+    Uint32 mac_scroll_event_ = 0;
+    void* mac_scroll_monitor_ = nullptr;
+    float pending_mac_scroll_lines_ = 0.0F;
+    float last_mac_scroll_lines_ = 0.0F;
+    bool mac_scroll_event_queued_ = false;
+#endif
     std::unique_ptr<SDL_Window, WindowDeleter> window_;
     std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
     std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
@@ -868,15 +1014,15 @@ private:
     int rows_ = 24;
     int columns_ = 80;
     int page_rows_ = 22;
-    float wheel_scroll_accumulator_ = 0.0F;
+    bool direct_scroll_pending_ = false;
     bool suppress_text_input_ = false;
     bool vsync_enabled_ = false;
     std::uint64_t last_repaint_event_sequence_ = 0;
 };
 
 // Renders one frame headless and writes the raw N32 (BGRA) pixels. No SDL, no
-// Wayland: the presenter rasterizes into an owned buffer, the reliable way to
-// capture the real chrome for font-smoothing comparisons. The vendored Skia is
+// The presenter rasterizes into an owned buffer, the reliable way to capture
+// the real chrome for font-smoothing comparisons. The vendored Skia is
 // built without encoders, so a tiny external step turns the dump into a PNG.
 struct ScreenshotGeometry {
     float font_size = 16.0F;

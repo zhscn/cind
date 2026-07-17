@@ -62,6 +62,8 @@ struct RenderDamageRectSnapshot {
 
 struct RenderDamageSnapshot {
     bool full_repaint = false;
+    bool grid_transform_changed = false;
+    float grid_translation_rows = 0.0F;
     std::size_t damaged_cells = 0;
     std::uint64_t damaged_output_pixels = 0;
     double output_fraction = 0.0;
@@ -89,6 +91,25 @@ struct RenderAnimationSnapshot {
     std::vector<RenderScrollLayerSnapshot> layers;
     std::optional<float> active_line_y;
     std::optional<LogicalPixelRectSnapshot> cursor_rect;
+};
+
+struct RenderTimingSnapshot {
+    double layout_us = 0.0;
+    double compose_us = 0.0;
+    double render_state_us = 0.0;
+    double inspect_us = 0.0;
+    double frame_build_us = 0.0;
+    double raster_us = 0.0;
+    double reference_us = 0.0;
+    double upload_us = 0.0;
+    double present_us = 0.0;
+    double total_us = 0.0;
+    std::uint64_t uploaded_bytes = 0;
+    std::size_t upload_rects = 0;
+    std::uint64_t shape_cache_hits = 0;
+    std::uint64_t shape_cache_misses = 0;
+    std::uint64_t shape_cache_evictions = 0;
+    std::size_t shape_cache_entries = 0;
 };
 
 struct FontMetricsSnapshot {
@@ -183,6 +204,7 @@ struct RenderStateSnapshot {
     std::uint64_t pixel_hash = 0;
     RenderAnimationSnapshot animation;
     RenderDamageSnapshot damage;
+    RenderTimingSnapshot timings;
     std::optional<DocumentLayoutSnapshot> document_layout;
     std::optional<PopupLayoutSnapshot> popup_layout;
     std::optional<EchoLayoutSnapshot> echo_layout;
@@ -200,7 +222,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 40;
+    static constexpr int schema_version = 41;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

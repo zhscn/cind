@@ -311,12 +311,15 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .pixel_hash = 42,
         .animation = std::move(animation),
         .damage = {.full_repaint = scroll_frame || document_cursor_animation,
+                   .grid_transform_changed = false,
+                   .grid_translation_rows = 0.0F,
                    .damaged_cells = 1,
                    .damaged_output_pixels = 1350,
                    .output_fraction = 0.03,
                    .full_reference_match = full_reference_match,
                    .rects = {{.logical = {.x = 0.0F, .y = 0.0F, .width = 30.0F, .height = 20.0F},
                               .output = {.x = 0, .y = 0, .width = 45, .height = 30}}}},
+        .timings = {},
         .document_layout =
             DocumentLayoutSnapshot{
                 .bounds = {.x = 0.0F, .y = 0.0F, .width = 100.0F, .height = 20.0F},
@@ -384,7 +387,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":40") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":41") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -570,6 +573,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse damage = run_inspection_query(hub, "get render.damage");
     REQUIRE(damage.ok);
     CHECK(damage.payload.find("\"full_repaint\":false") != std::string::npos);
+    CHECK(damage.payload.find("\"grid_translation_rows\":0") != std::string::npos);
     CHECK(damage.payload.find("\"output\":{\"x\":0,\"y\":0,\"width\":45") != std::string::npos);
     CHECK(damage.payload.find("\"full_reference_match\":true") != std::string::npos);
 

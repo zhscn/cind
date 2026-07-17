@@ -31,13 +31,14 @@ public:
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);
     void click(const ui::HitTarget& target);
-    void scroll_lines(int delta);
+    void scroll_lines(float delta);
     bool has_background_work() const { return application_.has_background_work(); }
     bool poll_background_work() { return application_.poll_background_work(); }
     bool should_quit() const { return application_.should_quit(); }
     void request_quit(bool force = false) { application_.request_quit(force); }
 
     RevisionId revision() const { return application_.revision(); }
+    EditorRenderState render_state();
     EditorStateSnapshot inspect();
 
 private:

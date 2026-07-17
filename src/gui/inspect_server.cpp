@@ -1,5 +1,6 @@
 #include "gui/inspect_server.hpp"
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -23,6 +24,51 @@ namespace {
 
 std::runtime_error socket_error(std::string_view operation) {
     return std::runtime_error(std::format("{}: {}", operation, std::strerror(errno)));
+}
+
+int set_close_on_exec(int descriptor) {
+    int flags = -1;
+    do {
+        flags = ::fcntl(descriptor, F_GETFD);
+    } while (flags < 0 && errno == EINTR);
+    if (flags < 0) {
+        return -1;
+    }
+    int result = -1;
+    do {
+        result = ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
+    } while (result < 0 && errno == EINTR);
+    return result;
+}
+
+int create_local_socket() {
+#if defined(__linux__)
+    return ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (descriptor >= 0 && set_close_on_exec(descriptor) < 0) {
+        const int error = errno;
+        ::close(descriptor);
+        errno = error;
+        return -1;
+    }
+    return descriptor;
+#endif
+}
+
+int accept_local_socket(int listening) {
+#if defined(__linux__)
+    return ::accept4(listening, nullptr, nullptr, SOCK_CLOEXEC);
+#else
+    const int descriptor = ::accept(listening, nullptr, nullptr);
+    if (descriptor >= 0 && set_close_on_exec(descriptor) < 0) {
+        const int error = errno;
+        ::close(descriptor);
+        errno = error;
+        return -1;
+    }
+    return descriptor;
+#endif
 }
 
 sockaddr_un socket_address(const std::filesystem::path& path) {
@@ -186,7 +232,7 @@ InspectorServer::InspectorServer(InspectionHub& hub, std::filesystem::path socke
         throw socket_error("cannot inspect existing inspector socket");
     }
 
-    const int socket = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    const int socket = create_local_socket();
     if (socket < 0) {
         throw socket_error("cannot create inspector socket");
     }
@@ -230,7 +276,7 @@ void InspectorServer::serve() {
         if (listening < 0) {
             return;
         }
-        const int client = ::accept4(listening, nullptr, nullptr, SOCK_CLOEXEC);
+        const int client = accept_local_socket(listening);
         if (client < 0) {
             if (errno == EINTR) {
                 continue;
@@ -279,7 +325,7 @@ void InspectorServer::handle_client(int client) const {
 
 InspectionResponse send_inspector_request(const std::filesystem::path& socket_path,
                                           std::string_view request) {
-    const int socket = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    const int socket = create_local_socket();
     if (socket < 0) {
         throw socket_error("cannot create inspector client socket");
     }

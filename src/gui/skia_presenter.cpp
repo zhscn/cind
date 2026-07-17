@@ -25,9 +25,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <format>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace cind::gui {
@@ -125,6 +127,19 @@ struct ShapedText {
     float advance = 0.0F;
     SkRect shape_bounds;
 };
+
+struct CachedShape {
+    sk_sp<SkTextBlob> blob;
+    float advance = 0.0F;
+    SkRect shape_bounds;
+};
+
+struct ShapeCache {
+    std::unordered_map<std::string, CachedShape> entries;
+    std::deque<std::string> insertion_order;
+};
+
+constexpr std::size_t max_shape_cache_entries = 4096;
 
 struct PositionedText {
     std::string role;
@@ -670,13 +685,34 @@ struct SkiaPresenter::Impl {
                     .advance = 0.0F,
                     .shape_bounds = SkRect::MakeEmpty()};
         }
+        ShapeCache& cache = text_font.getTypeface() == strong_font.getTypeface()
+                                ? strong_shape_cache
+                                : regular_shape_cache;
+        if (const auto cached = cache.entries.find(text); cached != cache.entries.end()) {
+            ++shape_cache_hits;
+            return {.text = std::move(text),
+                    .blob = cached->second.blob,
+                    .advance = cached->second.advance,
+                    .shape_bounds = cached->second.shape_bounds};
+        }
+        ++shape_cache_misses;
         TextLayoutRunHandler handler;
         shaper->shape(text.data(), text.size(), text_font, true, SK_ScalarMax, &handler);
         sk_sp<SkTextBlob> blob = handler.make_blob();
+        const float advance = handler.advance();
+        const SkRect bounds = blob ? blob->bounds() : SkRect::MakeEmpty();
+        if (cache.entries.size() >= max_shape_cache_entries) {
+            cache.entries.erase(cache.insertion_order.front());
+            cache.insertion_order.pop_front();
+            ++shape_cache_evictions;
+        }
+        cache.insertion_order.push_back(text);
+        cache.entries.emplace(
+            text, CachedShape{.blob = blob, .advance = advance, .shape_bounds = bounds});
         return {.text = std::move(text),
-                .blob = blob,
-                .advance = handler.advance(),
-                .shape_bounds = blob ? blob->bounds() : SkRect::MakeEmpty()};
+                .blob = std::move(blob),
+                .advance = advance,
+                .shape_bounds = bounds};
     }
 
     ShapedText shape_text(std::string text) const { return shape_text(std::move(text), font); }
@@ -1999,6 +2035,11 @@ struct SkiaPresenter::Impl {
     SkFont font;
     SkFont strong_font;
     std::unique_ptr<SkShaper> shaper;
+    mutable ShapeCache regular_shape_cache;
+    mutable ShapeCache strong_shape_cache;
+    mutable std::uint64_t shape_cache_hits = 0;
+    mutable std::uint64_t shape_cache_misses = 0;
+    mutable std::uint64_t shape_cache_evictions = 0;
     SkiaFontSmoothing smoothing = SkiaFontSmoothing::Smooth;
     float ascent = 0.0F;
     float descent = 0.0F;
@@ -2064,6 +2105,14 @@ float SkiaPresenter::status_bar_height() const {
 
 float SkiaPresenter::echo_area_height() const {
     return footer_height_for(ui::RegionRole::EchoArea, static_cast<float>(impl_->cell_height));
+}
+
+SkiaShapeCacheStats SkiaPresenter::shape_cache_stats() const {
+    return {.hits = impl_->shape_cache_hits,
+            .misses = impl_->shape_cache_misses,
+            .evictions = impl_->shape_cache_evictions,
+            .entries = impl_->regular_shape_cache.entries.size() +
+                       impl_->strong_shape_cache.entries.size()};
 }
 
 ui::SceneVerticalMetrics SkiaPresenter::vertical_metrics(float viewport_height) const {
@@ -2349,7 +2398,11 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const SkiaFrameLayout& 
     const float cell_height = static_cast<float>(impl_->cell_height);
     const float footer_top = vertical_layout.grid_clip_bottom();
     std::vector<SkiaLogicalRect> rectangles;
-    rectangles.reserve(damage.cell_rects.size() + damage.cursor_cells.size());
+    rectangles.reserve(damage.cell_rects.size() + damage.cursor_cells.size() + 1);
+    if (damage.grid_transform_changed && footer_top > 0.0F) {
+        append_damage(rectangles,
+                      {.x = 0.0F, .y = 0.0F, .width = frame_width, .height = footer_top});
+    }
     const auto append_cells = [&](const ui::Rect& cells, float vertical_limit) {
         const float left = static_cast<float>(cells.col * impl_->cell_width);
         const float top = vertical_layout.row_top(cells.row);
@@ -2643,6 +2696,67 @@ void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width
                   storage.popup ? &*storage.popup : nullptr,
                   storage.echo ? &*storage.echo : nullptr, storage.documents,
                   storage.documents.empty() ? nullptr : &storage.documents.front());
+}
+
+bool SkiaPresenter::render_grid_translation_damage(const SkiaFrameLayout& layout,
+                                                   const ui::SceneDamage& damage, int pixel_width,
+                                                   int pixel_height, void* pixels,
+                                                   std::size_t row_bytes, float device_scale) {
+    const SkiaFrameLayout::Storage& storage = checked_layout(layout);
+    validate_layout_viewport(
+        {.width = storage.viewport_width, .height = storage.viewport_height},
+        {.width = pixel_width, .height = pixel_height, .device_scale = device_scale});
+    const ui::Scene& scene = *storage.scene;
+    const bool has_overlay = std::ranges::any_of(scene.regions, [](const ui::Region& region) {
+        return region.vertical_anchor == ui::VerticalAnchor::Overlay;
+    });
+    if (damage.full_repaint || !damage.grid_transform_changed ||
+        damage.grid_translation_rows == 0.0F || !damage.cell_rects.empty() ||
+        !damage.cursor_cells.empty() || !scene.panes.empty() || has_overlay) {
+        return false;
+    }
+    if (pixels == nullptr || pixel_width <= 0 || pixel_height <= 0 ||
+        row_bytes < static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t)) {
+        throw std::invalid_argument("SkiaPresenter received an invalid pixel buffer");
+    }
+
+    const float output_translation = damage.grid_translation_rows *
+                                     static_cast<float>(impl_->cell_height) * device_scale;
+    const int output_rows = static_cast<int>(std::lround(output_translation));
+    if (output_rows == 0 ||
+        std::abs(output_translation - static_cast<float>(output_rows)) > 0.001F) {
+        return false;
+    }
+    const float logical_grid_bottom = storage.pixel_layout->vertical().grid_clip_bottom();
+    const int grid_output_bottom =
+        std::clamp(static_cast<int>(std::ceil(logical_grid_bottom * device_scale)), 0,
+                   pixel_height);
+    if (std::abs(output_rows) >= grid_output_bottom) {
+        return false;
+    }
+
+    auto* bytes = static_cast<std::byte*>(pixels);
+    SkiaLogicalRect exposed;
+    if (output_rows < 0) {
+        const int rows_to_copy = grid_output_bottom + output_rows;
+        std::memmove(bytes, bytes + static_cast<std::size_t>(-output_rows) * row_bytes,
+                     static_cast<std::size_t>(rows_to_copy) * row_bytes);
+        exposed = {.x = 0.0F,
+                   .y = static_cast<float>(rows_to_copy) / device_scale,
+                   .width = storage.viewport_width,
+                   .height = static_cast<float>(-output_rows) / device_scale};
+    } else {
+        const int rows_to_copy = grid_output_bottom - output_rows;
+        std::memmove(bytes + static_cast<std::size_t>(output_rows) * row_bytes, bytes,
+                     static_cast<std::size_t>(rows_to_copy) * row_bytes);
+        exposed = {.x = 0.0F,
+                   .y = 0.0F,
+                   .width = storage.viewport_width,
+                   .height = static_cast<float>(output_rows) / device_scale};
+    }
+    render_damage(layout, pixel_width, pixel_height, pixels, row_bytes,
+                  std::span<const SkiaLogicalRect>(&exposed, 1), device_scale);
+    return true;
 }
 
 void SkiaPresenter::render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,

@@ -200,7 +200,10 @@ if (CIND_BUILD_GUI)
     gui/skia_presenter.cpp
   )
   target_include_directories(cind_skia_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(cind_skia_ui PUBLIC cind_ui PRIVATE Skia::Skia)
+  target_link_libraries(cind_skia_ui
+    PUBLIC cind_ui
+    PRIVATE Skia::Skia Fontconfig::Fontconfig Freetype::Freetype
+  )
 
   add_library(cind_gui_presentation STATIC
     gui/frame_controller.cpp
@@ -213,6 +216,14 @@ if (CIND_BUILD_GUI)
   add_executable(cind-gui
     gui/main.cpp
   )
+  if (APPLE)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    target_sources(cind-gui PRIVATE gui/mac_scroll_bridge.mm)
+    set_source_files_properties(gui/mac_scroll_bridge.mm PROPERTIES
+      COMPILE_OPTIONS "-fobjc-arc"
+    )
+    target_link_libraries(cind-gui PRIVATE "${APPKIT_FRAMEWORK}")
+  endif()
   target_link_libraries(cind-gui PRIVATE
     cind_gui_model
     cind_gui_presentation

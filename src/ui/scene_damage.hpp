@@ -11,6 +11,8 @@ namespace cind::ui {
 
 struct SceneDamage {
     bool full_repaint = false;
+    bool grid_transform_changed = false;
+    float grid_translation_rows = 0.0F;
     std::size_t damaged_cells = 0;
     std::vector<Rect> cell_rects;
     std::vector<CellPoint> cursor_cells;

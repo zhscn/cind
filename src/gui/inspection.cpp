@@ -1004,10 +1004,14 @@ void append_document_layout(std::string& output,
 void append_render_damage(std::string& output, const RenderDamageSnapshot& damage) {
     output += "{\"full_repaint\":";
     append_bool(output, damage.full_repaint);
+    output += ",\"grid_transform_changed\":";
+    append_bool(output, damage.grid_transform_changed);
     output +=
-        std::format(",\"damaged_cells\":{},\"damaged_output_pixels\":{},"
+        std::format(",\"grid_translation_rows\":{},\"damaged_cells\":{},"
+                    "\"damaged_output_pixels\":{},"
                     "\"output_fraction\":{},\"full_reference_match\":",
-                    damage.damaged_cells, damage.damaged_output_pixels, damage.output_fraction);
+                    damage.grid_translation_rows, damage.damaged_cells,
+                    damage.damaged_output_pixels, damage.output_fraction);
     append_bool(output, damage.full_reference_match);
     output += ",\"rects\":[";
     for (std::size_t index = 0; index < damage.rects.size(); ++index) {
@@ -1059,6 +1063,20 @@ void append_render_animation(std::string& output, const RenderAnimationSnapshot&
         output += "null";
     }
     output.push_back('}');
+}
+
+void append_render_timings(std::string& output, const RenderTimingSnapshot& timings) {
+    output += std::format(
+        "{{\"layout_us\":{},\"compose_us\":{},\"render_state_us\":{},\"inspect_us\":{},"
+        "\"frame_build_us\":{},\"raster_us\":{},\"reference_us\":{},\"upload_us\":{},"
+        "\"present_us\":{},\"total_us\":{},\"uploaded_bytes\":{},\"upload_rects\":{},"
+        "\"shape_cache_hits\":{},\"shape_cache_misses\":{},"
+        "\"shape_cache_evictions\":{},\"shape_cache_entries\":{}}}",
+        timings.layout_us, timings.compose_us, timings.render_state_us, timings.inspect_us,
+        timings.frame_build_us, timings.raster_us, timings.reference_us, timings.upload_us,
+        timings.present_us, timings.total_us, timings.uploaded_bytes, timings.upload_rects,
+        timings.shape_cache_hits, timings.shape_cache_misses, timings.shape_cache_evictions,
+        timings.shape_cache_entries);
 }
 
 void append_render(std::string& output, const RenderStateSnapshot& render) {
@@ -1113,6 +1131,8 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_render_animation(output, render.animation);
     output += ",\"damage\":";
     append_render_damage(output, render.damage);
+    output += ",\"timings\":";
+    append_render_timings(output, render.timings);
     output += ",\"document_layout\":";
     append_document_layout(output, render.document_layout);
     output += ",\"popup_layout\":";
@@ -2012,6 +2032,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_render_animation(output, frame.render.animation);
     } else if (path == "render.damage") {
         append_render_damage(output, frame.render.damage);
+    } else if (path == "render.timings") {
+        append_render_timings(output, frame.render.timings);
     } else if (path == "render.document_layout") {
         append_document_layout(output, frame.render.document_layout);
     } else if (path == "render.popup_layout") {
@@ -2607,12 +2629,31 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << '\n';
     }
     output << "    damage=" << (frame.render.damage.full_repaint ? "full" : "partial")
+           << " grid-transform="
+           << (frame.render.damage.grid_transform_changed ? "true" : "false")
+           << " translation-rows=" << frame.render.damage.grid_translation_rows
            << " rects=" << frame.render.damage.rects.size()
            << " cells=" << frame.render.damage.damaged_cells
            << " output-pixels=" << frame.render.damage.damaged_output_pixels
            << " fraction=" << frame.render.damage.output_fraction
            << " reference-match=" << (frame.render.damage.full_reference_match ? "true" : "false")
            << '\n';
+    output << "    timings-us layout=" << frame.render.timings.layout_us
+           << " compose=" << frame.render.timings.compose_us
+           << " state=" << frame.render.timings.render_state_us
+           << " inspect=" << frame.render.timings.inspect_us
+           << " build=" << frame.render.timings.frame_build_us
+           << " raster=" << frame.render.timings.raster_us
+           << " reference=" << frame.render.timings.reference_us
+           << " upload=" << frame.render.timings.upload_us
+           << " present=" << frame.render.timings.present_us
+           << " total=" << frame.render.timings.total_us
+           << " uploaded-bytes=" << frame.render.timings.uploaded_bytes
+           << " upload-rects=" << frame.render.timings.upload_rects
+           << " shape-cache=" << frame.render.timings.shape_cache_hits << '/'
+           << frame.render.timings.shape_cache_misses
+           << " evictions=" << frame.render.timings.shape_cache_evictions
+           << " entries=" << frame.render.timings.shape_cache_entries << '\n';
     for (const PrimitiveRenderSnapshot& primitive : frame.render.primitives) {
         if (primitive.row_overflow) {
             output << "      ! " << printable(primitive.id)

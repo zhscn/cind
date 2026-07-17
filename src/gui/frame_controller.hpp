@@ -83,6 +83,7 @@ struct FrameRequest {
     int output_width = 0;
     int output_height = 0;
     float display_scale = 1.0F;
+    bool animate_scroll = true;
     bool geometry_changed = false;
     FrameClock::time_point now = FrameClock::now();
 };
@@ -173,7 +174,8 @@ private:
 
     void update_animation_targets(const std::shared_ptr<const ui::Scene>& scene,
                                   const SkiaViewPresentation& target_view, float scroll_top,
-                                  const FrameIdentity& identity, bool geometry_changed,
+                                  const FrameIdentity& identity, bool animate_scroll,
+                                  bool geometry_changed,
                                   FrameClock::time_point now);
     AnimationPresentation animation_presentation(const SkiaViewPresentation& target_view,
                                                  float logical_height,

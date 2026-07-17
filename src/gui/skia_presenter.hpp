@@ -73,6 +73,13 @@ struct SkiaLogicalPoint {
     float y = 0.0F;
 };
 
+struct SkiaShapeCacheStats {
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t evictions = 0;
+    std::size_t entries = 0;
+};
+
 enum class SkiaCursorOwner : std::uint8_t {
     None,
     Document,
@@ -261,6 +268,7 @@ public:
     const SkiaTheme& theme() const;
     float status_bar_height() const;
     float echo_area_height() const;
+    SkiaShapeCacheStats shape_cache_stats() const;
     // Vertical metrics with this presenter's footer heights, for callers that
     // need the same row mapping the painter uses (mouse hits, inspection).
     ui::SceneVerticalMetrics vertical_metrics(float viewport_height) const;
@@ -300,6 +308,13 @@ public:
     void render_damage(const SkiaFrameLayout& layout, int pixel_width, int pixel_height,
                        void* pixels, std::size_t row_bytes, std::span<const SkiaLogicalRect> damage,
                        float device_scale = 1.0F);
+    // Reuses the retained raster when a fractional scroll translates otherwise unchanged grid
+    // content by a whole number of output pixels. Returns false when the frame needs normal damage
+    // rendering instead.
+    bool render_grid_translation_damage(const SkiaFrameLayout& layout,
+                                        const ui::SceneDamage& damage, int pixel_width,
+                                        int pixel_height, void* pixels, std::size_t row_bytes,
+                                        float device_scale = 1.0F);
     void render_animated(const ui::Scene& scene, const SkiaAnimationFrame& animation,
                          int pixel_width, int pixel_height, void* pixels, std::size_t row_bytes,
                          float device_scale = 1.0F, SkiaRenderDiagnostics* diagnostics = nullptr);

@@ -17,6 +17,16 @@
 using namespace cind::gui;
 using namespace cind::ui;
 
+namespace {
+
+int editor_viewport_height(const SkiaPresenter& presenter, int grid_rows) {
+    const float height = static_cast<float>(grid_rows * presenter.cell_height()) +
+                         presenter.status_bar_height() + presenter.echo_area_height();
+    return static_cast<int>(std::ceil(height));
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
     doctest::Context context(argc, argv);
     const int result = context.run();
@@ -106,7 +116,7 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
     scene.cursor_col = 5 + local_column + 1;
 
     const int width = presenter.cell_width() * scene.cols;
-    const int height = presenter.cell_height() * scene.rows;
+    const int height = editor_viewport_height(presenter, body.rect.rows);
     const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
     const SkiaFrameLayout layout =
@@ -457,6 +467,75 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
     CHECK(cursor_pixels == cell_height);
 }
 
+TEST_CASE("Skia presenter limits fractional scroll damage to the document grid") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    SceneDamageTracker tracker;
+
+    Scene scene;
+    scene.rows = 4;
+    scene.cols = 12;
+    scene.cursor_visible = false;
+    Region body{RegionRole::TextArea, {0, 0, 2, 12}, {}};
+    body.primitives().push_back({0, 0, "top", StyleClass::Text, false});
+    body.primitives().push_back({1, 0, "bottom", StyleClass::Text, false});
+    Region status{
+        RegionRole::StatusBar, {2, 0, 1, 12}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
+    status.primitives().push_back({0, 0, "status", StyleClass::StatusBar, false});
+    Region echo{
+        RegionRole::EchoArea, {3, 0, 1, 12}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
+    scene.regions = {body, status, echo};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const float grid_height = static_cast<float>(height) - presenter.status_bar_height() -
+                              presenter.echo_area_height();
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
+    std::vector<std::uint32_t> reference(retained.size());
+    REQUIRE(tracker.update(scene).full_repaint);
+    presenter.render(scene, width, height, retained.data(), row_bytes);
+
+    scene.grid_offset_rows = -0.5F;
+    const SceneDamage damage = tracker.update(scene);
+    REQUIRE_FALSE(damage.full_repaint);
+    REQUIRE(damage.grid_transform_changed);
+    const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
+        scene, damage, static_cast<float>(width), static_cast<float>(height));
+    REQUIRE(rectangles.size() == 1);
+    CHECK(rectangles.front().x == 0.0F);
+    CHECK(rectangles.front().y == 0.0F);
+    CHECK(rectangles.front().width == static_cast<float>(width));
+    CHECK(rectangles.front().height == doctest::Approx(grid_height));
+
+    CHECK(presenter.render_grid_translation_damage(
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height)),
+        damage, width, height, retained.data(), row_bytes));
+    presenter.render(scene, width, height, reference.data(), row_bytes);
+    CHECK(retained == reference);
+}
+
+TEST_CASE("Skia presenter reuses shaped text runs across layouts") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    Scene scene;
+    scene.rows = 3;
+    scene.cols = 20;
+    scene.cursor_visible = false;
+    Region body{RegionRole::TextArea, {0, 0, 1, 20}, {}};
+    body.primitives().push_back({0, 0, "cached text", StyleClass::Text, false});
+    scene.regions.push_back(std::move(body));
+
+    const SkiaShapeCacheStats before = presenter.shape_cache_stats();
+    presenter.prepare_layout(scene, 200.0F, 60.0F);
+    const SkiaShapeCacheStats first = presenter.shape_cache_stats();
+    presenter.prepare_layout(scene, 200.0F, 60.0F);
+    const SkiaShapeCacheStats second = presenter.shape_cache_stats();
+
+    CHECK(first.misses > before.misses);
+    CHECK(second.misses == first.misses);
+    CHECK(second.hits > first.hits);
+    CHECK(second.entries == first.entries);
+}
+
 TEST_CASE("Skia presenter keeps popup painting and damage independent of fractional scrolling") {
     SkiaPresenter presenter("monospace", 16.0F);
     SceneDamageTracker tracker;
@@ -643,7 +722,7 @@ TEST_CASE("Skia damage rendering matches a full reference frame") {
     constexpr float scale = 1.5F;
     Scene scene = make_scene("abcdef", 1);
     const float logical_width = static_cast<float>(presenter.cell_width() * scene.cols);
-    const float logical_height = static_cast<float>(presenter.cell_height() * scene.rows);
+    const float logical_height = static_cast<float>(editor_viewport_height(presenter, 1));
     const int width = static_cast<int>(std::ceil(logical_width * scale));
     const int height = static_cast<int>(std::ceil(logical_height * scale));
     const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
@@ -993,11 +1072,17 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
     };
     CHECK(pixel(before) == theme.highlight);
     CHECK(pixel(after) == theme.highlight);
-    std::size_t changed_pixels = 0;
-    for (std::size_t index = 0; index < before.size(); ++index) {
-        changed_pixels += before[index] != after[index] ? 1 : 0;
+    const int blank_left = presenter.cell_width() * 10;
+    for (int y = 0; y < height; ++y) {
+        for (int x = blank_left; x < width; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) *
+                                          static_cast<std::size_t>(width) +
+                                      static_cast<std::size_t>(x);
+            CAPTURE(x);
+            CAPTURE(y);
+            CHECK(before[index] == after[index]);
+        }
     }
-    CHECK(changed_pixels < before.size() / 50);
 }
 
 TEST_CASE("Skia line-number emphasis follows the animated document caret midpoint") {

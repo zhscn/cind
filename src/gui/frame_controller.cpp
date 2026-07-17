@@ -215,7 +215,7 @@ void GuiFrameController::retain_presented_layouts(const std::shared_ptr<const ui
 void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui::Scene>& scene,
                                                   const SkiaViewPresentation& target_view,
                                                   float scroll_top, const FrameIdentity& identity,
-                                                  bool geometry_changed,
+                                                  bool animate_scroll, bool geometry_changed,
                                                   FrameClock::time_point now) {
     // A workspace contains independently scrolling pane grids; the scalar
     // scroll timeline represents a single grid only. Composite frames use
@@ -233,6 +233,11 @@ void GuiFrameController::update_animation_targets(const std::shared_ptr<const ui
         *last_identity_ != identity) {
         scroll_animation_.reset();
         view_animation_.reset();
+    } else if (!animate_scroll) {
+        scroll_animation_.reset();
+        if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
+            view_animation_.reset();
+        }
     } else if (std::abs(*last_scroll_top_ - scroll_top) > 0.0001F) {
         const float line_delta = scroll_top - *last_scroll_top_;
         if (std::abs(line_delta) <= 4.0F) {
@@ -380,7 +385,7 @@ PresentedFrame GuiFrameController::build(FrameRequest request) {
         prepared_layout(scene, request.logical_width, request.logical_height);
     const SkiaViewPresentation target_view = presenter_.view_presentation(*layout);
     update_animation_targets(scene, target_view, request.scroll_top, request.identity,
-                             request.geometry_changed, request.now);
+                             request.animate_scroll, request.geometry_changed, request.now);
     AnimationPresentation animation =
         animation_presentation(target_view, request.logical_height, request.now);
 

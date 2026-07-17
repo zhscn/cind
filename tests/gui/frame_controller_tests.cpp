@@ -70,7 +70,8 @@ Scene frame_scene(int cursor_row, int marker, bool popup_visible = false) {
 }
 
 FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top,
-                         FrameClock::time_point now, bool geometry_changed = false) {
+                         FrameClock::time_point now, bool geometry_changed = false,
+                         bool animate_scroll = true) {
     const int width = presenter.cell_width() * scene.cols;
     const int height = presenter.cell_height() * scene.rows;
     return {.scene = std::move(scene),
@@ -87,6 +88,7 @@ FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top
             .output_width = width,
             .output_height = height,
             .display_scale = 1.0F,
+            .animate_scroll = animate_scroll,
             .geometry_changed = geometry_changed,
             .now = now};
 }
@@ -127,6 +129,22 @@ TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") 
 
     CHECK(&initial.scene() == &repeated.scene());
     CHECK(&initial.layout() == &repeated.layout());
+}
+
+TEST_CASE("direct scroll input bypasses the spring animation") {
+    SkiaPresenter presenter("monospace", 16.0F);
+    GuiFrameController controller(presenter);
+    const FrameClock::time_point start{};
+
+    PresentedFrame initial =
+        controller.build(request_for(presenter, frame_scene(1, 7), 0.0F, start, true));
+    controller.did_present(initial);
+    PresentedFrame scrolled = controller.build(request_for(
+        presenter, frame_scene(1, 8), 0.75F, start + std::chrono::milliseconds(1), false, false));
+
+    CHECK_FALSE(scrolled.animated());
+    CHECK(scrolled.animation().scroll_layers.empty());
+    CHECK(scrolled.animation_state().visual_scroll_top == doctest::Approx(0.0F));
 }
 
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {

@@ -126,6 +126,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     const EditorStateSnapshot state = model.inspect();
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
+    CHECK(state.viewport.top_line_offset == doctest::Approx(0.0F));
     CHECK(state.scripting.engine == "guile");
     CHECK(state.scripting.modules == std::vector<std::string>{"cind command", "cind input",
                                                               "cind emacs", "cind toy-modal",
@@ -157,6 +158,26 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     const ui::Scene revealed = compose_frame(model, 8, 80);
     CHECK(model.inspect().caret_position.line == 1);
     CHECK(revealed.cursor_visible);
+}
+
+TEST_CASE("fractional wheel scrolling preserves trackpad precision") {
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
+    compose_frame(model, 4, 80);
+    const TextOffset caret = model.inspect().caret;
+
+    model.scroll_lines(0.25F);
+    EditorStateSnapshot state = model.inspect();
+    CHECK(state.caret == caret);
+    CHECK(state.viewport.top_line == 0);
+    CHECK(state.viewport.top_line_offset == doctest::Approx(0.25F));
+
+    model.scroll_lines(1.5F);
+    state = model.inspect();
+    CHECK(state.viewport.top_line == 1);
+    CHECK(state.viewport.top_line_offset == doctest::Approx(0.75F));
+    const ui::Scene scene = compose_frame(model, 4, 80);
+    CHECK(scene.grid_offset_rows == doctest::Approx(-0.75F));
+    CHECK_FALSE(scene.cursor_visible);
 }
 
 TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy") {

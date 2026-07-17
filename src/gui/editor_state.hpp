@@ -156,6 +156,17 @@ struct ScriptingStateSnapshot {
     std::optional<std::string> last_error;
 };
 
+struct EditorRenderState {
+    RevisionId revision = 0;
+    ui::EditorViewport viewport;
+    std::uint32_t window_slot = 0;
+    std::uint32_t window_generation = 0;
+    std::uint32_t view_slot = 0;
+    std::uint32_t view_generation = 0;
+    std::uint32_t buffer_slot = 0;
+    std::uint32_t buffer_generation = 0;
+};
+
 struct EditorStateSnapshot {
     std::string path;
     RevisionId revision = 0;
