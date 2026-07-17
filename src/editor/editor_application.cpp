@@ -237,18 +237,19 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(std::format("unknown thing '{}'", definition_name));
                }
                EditSession& active = session_for(view);
-               const std::optional<ThingMatch> match =
-                   evaluate_thing(runtime_.things(), *thing, active.snapshot(),
-                                  active.analysis().tree, active.caret());
-               if (!match) {
-                   return std::optional<ViewSelection>{};
+               const DocumentSnapshot snapshot = active.snapshot();
+               ViewSelection selected = active.selection_model();
+               for (SelectionRange& range : selected.ranges) {
+                   const std::optional<ThingMatch> match = evaluate_thing(
+                       runtime_.things(), *thing, snapshot, active.analysis().tree, range.head);
+                   if (!match) {
+                       return std::optional<ViewSelection>{};
+                   }
+                   range = bounds ? match->bounds : match->inner;
                }
-               const SelectionRange range = bounds ? match->bounds : match->inner;
-               return std::optional<ViewSelection>{ViewSelection{
-                   .ranges = {range},
-                   .primary = 0,
-                   .metadata = std::format("((thing . {}) (definition . {}) (extent . {}))", name,
-                                           definition_name, bounds ? "bounds" : "inner")}};
+               selected.metadata = std::format("((thing . {}) (definition . {}) (extent . {}))",
+                                               name, definition_name, bounds ? "bounds" : "inner");
+               return std::optional<ViewSelection>{std::move(selected)};
            },
            .motion_selection = [this](ViewId view, std::string_view name, std::int64_t count,
                                       bool extend) -> std::expected<ViewSelection, std::string> {

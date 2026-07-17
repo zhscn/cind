@@ -378,6 +378,7 @@ TEST_CASE("Guile meow keypad supports literal and transparent base-layer fallbac
 
 TEST_CASE("Guile meow motions and things consume shared noun registries") {
     EditorApplication application = make_application("sample.cc", "one two three vector<int>");
+    EditorRuntime& runtime = application.runtime();
     send_keys(application, "C-c m");
 
     send_keys(application, "3 w");
@@ -400,6 +401,24 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
     CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(20, 25));
     CHECK(application.session().active_selection()->ranges.front().granularity ==
           SelectionGranularity::Node);
+
+    runtime.views().set_selection(
+        application.view_id(),
+        ViewSelection{.ranges = {{.anchor = TextOffset{1},
+                                  .head = TextOffset{1},
+                                  .granularity = SelectionGranularity::Character},
+                                 {.anchor = TextOffset{5},
+                                  .head = TextOffset{5},
+                                  .granularity = SelectionGranularity::Character}},
+                      .primary = 1,
+                      .metadata = "((source . test))"});
+    send_keys(application, ", w");
+    REQUIRE(application.session().active_selection().has_value());
+    const ViewSelection selected = *application.session().active_selection();
+    REQUIRE(selected.ranges.size() == 2);
+    CHECK(selected.ranges[0].ordered() == make_range(0, 3));
+    CHECK(selected.ranges[1].ordered() == make_range(4, 7));
+    CHECK(selected.primary == 1);
 }
 
 TEST_CASE("Guile Vim policy composes states prefixes operators and things") {

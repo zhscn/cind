@@ -252,9 +252,9 @@ syntax-aware range query and does not mutate text.
 `(pair open close)`, `(cst-node kind)`, `(char-class word-or-symbol)`, or
 `(multi pattern ...)`. Pair evaluation prefers a matching CST group before textual fallback;
 `cst-node` resolves the innermost matching syntax node or literal token. `thing-selection` resolves
-a semantic mode binding before a concrete registry name and returns its inner or bounds Selection,
-or `#f` when no match contains point. Returned metadata records the semantic name, concrete
-definition, and extent.
+a semantic mode binding before a concrete registry name and evaluates the requested inner or bounds
+extent at every range head. It preserves range order and the primary index, returning `#f` unless
+every range resolves. Returned metadata records the semantic name, concrete definition, and extent.
 
 `define-motion!` maps a name to a native pure mechanism: forward/backward character, word, or
 expression, plus up-list. `motion-selection` transforms every range in the View's current
