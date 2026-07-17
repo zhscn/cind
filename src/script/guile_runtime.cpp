@@ -1737,6 +1737,70 @@ SCM clear_selection(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM push_selection_history(SCM host_object, SCM view_value, SCM selection_value) {
+    try {
+        HostLease& host = require_host(host_object, "push-selection-history!");
+        const ViewId view =
+            entity_id_from_scheme<ViewTag>(view_value, "push-selection-history!", 2);
+        host.runtime->views().push_selection_history(
+            view, view_selection_from_scheme(selection_value, "push-selection-history!", 3));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("push-selection-history!", exception.what());
+    } catch (...) {
+        scm_misc_error("push-selection-history!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM pop_selection_history(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "pop-selection-history!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "pop-selection-history!", 2);
+        const std::optional<ViewSelection> selection =
+            host.runtime->views().pop_selection_history(view);
+        return selection ? view_selection_value(*selection) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("pop-selection-history!", exception.what());
+    } catch (...) {
+        scm_misc_error("pop-selection-history!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM clear_selection_history(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "clear-selection-history!");
+        const ViewId view =
+            entity_id_from_scheme<ViewTag>(view_value, "clear-selection-history!", 2);
+        host.runtime->views().clear_selection_history(view);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("clear-selection-history!", exception.what());
+    } catch (...) {
+        scm_misc_error("clear-selection-history!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM selection_history_depth(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "selection-history-depth");
+        const ViewId view =
+            entity_id_from_scheme<ViewTag>(view_value, "selection-history-depth", 2);
+        return scm_from_size_t(host.runtime->views().selection_history_size(view));
+    } catch (const std::exception& exception) {
+        raise_host_error("selection-history-depth", exception.what());
+    } catch (...) {
+        scm_misc_error("selection-history-depth", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 std::vector<std::string> selection_replacements_from_scheme(SCM value, std::size_t range_count,
                                                             const char* caller, int position) {
     if (scm_is_string(value)) {
@@ -1974,6 +2038,29 @@ SCM motion_selection(SCM host_object, SCM view_value, SCM motion_value, SCM coun
         raise_host_error("motion-selection", exception.what());
     } catch (...) {
         scm_misc_error("motion-selection", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM expand_node_selection(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "expand-node-selection");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "expand-node-selection", 2);
+    if (!host.services.expand_selection) {
+        scm_misc_error("expand-node-selection", "node expansion capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<std::optional<ViewSelection>, std::string> selected =
+            host.services.expand_selection(view);
+        if (!selected) {
+            raise_host_error("expand-node-selection", selected.error());
+        }
+        return *selected ? view_selection_value(**selected) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("expand-node-selection", exception.what());
+    } catch (...) {
+        scm_misc_error("expand-node-selection", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -2596,6 +2683,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_selection));
     (void)scm_c_define_gsubr("clear-selection!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(clear_selection));
+    (void)scm_c_define_gsubr("push-selection-history!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(push_selection_history));
+    (void)scm_c_define_gsubr("pop-selection-history!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(pop_selection_history));
+    (void)scm_c_define_gsubr("clear-selection-history!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(clear_selection_history));
+    (void)scm_c_define_gsubr("selection-history-depth", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(selection_history_depth));
     (void)scm_c_define_gsubr("replace-selection!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(replace_selection));
     (void)scm_c_define_gsubr("buffer-substring", 4, 0, 0,
@@ -2612,6 +2707,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(thing_selection));
     (void)scm_c_define_gsubr("motion-selection", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(motion_selection));
+    (void)scm_c_define_gsubr("expand-node-selection", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(expand_node_selection));
     (void)scm_c_define_gsubr("write-clipboard!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(write_clipboard));
     (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
@@ -2651,27 +2748,28 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-                 "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-                 "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
-                 "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
-                 "set-base-input-state!", "push-input-state!", "pop-input-state!",
-                 "reset-input-states!", "view-input-states", "observe-input-state-changes!",
-                 "define-thing!", "define-motion!", "%define-mode!", "mode-properties",
-                 "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
-                 "observe-mode-policy-changes!", "enabled-command-names", "open-buffer-summaries",
-                 "project-root", "project-files", "path-relative", "path-filename",
-                 "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
-                 "directory-path?", "path-as-directory", "view-caret", "view-mark",
-                 "view-selection", "set-selection!", "clear-selection!", "replace-selection!",
-                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-                 "set-view-caret!", "reset-preferred-column!", "thing-selection",
-                 "motion-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
-                 "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
-                 "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-                 "kill-buffer!", "request-quit!", "split-window!", "delete-window!",
-                 "delete-other-windows!", "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export(
+        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+        "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
+        "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
+        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
+        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
+        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
+        "%define-mode!", "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
+        "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
+        "open-buffer-summaries", "project-root", "project-files", "path-relative", "path-filename",
+        "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
+        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
+        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
+        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
+        "request-redraw!", nullptr);
 }
 
 void initialize_guile() {
@@ -3280,7 +3378,7 @@ public:
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
-             {"command", "emacs", "toy-modal", "meow", "vim", "helix", "core"}) {
+             {"command", "emacs", "toy-modal", "meow", "vim", "helix", "structural", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3444,7 +3542,7 @@ public:
         return {.engine = "guile",
                 .version = version_,
                 .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind vim",
-                            "cind helix", "cind core"},
+                            "cind helix", "cind structural", "cind core"},
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,

@@ -43,6 +43,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .selection =
             {.active = true,
              .primary = 1,
+             .history_depth = 2,
              .metadata = "(thing . defun)",
              .ranges = {{.anchor = TextOffset{0}, .head = TextOffset{1}, .granularity = "char"},
                         {.anchor = TextOffset{2}, .head = TextOffset{3}, .granularity = "node"}}},
@@ -403,6 +404,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"prefix_extra\":[{\"name\":\"scope\",\"value\":\"word\"}]") !=
           std::string::npos);
     CHECK(snapshot.find("\"selection\":{\"active\":true,\"primary\":1") != std::string::npos);
+    CHECK(snapshot.find("\"history_depth\":2") != std::string::npos);
     CHECK(snapshot.find("\"selection_after_edit\":\"collapse\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
@@ -420,6 +422,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse selection = run_inspection_query(hub, "get editor.selection");
     REQUIRE(selection.ok);
     CHECK(selection.payload.find("\"metadata\":\"(thing . defun)\"") != std::string::npos);
+    CHECK(selection.payload.find("\"history_depth\":2") != std::string::npos);
     CHECK(selection.payload.find("\"granularity\":\"node\"") != std::string::npos);
 
     const InspectionResponse command_loop = run_inspection_query(hub, "get editor.command_loop");

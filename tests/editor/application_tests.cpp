@@ -468,6 +468,47 @@ TEST_CASE("views retain typed multi-range selections through document edits") {
     CHECK(collapsed.metadata == "()");
 }
 
+TEST_CASE("view selection history settles anchored multi-range snapshots") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "history",
+                                                      .initial_text = "abcdef",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const ViewSelection stored{.ranges = {{.anchor = TextOffset{4},
+                                           .head = TextOffset{1},
+                                           .granularity = SelectionGranularity::Node},
+                                          {.anchor = TextOffset{2},
+                                           .head = TextOffset{5},
+                                           .granularity = SelectionGranularity::Character}},
+                               .primary = 1,
+                               .metadata = "((history . structural))"};
+
+    runtime.views().push_selection_history(view, stored);
+    CHECK(runtime.views().selection_history_size(view) == 1);
+    auto transaction = runtime.buffers().get(buffer).begin_transaction();
+    transaction.insert(TextOffset{0}, "X");
+    (void)transaction.commit();
+
+    const std::optional<ViewSelection> settled = runtime.views().pop_selection_history(view);
+    REQUIRE(settled.has_value());
+    CHECK(settled->ranges[0].anchor == TextOffset{5});
+    CHECK(settled->ranges[0].head == TextOffset{2});
+    CHECK(settled->ranges[0].granularity == SelectionGranularity::Node);
+    CHECK(settled->ranges[1].anchor == TextOffset{3});
+    CHECK(settled->ranges[1].head == TextOffset{6});
+    CHECK(settled->primary == 1);
+    CHECK(settled->metadata == "((history . structural))");
+    CHECK(runtime.views().selection_history_size(view) == 0);
+    CHECK_FALSE(runtime.views().pop_selection_history(view).has_value());
+
+    runtime.views().push_selection_history(view, stored);
+    runtime.views().push_selection_history(view, stored);
+    runtime.views().clear_selection_history(view);
+    CHECK(runtime.views().selection_history_size(view) == 0);
+}
+
 TEST_CASE("view selections validate their non-empty primary range contract") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "shared",

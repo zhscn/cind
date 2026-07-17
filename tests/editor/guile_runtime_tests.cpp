@@ -92,9 +92,9 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
-    CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind emacs",
-                                                       "cind toy-modal", "cind meow", "cind vim",
-                                                       "cind helix", "cind core"});
+    CHECK(snapshot.modules ==
+          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind meow",
+                                   "cind vim", "cind helix", "cind structural", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -125,8 +125,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 17);
-    CHECK(*second == 17);
+    CHECK(*first == 18);
+    CHECK(*second == 18);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -163,11 +163,13 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 17);
+    CHECK(guile.snapshot().scripted_input_states == 18);
     CHECK(guile.snapshot().scripted_input_strategies == 5);
     const InputStrategyId helix =
         runtime.input_strategies().find("helix").value_or(InputStrategyId{});
     const InputStrategyId vim = runtime.input_strategies().find("vim").value_or(InputStrategyId{});
+    const InputStateId structural =
+        runtime.input_states().find("structural-node").value_or(InputStateId{});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     const InputStrategyId toy_strategy =
@@ -176,6 +178,9 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     REQUIRE(toy_strategy);
     REQUIRE(vim);
     REQUIRE(helix);
+    REQUIRE(structural);
+    CHECK(runtime.input_states().definition(structural).indicator == "NODE");
+    CHECK(runtime.input_states().definition(structural).text_input == TextInputPolicy::Ignore);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(runtime.input_strategies().definition(emacs_strategy).selection_after_edit ==
           SelectionEditPolicy::Collapse);
@@ -441,6 +446,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                   .primary = 0,
                                   .metadata = "()"};
          },
+         .expand_selection =
+             [](ViewId) -> std::expected<std::optional<ViewSelection>, std::string> {
+             return std::optional<ViewSelection>{};
+         },
          .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
              if (!clipboard_error.empty()) {
                  return std::unexpected(clipboard_error);
@@ -457,7 +466,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 111);
+    CHECK(*installed == 116);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -810,7 +819,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 111);
+    CHECK(snapshot.scripted_commands == 116);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

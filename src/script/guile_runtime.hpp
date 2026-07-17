@@ -63,6 +63,8 @@ struct GuileHostServices {
     std::function<std::expected<ViewSelection, std::string>(ViewId, std::string_view, std::int64_t,
                                                             bool)>
         motion_selection;
+    std::function<std::expected<std::optional<ViewSelection>, std::string>(ViewId)>
+        expand_selection;
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
     std::function<std::expected<std::optional<std::string>, std::string>()> read_clipboard;
 };

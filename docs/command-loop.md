@@ -150,7 +150,7 @@ The default keymap follows Emacs conventions:
 - `M-x` opens the command palette and `C-h b` opens searchable key-binding help;
 - `C-M-f`, `C-M-b`, and `C-M-u` perform structural movement;
 - `M-g n`, `M-g p`, and `` C-x ` `` navigate the current location list across source buffers;
-- `C-c e` and `C-c s` expand and contract the structural selection.
+- `C-c e` enters sticky structural selection and expands once; `C-c s` contracts its history.
 
 The bundled Guile module `(cind core)` owns the default binding tables, while `(cind emacs)` owns
 the corresponding input strategy. The installer binds only commands present in the application
@@ -209,6 +209,13 @@ Selection verbs submit a typed Selection and one replacement per range to the na
 Character, line, and node ranges are resolved before mutation, checked for overlap, and committed
 as one transaction and undo node. The mechanism returns the collapsed post-edit Selection, so the
 strategy package remains responsible for the visible selection lifecycle.
+
+The bundled `(cind structural)` policy pushes `structural-node` above the invoking View's durable
+state. Scheme owns the history lifecycle, while the View registry stores each complete Selection as
+anchors and settles it across transactions. The native noun mechanism computes one all-or-none CST
+expansion across every range and assigns `node` granularity. Expansion and contraction remain in the
+state; deletion pops it before dispatching the common selection verb. Exiting preserves the selected
+nodes and returns to the underlying input strategy.
 
 The keymap registry merges immediate continuations across ordered keymaps and their parents using
 the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is

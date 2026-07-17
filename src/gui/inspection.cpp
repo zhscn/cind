@@ -473,7 +473,8 @@ void append_scripting(std::string& output, const ScriptingStateSnapshot& scripti
 void append_selection(std::string& output, const SelectionStateSnapshot& selection) {
     output += "{\"active\":";
     append_bool(output, selection.active);
-    output += std::format(",\"primary\":{},\"metadata\":", selection.primary);
+    output += std::format(",\"primary\":{},\"history_depth\":{},\"metadata\":", selection.primary,
+                          selection.history_depth);
     append_json_string(output, selection.metadata);
     output += ",\"ranges\":[";
     for (std::size_t index = 0; index < selection.ranges.size(); ++index) {
@@ -2331,7 +2332,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " rows grid-offset=" << frame.scene.grid_offset_rows << '\n';
     output << "    selection active=" << (frame.editor.selection.active ? "true" : "false")
            << " ranges=" << frame.editor.selection.ranges.size()
-           << " primary=" << frame.editor.selection.primary << " meta=\""
+           << " primary=" << frame.editor.selection.primary
+           << " history=" << frame.editor.selection.history_depth << " meta=\""
            << printable(frame.editor.selection.metadata) << "\"\n";
     output << "    focus=" << printable(frame.editor.input_focus)
            << " strategy=" << printable(frame.editor.input_strategy)

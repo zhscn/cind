@@ -121,7 +121,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `frame.violations` | 跨层 invariant 违规 |
 | `editor` | 完整编辑器状态 |
 | `editor.caret` | caret 的 byte、line 和 column |
-| `editor.selection` | active mark、primary range、Scheme metadata 和带 granularity 的方向性 ranges |
+| `editor.selection` | active mark、primary range、anchored history depth、Scheme metadata 和带 granularity 的方向性 ranges |
 | `editor.viewport` | viewport 起始行列 |
 | `editor.line_signs` | change sign 摘要 |
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、count/register/extras prefix 和 last command |
@@ -183,8 +183,8 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
-  Selection 记录 active mark、primary range 索引、Scheme metadata，以及每个 range 的
-  anchor、head 和 `char`/`line`/`block`/`node` granularity。
+  Selection 记录 active mark、primary range 索引、anchored history depth、Scheme metadata，
+  以及每个 range 的 anchor、head 和 `char`/`line`/`block`/`node` granularity。
   Input state 同时记录所属 strategy 在文档编辑后使用的 `collapse` 或 `preserve`
   selection policy。
 - `scene`：cell 网格、cursor、活动文本行、pane/divider、view tree、region 几何和语义

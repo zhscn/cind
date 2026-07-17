@@ -34,6 +34,65 @@ AnchorId ViewRegistry::make_anchor(Buffer& buffer, TextOffset offset, AnchorAffi
     return buffer.document_.create_anchor(offset, affinity);
 }
 
+View::AnchoredSelection ViewRegistry::anchor_selection(Buffer& buffer, ViewSelection selection) {
+    if (selection.ranges.empty()) {
+        throw std::invalid_argument("view selection requires at least one range");
+    }
+    if (selection.primary >= selection.ranges.size()) {
+        throw std::out_of_range("view selection primary range is outside the range list");
+    }
+
+    View::AnchoredSelection result{
+        .ranges = {}, .primary = selection.primary, .metadata = std::move(selection.metadata)};
+    result.ranges.reserve(selection.ranges.size());
+    try {
+        for (const SelectionRange& range : selection.ranges) {
+            const AnchorId anchor =
+                make_anchor(buffer, range.anchor, AnchorAffinity::BeforeInsertion);
+            AnchorId head = 0;
+            try {
+                head = make_anchor(buffer, range.head, AnchorAffinity::AfterInsertion);
+                result.ranges.push_back(
+                    {.anchor = anchor, .head = head, .granularity = range.granularity});
+            } catch (...) {
+                buffer.document_.remove_anchor(anchor);
+                if (head != 0) {
+                    buffer.document_.remove_anchor(head);
+                }
+                throw;
+            }
+        }
+    } catch (...) {
+        remove_anchored_selection(buffer, result);
+        throw;
+    }
+    return result;
+}
+
+ViewSelection ViewRegistry::resolve_selection(const Buffer& buffer,
+                                              const View::AnchoredSelection& selection) const {
+    ViewSelection result{
+        .ranges = {}, .primary = selection.primary, .metadata = selection.metadata};
+    result.ranges.reserve(selection.ranges.size());
+    for (const View::AnchoredSelectionRange& range : selection.ranges) {
+        result.ranges.push_back({.anchor = buffer.document_.anchor_offset(range.anchor),
+                                 .head = buffer.document_.anchor_offset(range.head),
+                                 .granularity = range.granularity});
+    }
+    return result;
+}
+
+void ViewRegistry::remove_anchored_selection(Buffer& buffer, View::AnchoredSelection& selection,
+                                             AnchorId retained_head) {
+    for (const View::AnchoredSelectionRange& range : selection.ranges) {
+        buffer.document_.remove_anchor(range.anchor);
+        if (range.head != retained_head) {
+            buffer.document_.remove_anchor(range.head);
+        }
+    }
+    selection.ranges.clear();
+}
+
 ViewId ViewRegistry::create(BufferId buffer_id, TextOffset caret_offset) {
     Buffer& buffer = buffers_->get(buffer_id);
     const AnchorId caret = make_anchor(buffer, caret_offset, AnchorAffinity::AfterInsertion);
@@ -87,6 +146,7 @@ void ViewRegistry::remove_anchors(View& view) {
     } else {
         buffers_->get(view.buffer_id_).document_.remove_anchor(view.caret_);
     }
+    clear_selection_history(view);
     --buffers_->get(view.buffer_id_).attached_views_;
 }
 
@@ -95,12 +155,7 @@ void ViewRegistry::remove_selection_anchors(View& view, AnchorId retained_head) 
         return;
     }
     Buffer& buffer = buffers_->get(view.buffer_id_);
-    for (const View::AnchoredSelectionRange& range : view.selection_->ranges) {
-        buffer.document_.remove_anchor(range.anchor);
-        if (range.head != retained_head) {
-            buffer.document_.remove_anchor(range.head);
-        }
-    }
+    remove_anchored_selection(buffer, *view.selection_, retained_head);
     view.selection_.reset();
 }
 
@@ -201,16 +256,7 @@ std::optional<ViewSelection> ViewRegistry::active_selection(ViewId id) const {
     if (!view.selection_) {
         return std::nullopt;
     }
-    const Buffer& buffer = buffers_->get(view.buffer_id_);
-    ViewSelection result{
-        .ranges = {}, .primary = view.selection_->primary, .metadata = view.selection_->metadata};
-    result.ranges.reserve(view.selection_->ranges.size());
-    for (const View::AnchoredSelectionRange& range : view.selection_->ranges) {
-        result.ranges.push_back({.anchor = buffer.document_.anchor_offset(range.anchor),
-                                 .head = buffer.document_.anchor_offset(range.head),
-                                 .granularity = range.granularity});
-    }
-    return result;
+    return resolve_selection(buffers_->get(view.buffer_id_), *view.selection_);
 }
 
 void ViewRegistry::set_selection(ViewId id, SelectionEndpoints selection) {
@@ -220,40 +266,7 @@ void ViewRegistry::set_selection(ViewId id, SelectionEndpoints selection) {
 void ViewRegistry::set_selection(ViewId id, ViewSelection selection) {
     View& view = get(id);
     Buffer& buffer = buffers_->get(view.buffer_id_);
-    if (selection.ranges.empty()) {
-        throw std::invalid_argument("view selection requires at least one range");
-    }
-    if (selection.primary >= selection.ranges.size()) {
-        throw std::out_of_range("view selection primary range is outside the range list");
-    }
-
-    View::AnchoredSelection replacement{
-        .ranges = {}, .primary = selection.primary, .metadata = std::move(selection.metadata)};
-    replacement.ranges.reserve(selection.ranges.size());
-    try {
-        for (const SelectionRange& range : selection.ranges) {
-            const AnchorId anchor =
-                make_anchor(buffer, range.anchor, AnchorAffinity::BeforeInsertion);
-            AnchorId head = 0;
-            try {
-                head = make_anchor(buffer, range.head, AnchorAffinity::AfterInsertion);
-                replacement.ranges.push_back(
-                    {.anchor = anchor, .head = head, .granularity = range.granularity});
-            } catch (...) {
-                buffer.document_.remove_anchor(anchor);
-                if (head != 0) {
-                    buffer.document_.remove_anchor(head);
-                }
-                throw;
-            }
-        }
-    } catch (...) {
-        for (const View::AnchoredSelectionRange& range : replacement.ranges) {
-            buffer.document_.remove_anchor(range.anchor);
-            buffer.document_.remove_anchor(range.head);
-        }
-        throw;
-    }
+    View::AnchoredSelection replacement = anchor_selection(buffer, std::move(selection));
 
     if (view.selection_) {
         remove_selection_anchors(view);
@@ -272,6 +285,47 @@ void ViewRegistry::clear_selection(ViewId id) {
     const AnchorId retained_head = view.selection_->ranges[view.selection_->primary].head;
     remove_selection_anchors(view, retained_head);
     view.caret_ = retained_head;
+}
+
+void ViewRegistry::push_selection_history(ViewId id, ViewSelection selection) {
+    View& view = get(id);
+    Buffer& buffer = buffers_->get(view.buffer_id_);
+    View::AnchoredSelection stored = anchor_selection(buffer, std::move(selection));
+    try {
+        view.selection_history_.push_back(std::move(stored));
+    } catch (...) {
+        remove_anchored_selection(buffer, stored);
+        throw;
+    }
+}
+
+std::optional<ViewSelection> ViewRegistry::pop_selection_history(ViewId id) {
+    View& view = get(id);
+    if (view.selection_history_.empty()) {
+        return std::nullopt;
+    }
+    Buffer& buffer = buffers_->get(view.buffer_id_);
+    View::AnchoredSelection& stored = view.selection_history_.back();
+    ViewSelection result = resolve_selection(buffer, stored);
+    remove_anchored_selection(buffer, stored);
+    view.selection_history_.pop_back();
+    return result;
+}
+
+void ViewRegistry::clear_selection_history(ViewId id) {
+    clear_selection_history(get(id));
+}
+
+void ViewRegistry::clear_selection_history(View& view) {
+    Buffer& buffer = buffers_->get(view.buffer_id_);
+    for (View::AnchoredSelection& stored : view.selection_history_) {
+        remove_anchored_selection(buffer, stored);
+    }
+    view.selection_history_.clear();
+}
+
+std::size_t ViewRegistry::selection_history_size(ViewId id) const {
+    return get(id).selection_history_.size();
 }
 
 void ViewRegistry::set_input_strategy(ViewId view_id, std::optional<InputStrategyId> strategy) {

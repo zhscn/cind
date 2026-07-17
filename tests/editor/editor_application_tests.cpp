@@ -556,6 +556,99 @@ TEST_CASE("Guile Helix policy transforms every selection through shared nouns") 
     CHECK(application.input_state().name == "hx-normal");
 }
 
+TEST_CASE("Guile structural state expands and consumes multi-range nodes") {
+    const std::string source = "int f() { int alpha; int beta; }\n";
+    EditorApplication application = make_application("sample.cc", source);
+    EditorRuntime& runtime = application.runtime();
+    const TextOffset alpha{static_cast<std::uint32_t>(source.find("alpha") + 2)};
+    const TextOffset beta{static_cast<std::uint32_t>(source.find("beta") + 2)};
+    runtime.views().set_selection(
+        application.view_id(),
+        ViewSelection{
+            .ranges =
+                {{.anchor = alpha, .head = alpha, .granularity = SelectionGranularity::Character},
+                 {.anchor = beta, .head = beta, .granularity = SelectionGranularity::Character}},
+            .primary = 1,
+            .metadata = "((origin . structural-test))"});
+
+    send_keys(application, "C-c e");
+    CHECK(application.input_state().name == "structural-node");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 1);
+    REQUIRE(application.session().active_selection().has_value());
+    const ViewSelection identifiers = *application.session().active_selection();
+    REQUIRE(identifiers.ranges.size() == 2);
+    CHECK(identifiers.ranges[0].ordered() ==
+          make_range(static_cast<std::uint32_t>(source.find("alpha")),
+                     static_cast<std::uint32_t>(source.find("alpha") + 5)));
+    CHECK(identifiers.ranges[1].ordered() ==
+          make_range(static_cast<std::uint32_t>(source.find("beta")),
+                     static_cast<std::uint32_t>(source.find("beta") + 4)));
+    CHECK(identifiers.ranges[0].granularity == SelectionGranularity::Node);
+    CHECK(identifiers.ranges[1].granularity == SelectionGranularity::Node);
+    CHECK(identifiers.primary == 1);
+    CHECK(identifiers.metadata == "((origin . structural-test))");
+
+    send_keys(application, "e");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 2);
+    REQUIRE(application.session().active_selection().has_value());
+    const ViewSelection declarations = *application.session().active_selection();
+    REQUIRE(declarations.ranges.size() == 2);
+    CHECK(declarations.ranges[0].ordered().start <= identifiers.ranges[0].ordered().start);
+    CHECK(declarations.ranges[0].ordered().end >= identifiers.ranges[0].ordered().end);
+    CHECK(declarations.ranges[1].ordered().start <= identifiers.ranges[1].ordered().start);
+    CHECK(declarations.ranges[1].ordered().end >= identifiers.ranges[1].ordered().end);
+    CHECK(declarations.ranges[0].ordered() != identifiers.ranges[0].ordered());
+    CHECK(declarations.ranges[1].ordered() != identifiers.ranges[1].ordered());
+
+    send_keys(application, "h");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 1);
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(*application.session().active_selection() == identifiers);
+
+    send_keys(application, "d");
+    CHECK(application.input_state().name == "emacs");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 0);
+    CHECK(application.session().snapshot().content() == "int f() { int ; int ; }\n");
+    REQUIRE(application.session().undo());
+    CHECK(application.session().snapshot().content() == source);
+
+    runtime.views().set_selection(
+        application.view_id(),
+        {.anchor = alpha, .head = alpha, .granularity = SelectionGranularity::Character});
+    send_keys(application, "C-c e ESC");
+    CHECK(application.input_state().name == "emacs");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 0);
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().granularity ==
+          SelectionGranularity::Node);
+
+    const TextOffset alpha_start{static_cast<std::uint32_t>(source.find("alpha"))};
+    const TextOffset alpha_end{alpha_start.value + 5};
+    runtime.views().set_selection(
+        application.view_id(),
+        {.anchor = alpha_end, .head = alpha_start, .granularity = SelectionGranularity::Node});
+    send_keys(application, "C-c e");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().anchor >
+          application.session().active_selection()->ranges.front().head);
+    send_keys(application, "ESC");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 0);
+
+    const ViewSelection incomplete{
+        .ranges = {{.anchor = alpha, .head = alpha, .granularity = SelectionGranularity::Character},
+                   {.anchor = TextOffset{0},
+                    .head = TextOffset{static_cast<std::uint32_t>(source.size())},
+                    .granularity = SelectionGranularity::Node}},
+        .primary = 0,
+        .metadata = "((all-or-none . test))"};
+    runtime.views().set_selection(application.view_id(), incomplete);
+    send_keys(application, "C-c e");
+    CHECK(application.input_state().name == "emacs");
+    CHECK(runtime.views().selection_history_size(application.view_id()) == 0);
+    CHECK(application.session().active_selection() == incomplete);
+    CHECK(application.message() == "no enclosing syntax node at every selection");
+}
+
 TEST_CASE("Guile selection verbs replace every range in one undo unit") {
     EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
     EditorRuntime& runtime = application.runtime();

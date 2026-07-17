@@ -62,6 +62,7 @@ private:
     BufferId buffer_id_;
     AnchorId caret_ = 0;
     std::optional<AnchoredSelection> selection_;
+    std::vector<AnchoredSelection> selection_history_;
     ViewportState viewport_;
     SettingsLayer settings_;
     std::vector<KeymapId> keymaps_;
@@ -97,6 +98,10 @@ public:
     void set_selection(ViewId id, SelectionEndpoints selection);
     void set_selection(ViewId id, ViewSelection selection);
     void clear_selection(ViewId id);
+    void push_selection_history(ViewId id, ViewSelection selection);
+    std::optional<ViewSelection> pop_selection_history(ViewId id);
+    void clear_selection_history(ViewId id);
+    std::size_t selection_history_size(ViewId id) const;
     void set_input_strategy(ViewId view, std::optional<InputStrategyId> strategy);
     void set_base_input_state(ViewId view, InputStateId state);
     void push_input_state(ViewId view, InputStateId state);
@@ -114,6 +119,12 @@ private:
 
     void remove_anchors(View& view);
     void remove_selection_anchors(View& view, AnchorId retained_head = 0);
+    void clear_selection_history(View& view);
+    View::AnchoredSelection anchor_selection(Buffer& buffer, ViewSelection selection);
+    ViewSelection resolve_selection(const Buffer& buffer,
+                                    const View::AnchoredSelection& selection) const;
+    void remove_anchored_selection(Buffer& buffer, View::AnchoredSelection& selection,
+                                   AnchorId retained_head = 0);
     AnchorId make_anchor(Buffer& buffer, TextOffset offset, AnchorAffinity affinity);
     std::optional<InputStateId> effective_base_state(const View& view) const;
     void refresh_mode_input_state(View& view);

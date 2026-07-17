@@ -123,6 +123,7 @@ struct SelectionRangeStateSnapshot {
 struct SelectionStateSnapshot {
     bool active = false;
     std::size_t primary = 0;
+    std::size_t history_depth = 0;
     std::string metadata;
     std::vector<SelectionRangeStateSnapshot> ranges;
 };

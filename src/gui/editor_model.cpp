@@ -483,10 +483,13 @@ EditorStateSnapshot EditorModel::inspect() {
     const InputStateRegistry::Definition& input_state = application_.input_state();
     const View& active_view = application_.runtime().views().get(application_.view_id());
     const ViewSelection view_selection = session.selection_model();
-    SelectionStateSnapshot selection_state{.active = session.mark().has_value(),
-                                           .primary = view_selection.primary,
-                                           .metadata = view_selection.metadata,
-                                           .ranges = {}};
+    SelectionStateSnapshot selection_state{
+        .active = session.mark().has_value(),
+        .primary = view_selection.primary,
+        .history_depth =
+            application_.runtime().views().selection_history_size(application_.view_id()),
+        .metadata = view_selection.metadata,
+        .ranges = {}};
     selection_state.ranges.reserve(view_selection.ranges.size());
     for (const SelectionRange& range : view_selection.ranges) {
         selection_state.ranges.push_back(

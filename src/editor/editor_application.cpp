@@ -164,14 +164,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .set_selection =
                [this](ViewId view, ViewSelection selection) {
                    session_for(view).set_selection(std::move(selection));
-                   view_state_for(view).selection_history.clear();
                    reveal_caret_ = true;
                },
-           .clear_selection =
-               [this](ViewId view) {
-                   session_for(view).clear_selection();
-                   view_state_for(view).selection_history.clear();
-               },
+           .clear_selection = [this](ViewId view) { session_for(view).clear_selection(); },
            .replace_selection = [this](ViewId view, ViewSelection selection,
                                        std::vector<std::string> replacements)
                -> std::expected<ViewSelection, std::string> {
@@ -181,7 +176,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    ViewSelection result =
                        active.replace_selection(std::move(selection), replacements);
                    if (active.snapshot().revision() != before) {
-                       after_edit(view);
+                       after_edit();
                    }
                    return result;
                } catch (const std::exception& exception) {
@@ -193,7 +188,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                try {
                    session_for(view).erase(
                        TextRange{TextOffset{range.start}, TextOffset{range.end}});
-                   after_edit(view);
+                   after_edit();
                    return {};
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
@@ -203,7 +198,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                  std::string_view text) -> std::expected<void, std::string> {
                try {
                    session_for(view).insert_text(text);
-                   after_edit(view);
+                   after_edit();
                    return {};
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
@@ -261,6 +256,15 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return evaluate_motion(runtime_.motions(), *motion, active.snapshot(),
                                       active.analysis().tree, active.selection_model(), count,
                                       extend);
+           },
+           .expand_selection =
+               [this](ViewId view) -> std::expected<std::optional<ViewSelection>, std::string> {
+               try {
+                   const EditSession& active = session_for(view);
+                   return evaluate_node_expansion(active.analysis().tree, active.selection_model());
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
            },
            .write_clipboard = [this](std::string_view text) -> std::expected<void, std::string> {
                if (!platform_services_.write_clipboard) {
@@ -1608,7 +1612,6 @@ void EditorApplication::register_commands() {
             return;
         }
         session().clear_selection();
-        active_view().selection_history.clear();
         message_ = "cancelled";
     });
     const auto interaction_enabled = [this](const CommandContext&) {
@@ -1696,28 +1699,6 @@ void EditorApplication::register_commands() {
             ui::display_column(text, session().caret(), session().style().tab_width) + 1,
             session().caret().value, text.size_bytes());
     });
-    define("selection.expand", [this](const CommandInvocation&) {
-        const TextRange current =
-            session().selection().value_or(TextRange{session().caret(), session().caret()});
-        if (const std::optional<TextRange> next =
-                expand_selection(session().analysis().tree, current)) {
-            if (session().selection()) {
-                active_view().selection_history.push_back(current);
-            }
-            session().set_selection({.anchor = next->start, .head = next->end});
-        }
-    });
-    define("selection.contract", [this](const CommandInvocation&) {
-        std::vector<TextRange>& history = active_view().selection_history;
-        if (history.empty()) {
-            session().clear_selection();
-            return;
-        }
-        const TextRange previous = history.back();
-        history.pop_back();
-        session().set_selection({.anchor = previous.start, .head = previous.end});
-    });
-
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
         throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));
@@ -1954,11 +1935,6 @@ CommandContext EditorApplication::command_context() {
 }
 
 void EditorApplication::after_edit() {
-    after_edit(view_id());
-}
-
-void EditorApplication::after_edit(ViewId view) {
-    view_state_for(view).selection_history.clear();
     quit_armed_ = false;
     message_.clear();
     reveal_caret_ = true;

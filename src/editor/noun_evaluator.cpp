@@ -368,4 +368,20 @@ ViewSelection evaluate_motion(const MotionRegistry& registry, MotionId motion,
     return result;
 }
 
+std::optional<ViewSelection> evaluate_node_expansion(const SyntaxTree& tree,
+                                                     const ViewSelection& selection) {
+    ViewSelection result = selection;
+    for (SelectionRange& range : result.ranges) {
+        const std::optional<TextRange> expanded = expand_selection(tree, range.ordered());
+        if (!expanded) {
+            return std::nullopt;
+        }
+        const bool reversed = range.head < range.anchor;
+        range.anchor = reversed ? expanded->end : expanded->start;
+        range.head = reversed ? expanded->start : expanded->end;
+        range.granularity = SelectionGranularity::Node;
+    }
+    return result;
+}
+
 } // namespace cind

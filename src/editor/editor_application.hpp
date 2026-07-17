@@ -213,7 +213,6 @@ private:
         BufferId buffer;
         ViewId view;
         std::unique_ptr<EditSession> session;
-        std::vector<TextRange> selection_history;
     };
 
     BufferState& active_buffer();
@@ -267,7 +266,6 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();
-    void after_edit(ViewId view);
     void save(BufferId buffer);
     std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
                                                std::optional<LinePosition> position);

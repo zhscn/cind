@@ -29,4 +29,7 @@ ViewSelection evaluate_motion(const MotionRegistry& registry, MotionId motion,
                               const DocumentSnapshot& snapshot, const SyntaxTree& tree,
                               const ViewSelection& selection, std::int64_t count, bool extend);
 
+std::optional<ViewSelection> evaluate_node_expansion(const SyntaxTree& tree,
+                                                     const ViewSelection& selection);
+
 } // namespace cind

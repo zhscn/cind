@@ -5,6 +5,7 @@
   #:use-module (cind helix)
   #:use-module (cind host)
   #:use-module (cind meow)
+  #:use-module (cind structural)
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
   #:export (install-core-commands!
@@ -596,6 +597,7 @@
    (make-region-commands host)
    (helix-command-definitions host)
    (meow-command-definitions host)
+   (structural-command-definitions host)
    (vim-command-definitions host)
    (toy-modal-command-definitions host)))
 
@@ -634,6 +636,7 @@
   (+ (install-emacs-input-state! host)
      (install-helix-input-states! host)
      (install-meow-input-states! host)
+     (install-structural-input-state! host)
      (install-vim-input-states! host)
      (install-toy-modal-input-state! host)))
 
@@ -727,7 +730,7 @@
     ("C-M-f" . "cursor.forward-expression")
     ("C-M-b" . "cursor.backward-expression")
     ("C-M-u" . "cursor.up-list")
-    ("C-c e" . "selection.expand")
+    ("C-c e" . "structural.enter")
     ("C-c s" . "selection.contract")
     ("C-c n" . "toy-modal.enter-normal")
     ("C-c h" . "helix.enter-normal")
@@ -781,5 +784,6 @@
      (bind-all! host 'application.global application-bindings)
      (install-helix-keymaps! host)
      (install-meow-keymaps! host)
+     (install-structural-keymap! host)
      (install-vim-keymaps! host)
      (install-toy-modal-keymap! host)))

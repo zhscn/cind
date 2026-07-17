@@ -26,7 +26,8 @@ object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`,
-and `(cind toy-modal)` define input strategies; and `(cind core)` composes the built-in editor policy.
+and `(cind toy-modal)` define input strategies; `(cind structural)` defines structural selection
+policy; and `(cind core)` composes the built-in editor policy.
 These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
 through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
 scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
@@ -94,6 +95,10 @@ The native module exports:
 (view-selection host view-id)
 (set-selection! host view-id selection)
 (clear-selection! host view-id)
+(push-selection-history! host view-id selection)
+(pop-selection-history! host view-id)
+(clear-selection-history! host view-id)
+(selection-history-depth host view-id)
 (replace-selection! host view-id selection replacement-or-vector)
 (buffer-substring host buffer-id start end)
 (erase-range! host view-id start end)
@@ -103,6 +108,7 @@ The native module exports:
 (reset-preferred-column! host view-id)
 (thing-selection host view-id thing-name inner-or-bounds)
 (motion-selection host view-id motion-name count extend?)
+(expand-node-selection host view-id)
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
@@ -239,7 +245,10 @@ head and releases the active mark.
 
 Selection endpoints are document anchors. Direct document transactions settle every endpoint
 across insertions and erasures, and moving the View caret moves the primary head without changing
-the other ranges. Views that display the same Buffer retain independent selections.
+the other ranges. Views that display the same Buffer retain independent selections. Selection
+history is also View-owned and anchor-backed. Scheme explicitly pushes, pops, and clears complete
+Selection values; `selection-history-depth` exposes its current stack size. This mechanism assigns
+no meaning to history entries or state transitions.
 `buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
 native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
 caret reveal coherent. `replace-selection!` accepts either one replacement string for every range
@@ -262,6 +271,11 @@ Selection, applies a signed count, and either collapses each range at its destin
 its anchor for extension. Both APIs return the same full Selection value used by command results,
 so Scheme commands do not mutate the caret through a separate path. `reset-preferred-column!`
 clears vertical-motion affinity and `request-redraw!` requests caret reveal.
+
+`expand-node-selection` is a pure CST query over the complete current Selection. It replaces every
+range with its next enclosing syntactic range, preserves direction, primary identity and metadata,
+and marks each result with `node` granularity. It returns `#f` if any range has no enclosing node, so
+policy never observes a partially expanded multi-range Selection.
 
 `write-clipboard!` returns `#f` on success or an error string. `read-clipboard` returns a
 two-element vector containing an optional string and optional error. The absence of a platform
@@ -384,6 +398,13 @@ range in the View Selection; select motions apply the same registered Motion wit
 preserving each anchor. The `mi` and `ma` prefixes push `helix-thing`, a transient single-key state
 that resolves the active mode's inner or bounds Thing at every range head. Delete dispatches the
 shared atomic selection verb, and the strategy preserves multi-range selection results across edits.
+
+`(cind structural)` owns the sticky `structural-node` transient state selected with `C-c e`. Scheme
+controls a per-View anchored selection-history stack. `e`, `l`, and `]` expand every range;
+`s`, `h`, and `[` restore the previous Selection; `d` leaves the state and dispatches the shared
+atomic selection verb; and `ESC` or `q` leaves the state while preserving the selected nodes. Native
+code provides the generic anchored history and CST query mechanisms; Scheme assigns their
+structural semantics and bindings.
 
 ## Scripted interaction providers
 
