@@ -64,11 +64,13 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .override_keymaps = {"editor.system"},
              .pending_keys = "C-x",
              .pending_keymap = "application.global",
+             .pending_input_state = "",
              .repeat_count = 4,
              .last_command = "edit.insert"},
         .scripting = {.engine = "guile",
                       .version = "3.0.9",
-                      .modules = {"cind command", "cind emacs", "cind toy-modal", "cind core"},
+                      .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow",
+                                  "cind core"},
                       .command_revision = 1,
                       .scripted_commands = 29,
                       .provider_revision = 1,
@@ -363,7 +365,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":33") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":34") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -384,6 +386,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
     CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
+    CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
           std::string::npos);
@@ -415,7 +418,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(scripting.ok);
     CHECK(scripting.payload.find("\"engine\":\"guile\"") != std::string::npos);
     CHECK(scripting.payload.find("\"modules\":[\"cind command\",\"cind emacs\","
-                                 "\"cind toy-modal\",\"cind core\"]") != std::string::npos);
+                                 "\"cind toy-modal\",\"cind meow\",\"cind core\"]") !=
+          std::string::npos);
     CHECK(scripting.payload.find("\"command_revision\":1") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_commands\":29") != std::string::npos);
     CHECK(scripting.payload.find("\"provider_revision\":1") != std::string::npos);

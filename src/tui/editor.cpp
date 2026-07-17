@@ -462,12 +462,12 @@ private:
                 popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
             }
         } else if (!key_hints.empty()) {
-            popup_title = command_loop_.pending_sequence_text() + " …";
+            popup_title = application_.pending_key_sequence_text() + " …";
             popup_items.reserve(key_hints.size());
             for (const KeyBindingHint& hint : key_hints) {
-                const std::string_view detail = hint.command.empty() && hint.prefix
+                const std::string_view detail = hint.detail.empty() && hint.prefix
                                                     ? std::string_view("prefix")
-                                                    : std::string_view(hint.command);
+                                                    : std::string_view(hint.detail);
                 popup_items.push_back({.label = hint.key, .detail = detail});
             }
         }

@@ -25,11 +25,11 @@ is process-wide, while access to an editor instance is represented by an explici
 object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
-defines the public command value API, `(cind emacs)` and `(cind toy-modal)` define input strategies,
-and `(cind core)` composes the built-in editor policy. These modules are loaded before application
-keymaps are configured. Calls from C++ enter Guile through a condition boundary; a Scheme condition
-becomes a C++ error value and is retained in the scripting inspection snapshot. C++ exceptions
-raised by a host primitive are translated into Scheme conditions.
+defines the public command value API; `(cind emacs)`, `(cind meow)`, and `(cind toy-modal)` define
+input strategies; and `(cind core)` composes the built-in editor policy. These modules are loaded
+before application keymaps are configured. Calls from C++ enter Guile through a condition boundary;
+a Scheme condition becomes a C++ error value and is retained in the scripting inspection snapshot.
+C++ exceptions raised by a host primitive are translated into Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 provider, input-state, input-strategy, and mode counts, command/provider/keymap/input-state/mode
@@ -53,6 +53,10 @@ The native module exports:
 (bind-remap! host keymap-name command-name replacement-name)
 (keymap-bindings host keymap-name)
 (resolve-key-sequence host keymap-names key-sequence)
+(base-keymap-layers host context)
+(key-sequence-completions host keymap-names key-sequence)
+(set-input-feedback! host view-id sequence hints)
+(clear-input-feedback! host view-id)
 (define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
 (define-input-strategy! host name editing-state interface-state)
 (set-default-input-strategy! host strategy-name)
@@ -137,12 +141,23 @@ keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
 
+`base-keymap-layers` returns the named Window, View, Buffer, minor-mode, major-mode, editor, and
+application maps for the Window in a command context. Input-state maps and the system override map
+are excluded. `key-sequence-completions` performs the corresponding side-effect-free layered query;
+an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors, merges duplicate
+keys by layer precedence, and applies the same one-pass remap as resolution. These operations let a
+transient translator inspect the command surface beneath itself without depending on an implicit
+focused application.
+
 `define-input-state!` creates or reconfigures a named state. `keymaps` is an ordered proper list or
 vector of keymap names; `text-input` is `accept` or `ignore`; `cursor` is `beam`, `block`, or
-`underline`; and `indicator` is presentation text. An optional handler receives the View ID and
-canonical key notation. It returns `pass`, `consume`, or `#(dispatch command-name)`. Handler errors
-are retained by the scripting runtime and consume the key without escaping into a frontend event
-loop.
+`underline`; and `indicator` is presentation text. An optional handler receives a complete command
+context and canonical key notation. It returns `pass`, `consume`, `#(dispatch command-name)`, or
+`#(pending sequence hints)`. Pending consumes the key and publishes the supplied
+`#(key detail prefix?)` hint vector through the same frontend-independent popup channel as keymap
+prefixes. Handler errors are retained by the scripting runtime and consume the key without escaping
+into a frontend event loop. The system override map is resolved before a handler, so `C-g` remains
+an unconditional escape path.
 
 An input strategy is a named mapping from the `editing` and `interface` interaction classes to
 durable states. The application has a default strategy, while each View may select an independent
@@ -157,6 +172,12 @@ state to top as a vector of names. Every application View is initialized with th
 defined by `(cind emacs)`; its empty state keymap list preserves the default Emacs keymap policy.
 The focused document state's cursor shape and indicator flow through the frontend-independent Scene.
 Interactions temporarily present a beam cursor because their text input owns focus.
+
+Input feedback belongs to the View's current state stack. `set-input-feedback!` publishes feedback
+when a command enters a transient state, while a handler may replace it with a pending result.
+`clear-input-feedback!` removes it explicitly. A push, pop, base transition, or next delivered key
+invalidates the prior feedback, so hints cannot outlive the state that produced them. Switching
+Windows preserves each View's independent transient state and feedback.
 
 `observe-input-state-changes!` registers an editor-thread procedure for every base, push, and pop
 transition. It receives `#(kind view-id from-state-or-#f to-state-or-#f)`. Observer conditions are
@@ -282,10 +303,19 @@ present a block cursor, and display `N` in the modeline. `i` selects the `emacs`
 View. The toy strategy maps interface Buffers to the Emacs state, demonstrating class-specific
 behavior without package-specific routing.
 
-The same module declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
+`(cind core)` declares `fundamental-mode`, `prog-mode`, and `special-mode`. Fundamental and
 programming buffers have the `editing` interaction class; special buffers have `interface`.
 The built-in C++ mode derives from `prog-mode`, and generated location-list buffers derive from
 `special-mode`. The default Emacs strategy maps both classes to the `emacs` InputState.
+
+`(cind meow)` is a modal strategy implemented entirely through public host mechanisms. `C-c m`
+selects it for the invoking View. Editing Buffers derive `meow-normal`, interface Buffers derive the
+sparse `meow-motion`, and `i` enters the text-accepting `meow-insert` state. Normal and motion maps
+bind `SPC`, `x`, `c`, `g`, and `m` to a transient `meow-keypad` handler. The handler translates
+unmodified keys against base layers, publishes completions, applies control-to-literal fallback,
+and finally tries the original key sequence for transparent interface bindings. Thus `x c`
+dispatches `C-x C-c`, `x b` falls back to `C-x b`, `m x` dispatches `M-x`, and interface keymaps
+remain available without package-specific routing.
 
 ## Scripted interaction providers
 

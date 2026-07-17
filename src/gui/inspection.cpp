@@ -245,6 +245,8 @@ void append_command_loop(std::string& output, const CommandLoopStateSnapshot& co
     append_json_string(output, command_loop.pending_keys);
     output += ",\"pending_keymap\":";
     append_json_string(output, command_loop.pending_keymap);
+    output += ",\"pending_input_state\":";
+    append_json_string(output, command_loop.pending_input_state);
     output += ",\"repeat_count\":";
     if (command_loop.repeat_count) {
         output += std::to_string(*command_loop.repeat_count);
@@ -2268,7 +2270,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << frame.editor.active_window_generation << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""
            << printable(frame.editor.command_loop.pending_keys) << "\" owner=\""
-           << printable(frame.editor.command_loop.pending_keymap) << "\" last=\""
+           << printable(frame.editor.command_loop.pending_keymap) << "\" state=\""
+           << printable(frame.editor.command_loop.pending_input_state) << "\" last=\""
            << printable(frame.editor.command_loop.last_command) << "\"\n";
     output << "    scripting=" << printable(frame.editor.scripting.engine) << ' '
            << printable(frame.editor.scripting.version)

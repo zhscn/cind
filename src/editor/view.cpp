@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace cind {
 
@@ -98,6 +99,7 @@ bool ViewRegistry::erase(ViewId id) {
     if (view->attached_windows_ != 0) {
         return false;
     }
+    view->input_states_.reset(*input_states_, id);
     remove_anchors(*view);
     Slot& slot = slots_[id.slot];
     slot.value.reset();
@@ -220,6 +222,14 @@ std::optional<InputStateId> ViewRegistry::pop_input_state(ViewId view) {
 
 void ViewRegistry::reset_input_states(ViewId view) {
     get(view).input_states_.reset(*input_states_, view);
+}
+
+void ViewRegistry::set_input_feedback(ViewId view, InputFeedback feedback) {
+    get(view).input_states_.set_feedback(std::move(feedback));
+}
+
+void ViewRegistry::clear_input_feedback(ViewId view) {
+    get(view).input_states_.clear_feedback();
 }
 
 std::optional<InputStateId> ViewRegistry::effective_base_state(const View& view) const {

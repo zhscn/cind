@@ -83,10 +83,14 @@ package-specific key-routing code.
 
 Push, pop and base replacement publish typed state-change events containing the View and the
 previous and next state identities. Resetting a stack emits one pop event per transient state and
-preserves the base. An input state may also provide a key handler. The focused View's top handler
-runs before layered lookup and returns pass, consume, dispatch-command or an error. Passing refreshes
-the state layers and continues through the command loop. Consuming and errors clear pending chords;
-dispatch-command enters the same checked command execution path as keymap lookup.
+preserves the base. Destroying a View resets its transient states before releasing the View, so
+state observers receive symmetric exit events. An input state may also provide a key handler. The focused View's top handler
+runs after the always-active override layer and before ordinary layered lookup. It returns pass,
+consume, dispatch-command, pending feedback, or an error. Passing refreshes the state layers and
+continues through the command loop. Consuming and errors clear pending chords; dispatch-command
+enters the same checked command execution path as keymap lookup. Pending feedback belongs to the
+View's current state, consumes the key, and supplies a display sequence plus structured hints to
+both frontends. State transitions invalidate feedback automatically.
 
 Every normalized keystroke enters this dispatch path, including printable characters. A consumed
 character ends at the command loop; a graphical frontend discards its paired text-input event. An
@@ -117,8 +121,9 @@ including `C-x C-c`. Document editing and buffer commands remain in `editor.defa
 editing remains in the interaction keymap family.
 
 Always-active override maps are resolved before a pending sequence. The built-in system override
-binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix or focused interaction through the
-same command path. Override maps contain complete bindings rather than prefix trees.
+binds `C-g` to `keyboard.quit`, allowing it to cancel a prefix, focused interaction, or transient
+handler state through the same command path. Override maps contain complete bindings rather than
+prefix trees.
 
 The default keymap follows Emacs conventions:
 
@@ -137,6 +142,13 @@ the corresponding input strategy. The installer binds only commands present in t
 composition, so optional capabilities can join the shared TUI and GUI keymap without duplicating
 policy in C++. The keymap registry and precedence rules remain C++ mechanisms.
 
+The bundled `(cind meow)` strategy demonstrates handler-based translation without a parallel input
+loop. Its keypad queries base layers 3–9 for the invoking Window, excluding its own state maps,
+resolves translated sequences with the same registry function used by dispatch, and publishes the
+same layered completions used by prefix help. Control-to-literal and transparent original-sequence
+fallback remain Scheme policy. Multiple Views may independently use Emacs, meow, or another named
+strategy.
+
 ## Command loop and prefix help
 
 One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap
@@ -148,10 +160,11 @@ An undefined key after a recognized prefix consumes the sequence and clears pend
 state. A single unbound key remains available to the platform text-input path. `C-g` invokes
 `keyboard.quit` from the system override map.
 
-The command loop merges immediate continuations across active keymaps and their parents using the
-same precedence as dispatch. While a sequence is pending, the scene contains a popup listing the
-next keys and their command names. This is the which-key view. Runtime, mode, inherited, and user
-bindings appear without a separate help table.
+The keymap registry merges immediate continuations across ordered keymaps and their parents using
+the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is
+pending, the scene contains a popup listing the next keys and their semantic details. This is the
+which-key view. Runtime, mode, inherited, translated, and user bindings appear without a separate
+frontend help table.
 
 Commands receive `CommandContext`, which names the runtime, window, buffer, and view explicitly.
 Settings resolution follows the same context. Command callbacks do not depend on process-global
@@ -201,7 +214,7 @@ The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.s
 `editor.interaction`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
 `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
-keymap, repeat count, and last command. Interaction state includes prompt kind, input caret,
+keymap, the input state owning handler feedback, repeat count, and last command. Interaction state includes prompt kind, input caret,
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
 lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
 reports the active state name, text-input policy, cursor shape, and indicator.

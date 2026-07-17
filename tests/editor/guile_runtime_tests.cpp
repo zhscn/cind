@@ -91,8 +91,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
-    CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind core"});
+    CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind emacs",
+                                                       "cind toy-modal", "cind meow", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -123,8 +123,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 2);
-    CHECK(*second == 2);
+    CHECK(*first == 6);
+    CHECK(*second == 6);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -141,8 +141,20 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(toy_definition.indicator == "N");
     REQUIRE(toy_definition.keymaps.size() == 1);
     CHECK(runtime.keymaps().definition(toy_definition.keymaps.front()).name == "toy-modal.normal");
-    CHECK(guile.snapshot().scripted_input_states == 2);
-    CHECK(guile.snapshot().scripted_input_strategies == 2);
+    const InputStateId keypad = runtime.input_states().find("meow-keypad").value_or(InputStateId{});
+    REQUIRE(keypad);
+    CHECK(runtime.input_states().definition(keypad).handler);
+    const InputStrategyId meow =
+        runtime.input_strategies().find("meow").value_or(InputStrategyId{});
+    REQUIRE(meow);
+    CHECK(runtime.input_states()
+              .definition(runtime.input_strategies().state(meow, InteractionClass::Editing))
+              .name == "meow-normal");
+    CHECK(runtime.input_states()
+              .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
+              .name == "meow-motion");
+    CHECK(guile.snapshot().scripted_input_states == 6);
+    CHECK(guile.snapshot().scripted_input_strategies == 3);
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     const InputStrategyId toy_strategy =
@@ -348,6 +360,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return std::vector<GuileKeyBindingSummary>{
                      {.keys = "C-x C-s", .command = "file.save"}};
              },
+         .base_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
          .set_selection =
              [&](ViewId target, std::uint32_t anchor, std::uint32_t head) {
                  runtime.views().set_selection(
@@ -399,7 +412,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 39);
+    CHECK(*installed == 46);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -753,7 +766,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 39);
+    CHECK(snapshot.scripted_commands == 46);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

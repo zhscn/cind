@@ -113,6 +113,7 @@ void ViewInputStates::set_base(InputStateRegistry& registry, ViewId view, InputS
         states_.front() = state;
     }
     if (previous != state) {
+        feedback_.reset();
         registry.publish(
             {.view = view, .kind = InputStateChangeKind::Base, .from = previous, .to = state});
     }
@@ -124,6 +125,7 @@ void ViewInputStates::push(InputStateRegistry& registry, ViewId view, InputState
         throw std::logic_error("input state stack requires a base before push");
     }
     const std::optional<InputStateId> previous = top();
+    feedback_.reset();
     states_.push_back(state);
     registry.publish(
         {.view = view, .kind = InputStateChangeKind::Push, .from = previous, .to = state});
@@ -134,6 +136,7 @@ std::optional<InputStateId> ViewInputStates::pop(InputStateRegistry& registry, V
         return std::nullopt;
     }
     const InputStateId removed = states_.back();
+    feedback_.reset();
     states_.pop_back();
     registry.publish(
         {.view = view, .kind = InputStateChangeKind::Pop, .from = removed, .to = states_.back()});
@@ -143,6 +146,13 @@ std::optional<InputStateId> ViewInputStates::pop(InputStateRegistry& registry, V
 void ViewInputStates::reset(InputStateRegistry& registry, ViewId view) {
     while (pop(registry, view)) {
     }
+}
+
+void ViewInputStates::set_feedback(InputFeedback feedback) {
+    if (states_.empty()) {
+        throw std::logic_error("input feedback requires an active input state");
+    }
+    feedback_ = std::move(feedback);
 }
 
 } // namespace cind

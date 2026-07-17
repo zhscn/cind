@@ -50,15 +50,30 @@ enum class InputStateHandlerActionKind : std::uint8_t {
     Pass,
     Consume,
     Dispatch,
+    Pending,
+};
+
+struct InputHint {
+    std::string key;
+    std::string detail;
+    bool prefix = false;
+
+    friend bool operator==(const InputHint&, const InputHint&) = default;
+};
+
+struct InputFeedback {
+    std::string sequence;
+    std::vector<InputHint> hints;
 };
 
 struct InputStateHandlerAction {
     InputStateHandlerActionKind kind = InputStateHandlerActionKind::Pass;
     CommandId command;
+    std::optional<InputFeedback> feedback;
 };
 
 using InputStateHandlerResult = std::expected<InputStateHandlerAction, std::string>;
-using InputStateHandler = std::function<InputStateHandlerResult(ViewId, KeyStroke)>;
+using InputStateHandler = std::function<InputStateHandlerResult(CommandContext&, KeyStroke)>;
 
 class InputStateRegistry {
 public:
@@ -108,6 +123,7 @@ public:
     std::optional<InputStateId> base() const;
     std::optional<InputStateId> top() const;
     const std::vector<InputStateId>& stack() const { return states_; }
+    const std::optional<InputFeedback>& feedback() const { return feedback_; }
 
 private:
     friend class ViewRegistry;
@@ -116,8 +132,11 @@ private:
     void push(InputStateRegistry& registry, ViewId view, InputStateId state);
     std::optional<InputStateId> pop(InputStateRegistry& registry, ViewId view);
     void reset(InputStateRegistry& registry, ViewId view);
+    void set_feedback(InputFeedback feedback);
+    void clear_feedback() { feedback_.reset(); }
 
     std::vector<InputStateId> states_;
+    std::optional<InputFeedback> feedback_;
 };
 
 } // namespace cind

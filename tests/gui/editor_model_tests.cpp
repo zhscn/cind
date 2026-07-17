@@ -127,16 +127,17 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.caret == caret);
     CHECK(state.viewport.top_line == 10);
     CHECK(state.scripting.engine == "guile");
-    CHECK(state.scripting.modules ==
-          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind core"});
+    CHECK(state.scripting.modules == std::vector<std::string>{"cind command", "cind emacs",
+                                                              "cind toy-modal", "cind meow",
+                                                              "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 39);
+    CHECK(state.scripting.scripted_commands == 46);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
-    CHECK(state.scripting.scripted_input_states == 2);
-    CHECK(state.scripting.scripted_input_strategies == 2);
+    CHECK(state.scripting.scripted_input_states == 6);
+    CHECK(state.scripting.scripted_input_strategies == 3);
     CHECK(state.scripting.mode_revision == 1);
     CHECK(state.scripting.scripted_modes == 3);
     CHECK(state.text_input_policy == "accept");
@@ -189,6 +190,26 @@ TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy")
     CHECK(state.text_input_policy == "accept");
     model.insert_text("z");
     CHECK(model.inspect().document_bytes == 4);
+}
+
+TEST_CASE("meow keypad feedback is exposed through the shared scene and inspector model") {
+    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+    CHECK(model.handle_key(KeyStroke::character_key(U'c', KeyModifier::Control), 8));
+    CHECK(model.handle_key(KeyStroke::character_key(U'm'), 8));
+    CHECK(model.handle_key(KeyStroke::character_key(U'x'), 8));
+
+    const EditorStateSnapshot state = model.inspect();
+    CHECK(state.command_loop.pending_keys == "C-x");
+    CHECK(state.command_loop.pending_keymap.empty());
+    CHECK(state.command_loop.pending_input_state == "meow-keypad");
+    const ui::Scene scene = compose_frame(model, 40, 80);
+    const ui::Region* popup = scene.find(ui::RegionRole::Popup);
+    REQUIRE(popup != nullptr);
+    REQUIRE(popup->popup() != nullptr);
+    CHECK(popup->popup()->title == "C-x …");
+    CHECK(std::ranges::any_of(popup->popup()->items, [](const ui::Region::PopupItem& item) {
+        return item.label == "C-s" && item.detail == "file.save";
+    }));
 }
 
 TEST_CASE("caret reveal moves a fractional row to the top edge") {

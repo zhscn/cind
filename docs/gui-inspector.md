@@ -179,8 +179,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 - `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、连续行单位的
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
   command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
-  名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；交互状态的
-  `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
+  名称、parent chain 和 window/view/buffer/mode/editor/global/interaction 作用域；
+  `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
+  所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
 - `scene`：cell 网格、cursor、活动文本行、pane/divider、view tree、region 几何和语义
   内容。Scene region 使用 0-based cell 坐标并声明 vertical anchor、pane owner、active
   状态和局部 `content_offset_rows`；单 grid 的 `grid_offset_rows` 与 pane-grid 的局部偏移

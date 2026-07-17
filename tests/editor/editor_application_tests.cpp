@@ -126,6 +126,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     const CommandId base_command = command("test.state.base", 1);
     const CommandId transient_command = command("test.state.transient", 2);
     const CommandId handled_command = command("test.state.handler", 3);
+    WindowId handler_window;
     const KeymapId base_map = runtime.keymaps().define("test.state.base-map");
     const KeymapId transient_map = runtime.keymaps().define("test.state.transient-map");
     runtime.keymaps().bind(base_map, "z", base_command);
@@ -138,14 +139,27 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
          .text_input = TextInputPolicy::Ignore,
          .cursor = CursorShape::Block,
          .indicator = "T",
-         .handler = [handled_command](ViewId, KeyStroke key) -> InputStateHandlerResult {
+         .handler = [handled_command, &handler_window](CommandContext& context,
+                                                       KeyStroke key) -> InputStateHandlerResult {
+             handler_window = context.window_id();
              if (format_key_stroke(key) == "q") {
                  return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume,
-                                                .command = {}};
+                                                .command = {},
+                                                .feedback = std::nullopt};
              }
              if (format_key_stroke(key) == "d") {
                  return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
-                                                .command = handled_command};
+                                                .command = handled_command,
+                                                .feedback = std::nullopt};
+             }
+             if (format_key_stroke(key) == "p") {
+                 return InputStateHandlerAction{
+                     .kind = InputStateHandlerActionKind::Pending,
+                     .command = {},
+                     .feedback = InputFeedback{
+                         .sequence = "C-x",
+                         .hints = {{.key = "C-s", .detail = "file.save", .prefix = false},
+                                   {.key = "4", .detail = "window", .prefix = true}}}};
              }
              return InputStateHandlerAction{};
          }});
@@ -157,10 +171,28 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     REQUIRE(application.active_keymap_layers().size() >= 2);
     CHECK(application.active_keymap_layers()[0].scope == "input-state:test-transient:transient");
     CHECK(application.active_keymap_layers()[1].scope == "input-state:test-base");
+    const std::vector<KeymapLayer> base_layers =
+        application.base_keymap_layers(application.window_id());
+    CHECK(std::ranges::none_of(base_layers, [](const KeymapLayer& layer) {
+        return layer.scope.starts_with("input-state:");
+    }));
+    CHECK(std::ranges::any_of(base_layers,
+                              [](const KeymapLayer& layer) { return layer.scope == "editor"; }));
+    CHECK(std::ranges::any_of(base_layers,
+                              [](const KeymapLayer& layer) { return layer.scope == "global"; }));
     CHECK(application.handle_key(KeyStroke::character_key(U'd'), 10));
     CHECK(selected == 3);
+    CHECK(handler_window == application.window_id());
+    CHECK(application.handle_key(KeyStroke::character_key(U'p'), 10));
+    CHECK(application.pending_key_sequence_text() == "C-x");
+    CHECK(application.pending_input_state_name() == "test-transient");
+    CHECK(application.command_loop().pending_sequence().empty());
+    CHECK(application.pending_key_hints() ==
+          std::vector<KeyBindingHint>{{.key = "C-s", .detail = "file.save", .prefix = false},
+                                      {.key = "4", .detail = "window", .prefix = true}});
     CHECK(application.handle_key(KeyStroke::character_key(U'q'), 10));
     CHECK(selected == 3);
+    CHECK(application.pending_key_sequence_text().empty());
 
     CHECK(runtime.views().pop_input_state(application.view_id()) == transient);
     CHECK(application.handle_key(KeyStroke::character_key(U'z'), 10));
@@ -204,6 +236,78 @@ TEST_CASE("text input follows the focused input state policy") {
     application.insert_text("z");
     CHECK(application.interaction().state()->input.text() == "z");
     CHECK(application.session().snapshot().content().to_string() == "text");
+}
+
+TEST_CASE("Guile meow keypad translates through base layers and preserves the escape layer") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+
+    send_keys(application, "C-c m");
+    CHECK(application.input_state().name == "meow-normal");
+    CHECK(runtime.input_strategies()
+              .definition(runtime.views().get(application.view_id()).input_strategy().value())
+              .name == "meow");
+
+    send_keys(application, "x");
+    CHECK(application.input_state().name == "meow-keypad");
+    CHECK(application.pending_key_sequence_text() == "C-x");
+    CHECK(application.pending_input_state_name() == "meow-keypad");
+    CHECK(std::ranges::any_of(application.pending_key_hints(), [](const KeyBindingHint& hint) {
+        return hint.key == "C-c" && hint.detail == "application.quit";
+    }));
+    CHECK(std::ranges::none_of(
+        application.base_keymap_layers(application.window_id()),
+        [](const KeymapLayer& layer) { return layer.scope.starts_with("input-state:"); }));
+
+    const WindowId keypad_window = application.window_id();
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WindowId other_window = application.window_layout().leaves().back();
+    REQUIRE(application.focus_window(other_window));
+    CHECK(application.pending_key_sequence_text().empty());
+    REQUIRE(application.focus_window(keypad_window));
+    CHECK(application.pending_key_sequence_text() == "C-x");
+
+    send_keys(application, "C-g");
+    CHECK(application.input_state().name == "meow-normal");
+    CHECK(application.pending_key_sequence_text().empty());
+    CHECK_FALSE(application.should_quit());
+
+    send_keys(application, "x c");
+    CHECK(application.should_quit());
+}
+
+TEST_CASE("Guile meow keypad supports literal and transparent base-layer fallback") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    send_keys(application, "C-c m");
+
+    send_keys(application, "x b");
+    REQUIRE(application.interaction().active());
+    CHECK(application.interaction().state()->request.prompt == "Switch buffer: ");
+    send_keys(application, "C-g");
+
+    send_keys(application, "m x");
+    REQUIRE(application.interaction().active());
+    CHECK(application.interaction().state()->request.prompt == "Command: ");
+    send_keys(application, "C-g");
+
+    int transparent_calls = 0;
+    const CommandId transparent = runtime.commands().define(
+        "test.meow.transparent", [&](CommandContext&, const CommandInvocation&) -> CommandResult {
+            ++transparent_calls;
+            return CommandCompleted{};
+        });
+    const KeymapId interface_map = runtime.keymaps().define("test.meow.interface");
+    runtime.keymaps().bind(interface_map, "SPC z", transparent);
+    application.session().buffer().keymaps().push_back(interface_map);
+    const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
+    REQUIRE(special);
+    application.session().buffer().modes().set_major(runtime.modes(), special);
+    CHECK(application.input_state().name == "meow-motion");
+
+    send_keys(application, "SPC z");
+    CHECK(transparent_calls == 1);
+    CHECK(application.input_state().name == "meow-motion");
 }
 
 TEST_CASE("background saving is independent of a graphical event loop") {
@@ -475,7 +579,7 @@ TEST_CASE("default keymap follows Emacs movement search undo and prefix conventi
     CHECK(application.command_loop().pending_sequence_text() == "C-x");
     const std::vector<KeyBindingHint> hints = application.pending_key_hints();
     CHECK(std::ranges::any_of(hints, [](const KeyBindingHint& hint) {
-        return hint.key == "C-s" && hint.command == "file.save";
+        return hint.key == "C-s" && hint.detail == "file.save";
     }));
     send_keys(application, "C-g");
     CHECK(application.command_loop().pending_sequence().empty());

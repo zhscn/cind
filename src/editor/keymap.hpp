@@ -154,6 +154,8 @@ public:
     std::optional<CommandId> remap(KeymapId keymap, CommandId command) const;
     std::vector<KeymapCompletion> completions(KeymapId keymap,
                                               std::span<const KeyStroke> prefix) const;
+    std::vector<KeymapCompletion> completions(std::span<const KeymapId> layers,
+                                              std::span<const KeyStroke> prefix) const;
     std::vector<KeymapBinding> bindings(KeymapId keymap) const;
     std::vector<KeymapEntry> entries(KeymapId keymap) const;
     std::vector<KeymapRemap> remaps(KeymapId keymap) const;

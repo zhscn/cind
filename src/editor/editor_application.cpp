@@ -152,6 +152,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
+           .base_keymap_layers =
+               [this](WindowId window) {
+                   std::vector<KeymapId> result;
+                   for (const KeymapLayer& layer : base_keymap_layers(window)) {
+                       result.push_back(layer.keymap);
+                   }
+                   return result;
+               },
            .set_selection =
                [this](ViewId view, std::uint32_t anchor, std::uint32_t head) {
                    session_for(view).set_selection(
@@ -354,6 +362,7 @@ void EditorApplication::refresh_default_keymap() {
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     command_page_rows_ = std::max(1, page_rows);
     last_key_ = format_key_stroke(key);
+    runtime_.views().clear_input_feedback(view_id());
     sync_keymaps();
     if (!interaction_.active()) {
         const View& active_view = runtime_.views().get(view_id());
@@ -361,7 +370,14 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
             const InputStateRegistry::Definition& definition =
                 runtime_.input_states().definition(*state);
             if (definition.handler) {
-                InputStateHandlerResult handled = definition.handler(active_view.id(), key);
+                CommandContext context = command_context();
+                if (std::optional<CommandLoopResult> override =
+                        command_loop_.dispatch_override(key, context)) {
+                    const bool consumed = handle_loop_result(std::move(*override));
+                    sync_keymaps();
+                    return consumed;
+                }
+                InputStateHandlerResult handled = definition.handler(context, key);
                 if (!handled) {
                     command_loop_.cancel_pending();
                     message_ = handled.error();
@@ -380,11 +396,22 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                         sync_keymaps();
                         return true;
                     }
-                    CommandContext context = command_context();
                     const bool consumed =
                         handle_loop_result(command_loop_.execute(handled->command, context));
                     sync_keymaps();
                     return consumed;
+                }
+                if (handled->kind == InputStateHandlerActionKind::Pending) {
+                    if (!handled->feedback) {
+                        command_loop_.cancel_pending();
+                        message_ = "input state handler returned pending without feedback";
+                        sync_keymaps();
+                        return true;
+                    }
+                    runtime_.views().set_input_feedback(active_view.id(), *handled->feedback);
+                    command_loop_.cancel_pending();
+                    sync_keymaps();
+                    return true;
                 }
                 sync_keymaps();
             }
@@ -1017,15 +1044,42 @@ LocationNavigationSnapshot EditorApplication::location_navigation() const {
             .location_count = location_count};
 }
 
+const InputFeedback* EditorApplication::active_input_feedback() const {
+    if (interaction_.active()) {
+        return nullptr;
+    }
+    const std::optional<InputFeedback>& feedback =
+        runtime_.views().get(view_id()).input_states().feedback();
+    return feedback ? &*feedback : nullptr;
+}
+
+std::string EditorApplication::pending_key_sequence_text() const {
+    if (const InputFeedback* feedback = active_input_feedback()) {
+        return feedback->sequence;
+    }
+    return command_loop_.pending_sequence_text();
+}
+
+std::string EditorApplication::pending_input_state_name() const {
+    if (active_input_feedback() == nullptr) {
+        return {};
+    }
+    const std::optional<InputStateId> state = runtime_.views().get(view_id()).input_states().top();
+    return state ? runtime_.input_states().definition(*state).name : std::string();
+}
+
 std::vector<KeyBindingHint> EditorApplication::pending_key_hints() const {
+    if (const InputFeedback* feedback = active_input_feedback()) {
+        return feedback->hints;
+    }
     std::vector<KeyBindingHint> result;
     for (const KeymapCompletion& completion : command_loop_.pending_completions()) {
-        std::string command;
+        std::string detail = completion.label;
         if (completion.command) {
-            command = runtime_.commands().definition(*completion.command).name;
+            detail = runtime_.commands().definition(*completion.command).name;
         }
         result.push_back({.key = format_key_stroke(completion.key),
-                          .command = std::move(command),
+                          .detail = std::move(detail),
                           .prefix = completion.prefix});
     }
     return result;
@@ -1489,6 +1543,8 @@ void EditorApplication::register_commands() {
                               .mode;
 
     define("keyboard.quit", [this](const CommandInvocation&) {
+        runtime_.views().reset_input_states(view_id());
+        command_loop_.cancel_pending();
         if (interaction_.cancel()) {
             message_ = "cancelled";
             return;
@@ -1724,7 +1780,7 @@ void EditorApplication::register_keymaps() {
     command_loop_.set_override_keymaps({system_keymap_});
 }
 
-std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
+std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_id) const {
     std::vector<KeymapLayer> layers;
     const auto append = [&](std::span<const KeymapId> maps, std::string_view scope) {
         for (const KeymapId map : maps) {
@@ -1736,17 +1792,9 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
         }
     };
 
-    const Window& window = runtime_.windows().get(active_window_);
+    const Window& window = runtime_.windows().get(window_id);
     const View& view = runtime_.views().get(window.view_id());
     const Buffer& buffer = runtime_.buffers().get(view.buffer_id());
-    const std::vector<InputStateId>& input_states = view.input_states().stack();
-    for (auto state = input_states.rbegin(); state != input_states.rend(); ++state) {
-        const InputStateRegistry::Definition& definition =
-            runtime_.input_states().definition(*state);
-        append(definition.keymaps,
-               std::format("input-state:{}{}", definition.name,
-                           state + 1 == input_states.rend() ? "" : ":transient"));
-    }
     append(window.keymaps(), "window");
     append(view.keymaps(), "view");
     append(buffer.keymaps(), "buffer");
@@ -1764,6 +1812,35 @@ std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
     }
     append(std::span(&keymap_, 1), "editor");
     append(std::span(&application_keymap_, 1), "global");
+    return layers;
+}
+
+std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
+    std::vector<KeymapLayer> layers;
+    const auto append = [&](std::span<const KeymapLayer> candidates) {
+        for (const KeymapLayer& candidate : candidates) {
+            if (std::ranges::none_of(layers, [&](const KeymapLayer& layer) {
+                    return layer.keymap == candidate.keymap;
+                })) {
+                layers.push_back(candidate);
+            }
+        }
+    };
+    const View& view = runtime_.views().get(view_id());
+    const std::vector<InputStateId>& input_states = view.input_states().stack();
+    for (auto state = input_states.rbegin(); state != input_states.rend(); ++state) {
+        const InputStateRegistry::Definition& definition =
+            runtime_.input_states().definition(*state);
+        for (const KeymapId keymap : definition.keymaps) {
+            const KeymapLayer layer{
+                .keymap = keymap,
+                .scope = std::format("input-state:{}{}", definition.name,
+                                     state + 1 == input_states.rend() ? "" : ":transient")};
+            append(std::span(&layer, 1));
+        }
+    }
+    const std::vector<KeymapLayer> base = base_keymap_layers(active_window_);
+    append(base);
     return layers;
 }
 

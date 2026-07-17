@@ -528,6 +528,31 @@ std::vector<KeymapCompletion> KeymapRegistry::completions(KeymapId keymap,
     return completions_from(keymap, prefix, 0, active);
 }
 
+std::vector<KeymapCompletion> KeymapRegistry::completions(std::span<const KeymapId> layers,
+                                                          std::span<const KeyStroke> prefix) const {
+    std::vector<KeymapCompletion> result;
+    for (const KeymapId layer : layers) {
+        for (KeymapCompletion completion : completions(layer, prefix)) {
+            if (std::ranges::any_of(result, [&](const KeymapCompletion& existing) {
+                    return existing.key == completion.key;
+                })) {
+                continue;
+            }
+            if (completion.command) {
+                for (const KeymapId remap_layer : layers) {
+                    if (const std::optional<CommandId> replacement =
+                            remap(remap_layer, *completion.command)) {
+                        completion.command = *replacement;
+                        break;
+                    }
+                }
+            }
+            result.push_back(std::move(completion));
+        }
+    }
+    return result;
+}
+
 std::vector<KeymapEntry> KeymapRegistry::entries(KeymapId keymap) const {
     (void)stored(keymap);
     std::vector<KeymapEntry> result;

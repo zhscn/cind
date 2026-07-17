@@ -683,6 +683,10 @@ TEST_CASE("keymaps compose explicit prefix maps and one-pass command remaps") {
         runtime.keymaps().completions(base, *parse_key_sequence("g"));
     REQUIRE(nested.size() == 1);
     CHECK(nested.front().command == original);
+    const std::vector<KeymapCompletion> layered_nested =
+        runtime.keymaps().completions(layers, *parse_key_sequence("g"));
+    REQUIRE(layered_nested.size() == 1);
+    CHECK(layered_nested.front().command == replacement);
 
     const std::vector<KeymapEntry> entries = runtime.keymaps().entries(base);
     CHECK(std::ranges::any_of(entries, [goto_map](const KeymapEntry& entry) {
@@ -744,6 +748,10 @@ TEST_CASE("input states are registered globally and stacked per view") {
     runtime.views().set_base_input_state(left, emacs);
     runtime.views().set_base_input_state(right, normal);
     runtime.views().push_input_state(left, transient);
+    runtime.views().set_input_feedback(
+        left,
+        {.sequence = "C-x", .hints = {{.key = "C-s", .detail = "file.save", .prefix = false}}});
+    REQUIRE(runtime.views().get(left).input_states().feedback());
     runtime.views().set_base_input_state(left, normal);
     const ViewInputStates& left_states = runtime.views().get(left).input_states();
     const ViewInputStates& right_states = runtime.views().get(right).input_states();
@@ -755,6 +763,7 @@ TEST_CASE("input states are registered globally and stacked per view") {
     CHECK(right_states.stack()[0] == normal);
     CHECK(left_states.top() == transient);
     CHECK(left_states.base() == normal);
+    CHECK_FALSE(left_states.feedback().has_value());
     CHECK(runtime.input_states().definition(transient).indicator == "K");
     CHECK(changes.size() == 4);
     CHECK(changes[2] ==
@@ -771,6 +780,17 @@ TEST_CASE("input states are registered globally and stacked per view") {
     runtime.views().reset_input_states(left);
     REQUIRE(left_states.stack().size() == 1);
     CHECK(left_states.stack()[0] == normal);
+
+    const ViewId disposable = runtime.views().create(buffer);
+    runtime.views().set_base_input_state(disposable, normal);
+    runtime.views().push_input_state(disposable, transient);
+    changes.clear();
+    REQUIRE(runtime.views().erase(disposable));
+    REQUIRE(changes.size() == 1);
+    CHECK(changes.front() == InputStateChange{.view = disposable,
+                                              .kind = InputStateChangeKind::Pop,
+                                              .from = transient,
+                                              .to = normal});
 
     CHECK(runtime.input_states().unsubscribe(listener));
     CHECK_FALSE(runtime.input_states().unsubscribe(listener));

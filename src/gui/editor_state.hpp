@@ -105,6 +105,7 @@ struct CommandLoopStateSnapshot {
     std::vector<std::string> override_keymaps;
     std::string pending_keys;
     std::string pending_keymap;
+    std::string pending_input_state;
     std::optional<std::int64_t> repeat_count;
     std::string last_command;
 };

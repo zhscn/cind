@@ -4,6 +4,7 @@
 #include "cli/session.hpp"
 #include "editor/basic_commands.hpp"
 #include "editor/command_loop.hpp"
+#include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
 #include "editor/location_list_mode.hpp"
 #include "editor/project_service.hpp"
@@ -75,11 +76,7 @@ struct LocationNavigationSnapshot {
     std::size_t location_count = 0;
 };
 
-struct KeyBindingHint {
-    std::string key;
-    std::string command;
-    bool prefix = false;
-};
+using KeyBindingHint = InputHint;
 
 // Frontend-independent state and command controller for one editor
 // application. Frontends translate native events into KeyStroke/text input
@@ -136,9 +133,12 @@ public:
     std::span<const KeymapLayer> active_keymap_layers() const {
         return command_loop_.keymap_layers();
     }
+    std::vector<KeymapLayer> base_keymap_layers(WindowId window) const;
     std::string_view input_focus() const {
         return interaction_.active() ? std::string_view("interaction") : std::string_view("window");
     }
+    std::string pending_key_sequence_text() const;
+    std::string pending_input_state_name() const;
     std::vector<KeyBindingHint> pending_key_hints() const;
     std::size_t buffer_count() const { return buffers_.size(); }
 
@@ -261,6 +261,7 @@ private:
     void register_keymaps();
     void sync_keymaps();
     std::vector<KeymapLayer> window_keymap_layers() const;
+    const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
     CommandContext command_context();
     void after_edit();

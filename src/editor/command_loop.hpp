@@ -51,6 +51,7 @@ public:
     std::span<const KeymapId> override_keymaps() const { return override_keymaps_; }
 
     CommandLoopResult dispatch(KeyStroke key, CommandContext& context);
+    std::optional<CommandLoopResult> dispatch_override(KeyStroke key, CommandContext& context);
     CommandLoopResult execute(CommandId command, CommandContext& context,
                               const CommandInvocation& invocation = {});
     void cancel_pending();

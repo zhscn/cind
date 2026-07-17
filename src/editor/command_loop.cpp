@@ -34,26 +34,8 @@ void CommandLoop::set_override_keymaps(std::vector<KeymapId> keymaps) {
 }
 
 CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) {
-    const KeySequence single{key};
-    std::vector<KeymapId> active_keymaps = override_keymaps_;
-    active_keymaps.reserve(override_keymaps_.size() + keymap_layers_.size());
-    for (const KeymapLayer& layer : keymap_layers_) {
-        active_keymaps.push_back(layer.keymap);
-    }
-    for (const KeymapId keymap : override_keymaps_) {
-        KeymapMatch override = runtime_->keymaps().resolve(keymap, single);
-        if (override.kind == KeymapMatchKind::Command) {
-            for (const KeymapId active : active_keymaps) {
-                if (const std::optional<CommandId> replacement =
-                        runtime_->keymaps().remap(active, override.command)) {
-                    override.command = *replacement;
-                    break;
-                }
-            }
-            const std::string sequence_text = format_key_stroke(key);
-            cancel_pending();
-            return invoke(override.command, context, {}, sequence_text);
-        }
+    if (std::optional<CommandLoopResult> override = dispatch_override(key, context)) {
+        return std::move(*override);
     }
 
     const bool continued_sequence = !pending_.empty();
@@ -94,23 +76,42 @@ CommandLoopResult CommandLoop::dispatch(KeyStroke key, CommandContext& context) 
     return invoke(match.command, context, invocation, sequence_text);
 }
 
+std::optional<CommandLoopResult> CommandLoop::dispatch_override(KeyStroke key,
+                                                                CommandContext& context) {
+    const KeySequence single{key};
+    std::vector<KeymapId> active_keymaps = override_keymaps_;
+    active_keymaps.reserve(override_keymaps_.size() + keymap_layers_.size());
+    for (const KeymapLayer& layer : keymap_layers_) {
+        active_keymaps.push_back(layer.keymap);
+    }
+    for (const KeymapId keymap : override_keymaps_) {
+        KeymapMatch override = runtime_->keymaps().resolve(keymap, single);
+        if (override.kind == KeymapMatchKind::Command) {
+            for (const KeymapId active : active_keymaps) {
+                if (const std::optional<CommandId> replacement =
+                        runtime_->keymaps().remap(active, override.command)) {
+                    override.command = *replacement;
+                    break;
+                }
+            }
+            const std::string sequence_text = format_key_stroke(key);
+            cancel_pending();
+            return invoke(override.command, context, {}, sequence_text);
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<KeymapCompletion> CommandLoop::pending_completions() const {
     if (pending_.empty()) {
         return {};
     }
-    std::vector<KeymapCompletion> result;
+    std::vector<KeymapId> layers;
+    layers.reserve(keymap_layers_.size());
     for (const KeymapLayer& layer : keymap_layers_) {
-        for (const KeymapCompletion& completion :
-             runtime_->keymaps().completions(layer.keymap, pending_)) {
-            if (std::ranges::any_of(result, [&](const KeymapCompletion& existing) {
-                    return existing.key == completion.key;
-                })) {
-                continue;
-            }
-            result.push_back(completion);
-        }
+        layers.push_back(layer.keymap);
     }
-    return result;
+    return runtime_->keymaps().completions(layers, pending_);
 }
 
 CommandLoopResult CommandLoop::execute(CommandId command, CommandContext& context,

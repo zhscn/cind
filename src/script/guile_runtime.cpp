@@ -206,7 +206,7 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
                                                  CommandContext& context, std::string_view query);
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
                                                     std::size_t state_index, EditorRuntime& runtime,
-                                                    ViewId view, KeyStroke key);
+                                                    CommandContext& context, KeyStroke key);
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
                                         std::size_t observer_index, EditorRuntime& runtime,
                                         const InputStateChange& change);
@@ -514,6 +514,29 @@ std::vector<KeymapId> keymap_layers_from_scheme(HostLease& host, SCM layers_valu
     return layers;
 }
 
+std::vector<InputHint> input_hints_from_scheme(SCM hints_value, const char* caller, int position) {
+    if (!scm_is_vector(hints_value)) {
+        scm_wrong_type_arg_msg(caller, position, hints_value,
+                               "vector of #(key detail prefix?) hints");
+    }
+    std::vector<InputHint> hints;
+    const std::size_t count = scm_c_vector_length(hints_value);
+    hints.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM hint = scm_c_vector_ref(hints_value, index);
+        if (!scm_is_vector(hint) || scm_c_vector_length(hint) != 3 ||
+            !scm_is_string(scm_c_vector_ref(hint, 0)) ||
+            !scm_is_string(scm_c_vector_ref(hint, 1)) ||
+            !scheme_boolean(scm_c_vector_ref(hint, 2))) {
+            scm_wrong_type_arg_msg(caller, position, hint, "#(key detail prefix?) hint");
+        }
+        hints.push_back({.key = scheme_string(scm_c_vector_ref(hint, 0)),
+                         .detail = scheme_string(scm_c_vector_ref(hint, 1)),
+                         .prefix = scheme_true(scm_c_vector_ref(hint, 2))});
+    }
+    return hints;
+}
+
 // The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
@@ -558,6 +581,108 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
         scm_misc_error("resolve-key-sequence", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM base_keymap_layers(SCM host_object, SCM context_value) {
+    try {
+        HostLease& host = require_host(host_object, "base-keymap-layers");
+        if (!host.services.base_keymap_layers) {
+            scm_misc_error("base-keymap-layers", "base keymap layer service is unavailable",
+                           SCM_EOL);
+        }
+        const CommandContext context =
+            command_context_from_scheme(host, context_value, "base-keymap-layers");
+        const std::vector<KeymapId> layers = host.services.base_keymap_layers(context.window_id());
+        SCM result = scm_c_make_vector(layers.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < layers.size(); ++index) {
+            scm_c_vector_set_x(result, index,
+                               name_symbol(host.runtime->keymaps().definition(layers[index]).name));
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("base-keymap-layers", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("base-keymap-layers", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM key_sequence_completions(SCM host_object, SCM layers_value, SCM keys_value) {
+    if (!scm_is_string(keys_value)) {
+        scm_wrong_type_arg_msg("key-sequence-completions", 3, keys_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "key-sequence-completions");
+        const std::vector<KeymapId> layers =
+            keymap_layers_from_scheme(host, layers_value, "key-sequence-completions");
+        KeySequence prefix;
+        const std::string keys = scheme_string(keys_value);
+        if (!keys.empty()) {
+            const std::expected<KeySequence, KeyParseError> parsed = parse_key_sequence(keys);
+            if (!parsed) {
+                scm_misc_error("key-sequence-completions", parsed.error().message.c_str(), SCM_EOL);
+            }
+            prefix = *parsed;
+        }
+        const std::vector<KeymapCompletion> completions =
+            host.runtime->keymaps().completions(layers, prefix);
+        SCM result = scm_c_make_vector(completions.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < completions.size(); ++index) {
+            const KeymapCompletion& completion = completions[index];
+            SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(value, 0,
+                               scm_from_utf8_string(format_key_stroke(completion.key).c_str()));
+            const std::string detail =
+                completion.command ? host.runtime->commands().definition(*completion.command).name
+                                   : completion.label;
+            scm_c_vector_set_x(value, 1, scm_from_utf8_string(detail.c_str()));
+            scm_c_vector_set_x(value, 2, scm_from_bool(completion.prefix));
+            scm_c_vector_set_x(result, index, value);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        scm_misc_error("key-sequence-completions", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("key-sequence-completions", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; validation preserves their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_input_feedback(SCM host_object, SCM view_value, SCM sequence_value, SCM hints_value) {
+    if (!scm_is_string(sequence_value)) {
+        scm_wrong_type_arg_msg("set-input-feedback!", 3, sequence_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-input-feedback!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-input-feedback!", 2);
+        host.runtime->views().set_input_feedback(
+            view, {.sequence = scheme_string(sequence_value),
+                   .hints = input_hints_from_scheme(hints_value, "set-input-feedback!", 4)});
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-input-feedback!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-input-feedback!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM clear_input_feedback(SCM host_object, SCM view_value) {
+    try {
+        HostLease& host = require_host(host_object, "clear-input-feedback!");
+        const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "clear-input-feedback!", 2);
+        host.runtime->views().clear_input_feedback(view);
+    } catch (const std::exception& exception) {
+        scm_misc_error("clear-input-feedback!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("clear-input-feedback!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
 }
 
 // The Guile ABI fixes seven adjacent SCM arguments; validation preserves their semantic order.
@@ -610,13 +735,13 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             if (!scheme_false(handler_value)) {
                 const std::weak_ptr<GuileState> weak = state;
                 EditorRuntime* runtime = host.runtime;
-                handler = [weak, state_index, runtime](ViewId view,
+                handler = [weak, state_index, runtime](CommandContext& context,
                                                        KeyStroke key) -> InputStateHandlerResult {
                     const std::shared_ptr<GuileState> locked = weak.lock();
                     if (!locked || !locked->active) {
                         return std::unexpected("Guile input state runtime has expired");
                     }
-                    return invoke_script_input_handler(locked, state_index, *runtime, view, key);
+                    return invoke_script_input_handler(locked, state_index, *runtime, context, key);
                 };
             }
             InputStateRegistry::Definition definition{.name = name,
@@ -2131,6 +2256,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(keymap_bindings));
     (void)scm_c_define_gsubr("resolve-key-sequence", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(resolve_key_sequence));
+    (void)scm_c_define_gsubr("base-keymap-layers", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(base_keymap_layers));
+    (void)scm_c_define_gsubr("key-sequence-completions", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(key_sequence_completions));
+    (void)scm_c_define_gsubr("set-input-feedback!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_input_feedback));
+    (void)scm_c_define_gsubr("clear-input-feedback!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(clear_input_feedback));
     (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
     (void)scm_c_define_gsubr("define-input-strategy!", 4, 0, 0,
@@ -2235,20 +2368,21 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
                  "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-                 "define-input-state!", "define-input-strategy!", "set-default-input-strategy!",
-                 "set-view-input-strategy!", "view-input-strategy", "set-base-input-state!",
-                 "push-input-state!", "pop-input-state!", "reset-input-states!",
-                 "view-input-states", "observe-input-state-changes!", "%define-mode!",
-                 "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
-                 "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
-                 "open-buffer-summaries", "project-root", "project-files", "path-relative",
-                 "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-resource",
-                 "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
-                 "view-selection", "set-selection!", "clear-selection!", "buffer-substring",
-                 "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-                 "reset-preferred-column!", "structural-motion-target", "write-clipboard!",
-                 "read-clipboard", "display-buffer!", "move-caret-to-line!", "set-message!",
-                 "ensure-project-index!", "open-file!", "start-project-search!",
+                 "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
+                 "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
+                 "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
+                 "set-base-input-state!", "push-input-state!", "pop-input-state!",
+                 "reset-input-states!", "view-input-states", "observe-input-state-changes!",
+                 "%define-mode!", "mode-properties", "set-buffer-major-mode!",
+                 "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
+                 "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
+                 "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
+                 "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
+                 "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
+                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
+                 "set-view-caret!", "reset-preferred-column!", "structural-motion-target",
+                 "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
+                 "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
                  "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",
                  "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
                  "select-other-window!", "request-redraw!", nullptr);
@@ -2284,7 +2418,6 @@ struct GuileCall {
     std::string query;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
-    ViewId view;
     KeyStroke key;
     const InputStateChange* input_state_change = nullptr;
     const BufferModePolicyChange* mode_policy_change = nullptr;
@@ -2531,9 +2664,8 @@ SCM call_body(void* data) {
             call.provider_candidates = provider_candidates_from_scheme(call.result);
             break;
         case GuileCall::Operation::InvokeInputHandler:
-            call.result =
-                scm_call_2(call.procedure, entity_id(call.view.slot, call.view.generation),
-                           scm_from_utf8_string(format_key_stroke(call.key).c_str()));
+            call.result = scm_call_2(call.procedure, command_context_value(*call.context),
+                                     scm_from_utf8_string(format_key_stroke(call.key).c_str()));
             break;
         case GuileCall::Operation::InvokeInputStateObserver: {
             const InputStateChange& change = *call.input_state_change;
@@ -2667,7 +2799,7 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
 
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
                                                     std::size_t state_index, EditorRuntime& runtime,
-                                                    ViewId view, KeyStroke key) {
+                                                    CommandContext& context, KeyStroke key) {
     if (std::this_thread::get_id() != state->owner || !state->active ||
         state_index >= state->input_states.size()) {
         return std::unexpected("Guile input state handler used outside its runtime");
@@ -2675,7 +2807,7 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
     GuileCall call;
     call.operation = GuileCall::Operation::InvokeInputHandler;
     call.procedure = state->input_states[state_index].handler;
-    call.view = view;
+    call.context = &context;
     call.key = key;
     const std::expected<SCM, std::string> result = run_guile_call(call);
     if (!result) {
@@ -2684,10 +2816,12 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
     }
     state->last_error.reset();
     if (symbol_is(*result, "pass")) {
-        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Pass, .command = {}};
+        return InputStateHandlerAction{
+            .kind = InputStateHandlerActionKind::Pass, .command = {}, .feedback = std::nullopt};
     }
     if (symbol_is(*result, "consume")) {
-        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume, .command = {}};
+        return InputStateHandlerAction{
+            .kind = InputStateHandlerActionKind::Consume, .command = {}, .feedback = std::nullopt};
     }
     if (scm_is_vector(*result) && scm_c_vector_length(*result) == 2 &&
         symbol_is(scm_c_vector_ref(*result, 0), "dispatch")) {
@@ -2698,10 +2832,27 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
             return std::unexpected(std::format("unknown input state command '{}'", name));
         }
         return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
-                                       .command = *command};
+                                       .command = *command,
+                                       .feedback = std::nullopt};
     }
-    return std::unexpected(
-        "Guile input state handler must return pass, consume, or #(dispatch command)");
+    if (scm_is_vector(*result) && scm_c_vector_length(*result) == 3 &&
+        symbol_is(scm_c_vector_ref(*result, 0), "pending")) {
+        const SCM sequence_value = scm_c_vector_ref(*result, 1);
+        const SCM hints_value = scm_c_vector_ref(*result, 2);
+        if (!scm_is_string(sequence_value) || !scm_is_vector(hints_value)) {
+            return std::unexpected(
+                "input state pending result requires a string and a vector of hints");
+        }
+        std::vector<InputHint> hints =
+            input_hints_from_scheme(hints_value, "input-state-handler", 3);
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Pending,
+                                       .command = {},
+                                       .feedback =
+                                           InputFeedback{.sequence = scheme_string(sequence_value),
+                                                         .hints = std::move(hints)}};
+    }
+    return std::unexpected("Guile input state handler must return pass, consume, "
+                           "#(dispatch command), or #(pending sequence hints)");
 }
 
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
@@ -2770,7 +2921,7 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module : {"command", "emacs", "toy-modal", "core"}) {
+        for (std::string_view module : {"command", "emacs", "toy-modal", "meow", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -2931,20 +3082,21 @@ public:
     }
 
     GuileRuntimeSnapshot snapshot() const {
-        return {.engine = "guile",
-                .version = version_,
-                .modules = {"cind command", "cind emacs", "cind toy-modal", "cind core"},
-                .command_revision = state_->command_revision,
-                .scripted_commands = state_->commands.size(),
-                .provider_revision = state_->provider_revision,
-                .scripted_providers = state_->providers.size(),
-                .binding_revision = binding_revision_,
-                .input_state_revision = state_->input_state_revision,
-                .scripted_input_states = state_->input_state_definitions,
-                .scripted_input_strategies = state_->input_strategy_definitions,
-                .mode_revision = state_->mode_revision,
-                .scripted_modes = state_->mode_definitions,
-                .last_error = state_->last_error};
+        return {
+            .engine = "guile",
+            .version = version_,
+            .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind core"},
+            .command_revision = state_->command_revision,
+            .scripted_commands = state_->commands.size(),
+            .provider_revision = state_->provider_revision,
+            .scripted_providers = state_->providers.size(),
+            .binding_revision = binding_revision_,
+            .input_state_revision = state_->input_state_revision,
+            .scripted_input_states = state_->input_state_definitions,
+            .scripted_input_strategies = state_->input_strategy_definitions,
+            .mode_revision = state_->mode_revision,
+            .scripted_modes = state_->mode_definitions,
+            .last_error = state_->last_error};
     }
 
 private:

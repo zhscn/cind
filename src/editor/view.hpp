@@ -91,6 +91,8 @@ public:
     void push_input_state(ViewId view, InputStateId state);
     std::optional<InputStateId> pop_input_state(ViewId view);
     void reset_input_states(ViewId view);
+    void set_input_feedback(ViewId view, InputFeedback feedback);
+    void clear_input_feedback(ViewId view);
     void refresh_mode_input_states(std::optional<BufferId> buffer = std::nullopt);
 
 private:
