@@ -135,7 +135,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.command_loop` | 按作用域排列的 active keymap、override map、pending key sequence、count/register/extras prefix 和 last command |
 | `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape、modeline indicator、handler、on-enter/on-exit 和 position-hints provider 状态 |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/input-strategy/mode/file-mode-rule/project-provider 数量、对应 installation revision、outstanding async task 数量和最近一次 host 错误 |
-| `editor.interaction` | minibuffer Window/View/Buffer、origin target、prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
+| `editor.interaction` | minibuffer Window/View/Buffer、origin target、prompt/picker 输入、provider、候选、选中项、history 大小/游标/草稿、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
 | `editor.projects` | project roots、discovery provider/marker、索引 revision、文件数、刷新状态和错误 |
@@ -195,7 +195,8 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
   名称、parent chain 和 window/view/buffer/mode/editor/global/minibuffer 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
-  所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset。
+  所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset，
+  `history_entries`、`history_index` 和 `history_draft` 描述命名 history 的遍历状态。
   Selection 记录 active mark、primary range 索引、anchored history depth、Scheme metadata，
   以及每个 range 的 anchor、head 和 `char`/`line`/`block`/`node` granularity。
   Input state 同时记录所属 strategy 在文档编辑后使用的 `collapse` 或 `preserve`

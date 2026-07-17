@@ -9,6 +9,7 @@
   #:use-module (cind input)
   #:use-module (cind introspect)
   #:use-module (cind meow)
+  #:use-module (cind minibuffer)
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
@@ -122,12 +123,14 @@
         (command-error "command palette requires a command name"))))
 
 (define (command-palette context invocation)
-  (interaction 'picker "Command: " "" "commands" "commands" #f
-               "command.palette.accept"))
+  (completing-read "Command: " "commands" "command.palette.accept"
+                   #:history "commands"))
 
 (define (file-open-interaction initial-input)
-  (interaction 'picker "Open file: " initial-input "files" "files" #t
-               "file.open.accept"))
+  (completing-read "Open file: " "files" "file.open.accept"
+                   #:initial-input initial-input
+                   #:history "files"
+                   #:allow-custom-input? #t))
 
 (define (file-open host context invocation)
   (let* ((resource (buffer-resource host (context-buffer context)))
@@ -152,8 +155,9 @@
 
 (define (file-save-as host context invocation)
   (let ((resource (buffer-resource host (context-buffer context))))
-    (interaction 'text "Write file: " (if resource resource "") "files" "" #t
-                 "file.save-as.accept")))
+    (read-from-minibuffer "Write file: " "file.save-as.accept"
+                          #:initial-input (if resource resource "")
+                          #:history "files")))
 
 (define (file-save-as-accept host context invocation)
   (let ((path (last-string-argument invocation)))
@@ -166,8 +170,8 @@
            (command-dispatch "file.save")))))
 
 (define (buffer-switch context invocation)
-  (interaction 'picker "Switch buffer: " "" "buffers" "buffers" #f
-               "buffer.switch.accept"))
+  (completing-read "Switch buffer: " "buffers" "buffer.switch.accept"
+                   #:history "buffers"))
 
 (define (buffer-switch-accept host context invocation)
   (let ((name (last-string-argument invocation)))
@@ -231,8 +235,8 @@
   (command-completed))
 
 (define (goto-line context invocation)
-  (interaction 'text "Go to line: " "" "line-numbers" "" #t
-               "cursor.goto-line.accept"))
+  (read-from-minibuffer "Go to line: " "cursor.goto-line.accept"
+                        #:history "line-numbers"))
 
 (define max-uint32 4294967295)
 
@@ -280,8 +284,14 @@
                  (command-completed)))))))
 
 (define (project-search context invocation)
-  (interaction 'text "Project search: " "" "project-search" "" #t
-               "project.search.accept"))
+  (read-from-minibuffer "Project search: " "project.search.accept"
+                        #:history "project-search"))
+
+(define (search-prompt forward?)
+  (read-from-minibuffer (if forward? "search: " "search backward: ")
+                        "search.accept"
+                        #:history "search"
+                        #:arguments (list forward?)))
 
 (define (project-search-accept host context invocation)
   (let ((query (last-string-argument invocation))
@@ -300,8 +310,9 @@
         (command-error "current buffer has no project")
         (begin
           (ensure-project-index! host project)
-          (interaction 'picker "Project file: " "" "project-files"
-                       "project-files" #f "project.find-file.accept")))))
+          (completing-read "Project file: " "project-files"
+                           "project.find-file.accept"
+                           #:history "project-files")))))
 
 (define (project-find-file-accept host context invocation)
   (let ((path (last-string-argument invocation)))
@@ -314,8 +325,8 @@
            (command-completed)))))
 
 (define (help-keys context invocation)
-  (interaction 'picker "Key bindings: " "" "key-bindings" "key-bindings" #f
-               "help.keys.accept"))
+  (completing-read "Key bindings: " "key-bindings" "help.keys.accept"
+                   #:history "key-bindings"))
 
 (define (help-keys-accept host context invocation)
   (let ((binding (last-string-argument invocation)))
@@ -616,6 +627,12 @@
                 (project-search-accept host context invocation))
               #f)
         (list "project.search" project-search context-has-project?)
+        (list "search.prompt"
+              (lambda (context invocation) (search-prompt #t))
+              #f)
+        (list "search.backward-prompt"
+              (lambda (context invocation) (search-prompt #f))
+              #f)
         (list "help.keys.accept"
               (lambda (context invocation)
                 (help-keys-accept host context invocation))

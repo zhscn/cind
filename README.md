@@ -80,7 +80,8 @@ Use `--inspect` to expose the GUI inspector for debugging self-drawn UI state. S
 
 The graphical and terminal editors load `cind/init.scm` from `XDG_CONFIG_HOME`, or from
 `~/.config/cind/init.scm` when `XDG_CONFIG_HOME` is unset. The file runs in an isolated Guile
-module with `host`, `(cind host)`, `(cind command)`, and `(cind input)` available:
+module with `host`, `(cind host)`, `(cind command)`, `(cind input)`, and `(cind minibuffer)`
+available:
 
 ```scheme
 (define-command! host "user.hello"

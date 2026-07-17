@@ -133,6 +133,9 @@ InteractionController::start(InteractionRequest request, CommandContext& context
                                     .candidates = {},
                                     .selected = 0,
                                     .generation = 0,
+                                    .history_index = std::nullopt,
+                                    .history_draft = {},
+                                    .history_navigation_revision = std::nullopt,
                                     .loading = false,
                                     .error = {}});
     refresh();
@@ -173,6 +176,67 @@ bool InteractionController::select(std::size_t index) {
     }
     state_->selected = index;
     return true;
+}
+
+bool InteractionController::previous_history() {
+    InteractionState* active = state();
+    if (active == nullptr || active->request.history.empty()) {
+        return false;
+    }
+    const std::vector<std::string>& entries = history(active->request.history);
+    if (entries.empty()) {
+        return false;
+    }
+    if (!active->history_index) {
+        active->history_draft = input_text();
+        active->history_index = entries.size() - 1;
+    } else if (*active->history_index > 0) {
+        --*active->history_index;
+    } else {
+        return false;
+    }
+    replace_input(entries[*active->history_index]);
+    active->history_navigation_revision = input_revision();
+    refresh();
+    return true;
+}
+
+bool InteractionController::next_history() {
+    InteractionState* active = state();
+    if (active == nullptr || !active->history_index || active->request.history.empty()) {
+        return false;
+    }
+    const std::vector<std::string>& entries = history(active->request.history);
+    if (*active->history_index + 1 < entries.size()) {
+        ++*active->history_index;
+        replace_input(entries[*active->history_index]);
+    } else {
+        std::string draft = std::move(active->history_draft);
+        active->history_index.reset();
+        replace_input(draft);
+    }
+    active->history_navigation_revision = input_revision();
+    refresh();
+    return true;
+}
+
+void InteractionController::refresh_candidates() {
+    const bool history_navigation =
+        state_ && state_->history_navigation_revision == input_revision();
+    refresh(!history_navigation);
+}
+
+void InteractionController::replace_input(std::string_view input) {
+    InteractionState* active = state();
+    if (active == nullptr) {
+        return;
+    }
+    Buffer& buffer = runtime_->buffers().get(active->buffer);
+    const TextOffset end{buffer.snapshot().content().size_bytes()};
+    EditTransaction transaction = buffer.begin_transaction();
+    transaction.replace({TextOffset{}, end}, input);
+    (void)transaction.commit();
+    runtime_->views().set_caret(active->view, buffer.snapshot().content().end_offset());
 }
 
 std::expected<InteractionSubmission, std::string> InteractionController::submit() {
@@ -246,10 +310,15 @@ const std::vector<std::string>& InteractionController::history(std::string_view 
     return found == histories_.end() ? empty : found->second;
 }
 
-void InteractionController::refresh() {
+void InteractionController::refresh(bool input_edited) {
     InteractionState* active = state();
     if (active == nullptr) {
         return;
+    }
+    if (input_edited) {
+        active->history_index.reset();
+        active->history_draft.clear();
+        active->history_navigation_revision.reset();
     }
     cancel_pending();
     InteractionState& state = *active;

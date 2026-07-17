@@ -1948,6 +1948,26 @@ void EditorApplication::register_commands() {
             const InteractionState* state = interaction_.state();
             return state != nullptr && state->request.kind == InteractionKind::Picker;
         });
+    runtime_.commands().define(
+        "interaction.previous-history",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.previous_history();
+            return CommandCompleted{};
+        },
+        [this](const CommandContext&) {
+            const InteractionState* state = interaction_.state();
+            return state != nullptr && !state->request.history.empty();
+        });
+    runtime_.commands().define(
+        "interaction.next-history",
+        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
+            (void)interaction_.next_history();
+            return CommandCompleted{};
+        },
+        [this](const CommandContext&) {
+            const InteractionState* state = interaction_.state();
+            return state != nullptr && !state->request.history.empty();
+        });
     define("editor.position", [this](const CommandInvocation&) {
         const DocumentSnapshot snapshot = session().snapshot();
         const Text& text = snapshot.content();
@@ -2052,7 +2072,10 @@ void EditorApplication::register_keymaps() {
     runtime_.keymaps().bind(system_keymap_, "C-g", command("keyboard.quit"));
     for (const auto& [keys, name] :
          std::initializer_list<std::pair<std::string_view, std::string_view>>{
-             {"RET", "interaction.submit"}, {"ESC", "keyboard.quit"}}) {
+             {"RET", "interaction.submit"},
+             {"ESC", "keyboard.quit"},
+             {"M-p", "interaction.previous-history"},
+             {"M-n", "interaction.next-history"}}) {
         runtime_.keymaps().bind(interaction_text_keymap_, keys, command(name));
     }
     for (std::string_view keys : {"C-n", "Down", "TAB"}) {

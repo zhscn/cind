@@ -6,6 +6,7 @@
   #:use-module (cind command)
   #:use-module (cind host)
   #:use-module (cind input)
+  #:use-module (cind minibuffer)
   #:export (introspection-command-definitions
             introspection-providers
             install-introspection-documentation!))
@@ -20,6 +21,7 @@
     (cind emacs)
     (cind toy-modal)
     (cind meow)
+    (cind minibuffer)
     (cind vim)
     (cind helix)
     (cind structural)
@@ -72,8 +74,9 @@
   (display-help! host context (command-help-text host context name)))
 
 (define (describe-command context invocation)
-  (interaction 'picker "Describe command: " "" "describe-command"
-               "commands" #f "help.describe-command.accept"))
+  (completing-read "Describe command: " "commands"
+                   "help.describe-command.accept"
+                   #:history "describe-command"))
 
 (define (describe-command-accept host context invocation)
   (let ((name (last-string-argument invocation)))
@@ -301,12 +304,14 @@
           (command-completed)))))
 
 (define (describe-function context invocation)
-  (interaction 'picker "Describe function: " "" "describe-function"
-               "scheme-functions" #f "help.describe-function.accept"))
+  (completing-read "Describe function: " "scheme-functions"
+                   "help.describe-function.accept"
+                   #:history "describe-function"))
 
 (define (describe-variable context invocation)
-  (interaction 'picker "Describe variable: " "" "describe-variable"
-               "scheme-variables" #f "help.describe-variable.accept"))
+  (completing-read "Describe variable: " "scheme-variables"
+                   "help.describe-variable.accept"
+                   #:history "describe-variable"))
 
 (define (introspection-command-definitions host)
   (list

@@ -1467,6 +1467,25 @@ TEST_CASE("describe bindings and command palette use shared command state") {
               .name == "application.global");
 }
 
+TEST_CASE("minibuffer history keys navigate named Scheme interaction history") {
+    EditorApplication application = make_application("sample.cc", "alpha beta alpha");
+
+    send_keys(application, "C-s");
+    application.insert_text("alpha");
+    send_keys(application, "RET");
+    CHECK_FALSE(application.interaction().active());
+
+    send_keys(application, "C-s");
+    application.insert_text("draft");
+    send_keys(application, "M-p");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().input_text() == "alpha");
+    CHECK(application.last_command() == "interaction.previous-history");
+    send_keys(application, "M-n");
+    CHECK(application.interaction().input_text() == "draft");
+    CHECK(application.last_command() == "interaction.next-history");
+}
+
 TEST_CASE("scripted caret and message commands use application host capabilities") {
     EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
     EditorRuntime& runtime = application.runtime();

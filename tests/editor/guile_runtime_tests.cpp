@@ -418,11 +418,11 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
-    CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind command", "cind input", "cind async", "cind extension",
-                                   "cind emacs", "cind toy-modal", "cind meow", "cind vim",
-                                   "cind helix", "cind structural", "cind development", "cind ares",
-                                   "cind introspect", "cind core"});
+    CHECK(snapshot.modules == std::vector<std::string>{
+                                  "cind command", "cind input", "cind async", "cind extension",
+                                  "cind emacs", "cind toy-modal", "cind meow", "cind vim",
+                                  "cind helix", "cind structural", "cind minibuffer",
+                                  "cind development", "cind ares", "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -633,6 +633,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
+    const CommandId native_search_accept = define_command(runtime, "search.accept");
 
     std::pair<WindowId, BufferId> displayed;
     bool buffer_displayed = false;
@@ -897,7 +898,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 153);
+    CHECK(*installed == 155);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1008,6 +1009,28 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(request->prompt == "Command: ");
     CHECK(request->provider == "commands");
     CHECK(runtime.commands().definition(request->accept_command).name == "command.palette.accept");
+
+    const CommandResult search_prompt_result =
+        runtime.commands().invoke(require_command(runtime, "search.prompt"), context);
+    REQUIRE(search_prompt_result.has_value());
+    const auto* search_prompt = std::get_if<InteractionRequest>(&*search_prompt_result);
+    REQUIRE(search_prompt != nullptr);
+    CHECK(search_prompt->kind == InteractionKind::Text);
+    CHECK(search_prompt->prompt == "search: ");
+    CHECK(search_prompt->history == "search");
+    CHECK(search_prompt->accept_command == native_search_accept);
+    REQUIRE(search_prompt->arguments.size() == 1);
+    CHECK(std::get<bool>(search_prompt->arguments.front()));
+
+    const CommandResult backward_search_prompt_result =
+        runtime.commands().invoke(require_command(runtime, "search.backward-prompt"), context);
+    REQUIRE(backward_search_prompt_result.has_value());
+    const auto* backward_search_prompt =
+        std::get_if<InteractionRequest>(&*backward_search_prompt_result);
+    REQUIRE(backward_search_prompt != nullptr);
+    CHECK(backward_search_prompt->prompt == "search backward: ");
+    REQUIRE(backward_search_prompt->arguments.size() == 1);
+    CHECK_FALSE(std::get<bool>(backward_search_prompt->arguments.front()));
 
     const CommandResult missing = runtime.commands().invoke(request->accept_command, context);
     REQUIRE_FALSE(missing.has_value());
@@ -1327,7 +1350,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 153);
+    CHECK(snapshot.scripted_commands == 155);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

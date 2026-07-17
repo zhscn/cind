@@ -4336,7 +4336,7 @@ public:
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
              {"command", "input", "async", "extension", "emacs", "toy-modal", "meow", "vim",
-              "helix", "structural", "development", "ares", "introspect", "core"}) {
+              "helix", "structural", "minibuffer", "development", "ares", "introspect", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -4630,8 +4630,8 @@ public:
                 .version = version_,
                 .modules = {"cind command", "cind input", "cind async", "cind extension",
                             "cind emacs", "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                            "cind structural", "cind development", "cind ares", "cind introspect",
-                            "cind core"},
+                            "cind structural", "cind minibuffer", "cind development", "cind ares",
+                            "cind introspect", "cind core"},
                 .extensions =
                     [&] {
                         std::vector<std::string> paths;

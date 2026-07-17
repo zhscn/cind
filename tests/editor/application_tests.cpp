@@ -1305,6 +1305,58 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     CHECK_FALSE(interaction.active());
 }
 
+TEST_CASE("interaction history preserves the current draft while navigating") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "history-origin",
+                                                      .initial_text = {},
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const CommandId accept = runtime.commands().define(
+        "history.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    const KeymapId keymap = runtime.keymaps().define("history-interaction-test");
+    InteractionController interaction(runtime, runtime.interaction_providers());
+    const auto request = [&](std::string initial_input) {
+        return InteractionRequest{.kind = InteractionKind::Text,
+                                  .prompt = "History: ",
+                                  .initial_input = std::move(initial_input),
+                                  .history = "commands",
+                                  .provider = {},
+                                  .allow_custom_input = true,
+                                  .accept_command = accept,
+                                  .arguments = {}};
+    };
+
+    REQUIRE(interaction.start(request("first"), context, keymap).has_value());
+    REQUIRE(interaction.submit().has_value());
+    REQUIRE(interaction.start(request("second"), context, keymap).has_value());
+    REQUIRE(interaction.submit().has_value());
+    REQUIRE(interaction.start(request("draft"), context, keymap).has_value());
+
+    CHECK(interaction.previous_history());
+    CHECK(interaction.input_text() == "second");
+    CHECK(interaction.input_caret() == TextOffset{6});
+    CHECK(interaction.previous_history());
+    CHECK(interaction.input_text() == "first");
+    CHECK_FALSE(interaction.previous_history());
+    CHECK(interaction.next_history());
+    CHECK(interaction.input_text() == "second");
+    CHECK(interaction.next_history());
+    CHECK(interaction.input_text() == "draft");
+    CHECK_FALSE(interaction.next_history());
+
+    CHECK(interaction.previous_history());
+    insert_interaction_text(runtime, interaction, "!");
+    interaction.refresh_candidates();
+    CHECK_FALSE(interaction.next_history());
+    CHECK(interaction.input_text() == "second!");
+}
+
 TEST_CASE("async interaction providers discard cancelled generations") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "prompt",

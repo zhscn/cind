@@ -22,13 +22,10 @@ public:
     bool move(bool forward, ViewId view);
 
 private:
-    CommandResult begin(bool forward) const;
     CommandResult accept(CommandContext&, const CommandInvocation& invocation);
 
-    EditorRuntime* runtime_;
     EditSessionResolver session_;
     MessageSink message_sink_;
-    CommandId accept_command_;
     std::string query_;
 };
 

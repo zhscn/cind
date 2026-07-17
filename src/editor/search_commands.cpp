@@ -11,49 +11,22 @@ namespace cind {
 
 SearchCommands::SearchCommands(EditorRuntime& runtime, EditSessionResolver session,
                                MessageSink message_sink)
-    : runtime_(&runtime), session_(std::move(session)), message_sink_(std::move(message_sink)) {
-    accept_command_ = runtime_->commands().define(
-        "search.accept", [this](CommandContext& context, const CommandInvocation& invocation) {
-            return accept(context, invocation);
-        });
-    runtime_->commands().define(
-        "search.prompt", [this](CommandContext& context, const CommandInvocation& invocation) {
-            (void)context;
-            (void)invocation;
-            return begin(true);
-        });
-    runtime_->commands().define(
-        "search.backward-prompt",
-        [this](CommandContext& context, const CommandInvocation& invocation) {
-            (void)context;
-            (void)invocation;
-            return begin(false);
-        });
-    runtime_->commands().define(
+    : session_(std::move(session)), message_sink_(std::move(message_sink)) {
+    runtime.commands().define("search.accept",
+                              [this](CommandContext& context, const CommandInvocation& invocation) {
+                                  return accept(context, invocation);
+                              });
+    runtime.commands().define(
         "search.next", [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
             (void)move(true, context.view_id());
             return CommandCompleted{};
         });
-    runtime_->commands().define(
+    runtime.commands().define(
         "search.previous",
         [this](CommandContext& context, const CommandInvocation&) -> CommandResult {
             (void)move(false, context.view_id());
             return CommandCompleted{};
         });
-}
-
-CommandResult SearchCommands::begin(bool forward) const {
-    const std::string direction = forward ? "search" : "search backward";
-    const std::string prompt = query_.empty() ? std::format("{}: ", direction)
-                                              : std::format("{} [{}]: ", direction, query_);
-    return InteractionRequest{.kind = InteractionKind::Text,
-                              .prompt = prompt,
-                              .initial_input = {},
-                              .history = "search",
-                              .provider = {},
-                              .allow_custom_input = true,
-                              .accept_command = accept_command_,
-                              .arguments = {forward}};
 }
 
 CommandResult SearchCommands::accept(CommandContext& context, const CommandInvocation& invocation) {

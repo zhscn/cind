@@ -42,6 +42,9 @@ struct InteractionStateSnapshot {
     std::string input;
     std::size_t input_cursor = 0;
     std::string history;
+    std::size_t history_entries = 0;
+    std::optional<std::size_t> history_index = std::nullopt;
+    std::string history_draft = {};
     std::string provider;
     bool allow_custom_input = false;
     std::uint64_t generation = 0;

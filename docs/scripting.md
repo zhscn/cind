@@ -26,6 +26,7 @@ object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind async)` defines cancellable native task composition;
+`(cind minibuffer)` defines high-level text and completion interaction constructors;
 `(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
@@ -520,6 +521,23 @@ The bridge validates the complete value before constructing a C++ command action
 and accept commands are resolved through the invoking `EditorRuntime`; a script cannot inject a
 foreign registry ID. Scheme conditions and bridge exceptions become `CommandError` values and are
 retained in `editor.scripting.last_error`.
+
+Interactive commands import `(cind minibuffer)` and return one of its high-level constructors:
+
+```scheme
+(read-from-minibuffer "Project search: " "project.search.accept"
+                      #:history "project-search")
+
+(completing-read "Switch buffer: " "buffers" "buffer.switch.accept"
+                 #:history "buffers")
+```
+
+Both constructors accept `#:initial-input`, `#:history`, and `#:arguments`. `completing-read` also
+accepts `#:allow-custom-input?`; otherwise submission requires a provider candidate. `arguments`
+is a proper list of typed values placed before the accepted string in the accept command's
+invocation. Prompts, provider names, history names, and accept commands are explicit strings, so a
+request is independent of dynamically scoped editor state. `interaction` remains the lower-level
+tag constructor used by `(cind minibuffer)` and by code implementing another interaction policy.
 
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and

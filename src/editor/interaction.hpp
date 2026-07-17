@@ -57,6 +57,9 @@ struct InteractionState {
     std::vector<InteractionCandidate> candidates;
     std::size_t selected = 0;
     std::uint64_t generation = 0;
+    std::optional<std::size_t> history_index;
+    std::string history_draft;
+    std::optional<RevisionId> history_navigation_revision;
     bool loading = false;
     std::string error;
 };
@@ -92,14 +95,17 @@ public:
     RevisionId input_revision() const;
     bool move_selection(int delta);
     bool select(std::size_t index);
-    void refresh_candidates() { refresh(); }
+    bool previous_history();
+    bool next_history();
+    void refresh_candidates();
     std::expected<InteractionSubmission, std::string> submit();
     bool cancel() noexcept;
 
     const std::vector<std::string>& history(std::string_view name) const;
 
 private:
-    void refresh();
+    void refresh(bool input_edited = false);
+    void replace_input(std::string_view input);
     void destroy_surface(WindowId window, ViewId view, BufferId buffer) noexcept;
     void cancel_pending() noexcept;
     void apply_candidates(std::uint64_t generation, std::vector<InteractionCandidate> candidates);

@@ -5,6 +5,7 @@
   #:use-module (cind async)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind minibuffer)
   #:export (development-command-definitions
             install-development-documentation!
             make-evaluation-module
@@ -19,6 +20,7 @@
         (module-use! module (resolve-interface '(cind command)))
         (module-use! module (resolve-interface '(cind async)))
         (module-use! module (resolve-interface '(cind input)))
+        (module-use! module (resolve-interface '(cind minibuffer)))
         (module-use! module (resolve-interface '(cind host)))
         (module-define! module 'host host)
         (hashq-set! evaluation-modules host module)
@@ -141,8 +143,8 @@
                        always-buffer?))
 
 (define (eval-expression context invocation)
-  (interaction 'text "Eval: " "" "scheme-expression" "" #t
-               "scheme.eval-expression.accept"))
+  (read-from-minibuffer "Eval: " "scheme.eval-expression.accept"
+                        #:history "scheme-expression"))
 
 (define (eval-expression-accept host context invocation)
   (let ((source (last-string-argument invocation)))

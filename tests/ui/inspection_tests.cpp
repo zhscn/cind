@@ -406,7 +406,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":44") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":45") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -508,6 +508,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(interaction.ok);
     CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
     CHECK(interaction.payload.find("\"input_cursor\":0") != std::string::npos);
+    CHECK(interaction.payload.find("\"history_entries\":0") != std::string::npos);
+    CHECK(interaction.payload.find("\"history_index\":null") != std::string::npos);
     CHECK(interaction.payload.find("\"surface\":{\"window\":{\"slot\":1") != std::string::npos);
     CHECK(interaction.payload.find("\"origin\":{\"window\":{\"slot\":0") != std::string::npos);
 

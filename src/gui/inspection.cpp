@@ -315,6 +315,15 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
     output += std::format(",\"input_cursor\":{}", interaction.input_cursor);
     output += ",\"history\":";
     append_json_string(output, interaction.history);
+    output += std::format(",\"history_entries\":{}", interaction.history_entries);
+    output += ",\"history_index\":";
+    if (interaction.history_index) {
+        output += std::to_string(*interaction.history_index);
+    } else {
+        output += "null";
+    }
+    output += ",\"history_draft\":";
+    append_json_string(output, interaction.history_draft);
     output += ",\"provider\":";
     append_json_string(output, interaction.provider);
     output += ",\"allow_custom_input\":";
@@ -1325,6 +1334,10 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     }
     if (frame.editor.interaction.input_cursor > frame.editor.interaction.input.size()) {
         violations.emplace_back("interaction input cursor is past the input end");
+    }
+    if (frame.editor.interaction.history_index &&
+        *frame.editor.interaction.history_index >= frame.editor.interaction.history_entries) {
+        violations.emplace_back("interaction history cursor is past the history end");
     }
     if (frame.editor.command_loop.keymaps.size() != frame.editor.command_loop.layers.size() ||
         !std::ranges::equal(frame.editor.command_loop.keymaps, frame.editor.command_loop.layers,
@@ -2537,7 +2550,11 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " kind=" << printable(frame.editor.interaction.kind)
            << " provider=" << printable(frame.editor.interaction.provider)
            << " input-cursor=" << frame.editor.interaction.input_cursor
-           << " candidates=" << frame.editor.interaction.candidates.size() << '\n';
+           << " history=" << frame.editor.interaction.history_entries;
+    if (frame.editor.interaction.history_index) {
+        output << '@' << *frame.editor.interaction.history_index;
+    }
+    output << " candidates=" << frame.editor.interaction.candidates.size() << '\n';
     output << "    buffers=" << frame.editor.buffers.size() << '\n';
     for (const OpenBufferStateSnapshot& buffer : frame.editor.buffers) {
         output << "      buffer:" << buffer.buffer_slot << ':' << buffer.buffer_generation

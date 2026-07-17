@@ -443,32 +443,36 @@ EditorStateSnapshot EditorModel::inspect() {
     InteractionStateSnapshot interaction_state;
     if (const InteractionState* interaction = application_.interaction().state()) {
         const std::string input = application_.interaction().input_text();
-        interaction_state = {.active = true,
-                             .window_slot = interaction->window.slot,
-                             .window_generation = interaction->window.generation,
-                             .buffer_slot = interaction->buffer.slot,
-                             .buffer_generation = interaction->buffer.generation,
-                             .view_slot = interaction->view.slot,
-                             .view_generation = interaction->view.generation,
-                             .origin_window_slot = interaction->origin.window.slot,
-                             .origin_window_generation = interaction->origin.window.generation,
-                             .origin_buffer_slot = interaction->origin.buffer.slot,
-                             .origin_buffer_generation = interaction->origin.buffer.generation,
-                             .origin_view_slot = interaction->origin.view.slot,
-                             .origin_view_generation = interaction->origin.view.generation,
-                             .kind = interaction->request.kind == InteractionKind::Picker ? "picker"
-                                                                                          : "text",
-                             .prompt = interaction->request.prompt,
-                             .input = input,
-                             .input_cursor = application_.interaction().input_caret().value,
-                             .history = interaction->request.history,
-                             .provider = interaction->request.provider,
-                             .allow_custom_input = interaction->request.allow_custom_input,
-                             .generation = interaction->generation,
-                             .loading = interaction->loading,
-                             .selected = interaction->selected,
-                             .error = interaction->error,
-                             .candidates = {}};
+        interaction_state = {
+            .active = true,
+            .window_slot = interaction->window.slot,
+            .window_generation = interaction->window.generation,
+            .buffer_slot = interaction->buffer.slot,
+            .buffer_generation = interaction->buffer.generation,
+            .view_slot = interaction->view.slot,
+            .view_generation = interaction->view.generation,
+            .origin_window_slot = interaction->origin.window.slot,
+            .origin_window_generation = interaction->origin.window.generation,
+            .origin_buffer_slot = interaction->origin.buffer.slot,
+            .origin_buffer_generation = interaction->origin.buffer.generation,
+            .origin_view_slot = interaction->origin.view.slot,
+            .origin_view_generation = interaction->origin.view.generation,
+            .kind = interaction->request.kind == InteractionKind::Picker ? "picker" : "text",
+            .prompt = interaction->request.prompt,
+            .input = input,
+            .input_cursor = application_.interaction().input_caret().value,
+            .history = interaction->request.history,
+            .history_entries =
+                application_.interaction().history(interaction->request.history).size(),
+            .history_index = interaction->history_index,
+            .history_draft = interaction->history_draft,
+            .provider = interaction->request.provider,
+            .allow_custom_input = interaction->request.allow_custom_input,
+            .generation = interaction->generation,
+            .loading = interaction->loading,
+            .selected = interaction->selected,
+            .error = interaction->error,
+            .candidates = {}};
         interaction_state.candidates.reserve(interaction->candidates.size());
         for (const InteractionCandidate& candidate : interaction->candidates) {
             interaction_state.candidates.push_back(
