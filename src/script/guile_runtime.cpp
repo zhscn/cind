@@ -1,6 +1,7 @@
 #include "script/guile_runtime.hpp"
 
 #include "editor/runtime.hpp"
+#include "script/guile_async_bridge.hpp"
 
 #include <libguile.h>
 
@@ -14,8 +15,6 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
-#include <type_traits>
-#include <unordered_map>
 #include <utility>
 
 namespace cind {
@@ -59,12 +58,6 @@ struct LoadedExtension {
     SCM module = SCM_UNDEFINED;
 };
 
-struct ScriptAsyncCallbackSet {
-    SCM completed = SCM_UNDEFINED;
-    SCM failed = SCM_BOOL_F;
-    SCM cancelled = SCM_BOOL_F;
-};
-
 struct GuileState {
     std::thread::id owner;
     bool active = true;
@@ -76,8 +69,6 @@ struct GuileState {
     std::vector<ScriptInputStateObserver> input_state_observers;
     std::vector<ScriptModePolicyObserver> mode_policy_observers;
     std::vector<LoadedExtension> extensions;
-    std::unordered_map<std::uint64_t, ScriptAsyncCallbackSet> async_callbacks;
-    bool async_active = true;
     SCM evaluation_module = SCM_UNDEFINED;
     bool evaluation_module_initialized = false;
     std::uint64_t command_revision = 0;
@@ -97,6 +88,7 @@ struct HostLease {
     EditorRuntime* runtime = nullptr;
     std::shared_ptr<GuileState> state;
     GuileHostServices services;
+    GuileAsyncBridge* async_bridge = nullptr;
     SCM capability = SCM_UNDEFINED;
     std::size_t commands_installed = 0;
     std::size_t providers_installed = 0;
@@ -109,11 +101,6 @@ struct HostLease {
 
 std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& host,
                                                                   GuileEvaluationRequest request);
-void complete_script_async_task(const std::weak_ptr<GuileState>& state, std::uint64_t task,
-                                ScriptAsyncResult result);
-void cancel_script_async_task(const std::weak_ptr<GuileState>& state, std::uint64_t task);
-void fail_script_async_task(const std::weak_ptr<GuileState>& state, std::uint64_t task,
-                            std::string message);
 
 SCM host_type = SCM_UNDEFINED;
 std::once_flag guile_once;
@@ -233,6 +220,14 @@ HostLease& require_host(SCM object, const char* caller) {
         scm_misc_error(caller, "editor host capability requires the editor thread", SCM_EOL);
     }
     return *host;
+}
+
+GuileAsyncBridge& require_async_bridge(SCM object, const char* caller) {
+    HostLease& host = require_host(object, caller);
+    if (host.async_bridge == nullptr) {
+        scm_misc_error(caller, "async task capability has expired", SCM_EOL);
+    }
+    return *host.async_bridge;
 }
 
 KeymapId require_keymap(HostLease& host, SCM value, const char* caller, int position) {
@@ -3231,180 +3226,6 @@ SCM select_other_window(SCM host_object, SCM window_value, SCM delta_value) {
     return SCM_BOOL_F;
 }
 
-ScriptAsyncRequest async_request_from_scheme(SCM value) {
-    constexpr const char* caller = "%start-async-task!";
-    if (!scm_is_vector(value) || scm_c_vector_length(value) == 0) {
-        scm_wrong_type_arg_msg(caller, 2, value, "async request vector");
-    }
-    const std::size_t size = scm_c_vector_length(value);
-    const SCM tag = scm_c_vector_ref(value, 0);
-    if (symbol_is(tag, "file-read")) {
-        if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {
-            scm_wrong_type_arg_msg(caller, 2, value, "#(file-read path) request");
-        }
-        return ScriptFileReadRequest{.path = scheme_string(scm_c_vector_ref(value, 1))};
-    }
-    if (symbol_is(tag, "directory-list")) {
-        if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
-            scm_is_unsigned_integer(scm_c_vector_ref(value, 2), 0,
-                                    std::numeric_limits<std::size_t>::max()) == 0) {
-            scm_wrong_type_arg_msg(caller, 2, value,
-                                   "#(directory-list path non-negative-maximum-entries) request");
-        }
-        return ScriptDirectoryListRequest{.path = scheme_string(scm_c_vector_ref(value, 1)),
-                                          .maximum_entries =
-                                              scm_to_size_t(scm_c_vector_ref(value, 2))};
-    }
-    if (symbol_is(tag, "process")) {
-        if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
-            !scm_is_string(scm_c_vector_ref(value, 3))) {
-            scm_wrong_type_arg_msg(
-                caller, 2, value,
-                "#(process executable string-sequence working-directory) request");
-        }
-        return ScriptProcessRequest{
-            .file = scheme_string(scm_c_vector_ref(value, 1)),
-            .arguments = string_sequence_from_scheme(scm_c_vector_ref(value, 2), caller, 2),
-            .working_directory = scheme_string(scm_c_vector_ref(value, 3))};
-    }
-    scm_misc_error(caller, "unknown async request kind", SCM_EOL);
-    return ScriptFileReadRequest{};
-}
-
-void unprotect_async_callbacks(const ScriptAsyncCallbackSet& callbacks) {
-    (void)scm_gc_unprotect_object(callbacks.completed);
-    if (!scheme_false(callbacks.failed)) {
-        (void)scm_gc_unprotect_object(callbacks.failed);
-    }
-    if (!scheme_false(callbacks.cancelled)) {
-        (void)scm_gc_unprotect_object(callbacks.cancelled);
-    }
-}
-
-// The Guile ABI fixes five adjacent SCM arguments; validation preserves their
-// semantic positions.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM start_async_task(SCM host_object, SCM request_value, SCM completed_value, SCM failed_value,
-                     SCM cancelled_value) {
-    HostLease& host = require_host(host_object, "%start-async-task!");
-    if (!host.state->async_active) {
-        scm_misc_error("%start-async-task!", "async task capability is shut down", SCM_EOL);
-    }
-    if (!host.services.start_async_task) {
-        scm_misc_error("%start-async-task!", "async task capability is unavailable", SCM_EOL);
-    }
-    if (!scheme_true(scm_procedure_p(completed_value))) {
-        scm_wrong_type_arg_msg("%start-async-task!", 3, completed_value, "procedure");
-    }
-    if (!scheme_false(failed_value) && !scheme_true(scm_procedure_p(failed_value))) {
-        scm_wrong_type_arg_msg("%start-async-task!", 4, failed_value, "procedure or #f");
-    }
-    if (!scheme_false(cancelled_value) && !scheme_true(scm_procedure_p(cancelled_value))) {
-        scm_wrong_type_arg_msg("%start-async-task!", 5, cancelled_value, "procedure or #f");
-    }
-    ScriptAsyncRequest request = async_request_from_scheme(request_value);
-    ScriptAsyncCallbackSet callbacks{
-        .completed = completed_value, .failed = failed_value, .cancelled = cancelled_value};
-    (void)scm_gc_protect_object(callbacks.completed);
-    if (!scheme_false(callbacks.failed)) {
-        (void)scm_gc_protect_object(callbacks.failed);
-    }
-    if (!scheme_false(callbacks.cancelled)) {
-        (void)scm_gc_protect_object(callbacks.cancelled);
-    }
-    try {
-        const std::weak_ptr<GuileState> state = host.state;
-        std::expected<std::uint64_t, std::string> started = host.services.start_async_task(
-            std::move(request),
-            {.completed =
-                 [state](std::uint64_t task, ScriptAsyncResult result) {
-                     complete_script_async_task(state, task, std::move(result));
-                 },
-             .cancelled = [state](std::uint64_t task) { cancel_script_async_task(state, task); },
-             .failed =
-                 [state](std::uint64_t task, std::string message) {
-                     fail_script_async_task(state, task, std::move(message));
-                 }});
-        if (!started) {
-            unprotect_async_callbacks(callbacks);
-            raise_host_error("%start-async-task!", started.error());
-        }
-        const auto [iterator, inserted] = host.state->async_callbacks.emplace(*started, callbacks);
-        (void)iterator;
-        if (!inserted) {
-            if (host.services.cancel_async_task) {
-                (void)host.services.cancel_async_task(*started);
-            }
-            unprotect_async_callbacks(callbacks);
-            scm_misc_error("%start-async-task!", "async task ID is already active", SCM_EOL);
-        }
-        return scm_from_uint64(*started);
-    } catch (const std::exception& exception) {
-        unprotect_async_callbacks(callbacks);
-        raise_host_error("%start-async-task!", exception.what());
-    } catch (...) {
-        unprotect_async_callbacks(callbacks);
-        scm_misc_error("%start-async-task!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM cancel_async_task_host(SCM host_object, SCM task_value) {
-    HostLease& host = require_host(host_object, "%cancel-async-task!");
-    if (scm_is_unsigned_integer(task_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
-        scm_wrong_type_arg_msg("%cancel-async-task!", 2, task_value, "positive async task ID");
-    }
-    if (!host.services.cancel_async_task) {
-        scm_misc_error("%cancel-async-task!", "async cancellation capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        return scm_from_bool(host.services.cancel_async_task(scm_to_uint64(task_value)));
-    } catch (const std::exception& exception) {
-        raise_host_error("%cancel-async-task!", exception.what());
-    } catch (...) {
-        scm_misc_error("%cancel-async-task!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-const char* async_task_kind_name(ScriptAsyncTaskKind kind) {
-    switch (kind) {
-    case ScriptAsyncTaskKind::FileRead:
-        return "file-read";
-    case ScriptAsyncTaskKind::DirectoryList:
-        return "directory-list";
-    case ScriptAsyncTaskKind::Process:
-        return "process";
-    }
-    return "unknown";
-}
-
-SCM async_task_summaries_host(SCM host_object) {
-    HostLease& host = require_host(host_object, "%async-task-summaries");
-    if (!host.services.async_tasks) {
-        scm_misc_error("%async-task-summaries", "async task inspection capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        const std::vector<ScriptAsyncTaskSummary> tasks = host.services.async_tasks();
-        SCM result = scm_c_make_vector(tasks.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < tasks.size(); ++index) {
-            SCM summary = scm_c_make_vector(2, SCM_UNSPECIFIED);
-            scm_c_vector_set_x(summary, 0, scm_from_uint64(tasks[index].id));
-            scm_c_vector_set_x(summary, 1, name_symbol(async_task_kind_name(tasks[index].kind)));
-            scm_c_vector_set_x(result, index, summary);
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("%async-task-summaries", exception.what());
-    } catch (...) {
-        scm_misc_error("%async-task-summaries", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
 SCM request_redraw(SCM host_object) {
     HostLease& host = require_host(host_object, "request-redraw!");
     if (!host.services.request_redraw) {
@@ -3593,12 +3414,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    (void)scm_c_define_gsubr("%start-async-task!", 5, 0, 0,
-                             reinterpret_cast<scm_t_subr>(start_async_task));
-    (void)scm_c_define_gsubr("%cancel-async-task!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(cancel_async_task_host));
-    (void)scm_c_define_gsubr("%async-task-summaries", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(async_task_summaries_host));
     scm_c_export(
         "define-command!", "set-command-documentation!", "define-interaction-provider!",
         "define-keymap!", "bind-key!", "bind-key-if-command!", "bind-remap!", "keymap-bindings",
@@ -3624,7 +3439,8 @@ void initialize_host_module(void*) {
         "ensure-project-index!", "open-file!", "start-project-search!", "set-buffer-resource!",
         "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
         "delete-window!", "delete-other-windows!", "select-other-window!", "request-redraw!",
-        "%start-async-task!", "%cancel-async-task!", "%async-task-summaries", nullptr);
+        nullptr);
+    initialize_guile_async_host_bindings(require_async_bridge);
 }
 
 enum class GuileSearchPath : std::uint8_t {
@@ -3666,7 +3482,6 @@ struct GuileCall {
         InvokePositionHints,
         InvokeInputStateObserver,
         InvokeModePolicyObserver,
-        InvokeProcedure,
         CheckEnabled,
     };
 
@@ -3689,7 +3504,6 @@ struct GuileCall {
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
     std::vector<PositionHint> position_hints;
-    std::vector<SCM> arguments;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -4112,9 +3926,6 @@ SCM call_body(void* data) {
             call.result = scm_call_1(call.procedure, event);
             break;
         }
-        case GuileCall::Operation::InvokeProcedure:
-            call.result = scm_call_n(call.procedure, call.arguments.data(), call.arguments.size());
-            break;
         case GuileCall::Operation::CheckEnabled:
             call.result = scm_call_1(call.procedure, command_context_value(*call.context));
             call.enabled = scheme_true(call.result);
@@ -4153,140 +3964,6 @@ std::expected<SCM, std::string> run_guile_call(GuileCall& call) {
         return std::unexpected(std::move(call.error));
     }
     return call.result;
-}
-
-SCM script_async_result_value(ScriptAsyncResult result) {
-    return std::visit(
-        [](auto value) {
-            using Result = decltype(value);
-            if constexpr (std::is_same_v<Result, ScriptFileReadResult>) {
-                SCM converted = scm_c_make_vector(4, SCM_UNSPECIFIED);
-                scm_c_vector_set_x(converted, 0, name_symbol("file-read"));
-                scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
-                scm_c_vector_set_x(converted, 2, scm_from_bool(value.exists));
-                scm_c_vector_set_x(
-                    converted, 3,
-                    scm_from_utf8_stringn(value.contents.data(), value.contents.size()));
-                return converted;
-            } else if constexpr (std::is_same_v<Result, ScriptDirectoryListResult>) {
-                SCM entries = scm_c_make_vector(value.entries.size(), SCM_UNSPECIFIED);
-                for (std::size_t index = 0; index < value.entries.size(); ++index) {
-                    const ScriptDirectoryEntry& entry = value.entries[index];
-                    SCM converted_entry = scm_c_make_vector(3, SCM_UNSPECIFIED);
-                    scm_c_vector_set_x(converted_entry, 0,
-                                       scm_from_utf8_string(entry.path.c_str()));
-                    scm_c_vector_set_x(converted_entry, 1,
-                                       scm_from_utf8_string(entry.name.c_str()));
-                    scm_c_vector_set_x(converted_entry, 2, scm_from_bool(entry.directory));
-                    scm_c_vector_set_x(entries, index, converted_entry);
-                }
-                SCM converted = scm_c_make_vector(3, SCM_UNSPECIFIED);
-                scm_c_vector_set_x(converted, 0, name_symbol("directory-list"));
-                scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
-                scm_c_vector_set_x(converted, 2, entries);
-                return converted;
-            } else {
-                SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);
-                scm_c_vector_set_x(converted, 0, name_symbol("process"));
-                scm_c_vector_set_x(converted, 1, scm_from_int64(value.exit_status));
-                scm_c_vector_set_x(converted, 2, scm_from_int(value.term_signal));
-                scm_c_vector_set_x(converted, 3,
-                                   scm_from_utf8_stringn(value.standard_output.data(),
-                                                         value.standard_output.size()));
-                scm_c_vector_set_x(converted, 4,
-                                   scm_from_utf8_stringn(value.standard_error.data(),
-                                                         value.standard_error.size()));
-                return converted;
-            }
-        },
-        std::move(result));
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void invoke_script_async_callback(const std::shared_ptr<GuileState>& state, std::uint64_t task,
-                                  SCM procedure, std::vector<SCM> arguments,
-                                  std::string_view kind) {
-    if (std::this_thread::get_id() != state->owner || !state->active) {
-        state->last_error = "Guile async callback used outside its runtime";
-        return;
-    }
-    if (scheme_false(procedure)) {
-        return;
-    }
-    GuileCall call;
-    call.operation = GuileCall::Operation::InvokeProcedure;
-    call.procedure = procedure;
-    call.arguments.reserve(arguments.size() + 1);
-    call.arguments.push_back(scm_from_uint64(task));
-    call.arguments.insert(call.arguments.end(), arguments.begin(), arguments.end());
-    const std::expected<SCM, std::string> invoked = run_guile_call(call);
-    if (!invoked) {
-        state->last_error =
-            std::format("Guile async {} callback failed: {}", kind, invoked.error());
-    }
-}
-
-std::optional<ScriptAsyncCallbackSet>
-take_script_async_callbacks(const std::shared_ptr<GuileState>& state, std::uint64_t task) {
-    auto node = state->async_callbacks.extract(task);
-    if (node.empty()) {
-        return std::nullopt;
-    }
-    return node.mapped();
-}
-
-void complete_script_async_task(const std::weak_ptr<GuileState>& weak_state, std::uint64_t task,
-                                ScriptAsyncResult result) {
-    const std::shared_ptr<GuileState> state = weak_state.lock();
-    if (!state || !state->active) {
-        return;
-    }
-    std::optional<ScriptAsyncCallbackSet> callbacks = take_script_async_callbacks(state, task);
-    if (!callbacks) {
-        return;
-    }
-    try {
-        invoke_script_async_callback(state, task, callbacks->completed,
-                                     {script_async_result_value(std::move(result))}, "completion");
-    } catch (const std::exception& exception) {
-        state->last_error =
-            std::format("failed to deliver Guile async completion: {}", exception.what());
-    } catch (...) {
-        state->last_error = "failed to deliver Guile async completion";
-    }
-    unprotect_async_callbacks(*callbacks);
-}
-
-void cancel_script_async_task(const std::weak_ptr<GuileState>& weak_state, std::uint64_t task) {
-    const std::shared_ptr<GuileState> state = weak_state.lock();
-    if (!state || !state->active) {
-        return;
-    }
-    std::optional<ScriptAsyncCallbackSet> callbacks = take_script_async_callbacks(state, task);
-    if (!callbacks) {
-        return;
-    }
-    invoke_script_async_callback(state, task, callbacks->cancelled, {}, "cancellation");
-    unprotect_async_callbacks(*callbacks);
-}
-
-void fail_script_async_task(const std::weak_ptr<GuileState>& weak_state, std::uint64_t task,
-                            std::string message) {
-    const std::shared_ptr<GuileState> state = weak_state.lock();
-    if (!state || !state->active) {
-        return;
-    }
-    std::optional<ScriptAsyncCallbackSet> callbacks = take_script_async_callbacks(state, task);
-    if (!callbacks) {
-        return;
-    }
-    if (scheme_false(callbacks->failed)) {
-        state->last_error = std::format("Guile async task failed: {}", message);
-    } else {
-        invoke_script_async_callback(state, task, callbacks->failed,
-                                     {scm_from_utf8_string(message.c_str())}, "failure");
-    }
-    unprotect_async_callbacks(*callbacks);
 }
 
 std::expected<GuileEvaluationResult, std::string> evaluation_result_from_scheme(SCM value) {
@@ -4644,7 +4321,15 @@ bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_
 class GuileRuntime::Impl {
 public:
     explicit Impl(EditorRuntime& runtime, GuileHostServices services)
-        : state_(std::make_shared<GuileState>()) {
+        : state_(std::make_shared<GuileState>()),
+          async_bridge_(services.start_async_task, services.cancel_async_task, services.async_tasks,
+                        [state = std::weak_ptr<GuileState>(state_)](std::string message) {
+                            if (const std::shared_ptr<GuileState> locked = state.lock();
+                                locked && locked->active &&
+                                std::this_thread::get_id() == locked->owner) {
+                                locked->last_error = std::move(message);
+                            }
+                        }) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
@@ -4660,8 +4345,10 @@ public:
             }
         }
         version_ = scheme_string(scm_version());
-        lease_ =
-            new HostLease{.runtime = &runtime, .state = state_, .services = std::move(services)};
+        lease_ = new HostLease{.runtime = &runtime,
+                               .state = state_,
+                               .services = std::move(services),
+                               .async_bridge = &async_bridge_};
         host_ = scm_make_foreign_object_1(host_type, lease_);
         lease_->capability = host_;
         (void)scm_gc_protect_object(host_);
@@ -4669,7 +4356,6 @@ public:
 
     ~Impl() {
         stop_ares_noexcept();
-        release_async_tasks(false);
         for (const ScriptModePolicyObserver& observer : state_->mode_policy_observers) {
             (void)lease_->runtime->modes().unsubscribe(observer.listener);
             (void)scm_gc_unprotect_object(observer.procedure);
@@ -4875,6 +4561,7 @@ public:
 
         EditorRuntime::ExtensionCheckpoint registries = lease_->runtime->checkpoint_extensions();
         const GuileState state_checkpoint = *state_;
+        const std::vector<std::uint64_t> async_checkpoint = async_bridge_.checkpoint();
         const std::size_t commands_installed = lease_->commands_installed;
         const std::size_t providers_installed = lease_->providers_installed;
         const std::size_t bindings_installed = lease_->bindings_installed;
@@ -4891,18 +4578,7 @@ public:
         std::expected<SCM, std::string> loaded = run_guile_call(call);
         state_->definition_source = "scheme";
         if (!loaded) {
-            for (auto iterator = state_->async_callbacks.begin();
-                 iterator != state_->async_callbacks.end();) {
-                if (state_checkpoint.async_callbacks.contains(iterator->first)) {
-                    ++iterator;
-                    continue;
-                }
-                if (lease_->services.cancel_async_task) {
-                    (void)lease_->services.cancel_async_task(iterator->first);
-                }
-                unprotect_async_callbacks(iterator->second);
-                iterator = state_->async_callbacks.erase(iterator);
-            }
+            async_bridge_.rollback_to(async_checkpoint);
             discard_state_tail(*state_, state_checkpoint);
             lease_->runtime->restore_extensions(registries);
             *state_ = state_checkpoint;
@@ -4978,7 +4654,7 @@ public:
                     lease_->runtime->resource_policies().file_mode_rules().size(),
                 .scripted_project_providers =
                     lease_->runtime->resource_policies().project_providers().size(),
-                .outstanding_async_tasks = state_->async_callbacks.size(),
+                .outstanding_async_tasks = async_bridge_.outstanding(),
                 .last_error = state_->last_error};
     }
 
@@ -4986,27 +4662,10 @@ public:
         if (std::this_thread::get_id() != state_->owner) {
             return;
         }
-        release_async_tasks(true);
+        async_bridge_.shutdown();
     }
 
 private:
-    void release_async_tasks(bool cancel) noexcept {
-        state_->async_active = false;
-        for (const auto& [task, callbacks] : state_->async_callbacks) {
-            if (cancel && lease_->services.cancel_async_task) {
-                try {
-                    (void)lease_->services.cancel_async_task(task);
-                } catch (...) {
-                    // The native adapter independently makes late delivery
-                    // inert during its own shutdown.
-                    state_->active = false;
-                }
-            }
-            unprotect_async_callbacks(callbacks);
-        }
-        state_->async_callbacks.clear();
-    }
-
     void stop_ares_noexcept() noexcept {
         try {
             GuileCall stop_ares;
@@ -5026,6 +4685,7 @@ private:
     }
 
     std::shared_ptr<GuileState> state_;
+    GuileAsyncBridge async_bridge_;
     HostLease* lease_ = nullptr;
     SCM host_ = SCM_UNDEFINED;
     std::string version_;

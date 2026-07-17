@@ -181,6 +181,7 @@ add_custom_target(cind_scheme_resources
 )
 
 add_library(cind_guile STATIC
+  script/guile_async_bridge.cpp
   script/guile_runtime.cpp
 )
 target_include_directories(cind_guile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
