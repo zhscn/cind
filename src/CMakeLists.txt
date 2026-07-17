@@ -67,6 +67,7 @@ add_library(cind_application STATIC
   editor/language.cpp
   editor/location_list_mode.cpp
   editor/mode.cpp
+  editor/noun.cpp
   editor/project.cpp
   editor/runtime.cpp
   editor/settings.cpp
@@ -131,6 +132,7 @@ add_library(cind_editor STATIC
   cli/style_loader.cpp
   editor/basic_commands.cpp
   editor/editor_application.cpp
+  editor/noun_evaluator.cpp
   editor/project_service.cpp
   editor/search_commands.cpp
 )

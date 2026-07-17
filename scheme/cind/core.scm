@@ -457,16 +457,14 @@
           (list "edit.copy-region" copy-region #f)
           (list "edit.yank" yank #f))))
 
-(define (make-structural-motion-command host motion)
+(define (make-motion-command host motion extend?)
   (lambda (context invocation)
-    (let ((view (context-view context)))
+    (let* ((view (context-view context))
+           (count (or (invocation-repeat-count invocation) 1))
+           (selection (motion-selection host view motion count extend?)))
       (reset-preferred-column! host view)
-      (let ((target (structural-motion-target host view motion)))
-        (if target
-            (begin
-              (set-view-caret! host view target)
-              (request-redraw! host))))
-      (command-completed))))
+      (request-redraw! host)
+      (command-completed/selection selection))))
 
 (define (core-commands host)
   (append
@@ -546,13 +544,22 @@
                 (editor-redraw host))
               #f)
         (list "cursor.forward-expression"
-              (make-structural-motion-command host 'forward-expression)
+              (make-motion-command host 'cind.forward-expression #f)
               #f)
         (list "cursor.backward-expression"
-              (make-structural-motion-command host 'backward-expression)
+              (make-motion-command host 'cind.backward-expression #f)
               #f)
         (list "cursor.up-list"
-              (make-structural-motion-command host 'up-list)
+              (make-motion-command host 'cind.up-list #f)
+              #f)
+        (list "cursor.forward-word"
+              (make-motion-command host 'cind.forward-word #f)
+              #f)
+        (list "cursor.backward-word"
+              (make-motion-command host 'cind.backward-word #f)
+              #f)
+        (list "selection.extend-forward-word"
+              (make-motion-command host 'cind.forward-word #t)
               #f)
         (list "cursor.goto-line.accept"
               (lambda (context invocation)
@@ -636,12 +643,27 @@
   (%define-mode! host name 'minor parent keymap interaction-class initial-state things))
 
 (define (install-core-modes! host)
+  (define-thing! host 'cind.angle '(pair "<" ">"))
+  (define-thing! host 'cind.word '(char-class word))
+  (define-thing! host 'cind.symbol '(char-class symbol))
+  (define-thing! host 'cind.defun '(cst-node function-definition))
+  (define-thing! host 'cind.string '(cst-node string-literal))
+  (define-motion! host 'cind.forward-character 'forward-character)
+  (define-motion! host 'cind.backward-character 'backward-character)
+  (define-motion! host 'cind.forward-word 'forward-word)
+  (define-motion! host 'cind.backward-word 'backward-word)
+  (define-motion! host 'cind.forward-expression 'forward-expression)
+  (define-motion! host 'cind.backward-expression 'backward-expression)
+  (define-motion! host 'cind.up-list 'up-list)
   (define-major-mode! host 'fundamental-mode
     #:interaction-class 'editing)
   (define-major-mode! host 'prog-mode
     #:parent 'fundamental-mode
     #:interaction-class 'editing
-    #:things '((defun . cst)))
+    #:things '((angle . cind.angle)
+               (defun . cind.defun)
+               (word . cind.word)
+               (symbol . cind.symbol)))
   (define-major-mode! host 'special-mode
     #:parent 'fundamental-mode
     #:interaction-class 'interface)

@@ -364,8 +364,8 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
             }
             output += "{\"name\":";
             append_json_string(output, buffer.things[thing_index].name);
-            output += ",\"kind\":";
-            append_json_string(output, buffer.things[thing_index].kind);
+            output += ",\"definition\":";
+            append_json_string(output, buffer.things[thing_index].definition);
             output.push_back('}');
         }
         output.push_back(']');

@@ -131,12 +131,12 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
                                                               "cind toy-modal", "cind meow",
                                                               "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 46);
+    CHECK(state.scripting.scripted_commands == 64);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 4);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
-    CHECK(state.scripting.scripted_input_states == 6);
+    CHECK(state.scripting.scripted_input_states == 8);
     CHECK(state.scripting.scripted_input_strategies == 3);
     CHECK(state.scripting.mode_revision == 1);
     CHECK(state.scripting.scripted_modes == 3);

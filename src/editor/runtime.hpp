@@ -7,6 +7,7 @@
 #include "editor/interaction.hpp"
 #include "editor/keymap.hpp"
 #include "editor/mode.hpp"
+#include "editor/noun.hpp"
 #include "editor/project.hpp"
 #include "editor/settings.hpp"
 #include "editor/view.hpp"
@@ -29,6 +30,10 @@ public:
     const LanguageRegistry& languages() const { return languages_; }
     ModeRegistry& modes() { return modes_; }
     const ModeRegistry& modes() const { return modes_; }
+    ThingRegistry& things() { return things_; }
+    const ThingRegistry& things() const { return things_; }
+    MotionRegistry& motions() { return motions_; }
+    const MotionRegistry& motions() const { return motions_; }
     BufferRegistry& buffers() { return buffers_; }
     const BufferRegistry& buffers() const { return buffers_; }
     ProjectRegistry& projects() { return projects_; }
@@ -69,6 +74,8 @@ private:
     KeymapRegistry keymaps_;
     InputStateRegistry input_states_;
     InputStrategyRegistry input_strategies_;
+    ThingRegistry things_;
+    MotionRegistry motions_;
     ModeRegistry modes_;
     BufferRegistry buffers_;
     ProjectRegistry projects_;

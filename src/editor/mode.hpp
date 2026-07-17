@@ -39,7 +39,7 @@ enum class InteractionClass : std::uint8_t {
 
 struct ModeThingBinding {
     std::string name;
-    std::string kind;
+    std::string definition;
 
     friend bool operator==(const ModeThingBinding&, const ModeThingBinding&) = default;
 };

@@ -124,8 +124,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 7);
-    CHECK(*second == 7);
+    CHECK(*first == 8);
+    CHECK(*second == 8);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -149,6 +149,10 @@ TEST_CASE("bundled Guile policy defines the default input state") {
         runtime.input_states().find("meow-register").value_or(InputStateId{});
     REQUIRE(register_capture);
     CHECK(runtime.input_states().definition(register_capture).handler);
+    const InputStateId thing_capture =
+        runtime.input_states().find("meow-thing").value_or(InputStateId{});
+    REQUIRE(thing_capture);
+    CHECK(runtime.input_states().definition(thing_capture).handler);
     const InputStrategyId meow =
         runtime.input_strategies().find("meow").value_or(InputStrategyId{});
     REQUIRE(meow);
@@ -158,7 +162,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 7);
+    CHECK(guile.snapshot().scripted_input_states == 8);
     CHECK(guile.snapshot().scripted_input_strategies == 3);
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
@@ -197,7 +201,13 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     REQUIRE(special);
     CHECK(runtime.modes().definition(prog).parent == fundamental);
     CHECK(runtime.modes().definition(prog).things ==
-          std::vector<ModeThingBinding>{{.name = "defun", .kind = "cst"}});
+          std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
+                                        {.name = "defun", .definition = "cind.defun"},
+                                        {.name = "word", .definition = "cind.word"},
+                                        {.name = "symbol", .definition = "cind.symbol"}});
+    CHECK(runtime.things().find("cind.angle").has_value());
+    CHECK(runtime.things().find("cind.defun").has_value());
+    CHECK(runtime.motions().find("cind.forward-word").has_value());
     CHECK(runtime.modes().definition(special).parent == fundamental);
     CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
     const InputStrategyId emacs_strategy =
@@ -265,9 +275,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string clipboard;
     std::string clipboard_error;
     std::optional<GuileTextRange> requested_soft_kill_range;
-    std::optional<std::uint32_t> requested_structural_target;
-    std::optional<ViewId> requested_structural_view;
-    std::optional<GuileStructuralMotion> requested_structural_motion;
+    std::optional<std::uint32_t> requested_motion_target;
+    std::optional<ViewId> requested_motion_view;
+    std::optional<std::string> requested_motion;
+    std::int64_t requested_motion_count = 0;
+    bool requested_motion_extend = false;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -396,12 +408,23 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
-         .structural_target =
-             [&](ViewId target, GuileStructuralMotion motion) {
-                 requested_structural_view = target;
-                 requested_structural_motion = motion;
-                 return requested_structural_target;
-             },
+         .thing_selection = [](ViewId, std::string_view,
+                               bool) -> std::expected<std::optional<ViewSelection>, std::string> {
+             return std::optional<ViewSelection>{};
+         },
+         .motion_selection = [&](ViewId target, std::string_view motion, std::int64_t count,
+                                 bool extend) -> std::expected<ViewSelection, std::string> {
+             requested_motion_view = target;
+             requested_motion = motion;
+             requested_motion_count = count;
+             requested_motion_extend = extend;
+             const TextOffset destination{requested_motion_target.value_or(0)};
+             return ViewSelection{.ranges = {{.anchor = destination,
+                                              .head = destination,
+                                              .granularity = SelectionGranularity::Character}},
+                                  .primary = 0,
+                                  .metadata = "()"};
+         },
          .write_clipboard = [&](std::string_view text) -> std::expected<void, std::string> {
              if (!clipboard_error.empty()) {
                  return std::unexpected(clipboard_error);
@@ -418,7 +441,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 58);
+    CHECK(*installed == 64);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 4);
@@ -608,24 +631,24 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     redraw_requested = false;
     runtime.views().set_caret(view, TextOffset{0});
     runtime.views().get(view).viewport().preferred_column = 9;
-    requested_structural_target = 2;
-    const CommandResult forward_expression =
-        runtime.commands().invoke(require_command(runtime, "cursor.forward-expression"), context);
-    REQUIRE(forward_expression.has_value());
-    CHECK(requested_structural_view == std::optional<ViewId>{view});
-    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::ForwardExpression});
+    requested_motion_target = 2;
+    CommandLoop motion_loop(runtime);
+    CHECK(motion_loop.execute(require_command(runtime, "cursor.forward-expression"), context)
+              .status == CommandLoopStatus::Executed);
+    CHECK(requested_motion_view == std::optional<ViewId>{view});
+    CHECK(requested_motion == std::optional<std::string>{"cind.forward-expression"});
+    CHECK(requested_motion_count == 1);
+    CHECK_FALSE(requested_motion_extend);
     CHECK(runtime.views().caret(view) == TextOffset{2});
     CHECK_FALSE(runtime.views().get(view).viewport().preferred_column.has_value());
     CHECK(redraw_requested);
 
-    const CommandResult backward_expression =
-        runtime.commands().invoke(require_command(runtime, "cursor.backward-expression"), context);
-    REQUIRE(backward_expression.has_value());
-    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::BackwardExpression});
-    const CommandResult up_list =
-        runtime.commands().invoke(require_command(runtime, "cursor.up-list"), context);
-    REQUIRE(up_list.has_value());
-    CHECK(requested_structural_motion == std::optional{GuileStructuralMotion::UpList});
+    CHECK(motion_loop.execute(require_command(runtime, "cursor.backward-expression"), context)
+              .status == CommandLoopStatus::Executed);
+    CHECK(requested_motion == std::optional<std::string>{"cind.backward-expression"});
+    CHECK(motion_loop.execute(require_command(runtime, "cursor.up-list"), context).status ==
+          CommandLoopStatus::Executed);
+    CHECK(requested_motion == std::optional<std::string>{"cind.up-list"});
 
     window_error = "cannot delete the only window";
     const CommandResult refused_delete =
@@ -771,7 +794,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 58);
+    CHECK(snapshot.scripted_commands == 64);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 4);
     CHECK_FALSE(snapshot.last_error.has_value());

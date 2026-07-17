@@ -930,7 +930,7 @@ std::vector<ModeThingBinding> mode_things_from_scheme(SCM value, const char* cal
             scm_wrong_type_arg_msg(caller, position, value, "proper alist of thing bindings");
         }
         things.push_back({.name = scheme_name(scm_car(entry), caller, position),
-                          .kind = scheme_name(scm_cdr(entry), caller, position)});
+                          .definition = scheme_name(scm_cdr(entry), caller, position)});
     }
     return things;
 }
@@ -938,7 +938,8 @@ std::vector<ModeThingBinding> mode_things_from_scheme(SCM value, const char* cal
 SCM mode_things_value(const std::vector<ModeThingBinding>& things) {
     SCM result = SCM_EOL;
     for (auto thing = things.rbegin(); thing != things.rend(); ++thing) {
-        result = scm_cons(scm_cons(name_symbol(thing->name), name_symbol(thing->kind)), result);
+        result =
+            scm_cons(scm_cons(name_symbol(thing->name), name_symbol(thing->definition)), result);
     }
     return result;
 }
@@ -952,6 +953,112 @@ SCM mode_policy_value(const EffectiveModePolicy& policy, const EditorRuntime& ru
     }
     scm_c_vector_set_x(result, 2, mode_things_value(policy.things));
     return result;
+}
+
+ThingPattern thing_pattern_from_scheme(SCM value, const char* caller, int position,
+                                       std::size_t depth = 0) {
+    if (depth >= 32) {
+        scm_misc_error(caller, "thing pattern nesting exceeds 32 levels", SCM_EOL);
+    }
+    const long length = scm_ilength(value);
+    if (length < 1) {
+        scm_wrong_type_arg_msg(caller, position, value, "non-empty proper thing pattern list");
+    }
+    const SCM tag = scm_car(value);
+    if (symbol_is(tag, "pair")) {
+        if (length != 3 || !scm_is_string(scm_cadr(value)) || !scm_is_string(scm_caddr(value))) {
+            scm_wrong_type_arg_msg(caller, position, value, "(pair opening-string closing-string)");
+        }
+        return {.kind = ThingPatternKind::Pair,
+                .arguments = {scheme_string(scm_cadr(value)), scheme_string(scm_caddr(value))},
+                .alternatives = {}};
+    }
+    if (symbol_is(tag, "cst-node") || symbol_is(tag, "char-class")) {
+        if (length != 2) {
+            scm_wrong_type_arg_msg(caller, position, value, "(cst-node name) or (char-class name)");
+        }
+        return {.kind = symbol_is(tag, "cst-node") ? ThingPatternKind::CstNode
+                                                   : ThingPatternKind::CharacterClass,
+                .arguments = {scheme_name(scm_cadr(value), caller, position)},
+                .alternatives = {}};
+    }
+    if (symbol_is(tag, "multi")) {
+        if (length < 2) {
+            scm_wrong_type_arg_msg(caller, position, value, "(multi pattern pattern ...)");
+        }
+        ThingPattern result{.kind = ThingPatternKind::Multi, .arguments = {}, .alternatives = {}};
+        result.alternatives.reserve(static_cast<std::size_t>(length - 1));
+        for (SCM rest = scm_cdr(value); !scheme_true(scm_null_p(rest)); rest = scm_cdr(rest)) {
+            result.alternatives.push_back(
+                thing_pattern_from_scheme(scm_car(rest), caller, position, depth + 1));
+        }
+        return result;
+    }
+    scm_wrong_type_arg_msg(caller, position, value,
+                           "pair, cst-node, char-class, or multi thing pattern");
+    return {};
+}
+
+MotionMechanism motion_mechanism_from_scheme(SCM value, const char* caller, int position) {
+    if (symbol_is(value, "forward-character"))
+        return MotionMechanism::ForwardCharacter;
+    if (symbol_is(value, "backward-character"))
+        return MotionMechanism::BackwardCharacter;
+    if (symbol_is(value, "forward-word"))
+        return MotionMechanism::ForwardWord;
+    if (symbol_is(value, "backward-word"))
+        return MotionMechanism::BackwardWord;
+    if (symbol_is(value, "forward-expression"))
+        return MotionMechanism::ForwardExpression;
+    if (symbol_is(value, "backward-expression"))
+        return MotionMechanism::BackwardExpression;
+    if (symbol_is(value, "up-list"))
+        return MotionMechanism::UpList;
+    scm_wrong_type_arg_msg(caller, position, value, "registered motion mechanism symbol");
+    return MotionMechanism::ForwardCharacter;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_thing(SCM host_object, SCM name_value, SCM pattern_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-thing!");
+        const std::string name = scheme_name(name_value, "define-thing!", 2);
+        ThingPattern pattern = thing_pattern_from_scheme(pattern_value, "define-thing!", 3);
+        const std::optional<ThingId> existing = host.runtime->things().find(name);
+        if (existing) {
+            host.runtime->things().configure(*existing, std::move(pattern));
+            return scm_from_uint32(existing->value);
+        }
+        const ThingId thing = host.runtime->things().define(name, std::move(pattern));
+        return scm_from_uint32(thing.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-thing!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-thing!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-motion!");
+        const std::string name = scheme_name(name_value, "define-motion!", 2);
+        const MotionMechanism mechanism =
+            motion_mechanism_from_scheme(mechanism_value, "define-motion!", 3);
+        const std::optional<MotionId> existing = host.runtime->motions().find(name);
+        const MotionId motion =
+            existing ? *existing : host.runtime->motions().define(name, mechanism);
+        if (existing) {
+            host.runtime->motions().configure(motion, mechanism);
+        }
+        return scm_from_uint32(motion.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-motion!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-motion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
 }
 
 // The Guile ABI fixes eight adjacent SCM arguments; the public Scheme wrappers
@@ -1763,35 +1870,60 @@ SCM reset_preferred_column(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM structural_motion_target(SCM host_object, SCM view_value, SCM motion_value) {
-    GuileStructuralMotion motion;
-    if (symbol_is(motion_value, "forward-expression")) {
-        motion = GuileStructuralMotion::ForwardExpression;
-    } else if (symbol_is(motion_value, "backward-expression")) {
-        motion = GuileStructuralMotion::BackwardExpression;
-    } else if (symbol_is(motion_value, "up-list")) {
-        motion = GuileStructuralMotion::UpList;
-    } else {
-        scm_wrong_type_arg_msg("structural-motion-target", 3, motion_value,
-                               "'forward-expression, 'backward-expression or 'up-list");
+SCM thing_selection(SCM host_object, SCM view_value, SCM thing_value, SCM extent_value) {
+    HostLease& host = require_host(host_object, "thing-selection");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "thing-selection", 2);
+    const std::string name = scheme_name(thing_value, "thing-selection", 3);
+    const bool bounds = symbol_is(extent_value, "bounds");
+    if (!bounds && !symbol_is(extent_value, "inner")) {
+        scm_wrong_type_arg_msg("thing-selection", 4, extent_value, "'inner or 'bounds");
     }
-
-    HostLease& host = require_host(host_object, "structural-motion-target");
-    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "structural-motion-target", 2);
-    if (!host.services.structural_target) {
-        scm_misc_error("structural-motion-target", "structural query capability is unavailable",
-                       SCM_EOL);
+    if (!host.services.thing_selection) {
+        scm_misc_error("thing-selection", "thing query capability is unavailable", SCM_EOL);
     }
     try {
-        const std::optional<std::uint32_t> target = host.services.structural_target(view, motion);
-        return target ? scm_from_uint32(*target) : SCM_BOOL_F;
+        const std::expected<std::optional<ViewSelection>, std::string> selected =
+            host.services.thing_selection(view, name, bounds);
+        if (!selected) {
+            raise_host_error("thing-selection", selected.error());
+        }
+        return *selected ? view_selection_value(**selected) : SCM_BOOL_F;
     } catch (const std::exception& exception) {
-        raise_host_error("structural-motion-target", exception.what());
+        raise_host_error("thing-selection", exception.what());
     } catch (...) {
-        scm_misc_error("structural-motion-target", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("thing-selection", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM motion_selection(SCM host_object, SCM view_value, SCM motion_value, SCM count_value,
+                     SCM extend_value) {
+    HostLease& host = require_host(host_object, "motion-selection");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "motion-selection", 2);
+    const std::string name = scheme_name(motion_value, "motion-selection", 3);
+    if (scm_is_signed_integer(count_value, std::numeric_limits<std::int64_t>::min(),
+                              std::numeric_limits<std::int64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("motion-selection", 4, count_value, "signed 64-bit integer");
+    }
+    if (!scheme_boolean(extend_value)) {
+        scm_wrong_type_arg_msg("motion-selection", 5, extend_value, "boolean");
+    }
+    if (!host.services.motion_selection) {
+        scm_misc_error("motion-selection", "motion query capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<ViewSelection, std::string> selected = host.services.motion_selection(
+            view, name, scm_to_int64(count_value), scheme_true(extend_value));
+        if (!selected) {
+            raise_host_error("motion-selection", selected.error());
+        }
+        return view_selection_value(*selected);
+    } catch (const std::exception& exception) {
+        raise_host_error("motion-selection", exception.what());
+    } catch (...) {
+        scm_misc_error("motion-selection", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -2382,6 +2514,9 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(view_input_states));
     (void)scm_c_define_gsubr("observe-input-state-changes!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(observe_input_state_changes));
+    (void)scm_c_define_gsubr("define-thing!", 3, 0, 0, reinterpret_cast<scm_t_subr>(define_thing));
+    (void)scm_c_define_gsubr("define-motion!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_motion));
     (void)scm_c_define_gsubr("%define-mode!", 8, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
     (void)scm_c_define_gsubr("mode-properties", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(mode_properties));
@@ -2421,8 +2556,10 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_view_caret));
     (void)scm_c_define_gsubr("reset-preferred-column!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(reset_preferred_column));
-    (void)scm_c_define_gsubr("structural-motion-target", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(structural_motion_target));
+    (void)scm_c_define_gsubr("thing-selection", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(thing_selection));
+    (void)scm_c_define_gsubr("motion-selection", 5, 0, 0,
+                             reinterpret_cast<scm_t_subr>(motion_selection));
     (void)scm_c_define_gsubr("write-clipboard!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(write_clipboard));
     (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
@@ -2462,26 +2599,26 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(select_other_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
-    scm_c_export("define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
-                 "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
-                 "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
-                 "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
-                 "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
-                 "set-base-input-state!", "push-input-state!", "pop-input-state!",
-                 "reset-input-states!", "view-input-states", "observe-input-state-changes!",
-                 "%define-mode!", "mode-properties", "set-buffer-major-mode!",
-                 "set-buffer-minor-mode!", "buffer-mode-policy", "observe-mode-policy-changes!",
-                 "enabled-command-names", "open-buffer-summaries", "project-root", "project-files",
-                 "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name",
-                 "buffer-resource", "path-parent", "directory-path?", "path-as-directory",
-                 "view-caret", "view-mark", "view-selection", "set-selection!", "clear-selection!",
-                 "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-                 "set-view-caret!", "reset-preferred-column!", "structural-motion-target",
-                 "write-clipboard!", "read-clipboard", "display-buffer!", "move-caret-to-line!",
-                 "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
-                 "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!",
-                 "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-                 "select-other-window!", "request-redraw!", nullptr);
+    scm_c_export(
+        "define-command!", "define-interaction-provider!", "define-keymap!", "bind-key!",
+        "bind-key-if-command!", "bind-remap!", "keymap-bindings", "resolve-key-sequence",
+        "base-keymap-layers", "key-sequence-completions", "set-input-feedback!",
+        "clear-input-feedback!", "define-input-state!", "define-input-strategy!",
+        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
+        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
+        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
+        "%define-mode!", "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!",
+        "buffer-mode-policy", "observe-mode-policy-changes!", "enabled-command-names",
+        "open-buffer-summaries", "project-root", "project-files", "path-relative", "path-filename",
+        "active-key-bindings", "buffer-id-by-name", "buffer-resource", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "buffer-substring", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
+        "move-caret-to-line!", "set-message!", "ensure-project-index!", "open-file!",
+        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+        "select-other-window!", "request-redraw!", nullptr);
 }
 
 void initialize_guile() {

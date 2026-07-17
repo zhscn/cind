@@ -4,19 +4,23 @@
   #:use-module (cind host)
   #:export (install-meow-input-states!
             meow-command-definitions
-            install-meow-keymaps!))
+            install-meow-keymaps!
+            char-thing-table-add!))
 
 (define meow-normal-keymap 'meow.normal)
 (define meow-motion-keymap 'meow.motion)
 (define meow-insert-keymap 'meow.insert)
 (define meow-keypad-state 'meow-keypad)
 (define meow-register-state 'meow-register)
+(define meow-thing-state 'meow-thing)
 
 ;; Each entry is #(host view translated-keys raw-keys pending-modifier).
 ;; The host capability is part of the key because Guile modules are process
 ;; global while editor runtimes are independent.
 (define keypad-sessions '())
 (define register-sessions '())
+(define thing-sessions '())
+(define char-thing-tables '())
 
 (define (session-matches? entry host view)
   (and (eq? (vector-ref entry 0) host)
@@ -67,6 +71,54 @@
 (define (start-register-session! host view)
   (remove-register-session! host view)
   (set! register-sessions (cons (vector host view #f) register-sessions)))
+
+(define (normalized-thing-key key)
+  (cond ((char? key) (string key))
+        ((and (string? key) (= (string-length key) 1)) key)
+        (else (error "thing table key must be one character" key))))
+
+(define (char-thing-table-add! table key thing)
+  (let ((normalized (normalized-thing-key key)))
+    (set! char-thing-tables
+          (cons (list table normalized thing)
+                (let loop ((entries char-thing-tables)
+                           (kept '()))
+                  (cond ((null? entries) (reverse kept))
+                        ((and (eq? (caar entries) table)
+                              (string=? (cadar entries) normalized))
+                         (append (reverse kept) (cdr entries)))
+                        (else (loop (cdr entries) (cons (car entries) kept)))))))
+    thing))
+
+(define (thing-for-key table key)
+  (let loop ((entries char-thing-tables))
+    (and (pair? entries)
+         (let ((entry (car entries)))
+           (if (and (eq? (car entry) table) (string=? (cadr entry) key))
+               (caddr entry)
+               (loop (cdr entries)))))))
+
+;; Each entry is #(host view extent captured-thing-or-#f).
+(define (find-thing-session host view)
+  (let loop ((sessions thing-sessions))
+    (and (pair? sessions)
+         (let ((entry (car sessions)))
+           (if (session-matches? entry host view)
+               entry
+               (loop (cdr sessions)))))))
+
+(define (remove-thing-session! host view)
+  (set! thing-sessions
+        (let loop ((sessions thing-sessions)
+                   (kept '()))
+          (cond ((null? sessions) (reverse kept))
+                ((session-matches? (car sessions) host view)
+                 (append (reverse kept) (cdr sessions)))
+                (else (loop (cdr sessions) (cons (car sessions) kept)))))))
+
+(define (start-thing-session! host view extent)
+  (remove-thing-session! host view)
+  (set! thing-sessions (cons (vector host view extent #f) thing-sessions)))
 
 (define (key-sequence keys)
   (string-join keys " "))
@@ -220,6 +272,46 @@
                             register
                             (invocation-prefix-extra invocation)))))))
 
+(define (thing-handle-key host context key)
+  (let* ((view (context-view context))
+         (session (find-thing-session host view))
+         (thing (and (= (string-length key) 1) (thing-for-key 'meow key))))
+    (cond ((not session)
+           (pop-input-state! host view)
+           (set-message! host "thing capture session is missing")
+           'consume)
+          ((not thing)
+           (pop-input-state! host view)
+           (set-message! host (string-append "undefined thing key: " key))
+           'consume)
+          (else
+           (vector-set! session 3 thing)
+           (pop-input-state! host view)
+           (vector 'dispatch "meow.thing-commit")))))
+
+(define (thing-start-command host extent display)
+  (lambda (context invocation)
+    (let ((view (context-view context)))
+      (start-thing-session! host view extent)
+      (push-input-state! host view meow-thing-state)
+      (set-input-feedback! host view display (vector))
+      (command-completed/preserve))))
+
+(define (thing-commit-command host)
+  (lambda (context invocation)
+    (let* ((view (context-view context))
+           (session (find-thing-session host view))
+           (extent (and session (vector-ref session 2)))
+           (thing (and session (vector-ref session 3))))
+      (if (not thing)
+          (command-error "thing capture session is missing")
+          (let ((selected (thing-selection host view thing extent)))
+            (remove-thing-session! host view)
+            (if selected
+                (command-completed/selection selected)
+                (command-error (string-append "no " (symbol->string thing)
+                                              " thing at point"))))))))
+
 (define (select-meow-state host state)
   (lambda (context invocation)
     (if state
@@ -262,7 +354,10 @@
          (list "meow.keypad-g" (keypad-command host 'g) #f)
          (list "meow.keypad-m" (keypad-command host 'm) #f)
          (list "meow.register-start" (register-start-command host) #f)
-         (list "meow.register-commit" (register-commit-command host) #f))
+         (list "meow.register-commit" (register-commit-command host) #f)
+         (list "meow.thing-inner" (thing-start-command host 'inner ",") #f)
+         (list "meow.thing-bounds" (thing-start-command host 'bounds ".") #f)
+         (list "meow.thing-commit" (thing-commit-command host) #f))
    (digit-command-definitions)))
 
 (define (install-meow-input-states! host)
@@ -281,6 +376,9 @@
   (define-input-state! host meow-register-state
     (vector) 'ignore 'block "R"
     (lambda (context key) (register-handle-key host context key)))
+  (define-input-state! host meow-thing-state
+    (vector) 'ignore 'block "T"
+    (lambda (context key) (thing-handle-key host context key)))
   (define-input-strategy! host 'meow 'meow-normal 'meow-motion 'collapse)
   (observe-input-state-changes!
    host
@@ -293,8 +391,12 @@
                ((eq? state meow-register-state)
                 (let ((session (find-register-session host view)))
                   (when (and session (not (vector-ref session 2)))
-                    (remove-register-session! host view)))))))))
-  5)
+                    (remove-register-session! host view))))
+               ((eq? state meow-thing-state)
+                (let ((session (find-thing-session host view)))
+                  (when (and session (not (vector-ref session 3)))
+                    (remove-thing-session! host view)))))))))
+  6)
 
 (define keypad-bindings
   '(("SPC" . "meow.keypad-leader")
@@ -318,10 +420,14 @@
 (define normal-bindings
   (append keypad-bindings digit-bindings
           '(("\"" . "meow.register-start")
+            ("," . "meow.thing-inner")
+            ("." . "meow.thing-bounds")
             ("h" . "cursor.backward-character")
             ("j" . "cursor.next-line")
             ("k" . "cursor.previous-line")
             ("l" . "cursor.forward-character")
+            ("w" . "cursor.forward-word")
+            ("b" . "cursor.backward-word")
             ("$" . "cursor.line-end")
             ("i" . "meow.insert-mode"))))
 
@@ -348,3 +454,7 @@
   (+ (bind-all! host meow-normal-keymap normal-bindings)
      (bind-all! host meow-motion-keymap motion-bindings)
      (bind-all! host meow-insert-keymap insert-bindings)))
+
+(char-thing-table-add! 'meow #\a 'angle)
+(char-thing-table-add! 'meow #\w 'word)
+(char-thing-table-add! 'meow #\s 'string)

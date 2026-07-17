@@ -124,6 +124,44 @@ TEST_CASE("buffers expose validated semantic source locations") {
     CHECK(mutable_result.locations().empty());
 }
 
+TEST_CASE("runtime noun registries own validated named mechanisms") {
+    EditorRuntime runtime;
+    const ThingId angle = runtime.things().define(
+        "angle", {.kind = ThingPatternKind::Pair, .arguments = {"<", ">"}, .alternatives = {}});
+    const ThingId symbol = runtime.things().define(
+        "symbol", {.kind = ThingPatternKind::Multi,
+                   .arguments = {},
+                   .alternatives = {{.kind = ThingPatternKind::CstNode,
+                                     .arguments = {"string-literal"},
+                                     .alternatives = {}},
+                                    {.kind = ThingPatternKind::CharacterClass,
+                                     .arguments = {"symbol"},
+                                     .alternatives = {}}}});
+    CHECK(runtime.things().definition(angle).pattern.arguments ==
+          std::vector<std::string>{"<", ">"});
+    CHECK(runtime.things().find("symbol") == symbol);
+    runtime.things().configure(
+        angle, {.kind = ThingPatternKind::Pair, .arguments = {"(", ")"}, .alternatives = {}});
+    CHECK(runtime.things().definition(angle).pattern.arguments ==
+          std::vector<std::string>{"(", ")"});
+    CHECK_THROWS_AS(
+        runtime.things().define(
+            "bad", {.kind = ThingPatternKind::Multi, .arguments = {}, .alternatives = {}}),
+        std::invalid_argument);
+
+    const MotionId word = runtime.motions().define("word", MotionMechanism::ForwardWord);
+    CHECK(runtime.motions().definition(word).mechanism == MotionMechanism::ForwardWord);
+    runtime.motions().configure(word, MotionMechanism::BackwardWord);
+    CHECK(runtime.motions().definition(word).mechanism == MotionMechanism::BackwardWord);
+
+    runtime.seal_extensions();
+    CHECK_THROWS_AS(
+        runtime.things().configure(
+            angle, {.kind = ThingPatternKind::Pair, .arguments = {"[", "]"}, .alternatives = {}}),
+        std::logic_error);
+    CHECK_THROWS_AS(runtime.motions().define("late", MotionMechanism::UpList), std::logic_error);
+}
+
 TEST_CASE("location-list mode owns sparse navigation bindings without a language profile") {
     EditorRuntime runtime;
     const auto command = [&](std::string name) {
@@ -208,8 +246,8 @@ TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
     CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
     CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
     CHECK(runtime.modes().definition(cpp.mode).things ==
-          std::vector<ModeThingBinding>{{.name = "defun", .kind = "cst"},
-                                        {.name = "string", .kind = "cst"}});
+          std::vector<ModeThingBinding>{{.name = "defun", .definition = "cind.defun"},
+                                        {.name = "string", .definition = "cind.string"}});
     CHECK(ensure_cpp_mode(runtime).mode == cpp.mode);
 }
 
@@ -240,15 +278,15 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     runtime.keymaps().bind(parent_map, "p", parent_command);
     const ModeId fundamental = runtime.modes().define("fundamental", ModeKind::Major);
     runtime.modes().set_interaction_class(fundamental, InteractionClass::Editing);
-    runtime.modes().set_things(fundamental, {{.name = "word", .kind = "character"}});
+    runtime.modes().set_things(fundamental, {{.name = "word", .definition = "character"}});
     runtime.modes().add_keymap(fundamental, parent_map);
 
     const KeymapId child_map = runtime.keymaps().define("test.child.map");
     const ModeId special = runtime.modes().define("special", ModeKind::Major);
     runtime.modes().set_parent(special, fundamental);
     runtime.modes().set_interaction_class(special, InteractionClass::Interface);
-    runtime.modes().set_things(
-        special, {{.name = "word", .kind = "interface"}, {.name = "item", .kind = "line"}});
+    runtime.modes().set_things(special, {{.name = "word", .definition = "interface"},
+                                         {.name = "item", .definition = "line"}});
     runtime.modes().add_keymap(special, child_map);
     CHECK(runtime.keymaps().parent(child_map) == parent_map);
     CHECK(runtime.modes().effective_keymaps(special) == std::vector<KeymapId>{child_map});
@@ -271,8 +309,9 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
         runtime.modes().effective_policy(runtime.buffers().get(buffer).modes());
     CHECK(initial.interaction_class == InteractionClass::Interface);
     CHECK_FALSE(initial.initial_state);
-    CHECK(initial.things == std::vector<ModeThingBinding>{{.name = "word", .kind = "interface"},
-                                                          {.name = "item", .kind = "line"}});
+    CHECK(initial.things ==
+          std::vector<ModeThingBinding>{{.name = "word", .definition = "interface"},
+                                        {.name = "item", .definition = "line"}});
 
     const ViewId first = runtime.views().create(buffer);
     const ViewId second = runtime.views().create(buffer);

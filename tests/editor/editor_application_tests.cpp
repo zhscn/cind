@@ -376,6 +376,32 @@ TEST_CASE("Guile meow keypad supports literal and transparent base-layer fallbac
     CHECK(application.input_state().name == "meow-motion");
 }
 
+TEST_CASE("Guile meow motions and things consume shared noun registries") {
+    EditorApplication application = make_application("sample.cc", "one two three vector<int>");
+    send_keys(application, "C-c m");
+
+    send_keys(application, "3 w");
+    CHECK(application.session().caret() == TextOffset{14});
+    CHECK(application.pending_command_text().empty());
+
+    application.session().set_caret(TextOffset{21});
+    send_keys(application, ",");
+    CHECK(application.input_state().name == "meow-thing");
+    CHECK(application.pending_key_sequence_text() == ",");
+    send_keys(application, "a");
+    CHECK(application.input_state().name == "meow-normal");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(21, 24));
+    CHECK(application.session().active_selection()->ranges.front().granularity ==
+          SelectionGranularity::Character);
+
+    send_keys(application, ". a");
+    REQUIRE(application.session().active_selection().has_value());
+    CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(20, 25));
+    CHECK(application.session().active_selection()->ranges.front().granularity ==
+          SelectionGranularity::Node);
+}
+
 TEST_CASE("background saving is independent of a graphical event loop") {
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /

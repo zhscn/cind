@@ -128,7 +128,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape 和 modeline indicator |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/input-strategy/mode 数量、对应 installation revision 和最近一次 host 错误 |
 | `editor.interaction` | prompt/picker 输入、provider、候选、选中项、generation、loading 和错误 |
-| `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、thing bindings、location 数量、view ID、modified、saving 和 active 状态 |
+| `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
 | `editor.projects` | project roots、索引 revision、文件数、刷新状态和错误 |
 | `editor.location` | caret 所在 location-list 项的 source range 和目标文件位置 |

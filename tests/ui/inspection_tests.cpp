@@ -119,7 +119,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .major_mode = "cind.cpp",
                      .interaction_class = "editing",
                      .initial_input_state = "emacs",
-                     .things = {{.name = "defun", .kind = "cst"}},
+                     .things = {{.name = "defun", .definition = "cind.defun"}},
                      .location_count = 0}},
         .windows = {{.window_slot = 0,
                      .window_generation = 1,
@@ -375,7 +375,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":37") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":38") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -395,6 +395,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"type\":\"text-input\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_keys\":\"C-x\"") != std::string::npos);
     CHECK(snapshot.find("\"file_count\":12") != std::string::npos);
+    CHECK(snapshot.find("\"things\":[{\"name\":\"defun\",\"definition\":\"cind.defun\"}]") !=
+          std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
     CHECK(snapshot.find("\"register\":\"a\"") != std::string::npos);

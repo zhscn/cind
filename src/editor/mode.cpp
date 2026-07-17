@@ -77,8 +77,8 @@ void ModeRegistry::set_initial_state(ModeId mode, std::optional<InputStateId> st
 void ModeRegistry::set_things(ModeId mode, std::vector<ModeThingBinding> things) {
     std::unordered_set<std::string> names;
     for (const ModeThingBinding& thing : things) {
-        if (thing.name.empty() || thing.kind.empty()) {
-            throw std::invalid_argument("mode thing binding requires a name and kind");
+        if (thing.name.empty() || thing.definition.empty()) {
+            throw std::invalid_argument("mode thing binding requires a name and definition");
         }
         if (!names.insert(thing.name).second) {
             throw std::invalid_argument(

@@ -3,6 +3,7 @@
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "editor/cpp_mode.hpp"
+#include "editor/noun_evaluator.hpp"
 #include "project/project_files.hpp"
 #include "project/search_results.hpp"
 #include "syntax/structure.hpp"
@@ -202,22 +203,47 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
                return GuileTextRange{range.start.value, range.end.value};
            },
-           .structural_target =
-               [this](ViewId view, GuileStructuralMotion motion) -> std::optional<std::uint32_t> {
-               EditSession& active = session_for(view);
-               std::optional<TextRange> range;
-               switch (motion) {
-               case GuileStructuralMotion::ForwardExpression:
-                   range = sexp_forward(active.analysis().tree, active.caret());
-                   return range ? std::optional<std::uint32_t>{range->end.value} : std::nullopt;
-               case GuileStructuralMotion::BackwardExpression:
-                   range = sexp_backward(active.analysis().tree, active.caret());
-                   break;
-               case GuileStructuralMotion::UpList:
-                   range = enclosing_list(active.analysis().tree, active.caret());
-                   break;
+           .thing_selection = [this](ViewId view, std::string_view name, bool bounds)
+               -> std::expected<std::optional<ViewSelection>, std::string> {
+               const Buffer& buffer = session_for(view).buffer();
+               const EffectiveModePolicy policy = runtime_.modes().effective_policy(buffer.modes());
+               std::string definition_name(name);
+               if (const auto binding =
+                       std::ranges::find_if(policy.things,
+                                            [name](const ModeThingBinding& candidate) {
+                                                return candidate.name == name;
+                                            });
+                   binding != policy.things.end()) {
+                   definition_name = binding->definition;
                }
-               return range ? std::optional<std::uint32_t>{range->start.value} : std::nullopt;
+               const std::optional<ThingId> thing = runtime_.things().find(definition_name);
+               if (!thing) {
+                   return std::unexpected(std::format("unknown thing '{}'", definition_name));
+               }
+               EditSession& active = session_for(view);
+               const std::optional<ThingMatch> match =
+                   evaluate_thing(runtime_.things(), *thing, active.snapshot(),
+                                  active.analysis().tree, active.caret());
+               if (!match) {
+                   return std::optional<ViewSelection>{};
+               }
+               const SelectionRange range = bounds ? match->bounds : match->inner;
+               return std::optional<ViewSelection>{ViewSelection{
+                   .ranges = {range},
+                   .primary = 0,
+                   .metadata = std::format("((thing . {}) (definition . {}) (extent . {}))", name,
+                                           definition_name, bounds ? "bounds" : "inner")}};
+           },
+           .motion_selection = [this](ViewId view, std::string_view name, std::int64_t count,
+                                      bool extend) -> std::expected<ViewSelection, std::string> {
+               const std::optional<MotionId> motion = runtime_.motions().find(name);
+               if (!motion) {
+                   return std::unexpected(std::format("unknown motion '{}'", name));
+               }
+               EditSession& active = session_for(view);
+               return evaluate_motion(runtime_.motions(), *motion, active.snapshot(),
+                                      active.analysis().tree, active.selection_model(), count,
+                                      extend);
            },
            .write_clipboard = [this](std::string_view text) -> std::expected<void, std::string> {
                if (!platform_services_.write_clipboard) {

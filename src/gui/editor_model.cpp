@@ -418,7 +418,7 @@ EditorStateSnapshot EditorModel::inspect() {
         std::vector<ModeThingStateSnapshot> things;
         things.reserve(buffer.things.size());
         for (const ModeThingBinding& thing : buffer.things) {
-            things.push_back({.name = thing.name, .kind = thing.kind});
+            things.push_back({.name = thing.name, .definition = thing.definition});
         }
         buffers.push_back({.buffer_slot = buffer.buffer.slot,
                            .buffer_generation = buffer.buffer.generation,

@@ -68,6 +68,8 @@ The native module exports:
 (reset-input-states! host view-id)
 (view-input-states host view-id)
 (observe-input-state-changes! host procedure)
+(define-thing! host name pattern)
+(define-motion! host name mechanism)
 (%define-mode! host name kind parent keymap interaction-class initial-state things)
 (mode-properties host mode-name)
 (set-buffer-major-mode! host buffer-id mode-name-or-#f)
@@ -97,7 +99,8 @@ The native module exports:
 (soft-kill-range host view-id)
 (set-view-caret! host view-id offset)
 (reset-preferred-column! host view-id)
-(structural-motion-target host view-id motion)
+(thing-selection host view-id thing-name inner-or-bounds)
+(motion-selection host view-id motion-name count extend?)
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
@@ -190,7 +193,7 @@ other observers.
 `(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
 `define-minor-mode!`. A definition accepts `#:parent`, `#:keymap`, `#:interaction-class`,
 `#:initial-state`, and `#:things`; thing bindings are an association list of semantic names to
-mechanism kinds. Parent modes have the same major/minor kind. When a child keymap has no explicit
+named Thing definitions. Parent modes have the same major/minor kind. When a child keymap has no explicit
 parent, mode inheritance assigns the nearest parent mode keymap. `mode-properties` returns the
 declared metadata together with the effective keymap names.
 
@@ -238,10 +241,21 @@ the other ranges. Views that display the same Buffer retain independent selectio
 `buffer-substring` copies only the requested range. `erase-range!` and `insert-text!` enter the
 native edit-session transaction path, which keeps undo, incremental syntax analysis, anchors and
 caret reveal coherent. `soft-kill-range` is a syntax-aware range query and does not mutate text.
-`structural-motion-target` accepts `forward-expression`, `backward-expression` or `up-list` and
-returns the corresponding syntax-derived byte offset or `#f`. `set-view-caret!` changes the
-document anchor, while `reset-preferred-column!` clears vertical-motion affinity. Scheme composes
-these mechanisms with `request-redraw!` into structural movement commands.
+
+`define-thing!` creates or reconfigures a runtime-owned named noun definition. Patterns are
+`(pair open close)`, `(cst-node kind)`, `(char-class word-or-symbol)`, or
+`(multi pattern ...)`. Pair evaluation prefers a matching CST group before textual fallback;
+`cst-node` resolves the innermost matching syntax node or literal token. `thing-selection` resolves
+a semantic mode binding before a concrete registry name and returns its inner or bounds Selection,
+or `#f` when no match contains point. Returned metadata records the semantic name, concrete
+definition, and extent.
+
+`define-motion!` maps a name to a native pure mechanism: forward/backward character, word, or
+expression, plus up-list. `motion-selection` transforms every range in the View's current
+Selection, applies a signed count, and either collapses each range at its destination or preserves
+its anchor for extension. Both APIs return the same full Selection value used by command results,
+so Scheme commands do not mutate the caret through a separate path. `reset-preferred-column!`
+clears vertical-motion affinity and `request-redraw!` requests caret reveal.
 
 `write-clipboard!` returns `#f` on success or an error string. `read-clipboard` returns a
 two-element vector containing an optional string and optional error. The absence of a platform
@@ -352,7 +366,11 @@ dispatches `C-x C-c`, `x b` falls back to `C-x b`, `m x` dispatches `M-x`, and i
 remain available without package-specific routing. The normal map binds `"` to a separate
 single-key handler state. Its captured key replaces the invocation's register while preserving an
 already accumulated count and extra prefix values; cancellation removes the transient session and
-the pending prefix.
+the pending prefix. Word motions use the shared motion registry, so a numeric prefix such as `3w`
+is handled by the same Selection transform as other schemes. `,` and `.` push a single-key thing
+state for inner and bounds selection. `char-thing-table-add!` owns the strategy's configurable
+character-to-semantic-thing table; the bundled table maps `a`, `w`, and `s` to the active mode's
+angle, word, and string definitions.
 
 ## Scripted interaction providers
 

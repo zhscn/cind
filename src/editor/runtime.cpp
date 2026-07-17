@@ -24,6 +24,8 @@ void EditorRuntime::seal_extensions() {
     keymaps_.seal();
     input_states_.seal();
     input_strategies_.seal();
+    things_.seal();
+    motions_.seal();
     interaction_providers_.seal();
     extensions_sealed_ = true;
 }

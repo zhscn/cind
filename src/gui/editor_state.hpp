@@ -14,7 +14,7 @@ namespace cind::gui {
 
 struct ModeThingStateSnapshot {
     std::string name;
-    std::string kind;
+    std::string definition;
 };
 
 struct InteractionCandidateSnapshot {

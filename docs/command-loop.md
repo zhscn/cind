@@ -81,7 +81,8 @@ are kept only at their highest-priority occurrence. Views displaying the same Bu
 independent state stacks.
 
 Major and minor modes form explicit same-kind parent hierarchies. A child mode inherits settings,
-interaction properties, thing bindings, and the nearest ancestor keymap. When both child and parent
+interaction properties, semantic-to-definition thing bindings, and the nearest ancestor keymap.
+When both child and parent
 have keymaps, the child's primary keymap receives the parent's primary map as its default keymap
 parent. Active minor modes are evaluated in reverse activation order before the major mode.
 
@@ -183,6 +184,13 @@ single-key handler state that captures a named register without entering a secon
 and register values compose in either order and travel through the shared invocation contract. The
 formatted prefix is projected into the echo area independently of pending keymap chords and
 transient-state feedback.
+
+Thing and Motion registries are application-owned named mechanism tables. Scheme definitions select
+pair, CST-node, character-class, fallback, and directional motion mechanisms; evaluation receives
+the current immutable document snapshot, CST, and typed Selection. A motion returns a complete
+multi-range Selection for move or extend behavior. A thing returns inner and bounds ranges, while
+the effective major/minor mode policy maps semantic nouns to concrete definitions. Meow's `w/b`
+and `,`/`.` bindings consume these APIs without adding modal branches to the command loop.
 
 The keymap registry merges immediate continuations across ordered keymaps and their parents using
 the same precedence and remap pass as dispatch. While a keymap sequence or input-state feedback is
