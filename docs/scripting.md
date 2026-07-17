@@ -163,8 +163,10 @@ focused application.
 `define-input-state!` creates or reconfigures a named state. `keymaps` is an ordered proper list or
 vector of keymap names; `text-input` is `accept` or `ignore`; `cursor` is `beam`, `block`, or
 `underline`; and `indicator` is presentation text. An optional handler receives a complete command
-context and canonical key notation. It returns `pass`, `consume`, `#(dispatch command-name)`, or
-`#(pending sequence hints)`. Pending consumes the key and publishes the supplied
+context and canonical key notation. It returns `pass`, `consume`, `#(dispatch command-name)`,
+`#(dispatch command-name arguments)`, or `#(pending sequence hints)`. Dispatch arguments are typed
+command values, and a dispatch without an explicit prefix inherits the command loop's pending
+count, register, and extras. Pending consumes the key and publishes the supplied
 `#(key detail prefix?)` hint vector through the same frontend-independent popup channel as keymap
 prefixes. Handler errors are retained by the scripting runtime and consume the key without escaping
 into a frontend event loop. The system override map is resolved before a handler, so `C-g` remains
@@ -186,6 +188,14 @@ state to top as a vector of names. Every application View is initialized with th
 defined by `(cind emacs)`; its empty state keymap list preserves the default Emacs keymap policy.
 The focused document state's cursor shape and indicator flow through the frontend-independent Scene.
 Interactions temporarily present a beam cursor because their text input owns focus.
+
+`(cind input)` defines the shared `input.read-key` transient state and exposes
+`(read-key-then! host view-id procedure #:sequence text #:hints vector)`. A strategy supplies a
+per-View continuation, display sequence, and hint vector;
+the helper pushes the state, captures exactly one canonical key, pops before invoking the
+continuation, and removes the continuation when an override command cancels the state. Register,
+Thing, and other one-key strategy prompts therefore share one lifetime and dispatch path while
+their interpretation remains Scheme policy.
 
 Input feedback belongs to the View's current state stack. `set-input-feedback!` publishes feedback
 when a command enters a transient state, while a handler may replace it with a pending result.
@@ -383,11 +393,11 @@ bind `SPC`, `x`, `c`, `g`, and `m` to a transient `meow-keypad` handler. The han
 unmodified keys against base layers, publishes completions, applies control-to-literal fallback,
 and finally tries the original key sequence for transparent interface bindings. Thus `x c`
 dispatches `C-x C-c`, `x b` falls back to `C-x b`, `m x` dispatches `M-x`, and interface keymaps
-remain available without package-specific routing. The normal map binds `"` to a separate
-single-key handler state. Its captured key replaces the invocation's register while preserving an
+remain available without package-specific routing. The normal map binds `"` to the shared
+single-key capture state. Its captured key replaces the invocation's register while preserving an
 already accumulated count and extra prefix values; cancellation removes the transient session and
 the pending prefix. Word motions use the shared motion registry, so a numeric prefix such as `3w`
-is handled by the same Selection transform as other schemes. `,` and `.` push a single-key thing
+is handled by the same Selection transform as other schemes. `,` and `.` use the same capture
 state for inner and bounds selection. `char-thing-table-add!` owns the strategy's configurable
 character-to-semantic-thing table; the bundled table maps `a`, `w`, and `s` to the active mode's
 angle, word, and string definitions.
@@ -395,8 +405,8 @@ angle, word, and string definitions.
 `(cind helix)` is a selection-first modal strategy selected with `C-c h`. Its durable `hx-normal`,
 `hx-select`, and `hx-insert` states use separate declarative keymaps. Normal motions replace every
 range in the View Selection; select motions apply the same registered Motion with extension enabled,
-preserving each anchor. The `mi` and `ma` prefixes push `helix-thing`, a transient single-key state
-that resolves the active mode's inner or bounds Thing at every range head. Delete dispatches the
+preserving each anchor. The `mi` and `ma` prefixes use `read-key-then!` to resolve the active mode's
+inner or bounds Thing at every range head. Delete dispatches the
 shared atomic selection verb, and the strategy preserves multi-range selection results across edits.
 
 `(cind structural)` owns the sticky `structural-node` transient state selected with `C-c e`. Scheme

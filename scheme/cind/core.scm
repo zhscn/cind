@@ -4,6 +4,7 @@
   #:use-module (cind emacs)
   #:use-module (cind helix)
   #:use-module (cind host)
+  #:use-module (cind input)
   #:use-module (cind meow)
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
@@ -633,7 +634,8 @@
     (length providers)))
 
 (define (install-input-states! host)
-  (+ (install-emacs-input-state! host)
+  (+ (install-read-key-input-state! host)
+     (install-emacs-input-state! host)
      (install-helix-input-states! host)
      (install-meow-input-states! host)
      (install-structural-input-state! host)

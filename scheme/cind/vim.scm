@@ -1,6 +1,7 @@
 (define-module (cind vim)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind input)
   #:export (install-vim-input-states!
             vim-command-definitions
             install-vim-keymaps!))
@@ -9,13 +10,10 @@
 (define vim-insert-keymap 'vim.insert)
 (define vim-visual-keymap 'vim.visual)
 (define vim-operator-state 'vim-operator)
-(define vim-register-state 'vim-register)
 
 ;; Operator entries are
 ;; #(host view original-selection operator-count motion-count phase finished?).
 (define operator-sessions '())
-;; Register entries are #(host view captured-register-or-#f).
-(define register-sessions '())
 
 (define (session-matches? entry host view)
   (and (eq? (vector-ref entry 0) host)
@@ -48,16 +46,6 @@
   (set! operator-sessions
         (cons (vector host view original (or count 1) #f #f #f)
               operator-sessions)))
-
-(define (find-register-session host view)
-  (find-session register-sessions host view))
-
-(define (remove-register-session! host view)
-  (set! register-sessions (remove-matching register-sessions host view)))
-
-(define (start-register-session! host view)
-  (remove-register-session! host view)
-  (set! register-sessions (cons (vector host view #f) register-sessions)))
 
 (define (digit-value key)
   (and (= (string-length key) 1)
@@ -116,6 +104,17 @@
   (set-selection! host view (vector-ref session 2))
   (thing-selection host view thing extent))
 
+(define (start-register-capture! host view sequence)
+  (read-key-then!
+   host view
+   (lambda (key)
+     (if (= (string-length key) 1)
+         (command-dispatch "vim.register-commit" key)
+         (begin
+           (set-message! host (string-append "invalid register: " key))
+           'consume)))
+   #:sequence sequence))
+
 (define (operator-handle-key host context key)
   (let* ((view (context-view context))
          (session (find-operator-session host view))
@@ -129,9 +128,7 @@
              (vector-set! session 4 (+ (* (or count 0) 10) digit))
              (vector 'dispatch (digit-command-name "vim.operator-digit-" digit))))
           ((string=? key "\"")
-           (start-register-session! host view)
-           (push-input-state! host view vim-register-state)
-           (set-input-feedback! host view "d \"" (vector))
+           (start-register-capture! host view "d \"")
            'consume)
           ((motion-for-key key)
            (finish-operator! host view session
@@ -166,22 +163,6 @@
            (vector 'pending (string-append "d " key) thing-hints))
           (else (operator-handle-key host context key)))))
 
-(define (register-handle-key host context key)
-  (let* ((view (context-view context))
-         (session (find-register-session host view)))
-    (cond ((not session)
-           (pop-input-state! host view)
-           (set-message! host "register session is missing")
-           'consume)
-          ((not (= (string-length key) 1))
-           (pop-input-state! host view)
-           (set-message! host (string-append "invalid register: " key))
-           'consume)
-          (else
-           (vector-set! session 2 key)
-           (pop-input-state! host view)
-           (vector 'dispatch "vim.register-commit")))))
-
 (define (select-vim-strategy host)
   (lambda (context invocation)
     (set-view-input-strategy! host (context-view context) 'vim)
@@ -213,25 +194,19 @@
 (define (register-start-command host)
   (lambda (context invocation)
     (let ((view (context-view context)))
-      (start-register-session! host view)
-      (push-input-state! host view vim-register-state)
-      (set-input-feedback! host view "\"" (vector))
+      (start-register-capture! host view "\"")
       (command-prefix (invocation-repeat-count invocation)
                       (invocation-register invocation)
                       (invocation-prefix-extra invocation)))))
 
 (define (register-commit-command host)
   (lambda (context invocation)
-    (let* ((view (context-view context))
-           (session (find-register-session host view))
-           (register (and session (vector-ref session 2))))
-      (if register
-          (begin
-            (remove-register-session! host view)
-            (command-prefix (invocation-repeat-count invocation)
-                            register
-                            (invocation-prefix-extra invocation)))
-          (command-error "register capture session is missing")))))
+    (let ((arguments (invocation-arguments invocation)))
+      (if (not (= (vector-length arguments) 1))
+          (command-error "register capture requires one key")
+          (command-prefix (invocation-repeat-count invocation)
+                          (vector-ref arguments 0)
+                          (invocation-prefix-extra invocation))))))
 
 (define (prefix-digit-command digit)
   (lambda (context invocation)
@@ -314,9 +289,6 @@
   (define-input-state! host vim-operator-state
     (vector) 'ignore 'block "O"
     (lambda (context key) (vim-operator-handler host context key)))
-  (define-input-state! host vim-register-state
-    (vector) 'ignore 'block "R"
-    (lambda (context key) (register-handle-key host context key)))
   (define-input-strategy! host 'vim 'vim-normal 'vim-normal 'collapse)
   (observe-input-state-changes!
    host
@@ -324,17 +296,13 @@
      (when (eq? (vector-ref event 0) 'pop)
        (let ((view (vector-ref event 1))
              (state (vector-ref event 2)))
-         (cond ((eq? state vim-operator-state)
-                (let ((session (find-operator-session host view)))
-                  (when session
-                    (unless (vector-ref session 6)
-                      (set-selection! host view (vector-ref session 2)))
-                    (remove-operator-session! host view))))
-               ((eq? state vim-register-state)
-                (let ((session (find-register-session host view)))
-                  (when (and session (not (vector-ref session 2)))
-                    (remove-register-session! host view)))))))))
-  5)
+         (when (eq? state vim-operator-state)
+           (let ((session (find-operator-session host view)))
+             (when session
+               (unless (vector-ref session 6)
+                 (set-selection! host view (vector-ref session 2)))
+               (remove-operator-session! host view))))))))
+  4)
 
 (define digit-bindings
   '(("0" . "vim.prefix-digit-0")

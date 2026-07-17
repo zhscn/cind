@@ -157,6 +157,11 @@ the corresponding input strategy. The installer binds only commands present in t
 composition, so optional capabilities can join the shared TUI and GUI keymap without duplicating
 policy in C++. The keymap registry and precedence rules remain C++ mechanisms.
 
+The bundled `(cind input)` module provides the reusable `input.read-key` transient state. It owns
+one-key capture lifetime, feedback, automatic pop, and cancellation cleanup; a Scheme continuation
+maps the captured key to a typed command dispatch. Meow, Vim, and Helix use this mechanism for
+register and Thing prompts instead of defining parallel strategy-specific input loops.
+
 The bundled `(cind meow)` strategy demonstrates handler-based translation without a parallel input
 loop. Its keypad queries base layers 3–9 for the invoking Window, excluding its own state maps,
 resolves translated sequences with the same registry function used by dispatch, and publishes the
@@ -167,13 +172,13 @@ strategy.
 The bundled `(cind vim)` strategy defines normal, insert, and visual durable states. Delete enters
 a transient operator state whose tentative character range is immediately published as the View
 Selection. Motion and text-object capture replace that preview through the shared Motion and Thing
-registries before dispatching the region verb. Decimal counts and single-key named registers remain
-in the command loop prefix slot across the operator state. `C-c v` selects the strategy from the
+registries before dispatching the region verb. Decimal counts and named registers captured through
+`input.read-key` remain in the command loop prefix slot across the operator state. `C-c v` selects the strategy from the
 default Emacs map.
 
 The bundled `(cind helix)` strategy defines normal, select, and insert durable states. The normal
 and select maps bind the same Motion mechanisms to replace and extend transforms respectively, so
-each command operates over the full View Selection. `mi` and `ma` enter a transient single-key Thing
+each command operates over the full View Selection. `mi` and `ma` enter the shared single-key
 capture state, and deletion consumes the resulting ranges through the shared atomic selection verb.
 `C-c h` selects the strategy from the default Emacs map.
 

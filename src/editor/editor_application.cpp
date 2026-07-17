@@ -442,8 +442,11 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                         sync_keymaps();
                         return true;
                     }
-                    const bool consumed =
-                        handle_loop_result(command_loop_.execute(handled->command, context));
+                    if (handled->invocation.prefix.empty()) {
+                        handled->invocation.prefix = command_loop_.pending_prefix();
+                    }
+                    const bool consumed = handle_loop_result(
+                        command_loop_.execute(handled->command, context, handled->invocation));
                     sync_keymaps();
                     return consumed;
                 }

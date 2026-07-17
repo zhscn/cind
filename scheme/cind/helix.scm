@@ -1,6 +1,7 @@
 (define-module (cind helix)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind input)
   #:export (install-helix-input-states!
             helix-command-definitions
             install-helix-keymaps!))
@@ -8,36 +9,6 @@
 (define helix-normal-keymap 'helix.normal)
 (define helix-select-keymap 'helix.select)
 (define helix-insert-keymap 'helix.insert)
-(define helix-thing-state 'helix-thing)
-
-;; Each entry is #(host view extent captured-thing-or-#f).
-(define thing-sessions '())
-
-(define (session-matches? entry host view)
-  (and (eq? (vector-ref entry 0) host)
-       (equal? (vector-ref entry 1) view)))
-
-(define (find-thing-session host view)
-  (let loop ((sessions thing-sessions))
-    (and (pair? sessions)
-         (let ((entry (car sessions)))
-           (if (session-matches? entry host view)
-               entry
-               (loop (cdr sessions)))))))
-
-(define (remove-thing-session! host view)
-  (set! thing-sessions
-        (let loop ((sessions thing-sessions)
-                   (kept '()))
-          (cond ((null? sessions) (reverse kept))
-                ((session-matches? (car sessions) host view)
-                 (append (reverse kept) (cdr sessions)))
-                (else (loop (cdr sessions) (cons (car sessions) kept)))))))
-
-(define (start-thing-session! host view extent)
-  (remove-thing-session! host view)
-  (set! thing-sessions
-        (cons (vector host view extent #f) thing-sessions)))
 
 (define (thing-for-key key)
   (cond ((string=? key "a") 'angle)
@@ -51,23 +22,6 @@
           (vector "w" "word" #f)
           (vector "s" "string" #f)
           (vector "f" "function" #f)))
-
-(define (thing-handle-key host context key)
-  (let* ((view (context-view context))
-         (session (find-thing-session host view))
-         (thing (thing-for-key key)))
-    (cond ((not session)
-           (pop-input-state! host view)
-           (set-message! host "thing capture session is missing")
-           'consume)
-          ((not thing)
-           (pop-input-state! host view)
-           (set-message! host (string-append "undefined thing key: " key))
-           'consume)
-          (else
-           (vector-set! session 3 thing)
-           (pop-input-state! host view)
-           (vector 'dispatch "helix.thing-commit")))))
 
 (define (select-helix-strategy host)
   (lambda (context invocation)
@@ -91,24 +45,32 @@
 (define (thing-start-command host extent display)
   (lambda (context invocation)
     (let ((view (context-view context)))
-      (start-thing-session! host view extent)
-      (push-input-state! host view helix-thing-state)
-      (set-input-feedback! host view display thing-hints)
+      (read-key-then!
+       host view
+       (lambda (key)
+         (let ((thing (thing-for-key key)))
+           (if thing
+               (command-dispatch "helix.thing-commit"
+                                 (symbol->string extent)
+                                 (symbol->string thing))
+               (begin
+                 (set-message! host (string-append "undefined thing key: " key))
+                 'consume))))
+       #:sequence display
+       #:hints thing-hints)
       (command-completed/preserve))))
 
 (define (thing-commit-command host)
   (lambda (context invocation)
-    (let* ((view (context-view context))
-           (session (find-thing-session host view))
-           (extent (and session (vector-ref session 2)))
-           (thing (and session (vector-ref session 3))))
-      (if (not thing)
-          (command-error "thing capture session is missing")
-          (let ((selected (thing-selection host view thing extent)))
-            (remove-thing-session! host view)
+    (let ((arguments (invocation-arguments invocation)))
+      (if (not (= (vector-length arguments) 2))
+          (command-error "thing capture requires an extent and thing")
+          (let* ((extent (string->symbol (vector-ref arguments 0)))
+                 (thing (vector-ref arguments 1))
+                 (selected (thing-selection host (context-view context) thing extent)))
             (if selected
                 (command-completed/selection selected)
-                (command-error (string-append "no " (symbol->string thing)
+                (command-error (string-append "no " thing
                                               " thing at every selection"))))))))
 
 (define (delete-selection-command host)
@@ -151,20 +113,8 @@
     (vector helix-select-keymap) 'ignore 'block "SEL" #f)
   (define-input-state! host 'hx-insert
     (vector helix-insert-keymap) 'accept 'beam "INS" #f)
-  (define-input-state! host helix-thing-state
-    (vector) 'ignore 'block "OBJ"
-    (lambda (context key) (thing-handle-key host context key)))
   (define-input-strategy! host 'helix 'hx-normal 'hx-normal 'preserve)
-  (observe-input-state-changes!
-   host
-   (lambda (event)
-     (when (and (eq? (vector-ref event 0) 'pop)
-                (eq? (vector-ref event 2) helix-thing-state))
-       (let* ((view (vector-ref event 1))
-              (session (find-thing-session host view)))
-         (when (and session (not (vector-ref session 3)))
-           (remove-thing-session! host view))))))
-  4)
+  3)
 
 (define normal-bindings
   '(("h" . "helix.move-backward-character")

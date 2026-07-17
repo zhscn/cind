@@ -69,6 +69,7 @@ struct InputFeedback {
 struct InputStateHandlerAction {
     InputStateHandlerActionKind kind = InputStateHandlerActionKind::Pass;
     CommandId command;
+    CommandInvocation invocation;
     std::optional<InputFeedback> feedback;
 };
 

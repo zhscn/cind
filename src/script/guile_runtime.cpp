@@ -3272,14 +3272,19 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
     }
     state->last_error.reset();
     if (symbol_is(*result, "pass")) {
-        return InputStateHandlerAction{
-            .kind = InputStateHandlerActionKind::Pass, .command = {}, .feedback = std::nullopt};
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Pass,
+                                       .command = {},
+                                       .invocation = {},
+                                       .feedback = std::nullopt};
     }
     if (symbol_is(*result, "consume")) {
-        return InputStateHandlerAction{
-            .kind = InputStateHandlerActionKind::Consume, .command = {}, .feedback = std::nullopt};
+        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume,
+                                       .command = {},
+                                       .invocation = {},
+                                       .feedback = std::nullopt};
     }
-    if (scm_is_vector(*result) && scm_c_vector_length(*result) == 2 &&
+    if (scm_is_vector(*result) &&
+        (scm_c_vector_length(*result) == 2 || scm_c_vector_length(*result) == 3) &&
         symbol_is(scm_c_vector_ref(*result, 0), "dispatch")) {
         const SCM command_value = scm_c_vector_ref(*result, 1);
         const std::string name = scheme_name(command_value, "input-state-handler", 2);
@@ -3287,9 +3292,15 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
         if (!command) {
             return std::unexpected(std::format("unknown input state command '{}'", name));
         }
-        return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
-                                       .command = *command,
-                                       .feedback = std::nullopt};
+        std::vector<SettingValue> arguments;
+        if (scm_c_vector_length(*result) == 3) {
+            arguments = arguments_from_scheme(scm_c_vector_ref(*result, 2), "input-state-handler");
+        }
+        return InputStateHandlerAction{
+            .kind = InputStateHandlerActionKind::Dispatch,
+            .command = *command,
+            .invocation = {.arguments = std::move(arguments), .prefix = {}},
+            .feedback = std::nullopt};
     }
     if (scm_is_vector(*result) && scm_c_vector_length(*result) == 3 &&
         symbol_is(scm_c_vector_ref(*result, 0), "pending")) {
@@ -3303,12 +3314,13 @@ InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileS
             input_hints_from_scheme(hints_value, "input-state-handler", 3);
         return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Pending,
                                        .command = {},
+                                       .invocation = {},
                                        .feedback =
                                            InputFeedback{.sequence = scheme_string(sequence_value),
                                                          .hints = std::move(hints)}};
     }
     return std::unexpected("Guile input state handler must return pass, consume, "
-                           "#(dispatch command), or #(pending sequence hints)");
+                           "#(dispatch command [arguments]), or #(pending sequence hints)");
 }
 
 void invoke_script_input_state_observer(const std::shared_ptr<GuileState>& state,
@@ -3377,8 +3389,8 @@ public:
         : state_(std::make_shared<GuileState>()) {
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module :
-             {"command", "emacs", "toy-modal", "meow", "vim", "helix", "structural", "core"}) {
+        for (std::string_view module : {"command", "input", "emacs", "toy-modal", "meow", "vim",
+                                        "helix", "structural", "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -3541,8 +3553,8 @@ public:
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
-                .modules = {"cind command", "cind emacs", "cind toy-modal", "cind meow", "cind vim",
-                            "cind helix", "cind structural", "cind core"},
+                .modules = {"cind command", "cind input", "cind emacs", "cind toy-modal",
+                            "cind meow", "cind vim", "cind helix", "cind structural", "cind core"},
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,

@@ -92,9 +92,10 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK_FALSE(snapshot.version.empty());
-    CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind command", "cind emacs", "cind toy-modal", "cind meow",
-                                   "cind vim", "cind helix", "cind structural", "cind core"});
+    CHECK(snapshot.modules == std::vector<std::string>{"cind command", "cind input", "cind emacs",
+                                                       "cind toy-modal", "cind meow", "cind vim",
+                                                       "cind helix", "cind structural",
+                                                       "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -125,8 +126,8 @@ TEST_CASE("bundled Guile policy defines the default input state") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 18);
-    CHECK(*second == 18);
+    CHECK(*first == 15);
+    CHECK(*second == 15);
     const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
     REQUIRE(emacs);
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
@@ -146,14 +147,11 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStateId keypad = runtime.input_states().find("meow-keypad").value_or(InputStateId{});
     REQUIRE(keypad);
     CHECK(runtime.input_states().definition(keypad).handler);
-    const InputStateId register_capture =
-        runtime.input_states().find("meow-register").value_or(InputStateId{});
-    REQUIRE(register_capture);
-    CHECK(runtime.input_states().definition(register_capture).handler);
-    const InputStateId thing_capture =
-        runtime.input_states().find("meow-thing").value_or(InputStateId{});
-    REQUIRE(thing_capture);
-    CHECK(runtime.input_states().definition(thing_capture).handler);
+    const InputStateId read_key =
+        runtime.input_states().find("input.read-key").value_or(InputStateId{});
+    REQUIRE(read_key);
+    CHECK(runtime.input_states().definition(read_key).handler);
+    CHECK(runtime.input_states().definition(read_key).indicator == "KEY");
     const InputStrategyId meow =
         runtime.input_strategies().find("meow").value_or(InputStrategyId{});
     REQUIRE(meow);
@@ -163,7 +161,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     CHECK(runtime.input_states()
               .definition(runtime.input_strategies().state(meow, InteractionClass::Interface))
               .name == "meow-motion");
-    CHECK(guile.snapshot().scripted_input_states == 18);
+    CHECK(guile.snapshot().scripted_input_states == 15);
     CHECK(guile.snapshot().scripted_input_strategies == 5);
     const InputStrategyId helix =
         runtime.input_strategies().find("helix").value_or(InputStrategyId{});

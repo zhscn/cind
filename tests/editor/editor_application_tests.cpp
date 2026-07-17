@@ -14,6 +14,7 @@
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <variant>
 
 using namespace cind;
 
@@ -162,7 +163,14 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     };
     const CommandId base_command = command("test.state.base", 1);
     const CommandId transient_command = command("test.state.transient", 2);
-    const CommandId handled_command = command("test.state.handler", 3);
+    CommandInvocation handled_invocation;
+    const CommandId handled_command = runtime.commands().define(
+        "test.state.handler",
+        [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
+            selected = 3;
+            handled_invocation = invocation;
+            return CommandCompleted{};
+        });
     WindowId handler_window;
     const KeymapId base_map = runtime.keymaps().define("test.state.base-map");
     const KeymapId transient_map = runtime.keymaps().define("test.state.transient-map");
@@ -182,17 +190,21 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
              if (format_key_stroke(key) == "q") {
                  return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Consume,
                                                 .command = {},
+                                                .invocation = {},
                                                 .feedback = std::nullopt};
              }
              if (format_key_stroke(key) == "d") {
-                 return InputStateHandlerAction{.kind = InputStateHandlerActionKind::Dispatch,
-                                                .command = handled_command,
-                                                .feedback = std::nullopt};
+                 return InputStateHandlerAction{
+                     .kind = InputStateHandlerActionKind::Dispatch,
+                     .command = handled_command,
+                     .invocation = {.arguments = {std::string("captured")}, .prefix = {}},
+                     .feedback = std::nullopt};
              }
              if (format_key_stroke(key) == "p") {
                  return InputStateHandlerAction{
                      .kind = InputStateHandlerActionKind::Pending,
                      .command = {},
+                     .invocation = {},
                      .feedback = InputFeedback{
                          .sequence = "C-x",
                          .hints = {{.key = "C-s", .detail = "file.save", .prefix = false},
@@ -217,8 +229,15 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
                               [](const KeymapLayer& layer) { return layer.scope == "editor"; }));
     CHECK(std::ranges::any_of(base_layers,
                               [](const KeymapLayer& layer) { return layer.scope == "global"; }));
+    application.command_loop().set_pending_prefix(
+        {.count = 7, .register_name = std::string("a"), .extra = {}});
     CHECK(application.handle_key(KeyStroke::character_key(U'd'), 10));
     CHECK(selected == 3);
+    REQUIRE(handled_invocation.arguments.size() == 1);
+    CHECK(std::get<std::string>(handled_invocation.arguments.front()) == "captured");
+    CHECK(handled_invocation.prefix.count == 7);
+    CHECK(handled_invocation.prefix.register_name == std::optional<std::string>{"a"});
+    CHECK(application.command_loop().pending_prefix().empty());
     CHECK(handler_window == application.window_id());
     CHECK(application.handle_key(KeyStroke::character_key(U'p'), 10));
     CHECK(application.pending_key_sequence_text() == "C-x");
@@ -297,7 +316,7 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
 
     send_keys(application, "3");
     send_keys(application, "\"");
-    CHECK(application.input_state().name == "meow-register");
+    CHECK(application.input_state().name == "input.read-key");
     CHECK(application.pending_command_text() == "3 \"");
     send_keys(application, "a");
     CHECK(application.input_state().name == "meow-normal");
@@ -309,9 +328,16 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     CHECK(application.pending_command_text().empty());
 
     send_keys(application, "\"");
-    CHECK(application.input_state().name == "meow-register");
+    CHECK(application.input_state().name == "input.read-key");
     send_keys(application, "C-g");
     CHECK(application.input_state().name == "meow-normal");
+    CHECK(application.pending_command_text().empty());
+
+    send_keys(application, "\" b");
+    CHECK(application.input_state().name == "meow-normal");
+    CHECK(application.command_loop().pending_prefix().register_name ==
+          std::optional<std::string>{"b"});
+    send_keys(application, "l");
     CHECK(application.pending_command_text().empty());
 
     send_keys(application, "x");
@@ -387,7 +413,7 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
 
     application.session().set_caret(TextOffset{21});
     send_keys(application, ",");
-    CHECK(application.input_state().name == "meow-thing");
+    CHECK(application.input_state().name == "input.read-key");
     CHECK(application.pending_key_sequence_text() == ",");
     send_keys(application, "a");
     CHECK(application.input_state().name == "meow-normal");
@@ -521,7 +547,7 @@ TEST_CASE("Guile Helix policy transforms every selection through shared nouns") 
 
     set_carets(TextOffset{1}, TextOffset{5});
     send_keys(application, "m i");
-    CHECK(application.input_state().name == "helix-thing");
+    CHECK(application.input_state().name == "input.read-key");
     CHECK(application.pending_key_sequence_text() == "m i");
     send_keys(application, "w");
     CHECK(application.input_state().name == "hx-normal");
