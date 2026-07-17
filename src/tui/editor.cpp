@@ -218,8 +218,6 @@ private:
     // ---- editing ----------------------------------------------------------
 
     void handle_key(const Key& key) {
-        const RevisionId rev_before = session().snapshot().revision();
-        const BufferId buffer_before = application_.buffer_id();
         command_keep_message_ = false;
 
         if (key.kind == KeyKind::Char) {
@@ -253,10 +251,6 @@ private:
 
         if (!command_keep_message_) {
             message_.clear();
-        }
-        if (application_.buffer_id() == buffer_before &&
-            session().snapshot().revision() != rev_before) {
-            session().clear_selection(); // edits invalidate the selection
         }
     }
 

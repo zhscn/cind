@@ -496,6 +496,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.input_state_indicator);
     output += ",\"text_input_policy\":";
     append_json_string(output, editor.text_input_policy);
+    output += ",\"selection_after_edit\":";
+    append_json_string(output, editor.selection_after_edit);
     output += ",\"command_loop\":";
     append_command_loop(output, editor.command_loop);
     output += ",\"scripting\":";
@@ -1868,6 +1870,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_json_string(output, frame.editor.input_state_indicator);
         output += ",\"text_input\":";
         append_json_string(output, frame.editor.text_input_policy);
+        output += ",\"selection_after_edit\":";
+        append_json_string(output, frame.editor.selection_after_edit);
         output.push_back('}');
     } else if (path == "scene") {
         append_scene(output, frame.scene);
@@ -2304,6 +2308,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " cursor=" << printable(frame.editor.input_cursor_shape) << " indicator=\""
            << printable(frame.editor.input_state_indicator) << '"'
            << " text-input=" << printable(frame.editor.text_input_policy)
+           << " selection-after-edit=" << printable(frame.editor.selection_after_edit)
            << " window:" << frame.editor.active_window_slot << ':'
            << frame.editor.active_window_generation << '\n';
     output << "    command keymaps=" << frame.editor.command_loop.keymaps.size() << " pending=\""

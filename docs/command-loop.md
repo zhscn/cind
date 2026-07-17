@@ -39,6 +39,13 @@ moving it preserves the other ranges. Document transactions settle all endpoints
 and a window split copies the full selection model into the new View. Scene composition highlights
 every non-empty range in both frontends.
 
+Selection lifecycle is part of command completion. A completed command may preserve, collapse, or
+replace the full Selection; the default result asks
+the active InputStrategy to choose `collapse` or `preserve` when the command chain changed its
+context Buffer. Direct text and IME commits use that same strategy policy. Document edit hooks
+invalidate edit-dependent caches and request presentation updates. Native transactions and
+multi-step scripted verbs therefore retain anchor-backed selections between edits.
+
 ## Normalized input
 
 `KeyStroke` represents a character or named key together with Control, Alt, Shift, and Super
@@ -224,7 +231,8 @@ keymap names with their scopes and parent chains, override maps, pending keys, t
 keymap, the input state owning handler feedback, repeat count, and last command. Interaction state includes prompt kind, input caret,
 provider, selection, generation, errors, and candidates. Buffer state includes resource and
 lifecycle data; Window state identifies each Window's bound View and Buffer. Input-state inspection
-reports the active state name, text-input policy, cursor shape, and indicator.
+reports the active state name, text-input policy, selection-after-edit policy, cursor shape, and
+indicator.
 Selection state reports whether a mark is active, the primary range, strategy metadata, and every
 directional range with its granularity.
 The popup is also represented as `scene.region.popup`, including structured title, input, visible

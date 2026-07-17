@@ -11,7 +11,7 @@
   (define-keymap! host toy-normal-keymap #f)
   (define-input-state! host 'toy-normal
     (vector toy-normal-keymap) 'ignore 'block "N" #f)
-  (define-input-strategy! host 'toy-modal 'toy-normal 'emacs)
+  (define-input-strategy! host 'toy-modal 'toy-normal 'emacs 'collapse)
   1)
 
 (define (set-input-strategy-command host strategy)

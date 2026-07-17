@@ -165,6 +165,7 @@ struct EditorStateSnapshot {
     std::string input_cursor_shape;
     std::string input_state_indicator;
     std::string text_input_policy;
+    std::string selection_after_edit;
     CommandLoopStateSnapshot command_loop;
     ScriptingStateSnapshot scripting;
     InteractionStateSnapshot interaction;

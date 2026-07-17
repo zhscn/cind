@@ -1,5 +1,8 @@
 (define-module (cind command)
   #:export (command-completed
+            command-completed/preserve
+            command-completed/collapse
+            command-completed/selection
             command-error
             command-dispatch
             interaction
@@ -13,10 +16,25 @@
             selection
             selection-range))
 
-(define (command-completed . values)
-  (cond ((null? values) (vector 'completed))
-        ((null? (cdr values)) (vector 'completed (car values)))
+(define (completed-result tag values)
+  (cond ((null? values) (vector tag))
+        ((null? (cdr values)) (vector tag (car values)))
         (else (error "command-completed accepts at most one value"))))
+
+(define (command-completed . values)
+  (completed-result 'completed values))
+
+(define (command-completed/preserve . values)
+  (completed-result 'completed-preserve values))
+
+(define (command-completed/collapse . values)
+  (completed-result 'completed-collapse values))
+
+(define (command-completed/selection selection . values)
+  (cond ((null? values) (vector 'completed-selection selection))
+        ((null? (cdr values))
+         (vector 'completed-selection selection (car values)))
+        (else (error "command-completed/selection accepts at most one value"))))
 
 (define (command-error message)
   (vector 'error message))

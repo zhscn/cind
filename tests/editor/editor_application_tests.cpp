@@ -79,6 +79,43 @@ TEST_CASE("editor application owns normalized interaction dispatch") {
     CHECK(application.session().caret().value == 4);
 }
 
+TEST_CASE("direct text input uses the active strategy selection edit policy") {
+    EditorApplication application = make_application("sample.cc", "abcd");
+    application.session().set_selection({.anchor = TextOffset{0}, .head = TextOffset{2}});
+    application.insert_text("x");
+    CHECK_FALSE(application.session().active_selection().has_value());
+
+    EditorRuntime& runtime = application.runtime();
+    const InputStateId emacs = runtime.input_states().find("emacs").value_or(InputStateId{});
+    REQUIRE(emacs);
+    const InputStrategyId preserve =
+        runtime.input_strategies().define({.name = "test-preserve-selection",
+                                           .editing = emacs,
+                                           .interface = emacs,
+                                           .selection_after_edit = SelectionEditPolicy::Preserve});
+    runtime.views().set_input_strategy(application.view_id(), preserve);
+    const ViewSelection selection{.ranges = {{.anchor = TextOffset{0},
+                                              .head = TextOffset{2},
+                                              .granularity = SelectionGranularity::Character},
+                                             {.anchor = TextOffset{3},
+                                              .head = TextOffset{4},
+                                              .granularity = SelectionGranularity::Node}},
+                                  .primary = 0,
+                                  .metadata = "(strategy . preserve)"};
+    application.session().set_selection(selection);
+    application.insert_text("y");
+
+    const ViewSelection expected{.ranges = {{.anchor = TextOffset{0},
+                                             .head = TextOffset{3},
+                                             .granularity = SelectionGranularity::Character},
+                                            {.anchor = TextOffset{4},
+                                             .head = TextOffset{5},
+                                             .granularity = SelectionGranularity::Node}},
+                                 .primary = 0,
+                                 .metadata = "(strategy . preserve)"};
+    CHECK(application.session().active_selection() == expected);
+}
+
 TEST_CASE("frontend commands join the shared default keymap") {
     EditorApplication application = make_application("sample.cc", "text");
     bool called = false;

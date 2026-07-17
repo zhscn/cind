@@ -66,7 +66,11 @@ public:
 private:
     CommandLoopResult invoke(CommandId command, CommandContext& context,
                              const CommandInvocation& invocation, std::string key_sequence);
-    CommandLoopResult finish(CommandId command, CommandResult result, std::string key_sequence);
+    CommandLoopResult finish(CommandId command, CommandResult result, std::string key_sequence,
+                             CommandContext& context, RevisionId initial_revision);
+    std::optional<std::string> apply_selection_result(const CommandResult& result,
+                                                      CommandContext& context,
+                                                      RevisionId initial_revision);
 
     EditorRuntime* runtime_;
     std::vector<KeymapId> override_keymaps_;

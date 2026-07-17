@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "editor/command_loop.hpp"
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -162,6 +163,10 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     REQUIRE(emacs_strategy);
     REQUIRE(toy_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
+    CHECK(runtime.input_strategies().definition(emacs_strategy).selection_after_edit ==
+          SelectionEditPolicy::Collapse);
+    CHECK(runtime.input_strategies().definition(meow).selection_after_edit ==
+          SelectionEditPolicy::Collapse);
     CHECK(runtime.input_strategies().state(emacs_strategy, InteractionClass::Editing) == emacs);
     CHECK(runtime.input_strategies().state(emacs_strategy, InteractionClass::Interface) == emacs);
     CHECK(runtime.input_strategies().state(toy_strategy, InteractionClass::Editing) == toy);
@@ -373,7 +378,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              transaction.erase(TextRange{TextOffset{range.start}, TextOffset{range.end}});
              (void)transaction.commit();
              runtime.views().set_caret(target, TextOffset{range.start});
-             runtime.views().clear_selection(target);
              return {};
          },
          .insert_text = [&](ViewId target,
@@ -385,7 +389,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              (void)transaction.commit();
              runtime.views().set_caret(
                  target, TextOffset{caret.value + static_cast<std::uint32_t>(text.size())});
-             runtime.views().clear_selection(target);
              return {};
          },
          .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
@@ -725,41 +728,36 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(search_query == "needle");
 
     runtime.views().set_caret(view, TextOffset{0});
+    CommandLoop command_loop(runtime);
     const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");
-    const CommandResult mark_set = runtime.commands().invoke(toggle_mark, context);
-    REQUIRE(mark_set.has_value());
+    CHECK(command_loop.execute(toggle_mark, context).status == CommandLoopStatus::Executed);
     CHECK(runtime.views().mark(view) == std::optional<TextOffset>{TextOffset{0}});
     CHECK(message == "mark set");
-    const CommandResult mark_cleared = runtime.commands().invoke(toggle_mark, context);
-    REQUIRE(mark_cleared.has_value());
+    CHECK(command_loop.execute(toggle_mark, context).status == CommandLoopStatus::Executed);
     CHECK_FALSE(runtime.views().mark(view).has_value());
     CHECK(message == "mark cleared");
 
     runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
-    const CommandResult copied =
-        runtime.commands().invoke(require_command(runtime, "edit.copy-region"), context);
-    REQUIRE(copied.has_value());
+    CHECK(command_loop.execute(require_command(runtime, "edit.copy-region"), context).status ==
+          CommandLoopStatus::Executed);
     CHECK(clipboard == "a");
     CHECK(message == "copied");
     CHECK_FALSE(runtime.views().mark(view).has_value());
 
-    const CommandResult yanked =
-        runtime.commands().invoke(require_command(runtime, "edit.yank"), context);
-    REQUIRE(yanked.has_value());
+    CHECK(command_loop.execute(require_command(runtime, "edit.yank"), context).status ==
+          CommandLoopStatus::Executed);
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "aabc\n");
 
     runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
-    const CommandResult region_killed =
-        runtime.commands().invoke(require_command(runtime, "edit.kill-region"), context);
-    REQUIRE(region_killed.has_value());
+    CHECK(command_loop.execute(require_command(runtime, "edit.kill-region"), context).status ==
+          CommandLoopStatus::Executed);
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "abc\n");
     CHECK(clipboard == "a");
 
     runtime.views().set_caret(view, TextOffset{0});
     requested_soft_kill_range = GuileTextRange{0, 3};
-    const CommandResult line_killed =
-        runtime.commands().invoke(require_command(runtime, "edit.kill-line"), context);
-    REQUIRE(line_killed.has_value());
+    CHECK(command_loop.execute(require_command(runtime, "edit.kill-line"), context).status ==
+          CommandLoopStatus::Executed);
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "\n");
     CHECK(clipboard == "abc");
 

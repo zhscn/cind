@@ -467,6 +467,9 @@ void EditorApplication::insert_text(std::string_view text) {
     reset_preferred_column();
     last_key_ = "text";
     after_edit();
+    if (runtime_.selection_edit_policy(view_id()) == SelectionEditPolicy::Collapse) {
+        session().clear_selection();
+    }
 }
 
 void EditorApplication::reset_preferred_column() {
@@ -1896,7 +1899,6 @@ void EditorApplication::after_edit() {
 }
 
 void EditorApplication::after_edit(ViewId view) {
-    session_for(view).clear_selection();
     view_state_for(view).selection_history.clear();
     quit_armed_ = false;
     message_.clear();

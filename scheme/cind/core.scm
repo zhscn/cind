@@ -359,13 +359,12 @@
              (mark (view-mark host view)))
         (if (and mark (= mark caret))
             (begin
-              (clear-selection! host view)
-              (set-message! host "mark cleared"))
+              (set-message! host "mark cleared")
+              (command-completed/collapse))
             (begin
-              (set-selection!
-               host view (selection (list (selection-range caret caret 'char))))
-              (set-message! host "mark set")))
-        (command-completed)))
+              (set-message! host "mark set")
+              (command-completed/selection
+               (selection (list (selection-range caret caret 'char))))))))
 
     (define (kill-range! context range)
       (let* ((buffer (context-buffer context))
@@ -405,13 +404,12 @@
                    (text (buffer-substring host (context-buffer context)
                                            (range-start range) (range-end range)))
                    (clipboard-error (remember-kill! text)))
-              (clear-selection! host view)
               (set-message! host
                             (if clipboard-error
                                 (string-append "copied internally; clipboard: "
                                                clipboard-error)
                                 "copied"))
-              (command-completed)))))
+              (command-completed/collapse)))))
 
     (define (yank context invocation)
       (let* ((result (latest-kill))

@@ -188,7 +188,7 @@
   (define-input-state! host meow-keypad-state
     (vector) 'ignore 'block "K"
     (lambda (context key) (keypad-handle-key host context key)))
-  (define-input-strategy! host 'meow 'meow-normal 'meow-motion)
+  (define-input-strategy! host 'meow 'meow-normal 'meow-motion 'collapse)
   (observe-input-state-changes!
    host
    (lambda (event)

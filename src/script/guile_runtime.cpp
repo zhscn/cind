@@ -795,16 +795,30 @@ InputStrategyId require_input_strategy(HostLease& host, SCM value, const char* c
     return *strategy;
 }
 
-// The Guile ABI fixes four adjacent SCM arguments; validation preserves their semantic order.
+SelectionEditPolicy selection_edit_policy_from_scheme(SCM value, const char* caller, int position) {
+    if (symbol_is(value, "collapse")) {
+        return SelectionEditPolicy::Collapse;
+    }
+    if (symbol_is(value, "preserve")) {
+        return SelectionEditPolicy::Preserve;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "'collapse or 'preserve");
+    return SelectionEditPolicy::Collapse;
+}
+
+// The Guile ABI fixes five adjacent SCM arguments; validation preserves their semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SCM interface_value) {
+SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SCM interface_value,
+                          SCM selection_policy_value) {
     try {
         HostLease& host = require_host(host_object, "define-input-strategy!");
         const std::string name = scheme_name(name_value, "define-input-strategy!", 2);
         InputStrategyRegistry::Definition definition{
             .name = name,
             .editing = require_input_state(host, editing_value, "define-input-strategy!", 3),
-            .interface = require_input_state(host, interface_value, "define-input-strategy!", 4)};
+            .interface = require_input_state(host, interface_value, "define-input-strategy!", 4),
+            .selection_after_edit = selection_edit_policy_from_scheme(selection_policy_value,
+                                                                      "define-input-strategy!", 5)};
         const std::optional<InputStrategyId> existing = host.runtime->input_strategies().find(name);
         InputStrategyId id;
         if (existing) {
@@ -2348,7 +2362,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(clear_input_feedback));
     (void)scm_c_define_gsubr("define-input-state!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
-    (void)scm_c_define_gsubr("define-input-strategy!", 4, 0, 0,
+    (void)scm_c_define_gsubr("define-input-strategy!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_strategy));
     (void)scm_c_define_gsubr("set-default-input-strategy!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_default_input_strategy));
@@ -2603,15 +2617,38 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
     }
     const std::size_t size = scm_c_vector_length(value);
     const SCM tag = scm_c_vector_ref(value, 0);
-    if (symbol_is(tag, "completed")) {
-        if (size > 2 || (size == 2 && !setting_value_p(scm_c_vector_ref(value, 1)))) {
+    const auto completed = [&](CommandSelectionResult selection,
+                               std::size_t value_index) -> CommandResult {
+        if ((size != value_index && size != value_index + 1) ||
+            (size == value_index + 1 && !setting_value_p(scm_c_vector_ref(value, value_index)))) {
             return std::unexpected(CommandError{"Guile completed result is malformed"});
         }
-        CommandCompleted completed_result;
-        if (size == 2) {
-            completed_result.value = setting_from_scheme(scm_c_vector_ref(value, 1));
+        CommandCompleted result{.value = std::nullopt, .selection = std::move(selection)};
+        if (size == value_index + 1) {
+            result.value = setting_from_scheme(scm_c_vector_ref(value, value_index));
         }
-        return completed_result;
+        return result;
+    };
+    if (symbol_is(tag, "completed")) {
+        return completed(CommandSelectionDefault{}, 1);
+    }
+    if (symbol_is(tag, "completed-preserve")) {
+        return completed(CommandSelectionPreserve{}, 1);
+    }
+    if (symbol_is(tag, "completed-collapse")) {
+        return completed(CommandSelectionCollapse{}, 1);
+    }
+    if (symbol_is(tag, "completed-selection")) {
+        if (size != 2 && size != 3) {
+            return std::unexpected(CommandError{"Guile completed selection result is malformed"});
+        }
+        try {
+            return completed(view_selection_from_scheme(scm_c_vector_ref(value, 1),
+                                                        "command-completed/selection", 1),
+                             2);
+        } catch (const std::exception& exception) {
+            return std::unexpected(CommandError{exception.what()});
+        }
     }
     if (symbol_is(tag, "error")) {
         if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {

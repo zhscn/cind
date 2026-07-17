@@ -68,6 +68,14 @@ SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id)
     return SettingsResolver(setting_definitions_, std::move(layers));
 }
 
+SelectionEditPolicy EditorRuntime::selection_edit_policy(ViewId view_id) const {
+    const View& view = views_.get(view_id);
+    const std::optional<InputStrategyId> strategy =
+        view.input_strategy() ? view.input_strategy() : input_strategies_.default_strategy();
+    return strategy ? input_strategies_.definition(*strategy).selection_after_edit
+                    : SelectionEditPolicy::Collapse;
+}
+
 void EditorRuntime::set_default_input_strategy(std::optional<InputStrategyId> strategy) {
     input_strategies_.set_default(strategy);
     views_.refresh_mode_input_states();

@@ -559,6 +559,106 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
         std::logic_error);
 }
 
+TEST_CASE("command completion owns selection results and strategy edit defaults") {
+    EditorRuntime runtime;
+    const InputStateId state = runtime.input_states().define({.name = "selection-state",
+                                                              .keymaps = {},
+                                                              .text_input = TextInputPolicy::Accept,
+                                                              .cursor = CursorShape::Beam,
+                                                              .indicator = {},
+                                                              .handler = {}});
+    const InputStrategyId collapse =
+        runtime.input_strategies().define({.name = "selection-collapse",
+                                           .editing = state,
+                                           .interface = state,
+                                           .selection_after_edit = SelectionEditPolicy::Collapse});
+    const InputStrategyId preserve =
+        runtime.input_strategies().define({.name = "selection-preserve",
+                                           .editing = state,
+                                           .interface = state,
+                                           .selection_after_edit = SelectionEditPolicy::Preserve});
+    runtime.set_default_input_strategy(collapse);
+
+    const BufferId buffer = runtime.buffers().create({.name = "selection-command",
+                                                      .initial_text = "abcdef",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    CommandLoop loop(runtime);
+
+    const ViewSelection original{.ranges = {{.anchor = TextOffset{1},
+                                             .head = TextOffset{3},
+                                             .granularity = SelectionGranularity::Character},
+                                            {.anchor = TextOffset{5},
+                                             .head = TextOffset{4},
+                                             .granularity = SelectionGranularity::Node}},
+                                 .primary = 0,
+                                 .metadata = "(thing . expression)"};
+    runtime.views().set_selection(view, original);
+
+    const CommandId no_edit = runtime.commands().define(
+        "selection.no-edit", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    CHECK(loop.execute(no_edit, context).status == CommandLoopStatus::Executed);
+    CHECK(runtime.views().active_selection(view) == original);
+
+    const auto insert_at_start = [](CommandContext& command_context, std::string_view text) {
+        EditTransaction transaction = command_context.buffer().begin_transaction();
+        transaction.insert(TextOffset{0}, text);
+        (void)transaction.commit();
+    };
+    const CommandId use_default =
+        runtime.commands().define("selection.default",
+                                  [insert_at_start](CommandContext& command_context,
+                                                    const CommandInvocation&) -> CommandResult {
+                                      insert_at_start(command_context, "x");
+                                      return CommandCompleted{};
+                                  });
+    CHECK(loop.execute(use_default, context).status == CommandLoopStatus::Executed);
+    CHECK_FALSE(runtime.views().active_selection(view).has_value());
+
+    runtime.views().set_selection(view, original);
+    const CommandId preserve_result = runtime.commands().define(
+        "selection.preserve",
+        [insert_at_start](CommandContext& command_context,
+                          const CommandInvocation&) -> CommandResult {
+            insert_at_start(command_context, "y");
+            return CommandCompleted{.value = std::nullopt, .selection = CommandSelectionPreserve{}};
+        });
+    CHECK(loop.execute(preserve_result, context).status == CommandLoopStatus::Executed);
+    const ViewSelection settled{.ranges = {{.anchor = TextOffset{2},
+                                            .head = TextOffset{4},
+                                            .granularity = SelectionGranularity::Character},
+                                           {.anchor = TextOffset{6},
+                                            .head = TextOffset{5},
+                                            .granularity = SelectionGranularity::Node}},
+                                .primary = 0,
+                                .metadata = "(thing . expression)"};
+    CHECK(runtime.views().active_selection(view) == settled);
+
+    const ViewSelection replacement{.ranges = {{.anchor = TextOffset{0},
+                                                .head = TextOffset{2},
+                                                .granularity = SelectionGranularity::Line}},
+                                    .primary = 0,
+                                    .metadata = "(result . verb)"};
+    const CommandId replace_result = runtime.commands().define(
+        "selection.replace",
+        [replacement](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{.value = std::nullopt, .selection = replacement};
+        });
+    CHECK(loop.execute(replace_result, context).status == CommandLoopStatus::Executed);
+    CHECK(runtime.views().active_selection(view) == replacement);
+
+    runtime.views().set_input_strategy(view, preserve);
+    runtime.views().set_selection(view, original);
+    CHECK(loop.execute(use_default, context).status == CommandLoopStatus::Executed);
+    CHECK(runtime.views().active_selection(view) == settled);
+}
+
 TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "keys",

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ids.hpp"
+#include "editor/selection.hpp"
 #include "editor/settings.hpp"
 
 #include <compare>
@@ -13,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace cind {
@@ -41,8 +43,27 @@ struct CommandError {
     std::string message;
 };
 
+struct CommandSelectionDefault {
+    friend constexpr bool operator==(CommandSelectionDefault, CommandSelectionDefault) = default;
+};
+
+struct CommandSelectionPreserve {
+    friend constexpr bool operator==(CommandSelectionPreserve, CommandSelectionPreserve) = default;
+};
+
+struct CommandSelectionCollapse {
+    friend constexpr bool operator==(CommandSelectionCollapse, CommandSelectionCollapse) = default;
+};
+
+// A completed command either delegates edit-time selection handling to the
+// active input strategy, preserves or collapses the current selection, or
+// installs a complete replacement model.
+using CommandSelectionResult = std::variant<CommandSelectionDefault, CommandSelectionPreserve,
+                                            CommandSelectionCollapse, ViewSelection>;
+
 struct CommandCompleted {
     std::optional<SettingValue> value = std::nullopt;
+    CommandSelectionResult selection = CommandSelectionDefault{};
 };
 
 // Requests another named command without retaining a callback continuation.

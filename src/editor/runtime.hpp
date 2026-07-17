@@ -56,6 +56,7 @@ public:
     bool extensions_sealed() const { return extensions_sealed_; }
 
     SettingsResolver settings_for(BufferId buffer, ViewId view) const;
+    SelectionEditPolicy selection_edit_policy(ViewId view) const;
     void set_default_input_strategy(std::optional<InputStrategyId> strategy);
 
 private:

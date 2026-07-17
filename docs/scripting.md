@@ -58,7 +58,7 @@ The native module exports:
 (set-input-feedback! host view-id sequence hints)
 (clear-input-feedback! host view-id)
 (define-input-state! host name keymaps text-input cursor indicator handler-or-#f)
-(define-input-strategy! host name editing-state interface-state)
+(define-input-strategy! host name editing-state interface-state selection-after-edit)
 (set-default-input-strategy! host strategy-name)
 (set-view-input-strategy! host view-id strategy-name-or-#f)
 (view-input-strategy host view-id)
@@ -160,10 +160,13 @@ into a frontend event loop. The system override map is resolved before a handler
 an unconditional escape path.
 
 An input strategy is a named mapping from the `editing` and `interface` interaction classes to
-durable states. The application has a default strategy, while each View may select an independent
-override. Passing `#f` to `set-view-input-strategy!` restores inheritance from the application
-default. Selecting a strategy immediately rederives the View's durable state from its Buffer mode;
-a mode-specific `initial-state` remains the higher-priority override.
+durable states. Its `selection-after-edit` policy is `collapse` or `preserve` and applies when a
+document-changing command delegates its resulting selection to the strategy. Direct text and IME
+input consult the same policy after committing an edit. The application has a default strategy,
+while each View may select an independent override. Passing `#f` to
+`set-view-input-strategy!` restores inheritance from the application default. Selecting a strategy
+immediately rederives the View's durable state from its Buffer mode; a mode-specific `initial-state`
+remains the higher-priority override.
 
 The state mutation procedures address a generational View ID. Base replacement initializes or
 changes the durable state. Push adds a transient state, pop removes one transient state, and reset
@@ -282,9 +285,19 @@ A Scheme command imports `(cind command)` and returns one tagged vector through 
 | Tag | Meaning |
 | --- | --- |
 | `completed` | complete with an optional typed value |
+| `completed-preserve` | complete and preserve the current selection |
+| `completed-collapse` | complete and collapse the selection to its primary head |
+| `completed-selection` | complete with a full replacement Selection and optional typed value |
 | `error` | return a command error string |
 | `dispatch` | continue through the named command pipeline |
 | `interaction` | request a text or picker interaction using a named provider and accept command |
+
+`command-completed`, `command-completed/preserve`, `command-completed/collapse`, and
+`command-completed/selection` construct the four completion forms. The default completion applies
+the active InputStrategy policy only when the command chain changed its context Buffer. Explicit
+preserve, collapse, and replacement results apply independently of document revision. A dispatch
+chain is one command lifecycle: only its terminal completion selects the explicit result, while the
+initial and final Buffer revisions determine whether the strategy default applies.
 
 The bridge validates the complete value before constructing a C++ command action. Named dispatch
 and accept commands are resolved through the invoking `EditorRuntime`; a script cannot inject a

@@ -23,6 +23,21 @@ struct InputStrategyId {
     friend constexpr auto operator<=>(InputStrategyId, InputStrategyId) = default;
 };
 
+enum class SelectionEditPolicy : std::uint8_t {
+    Collapse,
+    Preserve,
+};
+
+constexpr std::string_view selection_edit_policy_name(SelectionEditPolicy policy) {
+    switch (policy) {
+    case SelectionEditPolicy::Collapse:
+        return "collapse";
+    case SelectionEditPolicy::Preserve:
+        return "preserve";
+    }
+    return "unknown";
+}
+
 // A strategy maps content interaction classes to durable input states. Modes
 // describe a Buffer; a View selects the strategy used to interpret that
 // description, so multiple editing schemes can coexist in one application.
@@ -32,6 +47,7 @@ public:
         std::string name;
         InputStateId editing;
         InputStateId interface;
+        SelectionEditPolicy selection_after_edit = SelectionEditPolicy::Collapse;
     };
 
     explicit InputStrategyRegistry(const InputStateRegistry& input_states)

@@ -61,6 +61,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .input_cursor_shape = "beam",
         .input_state_indicator = "",
         .text_input_policy = "accept",
+        .selection_after_edit = "collapse",
         .command_loop =
             {.keymaps = {"interaction.picker", "application.global"},
              .layers = {{.name = "interaction.picker",
@@ -371,7 +372,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":35") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":36") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
@@ -394,6 +395,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
     CHECK(snapshot.find("\"selection\":{\"active\":true,\"primary\":1") != std::string::npos);
+    CHECK(snapshot.find("\"selection_after_edit\":\"collapse\"") != std::string::npos);
     CHECK(snapshot.find("\"input_cursor\":0") != std::string::npos);
     CHECK(snapshot.find("\"popup_layout\":{\"coordinate_space\":\"logical-pixels\"") !=
           std::string::npos);
@@ -424,7 +426,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(input_state.ok);
     CHECK(input_state.payload ==
           "{\"strategy\":\"emacs\",\"name\":\"emacs\",\"cursor_shape\":\"beam\","
-          "\"indicator\":\"\",\"text_input\":\"accept\"}");
+          "\"indicator\":\"\",\"text_input\":\"accept\","
+          "\"selection_after_edit\":\"collapse\"}");
 
     const InspectionResponse scripting = run_inspection_query(hub, "get editor.scripting");
     REQUIRE(scripting.ok);

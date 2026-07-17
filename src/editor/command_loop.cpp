@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <format>
 #include <stdexcept>
 #include <utility>
 
@@ -130,11 +131,23 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
                                       const CommandInvocation& invocation,
                                       std::string key_sequence) {
     const CommandRegistry& commands = runtime_->commands();
+    const RevisionId initial_revision = context.buffer().snapshot().revision();
     CommandId current = command;
     CommandInvocation current_invocation = invocation;
     constexpr int maximum_dispatch_depth = 32;
     for (int depth = 0; depth < maximum_dispatch_depth; ++depth) {
         if (!commands.enabled(current, context)) {
+            const CommandResult disabled =
+                std::unexpected(CommandError{"command is disabled in this context"});
+            if (std::optional<std::string> error =
+                    apply_selection_result(disabled, context, initial_revision)) {
+                return {.status = CommandLoopStatus::Error,
+                        .consumed = true,
+                        .command = current,
+                        .key_sequence = std::move(key_sequence),
+                        .message = std::move(*error),
+                        .interaction = std::nullopt};
+            }
             return {.status = CommandLoopStatus::Disabled,
                     .consumed = true,
                     .command = current,
@@ -151,25 +164,33 @@ CommandLoopResult CommandLoop::invoke(CommandId command, CommandContext& context
             result = std::unexpected(CommandError{"command failed with an unknown exception"});
         }
         if (!result) {
-            return finish(current, std::move(result), std::move(key_sequence));
+            return finish(current, std::move(result), std::move(key_sequence), context,
+                          initial_revision);
         }
         if (CommandDispatch* dispatch = std::get_if<CommandDispatch>(&*result)) {
             current = dispatch->command;
             current_invocation = std::move(dispatch->invocation);
             continue;
         }
-        return finish(current, std::move(result), std::move(key_sequence));
+        return finish(current, std::move(result), std::move(key_sequence), context,
+                      initial_revision);
     }
-    return {.status = CommandLoopStatus::Error,
-            .consumed = true,
-            .command = current,
-            .key_sequence = std::move(key_sequence),
-            .message = "command dispatch depth exceeded",
-            .interaction = std::nullopt};
+    return finish(current, std::unexpected(CommandError{"command dispatch depth exceeded"}),
+                  std::move(key_sequence), context, initial_revision);
 }
 
 CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
-                                      std::string key_sequence) {
+                                      std::string key_sequence, CommandContext& context,
+                                      RevisionId initial_revision) {
+    if (std::optional<std::string> error =
+            apply_selection_result(result, context, initial_revision)) {
+        return {.status = CommandLoopStatus::Error,
+                .consumed = true,
+                .command = command,
+                .key_sequence = std::move(key_sequence),
+                .message = std::move(*error),
+                .interaction = std::nullopt};
+    }
     if (!result) {
         return {.status = CommandLoopStatus::Error,
                 .consumed = true,
@@ -200,6 +221,49 @@ CommandLoopResult CommandLoop::finish(CommandId command, CommandResult result,
             .key_sequence = std::move(key_sequence),
             .message = {},
             .interaction = std::nullopt};
+}
+
+std::optional<std::string> CommandLoop::apply_selection_result(const CommandResult& result,
+                                                               CommandContext& context,
+                                                               RevisionId initial_revision) {
+    View* view = runtime_->views().try_get(context.view_id());
+    if (view == nullptr) {
+        return std::nullopt;
+    }
+    const Buffer* buffer = runtime_->buffers().try_get(context.buffer_id());
+    const bool edited = buffer != nullptr && buffer->snapshot().revision() != initial_revision;
+
+    const CommandSelectionResult* requested = nullptr;
+    if (result) {
+        if (const CommandCompleted* completed = std::get_if<CommandCompleted>(&*result)) {
+            requested = &completed->selection;
+        }
+    }
+    const CommandSelectionResult default_result = CommandSelectionDefault{};
+    if (requested == nullptr) {
+        requested = &default_result;
+    }
+
+    try {
+        if (std::holds_alternative<CommandSelectionPreserve>(*requested)) {
+            return std::nullopt;
+        }
+        if (std::holds_alternative<CommandSelectionCollapse>(*requested)) {
+            runtime_->views().clear_selection(context.view_id());
+            return std::nullopt;
+        }
+        if (const ViewSelection* replacement = std::get_if<ViewSelection>(requested)) {
+            runtime_->views().set_selection(context.view_id(), *replacement);
+            return std::nullopt;
+        }
+        if (edited &&
+            runtime_->selection_edit_policy(context.view_id()) == SelectionEditPolicy::Collapse) {
+            runtime_->views().clear_selection(context.view_id());
+        }
+    } catch (const std::exception& exception) {
+        return std::format("invalid command selection result: {}", exception.what());
+    }
+    return std::nullopt;
 }
 
 } // namespace cind
