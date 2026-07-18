@@ -482,6 +482,57 @@ TEST_CASE("user initialization owns modeline content policy") {
     CHECK(content.segments.front().weight == ModelineWeight::Strong);
 }
 
+TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {
+    TemporaryFile init(std::format("cind-startup-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-startup-policy!
+ host
+ (lambda (host facts)
+   (vector 'startup-plan
+           (vector 'startup-buffer "*Welcome*" 'empty 'generated #f #t 'special-mode)
+           #f #f)))
+)");
+    EditorApplication application({.path = "ignored.cpp",
+                                   .initial_text = "ignored contents",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    const Buffer& buffer = application.session().buffer();
+    CHECK(buffer.name() == "*Welcome*");
+    CHECK(buffer.kind() == BufferKind::Generated);
+    CHECK(buffer.read_only());
+    CHECK(buffer.snapshot().content().empty());
+    const ModeId mode = buffer.modes().major().value_or(ModeId{});
+    REQUIRE(mode);
+    CHECK(application.runtime().modes().definition(mode).name == "special-mode");
+    CHECK_FALSE(application.has_background_work());
+}
+
+TEST_CASE("user initialization owns the last-buffer fallback policy") {
+    TemporaryFile init(std::format("cind-fallback-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-fallback-buffer-policy!
+ host
+ (lambda (host)
+   (create-buffer! host "*Fallback*" "ready\n" 'scratch #f #f
+                   'fundamental-mode #f "custom fallback")))
+)");
+    EditorApplication application({.path = {},
+                                   .initial_text = "source",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    REQUIRE(application.execute_command("buffer.force-kill"));
+    CHECK(application.buffer_count() == 1);
+    CHECK(application.session().buffer().name() == "*Fallback*");
+    CHECK(application.session().snapshot().content() == "ready\n");
+    CHECK(application.style_origin() == "custom fallback");
+}
+
 TEST_CASE("per-view input states precede window layers and may handle keys") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();

@@ -845,6 +845,22 @@ SCM buffer_kind_symbol(BufferKind kind) {
     throw std::logic_error("unknown buffer kind");
 }
 
+BufferKind buffer_kind_from_scheme(SCM value, const char* caller, int position) {
+    if (symbol_is(value, "scratch")) {
+        return BufferKind::Scratch;
+    }
+    if (symbol_is(value, "file")) {
+        return BufferKind::File;
+    }
+    if (symbol_is(value, "generated")) {
+        return BufferKind::Generated;
+    }
+    if (symbol_is(value, "process")) {
+        return BufferKind::Process;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "'scratch, 'file, 'generated, or 'process");
+}
+
 SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
     try {
         HostLease& host = require_host(host_object, "keymap-context-snapshot");
@@ -3803,19 +3819,7 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
         if (!host.services.create_buffer) {
             scm_misc_error("create-buffer!", "buffer-create capability is unavailable", SCM_EOL);
         }
-        BufferKind kind;
-        if (symbol_is(kind_value, "scratch")) {
-            kind = BufferKind::Scratch;
-        } else if (symbol_is(kind_value, "file")) {
-            kind = BufferKind::File;
-        } else if (symbol_is(kind_value, "generated")) {
-            kind = BufferKind::Generated;
-        } else if (symbol_is(kind_value, "process")) {
-            kind = BufferKind::Process;
-        } else {
-            scm_wrong_type_arg_msg("create-buffer!", 4, kind_value,
-                                   "'scratch, 'file, 'generated, or 'process");
-        }
+        const BufferKind kind = buffer_kind_from_scheme(kind_value, "create-buffer!", 4);
         std::optional<std::string> resource;
         if (!scheme_false(resource_value)) {
             if (!scm_is_string(resource_value)) {
@@ -4035,45 +4039,6 @@ SCM window_view(SCM host_object, SCM window_value) {
         scm_misc_error("window-view-id", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-SCM startup_placeholder(SCM host_object) {
-    HostLease& host = require_host(host_object, "startup-placeholder");
-    if (!host.services.startup_placeholder) {
-        scm_misc_error("startup-placeholder", "startup-placeholder capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        const std::optional<BufferId> buffer = host.services.startup_placeholder();
-        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("startup-placeholder", exception.what());
-    } catch (...) {
-        scm_misc_error("startup-placeholder", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_startup_placeholder(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "set-startup-placeholder!");
-    if (!host.services.set_startup_placeholder) {
-        scm_misc_error("set-startup-placeholder!", "startup-placeholder capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        std::optional<BufferId> buffer;
-        if (!scheme_false(buffer_value)) {
-            buffer = entity_id_from_scheme<BufferTag>(buffer_value, "set-startup-placeholder!", 2);
-            (void)host.runtime->buffers().get(*buffer);
-        }
-        host.services.set_startup_placeholder(buffer);
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-startup-placeholder!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-startup-placeholder!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
 }
 
 SCM focus_window(SCM host_object, SCM window_value) {
@@ -4632,10 +4597,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("active-window-id", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(active_window));
     (void)scm_c_define_gsubr("window-view-id", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_view));
-    (void)scm_c_define_gsubr("startup-placeholder", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(startup_placeholder));
-    (void)scm_c_define_gsubr("set-startup-placeholder!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_startup_placeholder));
     (void)scm_c_define_gsubr("focus-window!", 2, 0, 0, reinterpret_cast<scm_t_subr>(focus_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
@@ -4676,8 +4637,7 @@ void initialize_host_module(void*) {
         "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
         "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
-        "startup-placeholder", "set-startup-placeholder!", "focus-window!", "request-redraw!",
-        nullptr);
+        "focus-window!", "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -4831,6 +4791,82 @@ ModelineContent modeline_content_from_scheme(SCM value, const char* caller) {
     return content;
 }
 
+SCM startup_facts_value(const StartupFacts& facts) {
+    SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("startup-facts"));
+    scm_c_vector_set_x(value, 1, scm_from_utf8_string(facts.requested_resource.c_str()));
+    scm_c_vector_set_x(value, 2, scm_from_bool(facts.has_initial_text));
+    return value;
+}
+
+StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
+                                     const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "startup-plan") ||
+        !scheme_boolean(scm_c_vector_ref(value, 3))) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value,
+            "#(startup-plan startup-buffer resource-to-open-or-#f startup-placeholder?)");
+    }
+    const SCM buffer_value = scm_c_vector_ref(value, 1);
+    if (!scm_is_vector(buffer_value) || scm_c_vector_length(buffer_value) != 7 ||
+        !symbol_is(scm_c_vector_ref(buffer_value, 0), "startup-buffer") ||
+        !scm_is_string(scm_c_vector_ref(buffer_value, 1)) ||
+        !scheme_boolean(scm_c_vector_ref(buffer_value, 5))) {
+        scm_wrong_type_arg_msg(
+            caller, 0, buffer_value,
+            "#(startup-buffer name contents kind resource-or-#f read-only? mode)");
+    }
+
+    StartupPlan plan;
+    plan.buffer.name = scheme_string(scm_c_vector_ref(buffer_value, 1));
+    if (plan.buffer.name.empty()) {
+        scm_misc_error(caller, "startup buffer name must not be empty", SCM_EOL);
+    }
+    const SCM contents = scm_c_vector_ref(buffer_value, 2);
+    if (symbol_is(contents, "initial-text")) {
+        if (!facts.has_initial_text) {
+            scm_misc_error(caller, "startup plan requested unavailable initial text", SCM_EOL);
+        }
+        plan.buffer.use_initial_text = true;
+    } else if (!symbol_is(contents, "empty")) {
+        scm_wrong_type_arg_msg(caller, 0, contents, "'initial-text or 'empty");
+    }
+    plan.buffer.kind = buffer_kind_from_scheme(scm_c_vector_ref(buffer_value, 3), caller, 0);
+
+    const SCM resource = scm_c_vector_ref(buffer_value, 4);
+    if (!scheme_false(resource)) {
+        if (!scm_is_string(resource)) {
+            scm_wrong_type_arg_msg(caller, 0, resource, "string or #f");
+        }
+        plan.buffer.resource = scheme_string(resource);
+        if (plan.buffer.resource->empty()) {
+            scm_misc_error(caller, "startup buffer resource must not be empty", SCM_EOL);
+        }
+    }
+    if (plan.buffer.kind == BufferKind::File && !plan.buffer.resource) {
+        scm_misc_error(caller, "startup file buffer requires a resource", SCM_EOL);
+    }
+    plan.buffer.read_only = scheme_true(scm_c_vector_ref(buffer_value, 5));
+    plan.buffer.major_mode = require_mode(host, scm_c_vector_ref(buffer_value, 6), caller, 0);
+
+    const SCM resource_to_open = scm_c_vector_ref(value, 2);
+    if (!scheme_false(resource_to_open)) {
+        if (!scm_is_string(resource_to_open)) {
+            scm_wrong_type_arg_msg(caller, 0, resource_to_open, "string or #f");
+        }
+        plan.resource_to_open = scheme_string(resource_to_open);
+        if (plan.resource_to_open->empty()) {
+            scm_misc_error(caller, "startup resource to open must not be empty", SCM_EOL);
+        }
+    }
+    plan.startup_placeholder = scheme_true(scm_c_vector_ref(value, 3));
+    if (plan.startup_placeholder && !plan.resource_to_open) {
+        scm_misc_error(caller, "startup placeholder requires a deferred resource", SCM_EOL);
+    }
+    return plan;
+}
+
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
@@ -4843,7 +4879,10 @@ struct GuileCall {
         InstallInputStates,
         InstallModes,
         InstallResourcePolicies,
+        InstallBufferLifecyclePolicies,
         InstallPresentationPolicies,
+        ResolveStartupPlan,
+        SetStartupPlaceholder,
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
@@ -4875,6 +4914,7 @@ struct GuileCall {
     std::size_t count = 0;
     std::string query;
     WindowId window;
+    BufferId buffer;
     ProjectId project;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
@@ -4888,7 +4928,9 @@ struct GuileCall {
     std::vector<InteractionCandidate> provider_candidates;
     std::vector<PositionHint> position_hints;
     GuileKeymapPolicy keymap_policy;
+    StartupPlan startup_plan;
     ModelineContent modeline_content;
+    const StartupFacts* startup_facts = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
     bool enabled = false;
     std::exception_ptr cpp_failure;
@@ -5279,10 +5321,27 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind core", "install-core-resource-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallBufferLifecyclePolicies:
+            call.result = scm_call_1(
+                scm_c_public_ref("cind core", "install-buffer-lifecycle-policies!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InstallPresentationPolicies:
             call.result = scm_call_1(
                 scm_c_public_ref("cind core", "install-presentation-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
+            break;
+        case GuileCall::Operation::ResolveStartupPlan:
+            call.result = scm_call_2(scm_c_public_ref("cind lifecycle", "resolve-startup-plan"),
+                                     call.host, startup_facts_value(*call.startup_facts));
+            call.startup_plan =
+                startup_plan_from_scheme(require_host(call.host, "resolve-startup-plan"),
+                                         call.result, *call.startup_facts, "resolve-startup-plan");
+            break;
+        case GuileCall::Operation::SetStartupPlaceholder:
+            call.result = scm_call_2(
+                scm_c_public_ref("cind lifecycle", "set-startup-placeholder!"), call.host,
+                call.enabled ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F);
             break;
         case GuileCall::Operation::OpenResource:
             call.result = scm_call_5(scm_c_public_ref("cind core", "open-resource!"), call.host,
@@ -5898,8 +5957,9 @@ public:
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
-             {"command", "input", "async", "extension", "emacs", "toy-modal", "meow", "vim",
-              "helix", "structural", "minibuffer", "development", "ares", "introspect", "core"}) {
+             {"command", "input", "async", "lifecycle", "extension", "emacs", "toy-modal", "meow",
+              "vim", "helix", "structural", "minibuffer", "development", "ares", "introspect",
+              "core"}) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -6122,6 +6182,56 @@ public:
         ++state_->resource_policy_revision;
         state_->last_error.reset();
         return call.count;
+    }
+
+    std::expected<void, std::string> install_buffer_lifecycle_policies() {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallBufferLifecyclePolicies;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != 2) {
+            state_->last_error =
+                "Guile buffer lifecycle policy returned an inconsistent policy count";
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
+    std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ResolveStartupPlan;
+        call.host = host_;
+        call.startup_facts = &facts;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return std::move(call.startup_plan);
+    }
+
+    std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer) {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetStartupPlaceholder;
+        call.host = host_;
+        call.enabled = buffer.has_value();
+        if (buffer) {
+            (void)lease_->runtime->buffers().get(*buffer);
+            call.buffer = *buffer;
+        }
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return {};
     }
 
     std::expected<void, std::string> open_resource(WindowId window, std::string_view path,
@@ -6387,8 +6497,22 @@ std::expected<std::size_t, std::string> GuileRuntime::install_core_resource_poli
     return impl_->install_core_resource_policies();
 }
 
+std::expected<void, std::string> GuileRuntime::install_buffer_lifecycle_policies() {
+    return impl_->install_buffer_lifecycle_policies();
+}
+
 std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
     return impl_->install_presentation_policies();
+}
+
+std::expected<StartupPlan, std::string>
+GuileRuntime::startup_plan(const StartupFacts& facts) const {
+    return impl_->startup_plan(facts);
+}
+
+std::expected<void, std::string>
+GuileRuntime::set_startup_placeholder(std::optional<BufferId> buffer) {
+    return impl_->set_startup_placeholder(buffer);
 }
 
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,

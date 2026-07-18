@@ -253,9 +253,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                                 window_layout_.leaves().end());
                },
            .active_window = [this] { return active_window_; },
-           .startup_placeholder = [this] { return startup_placeholder_; },
-           .set_startup_placeholder =
-               [this](std::optional<BufferId> buffer) { startup_placeholder_ = buffer; },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -470,6 +467,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         throw std::logic_error("Guile mode policy did not define cind.location-list");
     }
     register_resource_policies();
+    register_buffer_lifecycle_policies();
     register_commands();
     register_interaction_providers();
     register_keymaps();
@@ -481,38 +479,43 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         }
     }
 
-    const bool deferred_initial_load = !spec.initial_text && !spec.path.empty();
-    BufferSpec initial_buffer{
-        .name = {},
-        .initial_text = spec.initial_text ? std::move(*spec.initial_text) : std::string(),
-        .kind = deferred_initial_load || spec.path.empty() ? BufferKind::Scratch : BufferKind::File,
-        .resource_uri = std::nullopt,
-        .read_only = false};
-    if (!spec.path.empty() && !deferred_initial_load) {
-        std::expected<std::string, std::string> path = normalize_resource_path(spec.path);
-        if (!path) {
-            throw std::invalid_argument(path.error());
-        }
-        initial_buffer.resource_uri = std::move(*path);
+    std::expected<StartupPlan, std::string> startup = guile_.startup_plan(
+        {.requested_resource = spec.path, .has_initial_text = spec.initial_text.has_value()});
+    if (!startup) {
+        throw std::runtime_error(std::format("Guile startup policy failed: {}", startup.error()));
     }
-    const ModeId initial_mode = initial_buffer.resource_uri
-                                    ? mode_for_resource(*initial_buffer.resource_uri)
-                                    : fundamental_mode_;
-    const BufferId initial = create_buffer(std::move(initial_buffer), spec.style,
-                                           std::move(spec.style_origin), initial_mode);
+    std::string initial_text;
+    if (startup->buffer.use_initial_text) {
+        if (!spec.initial_text) {
+            throw std::logic_error("validated startup plan requested unavailable initial text");
+        }
+        initial_text = std::move(*spec.initial_text);
+    }
+    const BufferId initial =
+        create_buffer(BufferSpec{.name = std::move(startup->buffer.name),
+                                 .initial_text = std::move(initial_text),
+                                 .kind = startup->buffer.kind,
+                                 .resource_uri = std::move(startup->buffer.resource),
+                                 .read_only = startup->buffer.read_only},
+                      spec.style, std::move(spec.style_origin), startup->buffer.major_mode);
     const ViewId initial_view = create_view({}, initial);
     active_window_ = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = active_window_;
     window_layout_ = WindowLayout(active_window_);
-    if (spec.initial_line > 0 && !deferred_initial_load) {
+    if (spec.initial_line > 0 && !startup->resource_to_open) {
         apply_position(active_window_, {.line = spec.initial_line - 1, .byte_column = 0});
     }
 
     sync_keymaps();
-    if (deferred_initial_load) {
-        startup_placeholder_ = initial;
+    if (std::expected<void, std::string> recorded = guile_.set_startup_placeholder(
+            startup->startup_placeholder ? std::optional(initial) : std::nullopt);
+        !recorded) {
+        throw std::runtime_error(
+            std::format("Guile startup policy state failed: {}", recorded.error()));
+    }
+    if (startup->resource_to_open) {
         if (std::expected<void, std::string> opened = guile_.open_resource(
-                active_window_, spec.path,
+                active_window_, *startup->resource_to_open,
                 spec.initial_line > 0 ? std::optional(spec.initial_line - 1) : std::nullopt,
                 spec.initial_line > 0 ? std::optional<std::uint32_t>(0) : std::nullopt);
             !opened) {
@@ -1408,23 +1411,18 @@ void EditorApplication::destroy_window(WindowId window) {
     }
 }
 
-BufferId EditorApplication::create_scratch_buffer() {
-    return create_buffer(BufferSpec{.name = "*scratch*",
-                                    .initial_text = {},
-                                    .kind = BufferKind::Scratch,
-                                    .resource_uri = std::nullopt,
-                                    .read_only = false},
-                         CppIndentStyle{}, "llvm (fallback)", fundamental_mode_);
-}
-
-ModeId EditorApplication::mode_for_resource(std::string_view resource) const {
-    return runtime_.resource_policies().mode_for(resource).value_or(fundamental_mode_);
-}
-
 void EditorApplication::register_commands() {
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
         throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));
+    }
+}
+
+void EditorApplication::register_buffer_lifecycle_policies() {
+    if (std::expected<void, std::string> installed = guile_.install_buffer_lifecycle_policies();
+        !installed) {
+        throw std::runtime_error(
+            std::format("Guile buffer lifecycle policy failed: {}", installed.error()));
     }
 }
 

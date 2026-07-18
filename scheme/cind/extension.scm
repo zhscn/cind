@@ -6,6 +6,7 @@
     (module-use! module (resolve-interface '(cind command)))
     (module-use! module (resolve-interface '(cind async)))
     (module-use! module (resolve-interface '(cind input)))
+    (module-use! module (resolve-interface '(cind lifecycle)))
     (module-use! module (resolve-interface '(cind minibuffer)))
     (module-use! module (resolve-interface '(cind host)))
     (module-define! module 'host host)

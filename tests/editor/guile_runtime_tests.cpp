@@ -773,6 +773,52 @@ TEST_CASE("bundled Guile policy defines file modes and project discovery provide
     CHECK(snapshot.scripted_project_providers == 3);
 }
 
+TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    REQUIRE(guile.install_input_states().has_value());
+    REQUIRE(guile.install_core_modes().has_value());
+    REQUIRE(guile.install_core_resource_policies().has_value());
+    REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
+
+    const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
+    const ModeId cpp = runtime.modes().find("cind.cpp").value_or(ModeId{});
+    REQUIRE(fundamental);
+    REQUIRE(cpp);
+
+    const std::expected<StartupPlan, std::string> scratch =
+        guile.startup_plan({.requested_resource = {}, .has_initial_text = false});
+    REQUIRE(scratch.has_value());
+    CHECK(scratch->buffer.name == "*scratch*");
+    CHECK(scratch->buffer.kind == BufferKind::Scratch);
+    CHECK(scratch->buffer.major_mode == fundamental);
+    CHECK_FALSE(scratch->buffer.use_initial_text);
+    CHECK_FALSE(scratch->resource_to_open.has_value());
+    CHECK_FALSE(scratch->startup_placeholder);
+
+    const std::filesystem::path requested = "src/main.cpp";
+    const std::string normalized = std::filesystem::absolute(requested).lexically_normal().string();
+    const std::expected<StartupPlan, std::string> preloaded =
+        guile.startup_plan({.requested_resource = requested.string(), .has_initial_text = true});
+    REQUIRE(preloaded.has_value());
+    CHECK(preloaded->buffer.name == "main.cpp");
+    CHECK(preloaded->buffer.kind == BufferKind::File);
+    CHECK(preloaded->buffer.resource == normalized);
+    CHECK(preloaded->buffer.major_mode == cpp);
+    CHECK(preloaded->buffer.use_initial_text);
+    CHECK_FALSE(preloaded->resource_to_open.has_value());
+    CHECK_FALSE(preloaded->startup_placeholder);
+
+    const std::expected<StartupPlan, std::string> deferred =
+        guile.startup_plan({.requested_resource = requested.string(), .has_initial_text = false});
+    REQUIRE(deferred.has_value());
+    CHECK(deferred->buffer.name == "*scratch*");
+    CHECK(deferred->buffer.kind == BufferKind::Scratch);
+    CHECK(deferred->buffer.major_mode == fundamental);
+    CHECK(deferred->resource_to_open == normalized);
+    CHECK(deferred->startup_placeholder);
+}
+
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
     const ModeId fundamental_mode = runtime.modes().define("fundamental-mode", ModeKind::Major);
@@ -955,8 +1001,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          },
          .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
          .active_window = [&] { return window; },
-         .startup_placeholder = [] { return std::optional<BufferId>{}; },
-         .set_startup_placeholder = [](std::optional<BufferId>) {},
          .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
@@ -1083,6 +1127,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return true;
              },
          .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
+    REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
     CHECK(*installed == 191);

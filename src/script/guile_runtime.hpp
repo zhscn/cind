@@ -4,6 +4,7 @@
 #include "editor/command.hpp"
 #include "editor/ids.hpp"
 #include "editor/selection.hpp"
+#include "editor/startup.hpp"
 #include "editor/window.hpp"
 #include "presentation/modeline.hpp"
 #include "script/async_host.hpp"
@@ -133,8 +134,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
     std::function<std::vector<WindowId>()> open_windows;
     std::function<WindowId()> active_window;
-    std::function<std::optional<BufferId>()> startup_placeholder;
-    std::function<void(std::optional<BufferId>)> set_startup_placeholder;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
@@ -218,7 +217,10 @@ public:
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
     std::expected<std::size_t, std::string> install_core_resource_policies();
+    std::expected<void, std::string> install_buffer_lifecycle_policies();
     std::expected<void, std::string> install_presentation_policies();
+    std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const;
+    std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer);
     std::expected<void, std::string>
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,

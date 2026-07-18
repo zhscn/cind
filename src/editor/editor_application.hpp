@@ -219,7 +219,6 @@ private:
     BufferId create_buffer(BufferSpec spec, CppIndentStyle style, std::string style_origin,
                            std::optional<ModeId> major_mode, TextOffset caret = {});
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
-    BufferId create_scratch_buffer();
     bool show_buffer(WindowId window, BufferId buffer);
     std::expected<void, std::string> display_generated_buffer(WindowId window, std::string name,
                                                               std::string text);
@@ -234,6 +233,7 @@ private:
     void register_input_states();
     void register_modes();
     void register_resource_policies();
+    void register_buffer_lifecycle_policies();
     void register_interaction_providers();
     void register_keymaps();
     void register_presentation_policies();
@@ -247,14 +247,11 @@ private:
     std::expected<bool, std::string> complete_buffer_save(BufferId buffer);
     void abort_buffer_save(BufferId buffer);
     void mark_saved(BufferId buffer, Text content);
-    ModeId mode_for_resource(std::string_view resource) const;
-
     EditorRuntime runtime_;
     GuileRuntime guile_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
-    std::optional<BufferId> startup_placeholder_;
     std::optional<LocationNavigationState> location_navigation_;
     WindowId active_window_;
     WindowLayout window_layout_;

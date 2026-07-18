@@ -27,6 +27,8 @@ object. Scheme code does not resolve an implicit current application.
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind async)` defines cancellable native task composition;
 `(cind minibuffer)` defines high-level text and completion interaction constructors;
+`(cind lifecycle)` owns configurable startup and fallback-buffer policy and per-application startup
+placeholder state;
 `(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
@@ -50,9 +52,9 @@ Interactive frontends discover `cind/init.scm` under `XDG_CONFIG_HOME`, falling 
 so their behavior is independent of the invoking account.
 
 `(cind extension)` evaluates each source file in a fresh Guile module. The module imports
-`(cind host)`, `(cind command)`, `(cind async)`, and `(cind input)`, and binds the owning
-application's foreign host as `host`. File-private definitions remain module-local while registered
-closures retain access to them.
+`(cind host)`, `(cind command)`, `(cind async)`, `(cind input)`, `(cind lifecycle)`, and
+`(cind minibuffer)`, and binds the owning application's foreign host as `host`. File-private
+definitions remain module-local while registered closures retain access to them.
 
 An extension load checkpoints the registries and protected Scheme callback ownership before
 evaluation. Successful definitions become visible together. A Scheme condition or native bridge
@@ -184,8 +186,6 @@ The native module exports:
 (open-window-ids host)
 (active-window-id host)
 (window-view-id host window-id)
-(startup-placeholder host)
-(set-startup-placeholder! host buffer-id-or-#f)
 (focus-window! host window-id)
 (request-redraw! host)
 (%start-async-task! host request completed failed-or-#f cancelled-or-#f)
@@ -558,15 +558,33 @@ explicit resource, mode, style and presentation data. `release-buffer!` requires
 replacement, redirects every Window displaying the
 released buffer, destroys its Views, and removes the Buffer as one native lifecycle operation. It
 returns `#f` on success or an invariant error string. The bundled Scheme policy refuses an active
-save, applies the force/modified rule, chooses the first remaining Buffer, and creates its named
-`*scratch*` replacement when necessary.
+save, applies the force/modified rule, and asks the configured fallback-buffer policy for a
+replacement when no other Buffer remains. The default fallback policy creates a writable
+`*scratch*` Buffer in `fundamental-mode`.
+
+`(cind lifecycle)` resolves application bootstrap through a per-host startup procedure configured
+with `configure-startup-policy!`. The procedure receives
+`#(startup-facts requested-resource has-initial-text?)` and returns:
+
+```scheme
+#(startup-plan
+  #(startup-buffer name contents kind resource-or-#f read-only? mode)
+  resource-to-open-or-#f
+  startup-placeholder?)
+```
+
+`contents` is `initial-text` or `empty`. C++ validates the complete plan against the Mode registry,
+creates the Buffer, View and Window, and supplies initial text only when requested by the plan. A
+deferred resource is passed to the shared Scheme `open-resource!` policy. The lifecycle module
+retains the placeholder Buffer identity in per-host Scheme state so successful asynchronous open
+policy can release it. `configure-fallback-buffer-policy!` replaces the procedure used when a
+command needs a Buffer after releasing the last open Buffer.
 
 Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
 `columns`; split, delete, retain and focus operations return `#f` on success or an invariant error
 string. `open-window-ids` returns layout order, `active-window-id` identifies the current focus,
-and `window-view-id` resolves presentation after a buffer is displayed. The startup placeholder
-accessors expose only its optional Buffer identity. The bundled Scheme policy uses these mechanisms
-for window cycling, asynchronous open targeting and placeholder cleanup. `exit-editor!`
+and `window-view-id` resolves presentation after a buffer is displayed. The bundled Scheme policy
+uses these mechanisms for window cycling and asynchronous open targeting. `exit-editor!`
 marks the native event loop for termination, and `request-redraw!` requests caret reveal. Scheme
 commands inspect buffer state and own the quit confirmation interaction before invoking the exit
 mechanism.
@@ -582,7 +600,7 @@ normalizing and deduplicating the path, snapshotting mode and provider policy, s
 clang-format and project-discovery tasks, and composing their results into buffer creation,
 project attachment, window presentation, startup-placeholder cleanup and user feedback. Duplicate
 opens update the pending target and position. The C++ `GuileRuntime::open_resource` entry point
-invokes the same Scheme policy for application startup and native callers.
+invokes the same Scheme policy for deferred startup plans and native callers.
 
 The bundled project-search policy starts `rg` with an explicit argument vector, interprets its exit
 status, schedules typed result parsing, creates the read-only location-list buffer, installs its

@@ -12,6 +12,7 @@
   #:use-module (cind host)
   #:use-module (cind input)
   #:use-module (cind introspect)
+  #:use-module (cind lifecycle)
   #:use-module (cind meow)
   #:use-module (cind minibuffer)
   #:use-module (cind structural)
@@ -22,6 +23,7 @@
             install-input-states!
             install-core-modes!
             install-core-resource-policies!
+            install-buffer-lifecycle-policies!
             install-presentation-policies!
             define-major-mode!
             define-minor-mode!
@@ -31,6 +33,39 @@
             open-resource!
             project-search-running?
             project-index-updated!))
+
+(define (startup-buffer name contents kind resource read-only? mode)
+  (vector 'startup-buffer name contents kind resource read-only? mode))
+
+(define (default-startup-plan host facts)
+  (let ((path (vector-ref facts 1))
+        (has-initial-text? (vector-ref facts 2)))
+    (cond
+     ((zero? (string-length path))
+      (vector 'startup-plan
+              (startup-buffer "*scratch*"
+                              (if has-initial-text? 'initial-text 'empty)
+                              'scratch #f #f 'fundamental-mode)
+              #f #f))
+     (has-initial-text?
+      (let ((resource (normalize-resource-path host path)))
+        (vector 'startup-plan
+                (startup-buffer (path-filename host resource) 'initial-text 'file resource #f
+                                (or (resource-mode host resource) 'fundamental-mode))
+                #f #f)))
+     (else
+      (vector 'startup-plan
+              (startup-buffer "*scratch*" 'empty 'scratch #f #f 'fundamental-mode)
+              (normalize-resource-path host path) #t)))))
+
+(define (default-fallback-buffer host)
+  (create-buffer! host "*scratch*" "" 'scratch #f #f 'fundamental-mode #f
+                  "plain text"))
+
+(define (install-buffer-lifecycle-policies! host)
+  (configure-startup-policy! host default-startup-plan)
+  (configure-fallback-buffer-policy! host default-fallback-buffer)
+  2)
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -614,10 +649,6 @@
           ((equal? (vector-ref buffers index) target) (loop (+ index 1)))
           (else (vector-ref buffers index)))))
 
-(define (make-scratch-buffer host)
-  (create-buffer! host "*scratch*" "" 'scratch #f #f 'fundamental-mode #f
-                  "plain text"))
-
 (define (buffer-kill host context force?)
   (let ((target (context-buffer context)))
     (cond ((buffer-saving? host target)
@@ -627,7 +658,7 @@
           (else
            (let* ((buffers (open-buffer-ids host))
                   (existing (first-other-buffer buffers target))
-                  (replacement (if existing existing (make-scratch-buffer host)))
+                  (replacement (if existing existing (create-fallback-buffer! host)))
                   (error (release-buffer! host target replacement)))
              (if error (command-error error) (command-completed)))))))
 
