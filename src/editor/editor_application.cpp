@@ -349,6 +349,16 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                                 window_layout().leaves().end());
                },
            .active_window = [this] { return window_id(); },
+           .set_window_role =
+               [this](WindowId window, std::optional<std::string> role) {
+                   return set_window_role(window, std::move(role));
+               },
+           .set_window_pinned = [this](WindowId window,
+                                       bool pinned) { return set_window_pinned(window, pinned); },
+           .workbench_slot =
+               [this](WorkbenchId workbench, std::string_view role) {
+                   return workbench_slot(workbench, role);
+               },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -1012,6 +1022,57 @@ bool EditorApplication::delete_other_windows() {
     return delete_other_windows(window_id());
 }
 
+std::expected<void, std::string>
+EditorApplication::set_window_role(WindowId window, std::optional<std::string> role) {
+    Window* target = runtime_.windows().try_get(window);
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    if (target == nullptr || !owner) {
+        return std::unexpected("unknown workbench window");
+    }
+    if (role && role->empty()) {
+        return std::unexpected("window role must not be empty");
+    }
+    Workbench& workbench = workbenches_.get(*owner);
+    if (target->role()) {
+        workbench.clear_slot(*target->role());
+    }
+    if (role) {
+        if (const std::optional<WindowId> previous = workbench.slot(*role);
+            previous && *previous != window) {
+            runtime_.windows().get(*previous).set_role(std::nullopt);
+        }
+        workbench.set_slot(*role, window);
+    }
+    target->set_role(std::move(role));
+    return {};
+}
+
+std::expected<void, std::string> EditorApplication::set_window_pinned(WindowId window,
+                                                                      bool pinned) {
+    Window* target = runtime_.windows().try_get(window);
+    if (target == nullptr || !workbenches_.find_by_window(window)) {
+        return std::unexpected("unknown workbench window");
+    }
+    target->set_pinned(pinned);
+    return {};
+}
+
+std::expected<void, std::string> EditorApplication::set_window_created_by_policy(WindowId window,
+                                                                                 bool created) {
+    Window* target = runtime_.windows().try_get(window);
+    if (target == nullptr || !workbenches_.find_by_window(window)) {
+        return std::unexpected("unknown workbench window");
+    }
+    target->set_created_by_policy(created);
+    return {};
+}
+
+std::optional<WindowId> EditorApplication::workbench_slot(WorkbenchId workbench,
+                                                          std::string_view role) const {
+    const Workbench* target = workbenches_.try_get(workbench);
+    return target == nullptr ? std::nullopt : target->slot(role);
+}
+
 bool EditorApplication::delete_other_windows(WindowId retained) {
     Workbench& workbench = active_workbench();
     if (!workbench.layout().contains(retained) || runtime_.windows().try_get(retained) == nullptr) {
@@ -1285,10 +1346,14 @@ std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
     std::vector<OpenWindowSnapshot> result;
     result.reserve(window_layout().leaves().size());
     for (const WindowId window : window_layout().leaves()) {
-        const ViewId view = runtime_.windows().get(window).view_id();
+        const Window& editor_window = runtime_.windows().get(window);
+        const ViewId view = editor_window.view_id();
         result.push_back({.window = window,
                           .view = view,
                           .buffer = runtime_.views().get(view).buffer_id(),
+                          .role = editor_window.role(),
+                          .pinned = editor_window.pinned(),
+                          .created_by_policy = editor_window.created_by_policy(),
                           .active = window == window_id()});
     }
     return result;
@@ -1726,6 +1791,9 @@ void EditorApplication::apply_position(WindowId window, LinePosition position) {
 }
 
 void EditorApplication::destroy_window(WindowId window) {
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        workbenches_.get(workbench).clear_window_slots(window);
+    }
     if (!runtime_.windows().erase(window)) {
         throw std::logic_error("window lifecycle registry is inconsistent");
     }

@@ -1113,6 +1113,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          },
          .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
          .active_window = [&] { return window; },
+         .set_window_role = {},
+         .set_window_pinned = {},
+         .workbench_slot = {},
          .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
@@ -1247,10 +1250,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 200);
+    CHECK(*installed == 204);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 10);
+    CHECK(*providers == 11);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -1919,8 +1922,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 200);
+    CHECK(snapshot.scripted_commands == 204);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 10);
+    CHECK(snapshot.scripted_providers == 11);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

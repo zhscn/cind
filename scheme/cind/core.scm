@@ -518,6 +518,12 @@
                             candidates)
                       candidates)))))))
 
+(define (window-roles-provider host context query)
+  (list->vector
+   (map (lambda (role)
+          (interaction-candidate role role "display slot" role))
+        '("jump" "tools" "doc"))))
+
 (define (key-bindings-provider host context query)
   (let ((bindings (active-key-bindings host)))
     (let loop ((index 0)
@@ -1082,6 +1088,37 @@
           (else
            (completed-or-error
             (focus-window! host (vector-ref windows (modulo (+ current 1) count))))))))
+
+(define (window-set-role host context invocation)
+  (let ((role (window-role host (context-window context))))
+    (completing-read "Window role: " "window-roles" "window.set-role.accept"
+                     #:initial-input (if role (symbol->string role) "")
+                     #:history "window-roles"
+                     #:allow-custom-input? #t)))
+
+(define (window-set-role-accept host context invocation)
+  (let ((role (last-string-argument invocation)))
+    (if (not role)
+        (command-error "window role requires a value")
+        (begin
+          (set-window-role! host (context-window context)
+                            (if (zero? (string-length role)) #f (string->symbol role)))
+          (completed-with-message
+           host (if (zero? (string-length role))
+                    "window role cleared"
+                    (string-append "window role " role)))))))
+
+(define (window-toggle-pinned host context invocation)
+  (let* ((window (context-window context))
+         (pinned? (not (window-pinned? host window))))
+    (set-window-pinned! host window pinned?)
+    (completed-with-message host (if pinned? "window pinned" "window unpinned"))))
+
+(define (window-dismiss host context invocation)
+  (let ((window (context-window context)))
+    (if (not (window-created-by-policy? host window))
+        (command-error "window was not created by display policy")
+        (window-delete host context))))
 
 (define (editor-redraw host)
   (request-redraw! host)
@@ -2249,6 +2286,22 @@
               (lambda (context invocation)
                 (window-other host context))
               #f)
+        (list "window.set-role.accept"
+              (lambda (context invocation)
+                (window-set-role-accept host context invocation))
+              #f)
+        (list "window.set-role"
+              (lambda (context invocation)
+                (window-set-role host context invocation))
+              #f)
+        (list "window.toggle-pinned"
+              (lambda (context invocation)
+                (window-toggle-pinned host context invocation))
+              #f)
+        (list "window.dismiss"
+              (lambda (context invocation)
+                (window-dismiss host context invocation))
+              #f)
         (list "editor.redraw"
               (lambda (context invocation)
                 (editor-redraw host))
@@ -2350,6 +2403,9 @@
          (cons "projects"
                (lambda (context query)
                  (projects-provider host context query)))
+         (cons "window-roles"
+               (lambda (context query)
+                 (window-roles-provider host context query)))
          (cons "key-bindings"
                (lambda (context query)
                  (key-bindings-provider host context query))))
@@ -2580,7 +2636,10 @@
     ("s" . "workbench.switch")
     ("k" . "workbench.close")
     ("a" . "workbench.adopt-project")
-    ("e" . "workbench.expel")))
+    ("e" . "workbench.expel")
+    ("r" . "window.set-role")
+    ("p" . "window.toggle-pinned")
+    ("d" . "window.dismiss")))
 
 (define scheme-mode-bindings
   '(("C-c C-e" . "scheme.eval-expression")

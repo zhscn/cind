@@ -459,9 +459,15 @@ void append_windows(std::string& output, const std::vector<OpenWindowStateSnapsh
         const OpenWindowStateSnapshot& window = windows[index];
         output += std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},"
                               "\"view\":{{\"slot\":{},\"generation\":{}}},"
-                              "\"buffer\":{{\"slot\":{},\"generation\":{}}},\"active\":",
+                              "\"buffer\":{{\"slot\":{},\"generation\":{}}},\"role\":",
                               window.window_slot, window.window_generation, window.view_slot,
                               window.view_generation, window.buffer_slot, window.buffer_generation);
+        append_json_string(output, window.role);
+        output += ",\"pinned\":";
+        append_bool(output, window.pinned);
+        output += ",\"created_by_policy\":";
+        append_bool(output, window.created_by_policy);
+        output += ",\"active\":";
         append_bool(output, window.active);
         output += ",\"input_states\":";
         append_strings(output, window.input_states);
@@ -2705,7 +2711,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
         output << "      window:" << window.window_slot << ':' << window.window_generation
                << (window.active ? " active" : "") << " view:" << window.view_slot << ':'
                << window.view_generation << " buffer:" << window.buffer_slot << ':'
-               << window.buffer_generation << " input-states=";
+               << window.buffer_generation << " role=" << printable(window.role)
+               << (window.pinned ? " pinned" : "")
+               << (window.created_by_policy ? " policy-created" : "") << " input-states=";
         for (std::size_t index = 0; index < window.input_states.size(); ++index) {
             if (index != 0) {
                 output << ',';

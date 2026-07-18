@@ -167,6 +167,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .view_generation = 1,
                      .buffer_slot = 0,
                      .buffer_generation = 1,
+                     .role = "tools",
+                     .pinned = true,
+                     .created_by_policy = true,
                      .active = true,
                      .input_states = {"emacs"}}},
         .projects = {{.project_slot = 0,
@@ -560,6 +563,9 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
 
     const InspectionResponse windows = run_inspection_query(hub, "get editor.windows");
     REQUIRE(windows.ok);
+    CHECK(windows.payload.find("\"role\":\"tools\"") != std::string::npos);
+    CHECK(windows.payload.find("\"pinned\":true") != std::string::npos);
+    CHECK(windows.payload.find("\"created_by_policy\":true") != std::string::npos);
     CHECK(windows.payload.find("\"active\":true") != std::string::npos);
     CHECK(windows.payload.find("\"input_states\":[\"emacs\"]") != std::string::npos);
 

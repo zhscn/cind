@@ -170,6 +170,10 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
     std::function<std::vector<WindowId>()> open_windows;
     std::function<WindowId()> active_window;
+    std::function<std::expected<void, std::string>(WindowId, std::optional<std::string>)>
+        set_window_role;
+    std::function<std::expected<void, std::string>(WindowId, bool)> set_window_pinned;
+    std::function<std::optional<WindowId>(WorkbenchId, std::string_view)> workbench_slot;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
     std::function<void(bool)> set_caret_reveal;

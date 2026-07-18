@@ -66,6 +66,9 @@ struct OpenWindowSnapshot {
     WindowId window;
     ViewId view;
     BufferId buffer;
+    std::optional<std::string> role;
+    bool pinned = false;
+    bool created_by_policy = false;
     bool active = false;
 };
 
@@ -136,6 +139,11 @@ public:
     bool split_window(WindowSplitAxis axis);
     bool delete_window();
     bool delete_other_windows();
+    std::expected<void, std::string> set_window_role(WindowId window,
+                                                     std::optional<std::string> role);
+    std::expected<void, std::string> set_window_pinned(WindowId window, bool pinned);
+    std::expected<void, std::string> set_window_created_by_policy(WindowId window, bool created);
+    std::optional<WindowId> workbench_slot(WorkbenchId workbench, std::string_view role) const;
     WorkbenchId create_workbench(std::string name, std::optional<ProjectId> project = std::nullopt);
     bool switch_workbench(WorkbenchId workbench);
     bool close_workbench(WorkbenchId workbench);

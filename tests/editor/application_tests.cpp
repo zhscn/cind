@@ -92,10 +92,20 @@ TEST_CASE("workbench registry preserves layouts scopes and recency independently
     REQUIRE(registry.get(first).mru().size() == 2);
     CHECK(registry.get(first).mru()[0] == source);
     CHECK(registry.get(first).mru()[1] == visitor);
+    REQUIRE(registry.get(first).layout().split(
+        {.target = first_window, .new_window = third_window, .axis = WindowSplitAxis::Columns}));
+    registry.get(first).set_slot("tools", third_window);
+    CHECK(registry.get(first).slot("tools") == std::optional{third_window});
+    registry.get(first).set_slot("jump", third_window);
+    CHECK_FALSE(registry.get(first).slot("tools").has_value());
+    CHECK(registry.get(first).slot("jump") == std::optional{third_window});
+    registry.get(first).clear_window_slots(third_window);
+    CHECK(registry.get(first).slots().empty());
+    CHECK_THROWS_AS(registry.get(first).set_slot("tools", WindowId{9, 1}), std::invalid_argument);
 
     const WorkbenchId second =
         registry.create({.name = "notes", .root_window = second_window, .scope = {}});
-    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = third_window, .scope = {}}),
+    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = WindowId{3, 1}, .scope = {}}),
                     std::invalid_argument);
     CHECK_THROWS_AS(registry.create({.name = "other", .root_window = second_window, .scope = {}}),
                     std::invalid_argument);

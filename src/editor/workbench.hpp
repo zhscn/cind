@@ -45,6 +45,10 @@ public:
     bool expel_buffer(BufferId buffer);
 
     const std::unordered_map<std::string, WindowId>& slots() const { return slots_; }
+    std::optional<WindowId> slot(std::string_view role) const;
+    void set_slot(std::string role, WindowId window);
+    void clear_slot(std::string_view role);
+    void clear_window_slots(WindowId window);
 
 private:
     friend class WorkbenchRegistry;

@@ -1974,6 +1974,43 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK_FALSE(application.close_workbench(first_workbench));
 }
 
+TEST_CASE("window roles pinning and policy provenance stay frontend independent") {
+    EditorApplication application = make_application("sample.cc", "one\n");
+    const WindowId first = application.window_id();
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WindowId second = application.window_layout().leaves().back();
+
+    REQUIRE(application.set_window_role(second, "tools").has_value());
+    CHECK(application.workbench_slot(application.workbench_id(), "tools") == std::optional{second});
+    REQUIRE(application.set_window_pinned(second, true).has_value());
+    REQUIRE(application.set_window_created_by_policy(second, true).has_value());
+    const std::vector<OpenWindowSnapshot> windows = application.open_windows();
+    const auto snapshot = std::ranges::find(windows, second, &OpenWindowSnapshot::window);
+    REQUIRE(snapshot != windows.end());
+    CHECK(snapshot->role == std::optional<std::string>{"tools"});
+    CHECK(snapshot->pinned);
+    CHECK(snapshot->created_by_policy);
+
+    REQUIRE(application.set_window_role(first, "tools").has_value());
+    CHECK(application.workbench_slot(application.workbench_id(), "tools") == std::optional{first});
+    CHECK_FALSE(application.runtime().windows().get(second).role().has_value());
+    REQUIRE(application.set_window_role(first, std::nullopt).has_value());
+    CHECK_FALSE(application.workbench_slot(application.workbench_id(), "tools").has_value());
+
+    REQUIRE(application.focus_window(second));
+    send_keys(application, "C-x w r");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.provider == "window-roles");
+    application.insert_text("doc");
+    send_keys(application, "RET");
+    CHECK(application.workbench_slot(application.workbench_id(), "doc") == std::optional{second});
+    send_keys(application, "C-x w p");
+    CHECK_FALSE(application.runtime().windows().get(second).pinned());
+    send_keys(application, "C-x w d");
+    CHECK(application.runtime().windows().try_get(second) == nullptr);
+    CHECK_FALSE(application.workbench_slot(application.workbench_id(), "doc").has_value());
+}
+
 TEST_CASE("workbench commands manage named editing surfaces") {
     EditorApplication application = make_application("sample.cc", "one\n");
     const WorkbenchId initial = application.workbench_id();

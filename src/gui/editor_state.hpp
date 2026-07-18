@@ -82,6 +82,9 @@ struct OpenWindowStateSnapshot {
     std::uint32_t view_generation = 0;
     std::uint32_t buffer_slot = 0;
     std::uint32_t buffer_generation = 0;
+    std::string role;
+    bool pinned = false;
+    bool created_by_policy = false;
     bool active = false;
     std::vector<std::string> input_states;
 };

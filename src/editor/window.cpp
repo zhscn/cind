@@ -8,6 +8,13 @@
 
 namespace cind {
 
+void Window::set_role(std::optional<std::string> role) {
+    if (role && role->empty()) {
+        throw std::invalid_argument("window role must not be empty");
+    }
+    role_ = std::move(role);
+}
+
 namespace {
 
 std::unique_ptr<WindowLayoutNode> make_leaf(WindowId window) {

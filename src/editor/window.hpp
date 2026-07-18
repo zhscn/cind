@@ -6,6 +6,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace cind {
@@ -93,6 +95,12 @@ public:
     ViewId view_id() const { return view_id_; }
     std::vector<KeymapId>& keymaps() { return keymaps_; }
     const std::vector<KeymapId>& keymaps() const { return keymaps_; }
+    const std::optional<std::string>& role() const { return role_; }
+    void set_role(std::optional<std::string> role);
+    bool pinned() const { return pinned_; }
+    void set_pinned(bool pinned) { pinned_ = pinned; }
+    bool created_by_policy() const { return created_by_policy_; }
+    void set_created_by_policy(bool created) { created_by_policy_ = created; }
 
 private:
     friend class WindowRegistry;
@@ -102,6 +110,9 @@ private:
     WindowId id_;
     ViewId view_id_;
     std::vector<KeymapId> keymaps_;
+    std::optional<std::string> role_;
+    bool pinned_ = false;
+    bool created_by_policy_ = false;
 };
 
 class WindowRegistry {

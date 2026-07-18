@@ -441,6 +441,9 @@ EditorStateSnapshot EditorModel::inspect() {
                            .view_generation = window.view.generation,
                            .buffer_slot = window.buffer.slot,
                            .buffer_generation = window.buffer.generation,
+                           .role = window.role.value_or(std::string{}),
+                           .pinned = window.pinned,
+                           .created_by_policy = window.created_by_policy,
                            .active = window.active,
                            .input_states = std::move(input_states)});
     }
