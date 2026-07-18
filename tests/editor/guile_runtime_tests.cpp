@@ -884,6 +884,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string clipboard;
     std::string clipboard_error;
     std::optional<GuileTextRange> requested_soft_kill_range;
+    bool requested_structural_kill = false;
     std::optional<std::uint32_t> requested_motion_target;
     std::optional<ViewId> requested_motion_view;
     std::optional<ViewSelection> requested_motion_source;
@@ -1084,7 +1085,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                                             texts.front().size())});
              return {};
          },
-         .soft_kill_range = [&](ViewId) { return requested_soft_kill_range; },
+         .soft_kill_range = [&](ViewId, bool structural)
+             -> std::expected<std::optional<GuileTextRange>, std::string> {
+             requested_structural_kill = structural;
+             return requested_soft_kill_range;
+         },
          .thing_selection = [](ViewId, const ViewSelection&, std::string_view,
                                bool) -> std::expected<std::optional<ViewSelection>, std::string> {
              return std::optional<ViewSelection>{};
@@ -1752,6 +1757,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     requested_soft_kill_range = GuileTextRange{0, 3};
     CHECK(command_loop.execute(require_command(runtime, "edit.kill-line"), context).status ==
           CommandLoopStatus::Executed);
+    CHECK_FALSE(requested_structural_kill);
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "\n");
     CHECK(clipboard == "abc");
 

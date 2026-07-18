@@ -1692,7 +1692,12 @@
               (command-completed)))))
 
     (define (kill-line context invocation)
-      (let ((range (soft-kill-range host (context-view context))))
+      (let ((range (soft-kill-range
+                    host (context-view context)
+                    (if (buffer-language-facet? host (context-buffer context)
+                                                'structural-editing)
+                        'structural
+                        'plain))))
         (if range
             (kill-range! context range invocation)
             (command-completed))))

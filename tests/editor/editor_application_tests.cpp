@@ -2083,6 +2083,18 @@ TEST_CASE("focused interactions inherit and remap text editing commands") {
     CHECK(application.session().snapshot().content().to_string() == "document");
 }
 
+TEST_CASE("kill line policy follows the active language facets") {
+    EditorApplication structural = make_application("sample.cc", "int x = f(a);");
+    structural.session().set_caret(TextOffset{11});
+    send_keys(structural, "C-k");
+    CHECK(structural.session().snapshot().content().to_string() == "int x = f(a);");
+
+    EditorApplication plain = make_application({}, "int x = f(a);");
+    plain.session().set_caret(TextOffset{11});
+    send_keys(plain, "C-k");
+    CHECK(plain.session().snapshot().content().to_string() == "int x = f(a");
+}
+
 TEST_CASE("active window assembles explicit window view buffer mode and global keymaps") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();

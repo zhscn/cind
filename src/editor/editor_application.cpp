@@ -344,18 +344,24 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .soft_kill_range = [this](ViewId view) -> std::optional<GuileTextRange> {
+           .soft_kill_range = [this](ViewId view, bool structural)
+               -> std::expected<std::optional<GuileTextRange>, std::string> {
                EditSession& active = session_for(view);
+               if (structural && !active.has_language_facet(LanguageFacet::StructuralEditing)) {
+                   return std::unexpected(
+                       "structural kill range is unavailable for the current mode");
+               }
                const DocumentSnapshot snapshot = active.snapshot();
                const TextRange range =
-                   active.has_language_facet(LanguageFacet::StructuralEditing)
+                   structural
                        ? soft_kill_end(active.analysis(LanguageFacet::StructuralEditing).tree,
                                        snapshot.content(), active.caret())
                        : plain_kill_line_range(snapshot.content(), active.caret());
                if (range.empty()) {
-                   return std::nullopt;
+                   return std::optional<GuileTextRange>{};
                }
-               return GuileTextRange{range.start.value, range.end.value};
+               return std::optional<GuileTextRange>{
+                   GuileTextRange{range.start.value, range.end.value}};
            },
            .thing_selection =
                [this](ViewId view, const ViewSelection& source, std::string_view name,

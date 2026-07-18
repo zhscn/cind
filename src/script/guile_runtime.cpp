@@ -1805,6 +1805,22 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
     return SCM_BOOL_F;
 }
 
+SCM buffer_language_facet_p(SCM host_object, SCM buffer_value, SCM facet_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-language-facet?");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-language-facet?", 2);
+        const LanguageFacet facet =
+            language_facet_from_scheme(facet_value, "buffer-language-facet?", 3);
+        return scm_from_bool(host.runtime->language_provider(buffer, facet).has_value());
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-language-facet?", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-language-facet?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
     try {
         HostLease& host = require_host(host_object, "set-buffer-major-mode!");
@@ -2746,16 +2762,25 @@ SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM soft_kill_range(SCM host_object, SCM view_value) {
+SCM soft_kill_range(SCM host_object, SCM view_value, SCM mode_value) {
     HostLease& host = require_host(host_object, "soft-kill-range");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "soft-kill-range", 2);
     if (!host.services.soft_kill_range) {
-        scm_misc_error("soft-kill-range", "structural range capability is unavailable", SCM_EOL);
+        scm_misc_error("soft-kill-range", "kill range capability is unavailable", SCM_EOL);
+    }
+    const bool structural = symbol_is(mode_value, "structural");
+    if (!structural && !symbol_is(mode_value, "plain")) {
+        scm_wrong_type_arg_msg("soft-kill-range", 3, mode_value, "'structural or 'plain");
     }
     try {
-        const std::optional<GuileTextRange> range = host.services.soft_kill_range(view);
-        return range ? text_range_value(TextRange{TextOffset{range->start}, TextOffset{range->end}})
-                     : SCM_BOOL_F;
+        const std::expected<std::optional<GuileTextRange>, std::string> range =
+            host.services.soft_kill_range(view, structural);
+        if (!range) {
+            raise_host_error("soft-kill-range", range.error());
+        }
+        return *range ? text_range_value(
+                            TextRange{TextOffset{(*range)->start}, TextOffset{(*range)->end}})
+                      : SCM_BOOL_F;
     } catch (const std::exception& exception) {
         raise_host_error("soft-kill-range", exception.what());
     } catch (...) {
@@ -4474,6 +4499,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(define_project_provider));
     (void)scm_c_define_gsubr("mode-properties", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(mode_properties));
+    (void)scm_c_define_gsubr("buffer-language-facet?", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_language_facet_p));
     (void)scm_c_define_gsubr("set-buffer-major-mode!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_major_mode));
     (void)scm_c_define_gsubr("set-buffer-minor-mode!", 4, 0, 0,
@@ -4524,7 +4551,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(find_buffer_text));
     (void)scm_c_define_gsubr("erase-range!", 4, 0, 0, reinterpret_cast<scm_t_subr>(erase_range));
     (void)scm_c_define_gsubr("insert-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(insert_text));
-    (void)scm_c_define_gsubr("soft-kill-range", 2, 0, 0,
+    (void)scm_c_define_gsubr("soft-kill-range", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(soft_kill_range));
     (void)scm_c_define_gsubr("set-view-caret!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_view_caret));
@@ -4672,15 +4699,15 @@ void initialize_host_module(void*) {
         "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
         "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
         "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
-        "define-project-provider!", "mode-properties", "set-buffer-major-mode!",
-        "set-buffer-minor-mode!", "buffer-mode-policy", "buffer-mode-summary",
-        "observe-mode-policy-changes!", "enabled-command-names", "command-properties",
-        "open-buffer-summaries", "owned-user-modules", "project-root", "project-files",
-        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
-        "set-buffer-locations!", "buffer-read-only?", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "define-project-provider!", "mode-properties", "buffer-language-facet?",
+        "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
+        "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
+        "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
+        "project-files", "path-relative", "path-filename", "active-key-bindings",
+        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-byte-size",
+        "buffer-locations", "set-buffer-locations!", "buffer-read-only?", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
         "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",

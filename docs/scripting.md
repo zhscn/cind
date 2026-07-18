@@ -106,6 +106,7 @@ The native module exports:
 (define-file-mode-rule! host rule-name mode-name suffixes filenames)
 (define-project-provider! host provider-name markers)
 (mode-properties host mode-name)
+(buffer-language-facet? host buffer-id facet)
 (set-buffer-major-mode! host buffer-id mode-name-or-#f)
 (set-buffer-minor-mode! host buffer-id mode-name enabled?)
 (buffer-mode-policy host buffer-id)
@@ -144,7 +145,7 @@ The native module exports:
 (set-buffer-locations! host buffer-id locations)
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)
-(soft-kill-range host view-id)
+(soft-kill-range host view-id 'plain-or-structural)
 (set-view-caret! host view-id offset)
 (reset-preferred-column! host view-id)
 (thing-selection host view-id selection thing-name inner-or-bounds)
@@ -423,6 +424,8 @@ including its incremental analysis cache.
 semantic names to named Thing definitions. Parent modes have the same major/minor kind. When a
 child keymap has no explicit parent, mode inheritance assigns the nearest parent mode keymap.
 `mode-properties` returns the declared metadata, language profile, and effective keymap names.
+`buffer-language-facet?` reports whether the active major-mode language profile binds a provider
+for the requested facet.
 
 `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode state.
 `buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy changes
@@ -534,7 +537,9 @@ text. All heads are edited in one transaction. `replace-selection!` similarly ac
 replacement string for every range or a vector containing one string per range. It resolves
 character, line, and node granularities, rejects overlapping or block ranges, applies every
 replacement in one transaction, and returns the collapsed post-edit Selection with its primary
-index and metadata intact. `soft-kill-range` is a syntax-aware range query and does not mutate text.
+index and metadata intact. `soft-kill-range` is a non-mutating range mechanism. Scheme selects
+`plain` line-end semantics or `structural` syntax-aware semantics after querying the Buffer's
+language facets; an unavailable structural provider is rejected at the native boundary.
 
 `define-thing!` creates or reconfigures a runtime-owned named noun definition. Patterns are
 `(pair open close)`, `(cst-node kind)`, `(char-class word-or-symbol)`, or
