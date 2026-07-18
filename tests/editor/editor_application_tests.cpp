@@ -2148,6 +2148,86 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     CHECK(application.message() == "workbench session restored · 1 resources unavailable");
 }
 
+TEST_CASE("workbench session validation preserves current state on invalid durable identity") {
+    EditorApplication application = make_application("sample.cc", "one\n");
+    const WorkbenchId original_workbench = application.workbench_id();
+    const WindowId original_window = application.window_id();
+    const std::size_t original_projects = application.runtime().projects().all().size();
+
+    const auto leaf = [](std::optional<std::string> resource,
+                         std::optional<std::string> role = std::nullopt) {
+        return WorkbenchLayoutSessionState{
+            .window = WorkbenchWindowSessionState{.resource = std::move(resource),
+                                                  .caret = 0,
+                                                  .role = std::move(role),
+                                                  .pinned = false,
+                                                  .created_by_policy = false},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr};
+    };
+    WorkbenchSessionState state;
+    WorkbenchSessionEntry invalid;
+    invalid.name = "invalid";
+    invalid.scope_roots = {"/tmp/project"};
+    invalid.mru_resources = {"/tmp/source.cc"};
+    invalid.layout = {
+        .window = std::nullopt,
+        .axis = WindowSplitAxis::Rows,
+        .ratio = 0.5F,
+        .first = std::make_unique<WorkbenchLayoutSessionState>(leaf("/tmp/source.cc", "tools")),
+        .second = std::make_unique<WorkbenchLayoutSessionState>(leaf("/tmp/results", "tools"))};
+    state.workbenches.push_back(std::move(invalid));
+
+    const std::expected<void, std::string> restored =
+        application.restore_workbench_session(serialize_workbench_session(state));
+    REQUIRE_FALSE(restored.has_value());
+    CHECK(restored.error() == "workbench session contains an invalid or duplicate window role");
+    CHECK(application.workbench_id() == original_workbench);
+    CHECK(application.window_id() == original_window);
+    CHECK(application.runtime().windows().try_get(original_window) != nullptr);
+    CHECK(application.runtime().projects().all().size() == original_projects);
+}
+
+TEST_CASE("workbench session restoration isolates staging names from durable names") {
+    EditorApplication application = make_application({}, "fallback\n");
+    WorkbenchSessionState state;
+    state.active_workbench = 1;
+    const auto leaf = [] {
+        return WorkbenchLayoutSessionState{
+            .window = WorkbenchWindowSessionState{.resource = std::nullopt,
+                                                  .caret = 0,
+                                                  .role = std::nullopt,
+                                                  .pinned = false,
+                                                  .created_by_policy = false},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr};
+    };
+    state.workbenches.push_back({.name = " *restore-1-0*",
+                                 .scope_roots = {},
+                                 .mru_resources = {},
+                                 .layout = leaf(),
+                                 .active_leaf = 0});
+    state.workbenches.push_back({.name = "notes",
+                                 .scope_roots = {},
+                                 .mru_resources = {},
+                                 .layout = leaf(),
+                                 .active_leaf = 0});
+
+    REQUIRE(application.restore_workbench_session(serialize_workbench_session(state)).has_value());
+    const std::vector<WorkbenchSnapshot> restored = application.workbench_snapshots();
+    REQUIRE(restored.size() == 2);
+    CHECK(std::ranges::any_of(restored, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name == " *restore-1-0*" && !workbench.active;
+    }));
+    CHECK(std::ranges::any_of(restored, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name == "notes" && workbench.active;
+    }));
+}
+
 TEST_CASE("workbench session commands persist and restore through the async runtime") {
     TemporaryDirectory directory(
         std::format("cind-workbench-command-{}", static_cast<long>(::getpid())));

@@ -1494,20 +1494,73 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
     if (!parsed) {
         return std::unexpected(parsed.error());
     }
-    const auto leaf_count = [](this const auto& self,
-                               const WorkbenchLayoutSessionState& node) -> std::size_t {
-        return node.leaf() ? 1 : self(*node.first) + self(*node.second);
+    const auto has_duplicate = [](const std::vector<std::string>& values) {
+        for (std::size_t index = 0; index < values.size(); ++index) {
+            if (std::ranges::find(values.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                                  values.end(), values[index]) != values.end()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto stable_path = [](const std::string& value) {
+        return !value.empty() && value.find('\0') == std::string::npos &&
+               std::filesystem::path(value).is_absolute();
     };
     std::vector<std::string> names;
     names.reserve(parsed->workbenches.size());
     for (const WorkbenchSessionEntry& entry : parsed->workbenches) {
-        const std::size_t leaves = leaf_count(entry.layout);
-        if (leaves == 0 || entry.active_leaf >= leaves ||
-            std::ranges::find(names, entry.name) != names.end()) {
-            return std::unexpected(
-                "workbench session contains an invalid layout or duplicate name");
+        if (std::ranges::find(names, entry.name) != names.end()) {
+            return std::unexpected("workbench session contains a duplicate name");
+        }
+        if (has_duplicate(entry.scope_roots) ||
+            std::ranges::any_of(entry.scope_roots,
+                                [&](const std::string& root) { return !stable_path(root); })) {
+            return std::unexpected("workbench session contains an invalid project scope");
+        }
+        if (has_duplicate(entry.mru_resources) ||
+            std::ranges::any_of(entry.mru_resources, [&](const std::string& resource) {
+                return !stable_path(resource);
+            })) {
+            return std::unexpected("workbench session contains an invalid buffer MRU");
         }
         names.push_back(entry.name);
+        std::vector<std::string> roles;
+        const auto validate_layout = [&](this const auto& self,
+                                         const WorkbenchLayoutSessionState& node)
+            -> std::expected<std::size_t, std::string> {
+            if (node.leaf()) {
+                const WorkbenchWindowSessionState& window = *node.window;
+                if (window.resource && !stable_path(*window.resource)) {
+                    return std::unexpected("workbench session contains an invalid window resource");
+                }
+                if (window.role) {
+                    if (window.role->empty() ||
+                        std::ranges::find(roles, *window.role) != roles.end()) {
+                        return std::unexpected(
+                            "workbench session contains an invalid or duplicate window role");
+                    }
+                    roles.push_back(*window.role);
+                }
+                return 1;
+            }
+            const std::expected<std::size_t, std::string> first = self(*node.first);
+            if (!first) {
+                return std::unexpected(first.error());
+            }
+            const std::expected<std::size_t, std::string> second = self(*node.second);
+            if (!second) {
+                return std::unexpected(second.error());
+            }
+            return *first + *second;
+        };
+        const std::expected<std::size_t, std::string> leaves = validate_layout(entry.layout);
+        if (!leaves) {
+            return std::unexpected(leaves.error());
+        }
+        if (*leaves == 0 || entry.active_leaf >= *leaves) {
+            return std::unexpected("workbench session contains an invalid active window");
+        }
     }
 
     struct PendingTarget {
@@ -1529,38 +1582,37 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
     const WorkbenchId previous_active = workbenches_.active_id();
     std::vector<WorkbenchId> created;
     created.reserve(parsed->workbenches.size());
+    std::vector<ProjectId> created_projects;
 
-    const auto project_for_root = [&](const std::string& root) -> std::optional<ProjectId> {
+    const auto project_for_root = [&](const std::string& root) -> ProjectId {
         if (const std::optional<ProjectId> existing = runtime_.projects().find_by_root(root)) {
-            return existing;
+            return *existing;
         }
-        try {
-            std::string name = std::filesystem::path(root).filename().string();
-            if (name.empty()) {
-                name = root;
-            }
-            return runtime_.projects().create({.name = std::move(name),
-                                               .roots = {root},
-                                               .discovery_provider = "session",
-                                               .discovery_marker = {}});
-        } catch (const std::exception&) {
-            return std::nullopt;
+        std::string name = std::filesystem::path(root).filename().string();
+        if (name.empty()) {
+            name = root;
         }
+        const ProjectId project = runtime_.projects().create({.name = std::move(name),
+                                                              .roots = {root},
+                                                              .discovery_provider = "session",
+                                                              .discovery_marker = {}});
+        created_projects.push_back(project);
+        return project;
     };
     try {
         for (std::size_t index = 0; index < parsed->workbenches.size(); ++index) {
             const WorkbenchSessionEntry& source = parsed->workbenches[index];
             std::vector<ProjectId> scope;
+            scope.reserve(source.scope_roots.size());
             for (const std::string& root : source.scope_roots) {
-                if (const std::optional<ProjectId> project = project_for_root(root)) {
-                    scope.push_back(*project);
-                }
+                scope.push_back(project_for_root(root));
             }
             const ViewId root_view = create_view({}, fallback);
             const WindowId root_window = runtime_.windows().create(root_view);
             view_state_for(root_view).window = root_window;
             std::string temporary = std::format(" *restore-{}-{}*", restore->generation, index);
-            while (workbenches_.find_by_name(temporary)) {
+            while (workbenches_.find_by_name(temporary) ||
+                   std::ranges::find(names, temporary) != names.end()) {
                 temporary.push_back('*');
             }
             const WorkbenchId id = workbenches_.create({.name = std::move(temporary),
@@ -1633,6 +1685,9 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                     destroy_window(window);
                 }
             }
+        }
+        for (const ProjectId project : created_projects) {
+            (void)runtime_.projects().erase(project);
         }
         return std::unexpected(exception.what());
     }
