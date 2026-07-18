@@ -6,6 +6,33 @@
 
 namespace cind {
 
+LanguageRegistry::LanguageRegistry(const LanguageRegistry& other)
+    : settings_(other.settings_), providers_(other.providers_),
+      providers_by_name_(other.providers_by_name_), profiles_by_name_(other.profiles_by_name_),
+      sealed_(other.sealed_) {
+    profiles_.reserve(other.profiles_.size());
+    for (const std::unique_ptr<ProfileDefinition>& profile : other.profiles_) {
+        profiles_.push_back(std::make_unique<ProfileDefinition>(*profile));
+    }
+}
+
+LanguageRegistry& LanguageRegistry::operator=(const LanguageRegistry& other) {
+    if (this == &other) {
+        return *this;
+    }
+    settings_ = other.settings_;
+    providers_ = other.providers_;
+    profiles_.clear();
+    profiles_.reserve(other.profiles_.size());
+    for (const std::unique_ptr<ProfileDefinition>& profile : other.profiles_) {
+        profiles_.push_back(std::make_unique<ProfileDefinition>(*profile));
+    }
+    providers_by_name_ = other.providers_by_name_;
+    profiles_by_name_ = other.profiles_by_name_;
+    sealed_ = other.sealed_;
+    return *this;
+}
+
 LanguageProviderId LanguageRegistry::define_provider(std::string name, LanguageFacet facet) {
     if (sealed_) {
         throw std::logic_error("language registry is sealed");
@@ -39,6 +66,12 @@ LanguageProfileId LanguageRegistry::define_profile(std::string name) {
     profiles_.push_back(std::make_unique<ProfileDefinition>(std::move(name), *settings_));
     profiles_by_name_.emplace(profiles_.back()->name, id);
     return id;
+}
+
+void LanguageRegistry::clear_profile(LanguageProfileId profile_id) {
+    ProfileDefinition& definition = profile_for_configuration(profile_id);
+    definition.providers = {};
+    definition.defaults = SettingsLayer(*settings_, SettingScope::Language);
 }
 
 void LanguageRegistry::bind(LanguageProfileId profile_id, LanguageFacet facet,

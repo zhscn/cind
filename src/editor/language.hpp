@@ -67,9 +67,12 @@ public:
     };
 
     explicit LanguageRegistry(const SettingRegistry& settings) : settings_(&settings) {}
+    LanguageRegistry(const LanguageRegistry& other);
+    LanguageRegistry& operator=(const LanguageRegistry& other);
 
     LanguageProviderId define_provider(std::string name, LanguageFacet facet);
     LanguageProfileId define_profile(std::string name);
+    void clear_profile(LanguageProfileId profile);
     void bind(LanguageProfileId profile, LanguageFacet facet, LanguageProviderId provider);
     void seal();
     bool sealed() const { return sealed_; }

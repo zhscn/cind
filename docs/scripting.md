@@ -98,7 +98,8 @@ The native module exports:
 (observe-input-state-changes! host procedure)
 (define-thing! host name pattern)
 (define-motion! host name mechanism)
-(%define-mode! host name kind parent keymap interaction-class initial-state things)
+(define-language-profile! host name providers defaults)
+(%define-mode! host name kind parent language-profile keymap interaction-class initial-state things)
 (define-file-mode-rule! host rule-name mode-name suffixes filenames)
 (define-project-provider! host provider-name markers)
 (mode-properties host mode-name)
@@ -317,12 +318,17 @@ transition. It receives `#(kind view-id from-state-or-#f to-state-or-#f)`. Obser
 retained as scripting diagnostics and do not roll back the completed state transition or interrupt
 other observers.
 
+`define-language-profile!` composes named native providers by facet and supplies language-scoped
+setting defaults. Provider associations use the facets `lexing`, `syntax`, `indentation`,
+`structural-editing`, `highlighting`, `completion`, and `formatting`. A declaration is validated in
+full before it replaces an existing profile.
+
 `(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
-`define-minor-mode!`. A definition accepts `#:parent`, `#:keymap`, `#:interaction-class`,
-`#:initial-state`, and `#:things`; thing bindings are an association list of semantic names to
-named Thing definitions. Parent modes have the same major/minor kind. When a child keymap has no explicit
-parent, mode inheritance assigns the nearest parent mode keymap. `mode-properties` returns the
-declared metadata together with the effective keymap names.
+`define-minor-mode!`. A major-mode definition accepts `#:parent`, `#:language`, `#:keymap`,
+`#:interaction-class`, `#:initial-state`, and `#:things`; thing bindings are an association list of
+semantic names to named Thing definitions. Parent modes have the same major/minor kind. When a
+child keymap has no explicit parent, mode inheritance assigns the nearest parent mode keymap.
+`mode-properties` returns the declared metadata, language profile, and effective keymap names.
 
 `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode state.
 `buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy changes

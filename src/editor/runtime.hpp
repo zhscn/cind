@@ -28,6 +28,7 @@ public:
         InputStrategyRegistry input_strategies;
         ThingRegistry things;
         MotionRegistry motions;
+        LanguageRegistry languages;
         ModeRegistry modes;
         ResourcePolicyRegistry resource_policies;
         InteractionProviderRegistry interaction_providers;

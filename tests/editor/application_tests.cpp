@@ -214,17 +214,17 @@ TEST_CASE("runtime noun registries own validated named mechanisms") {
 TEST_CASE("major modes select composed language profiles instead of inheriting parsers") {
     EditorRuntime runtime;
     const SettingId dialect = runtime.setting_definitions().define(
-        "language.c-family.dialect", std::string("c++"),
+        "test.language.dialect", std::string("c++"),
         SettingScope::Language | SettingScope::Project | SettingScope::Buffer);
 
     const LanguageProviderId lexer =
-        runtime.languages().define_provider("cind.c-family.lexer", LanguageFacet::Lexing);
+        runtime.languages().define_provider("test.language.lexer", LanguageFacet::Lexing);
     const LanguageProviderId syntax =
-        runtime.languages().define_provider("cind.c-family.syntax", LanguageFacet::Syntax);
+        runtime.languages().define_provider("test.language.syntax", LanguageFacet::Syntax);
     const LanguageProviderId indentation = runtime.languages().define_provider(
-        "cind.c-family.indentation", LanguageFacet::Indentation);
+        "test.language.indentation", LanguageFacet::Indentation);
     const LanguageProviderId editing = runtime.languages().define_provider(
-        "cind.c-family.structural-editing", LanguageFacet::StructuralEditing);
+        "test.language.structural-editing", LanguageFacet::StructuralEditing);
 
     const LanguageProfileId cpp = runtime.languages().define_profile("cpp");
     for (const auto [facet, provider] :

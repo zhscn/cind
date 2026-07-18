@@ -2,7 +2,6 @@
 #include <doctest/doctest.h>
 
 #include "editor/command_loop.hpp"
-#include "editor/cpp_mode.hpp"
 #include "editor/runtime.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -163,6 +162,8 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
   #f)
 (define-keymap! host 'user.partial-map #f)
 (bind-key! host 'user.partial-map "C-c p" 'user.partial)
+(define-language-profile! host 'user.partial-language
+  '((lexing . cind.c-family.lexer)) '())
 (define-file-mode-rule! host 'user.partial-mode 'text-mode '(".partial") '())
 (define-project-provider! host 'user.partial-project '("partial.project"))
 (error "extension failed")
@@ -173,6 +174,7 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
     REQUIRE_FALSE(loaded.has_value());
     CHECK_FALSE(runtime.commands().find("user.partial").has_value());
     CHECK_FALSE(runtime.keymaps().find("user.partial-map").has_value());
+    CHECK_FALSE(runtime.languages().find_profile("user.partial-language").has_value());
     CHECK(runtime.resource_policies().file_mode_rules().empty());
     CHECK(runtime.resource_policies().project_providers().empty());
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
@@ -258,6 +260,46 @@ TEST_CASE("Guile evaluation keeps an application-local module and reports stream
     REQUIRE(failed.has_value());
     REQUIRE(failed->error.has_value());
     CHECK(failed->error.value_or("").find("evaluation failed") != std::string::npos);
+}
+
+TEST_CASE("Guile language profile declarations replace configuration atomically") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> defined =
+        guile.evaluate({.source = R"((define-language-profile! host 'user.atomic
+  '((lexing . cind.c-family.lexer))
+  '((language.c-family.dialect . "c"))))",
+                        .source_name = "language-profile-test.scm"});
+    REQUIRE(defined.has_value());
+    CHECK_FALSE(defined->error.has_value());
+
+    const std::optional<LanguageProfileId> profile_id =
+        runtime.languages().find_profile("user.atomic");
+    REQUIRE(profile_id.has_value());
+    const LanguageProfileId profile = *profile_id;
+    const std::optional<SettingId> dialect_id =
+        runtime.setting_definitions().find("language.c-family.dialect");
+    REQUIRE(dialect_id.has_value());
+    const SettingId dialect = *dialect_id;
+    REQUIRE(runtime.languages().profile(profile).provider(LanguageFacet::Lexing).has_value());
+    REQUIRE(runtime.languages().profile(profile).defaults.find(dialect) != nullptr);
+    CHECK(std::get<std::string>(*runtime.languages().profile(profile).defaults.find(dialect)) ==
+          "c");
+
+    const std::expected<GuileEvaluationResult, std::string> rejected =
+        guile.evaluate({.source = R"((define-language-profile! host 'user.atomic
+  '((syntax . cind.c-family.syntax))
+  '((language.c-family.dialect . #t))))",
+                        .source_name = "language-profile-test.scm"});
+    REQUIRE(rejected.has_value());
+    REQUIRE(rejected->error.has_value());
+
+    const LanguageRegistry::ProfileDefinition& unchanged = runtime.languages().profile(profile);
+    CHECK(unchanged.provider(LanguageFacet::Lexing).has_value());
+    CHECK_FALSE(unchanged.provider(LanguageFacet::Syntax).has_value());
+    REQUIRE(unchanged.defaults.find(dialect) != nullptr);
+    CHECK(std::get<std::string>(*unchanged.defaults.find(dialect)) == "c");
 }
 
 TEST_CASE("Guile async tasks deliver typed results and cancellation on the editor thread") {
@@ -588,18 +630,20 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 5);
-    CHECK(*second == 5);
+    CHECK(*first == 6);
+    CHECK(*second == 6);
     const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
     const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
     const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
     const ModeId scheme = runtime.modes().find("scheme-mode").value_or(ModeId{});
     const ModeId location_list = runtime.modes().find("cind.location-list").value_or(ModeId{});
+    const ModeId cpp = runtime.modes().find("cind.cpp").value_or(ModeId{});
     REQUIRE(fundamental);
     REQUIRE(prog);
     REQUIRE(special);
     REQUIRE(scheme);
     REQUIRE(location_list);
+    REQUIRE(cpp);
     CHECK(runtime.modes().definition(prog).parent == fundamental);
     CHECK(runtime.modes().definition(prog).things ==
           std::vector<ModeThingBinding>{{.name = "word", .definition = "cind.word"},
@@ -617,12 +661,25 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK_FALSE(runtime.modes().definition(location_list).language.has_value());
     CHECK(runtime.modes().definition(location_list).keymaps ==
           std::vector<KeymapId>{require_keymap(runtime, "cind.location-list.map")});
+    const std::optional<LanguageProfileId> cpp_language =
+        runtime.languages().find_profile("cind.cpp");
+    REQUIRE(cpp_language.has_value());
+    CHECK(runtime.modes().definition(cpp).language == cpp_language);
+    CHECK(runtime.languages().profile(*cpp_language).provider(LanguageFacet::Lexing).has_value());
+    CHECK(runtime.languages()
+              .profile(*cpp_language)
+              .provider(LanguageFacet::StructuralEditing)
+              .has_value());
+    CHECK(runtime.modes().definition(cpp).things ==
+          std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
+                                        {.name = "defun", .definition = "cind.defun"},
+                                        {.name = "string", .definition = "cind.string"}});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
-    CHECK(guile.snapshot().scripted_modes == 5);
+    CHECK(guile.snapshot().scripted_modes == 6);
 }
 
 TEST_CASE("bundled Guile policy defines file modes and project discovery providers") {
@@ -630,7 +687,8 @@ TEST_CASE("bundled Guile policy defines file modes and project discovery provide
     GuileRuntime guile(runtime);
     REQUIRE(guile.install_input_states().has_value());
     REQUIRE(guile.install_core_modes().has_value());
-    const ModeId cpp = ensure_cpp_mode(runtime).mode;
+    const ModeId cpp = runtime.modes().find("cind.cpp").value_or(ModeId{});
+    REQUIRE(cpp);
 
     const std::expected<std::size_t, std::string> first = guile.install_core_resource_policies();
     const std::expected<std::size_t, std::string> second = guile.install_core_resource_policies();

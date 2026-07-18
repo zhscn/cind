@@ -251,9 +251,9 @@ TEST_CASE("interaction and position command policy is owned by Guile") {
 
 TEST_CASE("location-list command policy is owned by Guile") {
     EditorApplication application = make_application("sample.cc", "abc\n");
-    constexpr std::array<std::string_view, 5> commands{
-        "location.visit", "location.next", "location.previous", "location.next-error",
-        "location.previous-error"};
+    constexpr std::array<std::string_view, 5> commands{"location.visit", "location.next",
+                                                       "location.previous", "location.next-error",
+                                                       "location.previous-error"};
     for (const std::string_view name : commands) {
         const CommandRegistry::Definition& definition = application.runtime().commands().definition(
             require_command(application.runtime(), name));
@@ -303,6 +303,10 @@ TEST_CASE("application modes join the scripted core hierarchy") {
     REQUIRE(locations);
     REQUIRE(special);
     CHECK(modes.definition(cpp).parent == prog);
+    const std::optional<LanguageProfileId> cpp_language =
+        application.runtime().languages().find_profile("cind.cpp");
+    REQUIRE(cpp_language.has_value());
+    CHECK(modes.definition(cpp).language == cpp_language);
     CHECK(modes.definition(locations).parent == special);
     CHECK(modes.effective_policy(application.session().buffer().modes()).interaction_class ==
           InteractionClass::Editing);
@@ -342,7 +346,7 @@ TEST_CASE("resource policy selects file modes without making scratch buffers C++
 
 TEST_CASE("user initialization overrides file mode policy before the first buffer") {
     TemporaryFile init(std::format("cind-mode-policy-{}.scm", static_cast<long>(::getpid())),
-                       R"((%define-mode! host 'user-notes 'major 'fundamental-mode #f
+                       R"((%define-mode! host 'user-notes 'major 'fundamental-mode #f #f
                  'editing #f '())
 (define-file-mode-rule! host 'user-notes-rule 'user-notes '(".notes") '())
 )");

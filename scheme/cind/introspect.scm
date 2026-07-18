@@ -142,10 +142,12 @@
          (interaction (vector-ref properties 3))
          (initial-state (vector-ref properties 4))
          (things (vector-ref properties 5))
-         (keymaps (vector-ref properties 6)))
+         (keymaps (vector-ref properties 6))
+         (language (vector-ref properties 7)))
     (string-append
      (format #f "~a (~a mode)\n" (vector-ref properties 0) (vector-ref properties 1))
      (format #f "  parent: ~a\n" (if parent parent "none"))
+     (format #f "  language profile: ~a\n" (if language language "none"))
      (format #f "  interaction class: ~a\n" (if interaction interaction "inherited"))
      (format #f "  initial input state: ~a\n" (if initial-state initial-state "inherited"))
      "  keymaps:\n" (indented-lines (vector->strings keymaps) "none")

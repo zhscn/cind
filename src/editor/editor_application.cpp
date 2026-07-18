@@ -2,7 +2,6 @@
 
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
-#include "editor/cpp_mode.hpp"
 #include "editor/noun_evaluator.hpp"
 #include "project/project_files.hpp"
 #include "project/search_results.hpp"
@@ -216,7 +215,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
            },
            .open_file_at =
-               [this](WindowId window, std::string path, std::uint32_t line, std::uint32_t column) {
+               [this](WindowId window, const std::string& path, std::uint32_t line,
+                      std::uint32_t column) {
                    return open_file(path, window,
                                     LinePosition{.line = line, .byte_column = column});
                },
@@ -515,7 +515,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     if (!location_list_mode_) {
         throw std::logic_error("Guile mode policy did not define cind.location-list");
     }
-    (void)ensure_cpp_mode(runtime_);
     register_resource_policies();
     register_commands();
     register_interaction_providers();

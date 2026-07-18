@@ -8,7 +8,7 @@ namespace cind {
 EditorRuntime::ExtensionCheckpoint::ExtensionCheckpoint(const EditorRuntime& runtime)
     : commands(runtime.commands_), keymaps(runtime.keymaps_), input_states(runtime.input_states_),
       input_strategies(runtime.input_strategies_), things(runtime.things_),
-      motions(runtime.motions_), modes(runtime.modes_),
+      motions(runtime.motions_), languages(runtime.languages_), modes(runtime.modes_),
       resource_policies(runtime.resource_policies_),
       interaction_providers(runtime.interaction_providers_),
       extensions_sealed(runtime.extensions_sealed_) {}
@@ -119,6 +119,7 @@ void EditorRuntime::restore_extensions(const ExtensionCheckpoint& checkpoint) {
     input_strategies_ = checkpoint.input_strategies;
     things_ = checkpoint.things;
     motions_ = checkpoint.motions;
+    languages_ = checkpoint.languages;
     modes_ = checkpoint.modes;
     resource_policies_ = checkpoint.resource_policies;
     interaction_providers_ = checkpoint.interaction_providers;

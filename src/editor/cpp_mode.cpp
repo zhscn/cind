@@ -5,40 +5,70 @@
 
 namespace cind {
 
+CFamilyMechanismsRegistration ensure_c_family_mechanisms(EditorRuntime& runtime) {
+    const auto provider = [&](std::string name, LanguageFacet facet) {
+        if (const std::optional<LanguageProviderId> existing =
+                runtime.languages().find_provider(name)) {
+            if (runtime.languages().provider(*existing).facet != facet) {
+                throw std::logic_error("C-family provider has the wrong facet");
+            }
+            return *existing;
+        }
+        return runtime.languages().define_provider(std::move(name), facet);
+    };
+
+    const std::optional<SettingId> existing_dialect =
+        runtime.setting_definitions().find("language.c-family.dialect");
+    if (existing_dialect) {
+        const SettingRegistry::Definition& definition =
+            runtime.setting_definitions().definition(*existing_dialect);
+        const SettingScopeMask required_scopes =
+            SettingScope::Language | SettingScope::Project | SettingScope::Buffer;
+        if (!std::holds_alternative<std::string>(definition.default_value) ||
+            (definition.scopes & required_scopes) != required_scopes) {
+            throw std::logic_error("C-family dialect setting has an incompatible definition");
+        }
+    }
+    const SettingId dialect =
+        existing_dialect
+            ? *existing_dialect
+            : runtime.setting_definitions().define("language.c-family.dialect", std::string("c++"),
+                                                   SettingScope::Language | SettingScope::Project |
+                                                       SettingScope::Buffer);
+    return {.dialect = dialect,
+            .lexer = provider("cind.c-family.lexer", LanguageFacet::Lexing),
+            .syntax = provider("cind.c-family.syntax", LanguageFacet::Syntax),
+            .indentation = provider("cind.c-family.indentation", LanguageFacet::Indentation),
+            .structural_editing =
+                provider("cind.c-family.structural-editing", LanguageFacet::StructuralEditing),
+            .highlighting = provider("cind.c-family.highlighting", LanguageFacet::Highlighting)};
+}
+
 CppModeRegistration ensure_cpp_mode(EditorRuntime& runtime) {
+    const CFamilyMechanismsRegistration mechanisms = ensure_c_family_mechanisms(runtime);
     if (const std::optional<ModeId> existing = runtime.modes().find("cind.cpp")) {
-        const std::optional<SettingId> dialect =
-            runtime.setting_definitions().find("language.c-family.dialect");
         const std::optional<LanguageProfileId> language =
             runtime.languages().find_profile("cind.cpp");
-        if (!dialect || !language) {
+        if (!language) {
             throw std::logic_error("incomplete built-in C++ mode registration");
         }
-        return {*dialect, *language, *existing};
+        return {mechanisms.dialect, *language, *existing};
     }
 
-    const SettingId dialect = runtime.setting_definitions().define(
-        "language.c-family.dialect", std::string("c++"),
-        SettingScope::Language | SettingScope::Project | SettingScope::Buffer);
-    const LanguageProviderId lexer =
-        runtime.languages().define_provider("cind.c-family.lexer", LanguageFacet::Lexing);
-    const LanguageProviderId syntax =
-        runtime.languages().define_provider("cind.c-family.syntax", LanguageFacet::Syntax);
-    const LanguageProviderId indentation = runtime.languages().define_provider(
-        "cind.c-family.indentation", LanguageFacet::Indentation);
-    const LanguageProviderId structural_editing = runtime.languages().define_provider(
-        "cind.c-family.structural-editing", LanguageFacet::StructuralEditing);
-    const LanguageProviderId highlighting = runtime.languages().define_provider(
-        "cind.c-family.highlighting", LanguageFacet::Highlighting);
-
-    const LanguageProfileId language = runtime.languages().define_profile("cind.cpp");
-    runtime.languages().bind(language, LanguageFacet::Lexing, lexer);
-    runtime.languages().bind(language, LanguageFacet::Syntax, syntax);
-    runtime.languages().bind(language, LanguageFacet::Indentation, indentation);
-    runtime.languages().bind(language, LanguageFacet::StructuralEditing, structural_editing);
-    runtime.languages().bind(language, LanguageFacet::Highlighting, highlighting);
-    runtime.languages().profile_for_configuration(language).defaults.set(dialect,
-                                                                         std::string("c++"));
+    const std::optional<LanguageProfileId> existing_language =
+        runtime.languages().find_profile("cind.cpp");
+    const LanguageProfileId language =
+        existing_language ? *existing_language : runtime.languages().define_profile("cind.cpp");
+    if (!existing_language) {
+        runtime.languages().bind(language, LanguageFacet::Lexing, mechanisms.lexer);
+        runtime.languages().bind(language, LanguageFacet::Syntax, mechanisms.syntax);
+        runtime.languages().bind(language, LanguageFacet::Indentation, mechanisms.indentation);
+        runtime.languages().bind(language, LanguageFacet::StructuralEditing,
+                                 mechanisms.structural_editing);
+        runtime.languages().bind(language, LanguageFacet::Highlighting, mechanisms.highlighting);
+        runtime.languages().profile_for_configuration(language).defaults.set(mechanisms.dialect,
+                                                                             std::string("c++"));
+    }
     const ModeId mode = runtime.modes().define("cind.cpp", ModeKind::Major, language);
     if (const std::optional<ModeId> parent = runtime.modes().find("prog-mode")) {
         runtime.modes().set_parent(mode, parent);
@@ -48,7 +78,7 @@ CppModeRegistration ensure_cpp_mode(EditorRuntime& runtime) {
     runtime.modes().set_things(mode, {{.name = "angle", .definition = "cind.angle"},
                                       {.name = "defun", .definition = "cind.defun"},
                                       {.name = "string", .definition = "cind.string"}});
-    return {dialect, language, mode};
+    return {mechanisms.dialect, language, mode};
 }
 
 } // namespace cind

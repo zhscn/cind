@@ -1277,11 +1277,12 @@
 (define* (define-major-mode! host name
                             #:key
                             (parent #f)
+                            (language #f)
                             (keymap #f)
                             (interaction-class #f)
                             (initial-state #f)
                             (things '()))
-  (%define-mode! host name 'major parent keymap interaction-class initial-state things))
+  (%define-mode! host name 'major parent language keymap interaction-class initial-state things))
 
 (define* (define-minor-mode! host name
                             #:key
@@ -1290,7 +1291,7 @@
                             (interaction-class #f)
                             (initial-state #f)
                             (things '()))
-  (%define-mode! host name 'minor parent keymap interaction-class initial-state things))
+  (%define-mode! host name 'minor parent #f keymap interaction-class initial-state things))
 
 (define (install-core-modes! host)
   (define-thing! host 'cind.angle '(pair "<" ">"))
@@ -1308,6 +1309,14 @@
   (define-motion! host 'cind.forward-expression 'forward-expression)
   (define-motion! host 'cind.backward-expression 'backward-expression)
   (define-motion! host 'cind.up-list 'up-list)
+  (define-language-profile!
+    host 'cind.cpp
+    '((lexing . cind.c-family.lexer)
+      (syntax . cind.c-family.syntax)
+      (indentation . cind.c-family.indentation)
+      (structural-editing . cind.c-family.structural-editing)
+      (highlighting . cind.c-family.highlighting))
+    '((language.c-family.dialect . "c++")))
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
@@ -1324,11 +1333,18 @@
     #:parent 'prog-mode
     #:keymap 'scheme-mode-map
     #:interaction-class 'editing)
+  (define-major-mode! host 'cind.cpp
+    #:parent 'prog-mode
+    #:language 'cind.cpp
+    #:interaction-class 'editing
+    #:things '((angle . cind.angle)
+               (defun . cind.defun)
+               (string . cind.string)))
   (define-major-mode! host 'cind.location-list
     #:parent 'special-mode
     #:keymap 'cind.location-list.map
     #:interaction-class 'interface)
-  5)
+  6)
 
 (define (install-core-resource-policies! host)
   (define-file-mode-rule!

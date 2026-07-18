@@ -1,5 +1,6 @@
 #include "script/guile_runtime.hpp"
 
+#include "editor/cpp_mode.hpp"
 #include "editor/runtime.hpp"
 #include "script/guile_async_bridge.hpp"
 
@@ -102,6 +103,8 @@ struct HostLease {
 std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& host,
                                                                   GuileEvaluationRequest request);
 SCM setting_value(const SettingValue& value);
+bool setting_value_p(SCM value);
+SettingValue setting_from_scheme(SCM value);
 
 SCM host_type = SCM_UNDEFINED;
 std::once_flag guile_once;
@@ -1232,6 +1235,16 @@ ModeId require_mode(HostLease& host, SCM value, const char* caller, int position
     return *mode;
 }
 
+LanguageProfileId require_language_profile(HostLease& host, SCM value, const char* caller,
+                                           int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const std::optional<LanguageProfileId> profile = host.runtime->languages().find_profile(name);
+    if (!profile) {
+        scm_misc_error(caller, "unknown language profile: ~S", scm_list_1(value));
+    }
+    return *profile;
+}
+
 InteractionClass interaction_class_from_scheme(SCM value, const char* caller, int position) {
     if (symbol_is(value, "editing")) {
         return InteractionClass::Editing;
@@ -1241,6 +1254,32 @@ InteractionClass interaction_class_from_scheme(SCM value, const char* caller, in
     }
     scm_wrong_type_arg_msg(caller, position, value, "'editing or 'interface");
     return InteractionClass::Editing;
+}
+
+LanguageFacet language_facet_from_scheme(SCM value, const char* caller, int position) {
+    if (symbol_is(value, "lexing")) {
+        return LanguageFacet::Lexing;
+    }
+    if (symbol_is(value, "syntax")) {
+        return LanguageFacet::Syntax;
+    }
+    if (symbol_is(value, "indentation")) {
+        return LanguageFacet::Indentation;
+    }
+    if (symbol_is(value, "structural-editing")) {
+        return LanguageFacet::StructuralEditing;
+    }
+    if (symbol_is(value, "highlighting")) {
+        return LanguageFacet::Highlighting;
+    }
+    if (symbol_is(value, "completion")) {
+        return LanguageFacet::Completion;
+    }
+    if (symbol_is(value, "formatting")) {
+        return LanguageFacet::Formatting;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "language facet symbol");
+    return LanguageFacet::Lexing;
 }
 
 SCM interaction_class_symbol(InteractionClass interaction_class) {
@@ -1398,11 +1437,94 @@ SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
     return SCM_BOOL_F;
 }
 
-// The Guile ABI fixes eight adjacent SCM arguments; the public Scheme wrappers
+// The public Scheme wrapper names the provider/default association lists.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value,
+                            SCM defaults_value) {
+    try {
+        HostLease& host = require_host(host_object, "define-language-profile!");
+        const std::string name = scheme_name(name_value, "define-language-profile!", 2);
+        if (scm_ilength(providers_value) < 0) {
+            scm_wrong_type_arg_msg("define-language-profile!", 3, providers_value,
+                                   "proper association list");
+        }
+        if (scm_ilength(defaults_value) < 0) {
+            scm_wrong_type_arg_msg("define-language-profile!", 4, defaults_value,
+                                   "proper association list");
+        }
+
+        std::vector<std::pair<LanguageFacet, LanguageProviderId>> providers;
+        for (SCM remaining = providers_value; !scheme_true(scm_null_p(remaining));
+             remaining = scm_cdr(remaining)) {
+            const SCM entry = scm_car(remaining);
+            if (!scm_is_pair(entry)) {
+                scm_wrong_type_arg_msg("define-language-profile!", 3, entry,
+                                       "(facet . provider) entry");
+            }
+            const LanguageFacet facet =
+                language_facet_from_scheme(scm_car(entry), "define-language-profile!", 3);
+            const std::string provider_name =
+                scheme_name(scm_cdr(entry), "define-language-profile!", 3);
+            const std::optional<LanguageProviderId> provider =
+                host.runtime->languages().find_provider(provider_name);
+            if (!provider) {
+                scm_misc_error("define-language-profile!", "unknown language provider: ~S",
+                               scm_list_1(scm_cdr(entry)));
+            }
+            providers.emplace_back(facet, *provider);
+        }
+
+        std::vector<std::pair<SettingId, SettingValue>> defaults;
+        SettingsLayer validated_defaults(host.runtime->setting_definitions(),
+                                         SettingScope::Language);
+        for (SCM remaining = defaults_value; !scheme_true(scm_null_p(remaining));
+             remaining = scm_cdr(remaining)) {
+            const SCM entry = scm_car(remaining);
+            if (!scm_is_pair(entry) || !setting_value_p(scm_cdr(entry))) {
+                scm_wrong_type_arg_msg("define-language-profile!", 4, entry,
+                                       "(setting . value) entry");
+            }
+            const std::string setting_name =
+                scheme_name(scm_car(entry), "define-language-profile!", 4);
+            const std::optional<SettingId> setting =
+                host.runtime->setting_definitions().find(setting_name);
+            if (!setting) {
+                scm_misc_error("define-language-profile!", "unknown setting: ~S",
+                               scm_list_1(scm_car(entry)));
+            }
+            SettingValue value = setting_from_scheme(scm_cdr(entry));
+            validated_defaults.set(*setting, value);
+            defaults.emplace_back(*setting, std::move(value));
+        }
+
+        const std::optional<LanguageProfileId> existing =
+            host.runtime->languages().find_profile(name);
+        const LanguageProfileId profile =
+            existing ? *existing : host.runtime->languages().define_profile(name);
+        host.runtime->languages().clear_profile(profile);
+        for (const auto& [facet, provider] : providers) {
+            host.runtime->languages().bind(profile, facet, provider);
+        }
+        SettingsLayer& profile_defaults =
+            host.runtime->languages().profile_for_configuration(profile).defaults;
+        for (auto& [setting, value] : defaults) {
+            profile_defaults.set(setting, std::move(value));
+        }
+        return scm_from_uint32(profile.value);
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-language-profile!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-language-profile!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// The Guile ABI fixes nine adjacent SCM arguments; the public Scheme wrappers
 // provide keyword arguments and preserve this normalized host boundary.
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
-SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value, SCM keymap_value,
-                SCM interaction_class_value, SCM initial_state_value, SCM things_value) {
+SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value,
+                SCM language_value, SCM keymap_value, SCM interaction_class_value,
+                SCM initial_state_value, SCM things_value) {
     try {
         HostLease& host = require_host(host_object, "%define-mode!");
         const std::string name = scheme_name(name_value, "%define-mode!", 2);
@@ -1415,26 +1537,34 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
         if (!scheme_false(parent_value)) {
             parent = require_mode(host, parent_value, "%define-mode!", 4);
         }
+        std::optional<LanguageProfileId> language;
+        if (!scheme_false(language_value)) {
+            language = require_language_profile(host, language_value, "%define-mode!", 5);
+        }
         std::optional<KeymapId> keymap;
         if (!scheme_false(keymap_value)) {
-            keymap = require_keymap(host, keymap_value, "%define-mode!", 5);
+            keymap = require_keymap(host, keymap_value, "%define-mode!", 6);
         }
         std::optional<InteractionClass> interaction_class;
         if (!scheme_false(interaction_class_value)) {
             interaction_class =
-                interaction_class_from_scheme(interaction_class_value, "%define-mode!", 6);
+                interaction_class_from_scheme(interaction_class_value, "%define-mode!", 7);
         }
         std::optional<InputStateId> initial_state;
         if (!scheme_false(initial_state_value)) {
-            initial_state = require_input_state(host, initial_state_value, "%define-mode!", 7);
+            initial_state = require_input_state(host, initial_state_value, "%define-mode!", 8);
         }
         std::vector<ModeThingBinding> things =
-            mode_things_from_scheme(things_value, "%define-mode!", 8);
+            mode_things_from_scheme(things_value, "%define-mode!", 9);
 
         const std::optional<ModeId> existing = host.runtime->modes().find(name);
-        const ModeId mode = existing ? *existing : host.runtime->modes().define(name, kind);
+        const ModeId mode =
+            existing ? *existing : host.runtime->modes().define(name, kind, language);
         if (host.runtime->modes().definition(mode).kind != kind) {
             throw std::invalid_argument("mode definition cannot change its kind");
+        }
+        if (host.runtime->modes().definition(mode).language != language) {
+            throw std::invalid_argument("mode definition cannot change its language profile");
         }
         host.runtime->modes().set_parent(mode, parent);
         host.runtime->modes().set_interaction_class(mode, interaction_class);
@@ -1508,7 +1638,7 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
         HostLease& host = require_host(host_object, "mode-properties");
         const ModeId mode = require_mode(host, mode_value, "mode-properties", 2);
         const ModeRegistry::Definition& definition = host.runtime->modes().definition(mode);
-        SCM result = scm_c_make_vector(7, SCM_BOOL_F);
+        SCM result = scm_c_make_vector(8, SCM_BOOL_F);
         scm_c_vector_set_x(result, 0, name_symbol(definition.name));
         scm_c_vector_set_x(
             result, 1,
@@ -1535,6 +1665,11 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
                 name_symbol(host.runtime->keymaps().definition(keymaps[index]).name));
         }
         scm_c_vector_set_x(result, 6, keymap_names);
+        if (definition.language) {
+            scm_c_vector_set_x(
+                result, 7,
+                name_symbol(host.runtime->languages().profile(*definition.language).name));
+        }
         return result;
     } catch (const std::exception& exception) {
         scm_misc_error("mode-properties", exception.what(), SCM_EOL);
@@ -3874,7 +4009,9 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("define-thing!", 3, 0, 0, reinterpret_cast<scm_t_subr>(define_thing));
     (void)scm_c_define_gsubr("define-motion!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_motion));
-    (void)scm_c_define_gsubr("%define-mode!", 8, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
+    (void)scm_c_define_gsubr("define-language-profile!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_language_profile));
+    (void)scm_c_define_gsubr("%define-mode!", 9, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
     (void)scm_c_define_gsubr("define-file-mode-rule!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_file_mode_rule));
     (void)scm_c_define_gsubr("define-project-provider!", 3, 0, 0,
@@ -4035,29 +4172,29 @@ void initialize_host_module(void*) {
         "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
         "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
         "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
-        "define-motion!", "%define-mode!", "define-file-mode-rule!", "define-project-provider!",
-        "mode-properties", "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
-        "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
-        "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
-        "project-files", "path-relative", "path-filename", "active-key-bindings",
-        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-byte-size",
-        "buffer-locations", "buffer-read-only?", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
-        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
-        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
-        "submit-interaction!", "move-interaction-candidate!", "move-interaction-history!",
-        "cancel-interaction!", "cancel-pending-input!", "view-position", "location-navigation",
-        "set-location-navigation!", "position-buffer-view!", "open-file-at!", "set-message!",
-        "ensure-project-index!", "open-file!", "start-project-search!", "set-buffer-resource!",
-        "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
-        "delete-window!", "delete-other-windows!", "select-other-window!", "request-redraw!",
-        nullptr);
+        "define-motion!", "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
+        "define-project-provider!", "mode-properties", "set-buffer-major-mode!",
+        "set-buffer-minor-mode!", "buffer-mode-policy", "buffer-mode-summary",
+        "observe-mode-policy-changes!", "enabled-command-names", "command-properties",
+        "open-buffer-summaries", "owned-user-modules", "project-root", "project-files",
+        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-name",
+        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
+        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!",
+        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
+        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
+        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
+        "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",
+        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
+        "page-rows", "interaction-status", "submit-interaction!", "move-interaction-candidate!",
+        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
+        "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
+        "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
+        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+        "select-other-window!", "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -4973,6 +5110,7 @@ public:
                                 locked->last_error = std::move(message);
                             }
                         }) {
+        (void)ensure_c_family_mechanisms(runtime);
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (std::string_view module :
