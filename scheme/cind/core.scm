@@ -293,6 +293,115 @@
                         #:history "search"
                         #:arguments (list forward?)))
 
+(define (query-replace-count-message count)
+  (string-append "replaced " (number->string count) " occurrence"
+                 (if (= count 1) "" "s")))
+
+(define (query-replace-finish! host view count)
+  (clear-selection! host view)
+  (request-redraw! host)
+  (set-message! host (query-replace-count-message count)))
+
+(define (query-replace-selection range)
+  (selection
+   (list (selection-range (vector-ref range 0) (vector-ref range 1) 'char))))
+
+(define (query-replace-result-caret selected)
+  (let* ((ranges (selection-ranges selected))
+         (primary (selection-primary selected)))
+    (selection-range-head (vector-ref ranges primary))))
+
+(define (query-replace-one! host view match replacement)
+  (query-replace-result-caret
+   (replace-selection! host view (query-replace-selection match) replacement)))
+
+(define (query-replace-matches host buffer query start)
+  (let loop ((position start)
+             (matches '()))
+    (let ((match (find-buffer-text host buffer query position 'forward)))
+      (if match
+          (loop (vector-ref match 1) (cons match matches))
+          (reverse matches)))))
+
+(define (query-replace-all! host buffer view query replacement start count)
+  (let ((matches (query-replace-matches host buffer query start)))
+    (unless (null? matches)
+      (replace-selection!
+       host view
+       (selection
+        (map (lambda (match)
+               (selection-range (vector-ref match 0) (vector-ref match 1) 'char))
+             matches))
+       replacement))
+    (query-replace-finish! host view (+ count (length matches)))))
+
+(define query-replace-hints
+  (vector (vector "y" "replace" #f)
+          (vector "n" "skip" #f)
+          (vector "!" "replace remaining" #f)
+          (vector "q" "quit" #f)))
+
+(define (query-replace-read! host buffer view query replacement start count)
+  (let ((match (find-buffer-text host buffer query start 'forward)))
+    (if (not match)
+        (query-replace-finish! host view count)
+        (begin
+          (set-selection! host view (query-replace-selection match))
+          (request-redraw! host)
+          (set-message! host
+                        (string-append "Replace " query " with " replacement
+                                       "? (y/n/!/q)"))
+          (read-key-then!
+           host view
+           (lambda (key)
+             (cond ((or (string=? key "y") (string=? key "SPC"))
+                    (query-replace-read!
+                     host buffer view query replacement
+                     (query-replace-one! host view match replacement)
+                     (+ count 1)))
+                   ((or (string=? key "n") (string=? key "Delete"))
+                    (clear-selection! host view)
+                    (set-view-caret! host view (vector-ref match 1))
+                    (query-replace-read! host buffer view query replacement
+                                         (vector-ref match 1) count))
+                   ((or (string=? key "!") (string=? key "a"))
+                    (query-replace-all! host buffer view query replacement
+                                        (vector-ref match 0) count))
+                   ((or (string=? key "q") (string=? key "RET"))
+                    (query-replace-finish! host view count))
+                   (else
+                    (query-replace-read! host buffer view query replacement
+                                         (vector-ref match 0) count)))
+             'consume)
+           #:sequence "query-replace"
+           #:hints query-replace-hints)))))
+
+(define (query-replace context invocation)
+  (read-from-minibuffer "Replace: " "search.replace.from.accept"
+                        #:history "search"))
+
+(define (query-replace-from-accept context invocation)
+  (let ((query (last-string-argument invocation)))
+    (if (or (not query) (= (string-length query) 0))
+        (command-error "replacement query is empty")
+        (read-from-minibuffer
+         (string-append "Replace " query " with: ")
+         "search.replace.to.accept"
+         #:history "replace"
+         #:arguments (list query)))))
+
+(define (query-replace-to-accept host context invocation)
+  (let* ((arguments (invocation-arguments invocation))
+         (query (and (= (vector-length arguments) 2) (vector-ref arguments 0)))
+         (replacement (last-string-argument invocation)))
+    (if (not (and (string? query) (string? replacement)))
+        (command-error "query replace arguments are malformed")
+        (begin
+          (query-replace-read! host (context-buffer context) (context-view context)
+                               query replacement
+                               (view-caret host (context-view context)) 0)
+          (command-completed/preserve)))))
+
 (define (project-search-accept host context invocation)
   (let ((query (last-string-argument invocation))
         (project (context-project context)))
@@ -633,6 +742,12 @@
         (list "search.backward-prompt"
               (lambda (context invocation) (search-prompt #f))
               #f)
+        (list "search.replace" query-replace #f)
+        (list "search.replace.from.accept" query-replace-from-accept #f)
+        (list "search.replace.to.accept"
+              (lambda (context invocation)
+                (query-replace-to-accept host context invocation))
+              #f)
         (list "help.keys.accept"
               (lambda (context invocation)
                 (help-keys-accept host context invocation))
@@ -852,6 +967,22 @@
 (define application-bindings
   '(("C-x C-c" . "application.quit")))
 
+(define system-bindings
+  '(("C-g" . "keyboard.quit")))
+
+(define interaction-text-bindings
+  '(("RET" . "interaction.submit")
+    ("ESC" . "keyboard.quit")
+    ("M-p" . "interaction.previous-history")
+    ("M-n" . "interaction.next-history")))
+
+(define interaction-picker-bindings
+  '(("C-n" . "interaction.next-candidate")
+    ("Down" . "interaction.next-candidate")
+    ("TAB" . "interaction.next-candidate")
+    ("C-p" . "interaction.previous-candidate")
+    ("Up" . "interaction.previous-candidate")))
+
 (define scheme-mode-bindings
   '(("C-c C-e" . "scheme.eval-expression")
     ("C-c C-r" . "scheme.eval-region")
@@ -876,6 +1007,9 @@
   (define-keymap! host 'editor.text-input #f)
   (define-keymap! host 'editor.default 'editor.text-input)
   (define-keymap! host 'application.global #f)
+  (define-keymap! host 'editor.system #f)
+  (define-keymap! host 'interaction.text 'editor.text-input)
+  (define-keymap! host 'interaction.picker 'interaction.text)
   (define-keymap! host 'scheme-mode-map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
   (+ 1
@@ -883,6 +1017,9 @@
      (bind-all! host 'editor.text-input text-input-bindings)
      (bind-all! host 'editor.default editor-bindings)
      (bind-all! host 'application.global application-bindings)
+     (bind-all! host 'editor.system system-bindings)
+     (bind-all! host 'interaction.text interaction-text-bindings)
+     (bind-all! host 'interaction.picker interaction-picker-bindings)
      (bind-all! host 'scheme-mode-map scheme-mode-bindings)
      (install-helix-keymaps! host)
      (install-meow-keymaps! host)

@@ -86,10 +86,20 @@ InteractionProviderResult InteractionProviderRegistry::complete(std::string_view
     return found->second(context, query);
 }
 
-std::expected<void, std::string>
-InteractionController::start(InteractionRequest request, CommandContext& context, KeymapId keymap) {
+std::expected<void, std::string> InteractionController::start(InteractionRequest request,
+                                                              CommandContext& context) {
     if (!request.accept_command) {
         return std::unexpected("interaction request has no accept command");
+    }
+    const std::optional<KeymapId> keymap = runtime_->keymaps().find(request.keymap);
+    if (!keymap) {
+        return std::unexpected(std::format("unknown interaction keymap '{}'", request.keymap));
+    }
+    const std::optional<InputStateId> input_state =
+        runtime_->input_states().find(request.input_state);
+    if (!input_state) {
+        return std::unexpected(
+            std::format("unknown interaction input state '{}'", request.input_state));
     }
     if (request.kind == InteractionKind::Picker &&
         (request.provider.empty() || !providers_->contains(request.provider))) {
@@ -111,7 +121,8 @@ InteractionController::start(InteractionRequest request, CommandContext& context
                                              .read_only = false});
         view = runtime_->views().create(
             buffer, TextOffset{static_cast<std::uint32_t>(request.initial_input.size())});
-        runtime_->views().get(view).keymaps().push_back(keymap);
+        runtime_->views().get(view).keymaps().push_back(*keymap);
+        runtime_->views().set_base_input_state(view, *input_state);
         window = runtime_->windows().create(view);
     } catch (const std::exception& exception) {
         if (window.valid()) {

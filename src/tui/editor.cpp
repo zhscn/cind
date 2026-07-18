@@ -25,10 +25,6 @@ namespace cind::tui {
 
 namespace {
 
-bool is_utf8_continuation(char byte) {
-    return (static_cast<unsigned char>(byte) & 0xC0U) == 0x80U;
-}
-
 class EventLoopWakeup {
 public:
     EventLoopWakeup() {
@@ -172,10 +168,7 @@ public:
                                               .read_clipboard = {},
                                               .wake_event_loop = [this] { wakeup_.notify(); }},
                         .init_file = discover_user_init_file()}),
-          search_commands_(application_.search_commands()),
           command_loop_(application_.command_loop()), message_(application_.message()) {
-        register_commands();
-        application_.refresh_default_keymap();
         const DocumentSnapshot snap = session().snapshot();
         const Text& text = snap.content();
         if (message_.empty()) {
@@ -257,136 +250,11 @@ private:
         }
     }
 
-    void register_commands() {
-        auto define = [this](std::string name, auto execute) {
-            application_.runtime().commands().define(
-                std::move(name),
-                [execute = std::move(execute)](CommandContext&,
-                                               const CommandInvocation&) mutable -> CommandResult {
-                    execute();
-                    return CommandCompleted{};
-                });
-        };
-
-        define("search.replace", [this] {
-            command_keep_message_ = true;
-            command_replace();
-        });
-    }
-
     std::optional<TextRange> selection() const { return session().selection(); }
 
     bool dirty() const { return application_.dirty(); }
 
     const std::string& path() const { return application_.path(); }
-
-    // ---- synchronous compatibility prompts -------------------------------
-
-    // Modal one-line prompt on the message line. Enter accepts, Ctrl-G or
-    // Escape cancels. The input supports UTF-8 typing and backspace.
-    std::optional<std::string> prompt(std::string label, std::string initial = {}) {
-        prompt_label_ = std::move(label);
-        prompt_input_ = std::move(initial);
-        prompt_active_ = true;
-        std::optional<std::string> result;
-        while (true) {
-            render();
-            const Key key = wait_key();
-            if (key.kind == KeyKind::Enter) {
-                result = prompt_input_;
-                break;
-            }
-            if (key.kind == KeyKind::Escape || key.kind == KeyKind::Eof ||
-                (key.kind == KeyKind::Ctrl && key.ch == 'g')) {
-                break;
-            }
-            if (key.kind == KeyKind::Char) {
-                prompt_input_ += key.text;
-            } else if (key.kind == KeyKind::Backspace && !prompt_input_.empty()) {
-                std::size_t n = prompt_input_.size() - 1;
-                while (n > 0 && is_utf8_continuation(prompt_input_[n])) {
-                    --n;
-                }
-                prompt_input_.resize(n);
-            }
-        }
-        prompt_active_ = false;
-        return result;
-    }
-
-    // Single-key modal question; returns the lowercased key, or 0 on cancel.
-    char ask(std::string label) {
-        prompt_label_ = std::move(label);
-        prompt_input_.clear();
-        prompt_active_ = true;
-        char answer = 0;
-        while (true) {
-            render();
-            const Key key = wait_key();
-            if (key.kind == KeyKind::Escape || key.kind == KeyKind::Eof ||
-                (key.kind == KeyKind::Ctrl && key.ch == 'g')) {
-                break;
-            }
-            if (key.kind == KeyKind::Char && key.text.size() == 1) {
-                answer = static_cast<char>(std::tolower(static_cast<unsigned char>(key.text[0])));
-                break;
-            }
-        }
-        prompt_active_ = false;
-        return answer;
-    }
-
-    // ---- search / goto ----------------------------------------------------
-
-    void command_replace() {
-        std::optional<std::string> from =
-            prompt("replace: ", std::string(search_commands_.query()));
-        if (!from || from->empty()) {
-            message_ = "cancelled";
-            return;
-        }
-        search_commands_.set_query(*from);
-        std::optional<std::string> to = prompt(std::format("replace \"{}\" with: ", *from));
-        if (!to) {
-            message_ = "cancelled";
-            return;
-        }
-        // Walk matches from the caret, asking per match: y replace, n skip,
-        // a all remaining, q stop.
-        int replaced = 0;
-        bool all = false;
-        while (true) {
-            const DocumentSnapshot snap_keepalive = session().snapshot();
-            const Text& text = snap_keepalive.content();
-            const std::string hay = text.to_string();
-            const std::size_t at = hay.find(*from, session().caret().value);
-            if (at == std::string::npos) {
-                break;
-            }
-            session().set_caret(TextOffset{static_cast<std::uint32_t>(at)});
-            char answer = 'y';
-            if (!all) {
-                render();
-                answer = ask(std::format("replace this match? (y/n/a/q) "));
-                if (answer == 'q' || answer == 0) {
-                    break;
-                }
-                if (answer == 'a') {
-                    all = true;
-                }
-            }
-            if (all || answer == 'y') {
-                const auto match_start = static_cast<std::uint32_t>(at);
-                session().erase(make_range(match_start,
-                                           match_start + static_cast<std::uint32_t>(from->size())));
-                session().insert_text(*to);
-                ++replaced;
-            } else {
-                session().set_caret(TextOffset{static_cast<std::uint32_t>(at + from->size())});
-            }
-        }
-        message_ = std::format("replaced {} occurrence{}", replaced, replaced == 1 ? "" : "s");
-    }
 
     // ---- saving / quitting --------------------------------------------------
 
@@ -428,11 +296,10 @@ private:
         const std::size_t interaction_caret = application_.interaction().input_caret().value;
         const bool picker_active =
             interaction != nullptr && interaction->request.kind == InteractionKind::Picker;
-        const bool any_prompt = interaction != nullptr || prompt_active_;
+        const bool any_prompt = interaction != nullptr;
         const std::string echo_text =
             picker_active      ? std::string()
             : interaction      ? interaction->request.prompt + interaction_input
-            : prompt_active_   ? prompt_label_ + prompt_input_
             : message_.empty() ? "C-x C-s save  C-x C-f open  C-x b buffer  C-x C-c quit  "
                                  "C-s search  M-x commands  C-h b help"
                                : message_;
@@ -682,7 +549,6 @@ private:
     Terminal term_;
     EventLoopWakeup wakeup_;
     EditorApplication application_;
-    SearchCommands& search_commands_;
     CommandLoop& command_loop_;
     std::string& message_;
     ui::LineSigns signs_;
@@ -691,9 +557,6 @@ private:
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
     ui::ListViewport popup_viewport_;
     bool command_keep_message_ = false;
-    bool prompt_active_ = false;
-    std::string prompt_label_;
-    std::string prompt_input_;
 };
 
 } // namespace

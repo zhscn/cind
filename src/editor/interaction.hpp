@@ -88,8 +88,7 @@ public:
     InteractionState* state() { return state_ ? &*state_ : nullptr; }
     const InteractionState* state() const { return state_ ? &*state_ : nullptr; }
 
-    std::expected<void, std::string> start(InteractionRequest request, CommandContext& context,
-                                           KeymapId keymap);
+    std::expected<void, std::string> start(InteractionRequest request, CommandContext& context);
     std::string input_text() const;
     TextOffset input_caret() const;
     RevisionId input_revision() const;

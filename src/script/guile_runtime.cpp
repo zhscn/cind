@@ -2409,6 +2409,48 @@ SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end
     return SCM_BOOL_F;
 }
 
+// The low-level text search primitive operates on UTF-8 bytes so its ranges
+// share the same coordinate space as Buffer, View, and edit transactions.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM find_buffer_text(SCM host_object, SCM buffer_value, SCM query_value, SCM start_value,
+                     SCM direction_value) {
+    if (!scm_is_string(query_value)) {
+        scm_wrong_type_arg_msg("find-buffer-text", 3, query_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "find-buffer-text");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "find-buffer-text", 2);
+        const TextOffset start = text_offset_from_scheme(start_value, "find-buffer-text", 4);
+        const std::string query = scheme_string(query_value);
+        const std::string text =
+            host.runtime->buffers().get(buffer).snapshot().content().to_string();
+        if (start.value > text.size()) {
+            scm_out_of_range("find-buffer-text", start_value);
+        }
+
+        std::size_t found = std::string::npos;
+        if (symbol_is(direction_value, "forward")) {
+            found = text.find(query, start.value);
+        } else if (symbol_is(direction_value, "backward")) {
+            found = text.rfind(query, start.value);
+        } else {
+            scm_wrong_type_arg_msg("find-buffer-text", 5, direction_value, "'forward or 'backward");
+        }
+        if (found == std::string::npos) {
+            return SCM_BOOL_F;
+        }
+        return text_range_value(
+            TextRange{TextOffset{static_cast<std::uint32_t>(found)},
+                      TextOffset{static_cast<std::uint32_t>(found + query.size())}});
+    } catch (const std::exception& exception) {
+        raise_host_error("find-buffer-text", exception.what());
+    } catch (...) {
+        scm_misc_error("find-buffer-text", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -3357,6 +3399,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(selection_texts));
     (void)scm_c_define_gsubr("buffer-substring", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_substring));
+    (void)scm_c_define_gsubr("find-buffer-text", 5, 0, 0,
+                             reinterpret_cast<scm_t_subr>(find_buffer_text));
     (void)scm_c_define_gsubr("erase-range!", 4, 0, 0, reinterpret_cast<scm_t_subr>(erase_range));
     (void)scm_c_define_gsubr("insert-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(insert_text));
     (void)scm_c_define_gsubr("soft-kill-range", 2, 0, 0,
@@ -3434,14 +3478,14 @@ void initialize_host_module(void*) {
         "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
         "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "erase-range!", "insert-text!", "soft-kill-range",
-        "set-view-caret!", "reset-preferred-column!", "thing-selection", "motion-selection",
-        "expand-node-selection", "write-clipboard!", "read-clipboard", "display-buffer!",
-        "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!", "set-message!",
-        "ensure-project-index!", "open-file!", "start-project-search!", "set-buffer-resource!",
-        "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
-        "delete-window!", "delete-other-windows!", "select-other-window!", "request-redraw!",
-        nullptr);
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
+        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
+        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
+        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
+        "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -3753,14 +3797,16 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
                                .invocation = {.arguments = std::move(arguments), .prefix = {}}};
     }
     if (symbol_is(tag, "interaction")) {
-        if (size != 9 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||
-            !scm_is_string(scm_c_vector_ref(value, 2)) ||
-            !scm_is_string(scm_c_vector_ref(value, 3)) ||
+        if (size != 11 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||
+            !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 2))) ||
+            !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 3))) ||
             !scm_is_string(scm_c_vector_ref(value, 4)) ||
             !scm_is_string(scm_c_vector_ref(value, 5)) ||
-            !scheme_boolean(scm_c_vector_ref(value, 6)) ||
+            !scm_is_string(scm_c_vector_ref(value, 6)) ||
             !scm_is_string(scm_c_vector_ref(value, 7)) ||
-            !scm_is_vector(scm_c_vector_ref(value, 8))) {
+            !scheme_boolean(scm_c_vector_ref(value, 8)) ||
+            !scm_is_string(scm_c_vector_ref(value, 9)) ||
+            !scm_is_vector(scm_c_vector_ref(value, 10))) {
             return std::unexpected(CommandError{"Guile interaction result is malformed"});
         }
         const SCM kind_value = scm_c_vector_ref(value, 1);
@@ -3773,21 +3819,24 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
             return std::unexpected(CommandError{"Guile interaction kind is unknown"});
         }
         std::vector<SettingValue> arguments =
-            arguments_from_scheme(scm_c_vector_ref(value, 8), "command-interaction");
-        const std::string accept_name = scheme_string(scm_c_vector_ref(value, 7));
+            arguments_from_scheme(scm_c_vector_ref(value, 10), "command-interaction");
+        const std::string accept_name = scheme_string(scm_c_vector_ref(value, 9));
         const std::optional<CommandId> accept = context.runtime().commands().find(accept_name);
         if (!accept) {
             return std::unexpected(
                 CommandError{std::format("unknown accept command '{}'", accept_name)});
         }
-        return InteractionRequest{.kind = kind,
-                                  .prompt = scheme_string(scm_c_vector_ref(value, 2)),
-                                  .initial_input = scheme_string(scm_c_vector_ref(value, 3)),
-                                  .history = scheme_string(scm_c_vector_ref(value, 4)),
-                                  .provider = scheme_string(scm_c_vector_ref(value, 5)),
-                                  .allow_custom_input = scheme_true(scm_c_vector_ref(value, 6)),
-                                  .accept_command = *accept,
-                                  .arguments = std::move(arguments)};
+        return InteractionRequest{
+            .kind = kind,
+            .keymap = scheme_name(scm_c_vector_ref(value, 2), "command-interaction", 2),
+            .input_state = scheme_name(scm_c_vector_ref(value, 3), "command-interaction", 3),
+            .prompt = scheme_string(scm_c_vector_ref(value, 4)),
+            .initial_input = scheme_string(scm_c_vector_ref(value, 5)),
+            .history = scheme_string(scm_c_vector_ref(value, 6)),
+            .provider = scheme_string(scm_c_vector_ref(value, 7)),
+            .allow_custom_input = scheme_true(scm_c_vector_ref(value, 8)),
+            .accept_command = *accept,
+            .arguments = std::move(arguments)};
     }
     return std::unexpected(CommandError{"Guile command returned an unknown result kind"});
 }

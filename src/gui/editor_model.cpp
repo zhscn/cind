@@ -458,6 +458,8 @@ EditorStateSnapshot EditorModel::inspect() {
             .origin_view_slot = interaction->origin.view.slot,
             .origin_view_generation = interaction->origin.view.generation,
             .kind = interaction->request.kind == InteractionKind::Picker ? "picker" : "text",
+            .keymap = interaction->request.keymap,
+            .input_state = interaction->request.input_state,
             .prompt = interaction->request.prompt,
             .input = input,
             .input_cursor = application_.interaction().input_caret().value,

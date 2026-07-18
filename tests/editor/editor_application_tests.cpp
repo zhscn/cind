@@ -187,19 +187,47 @@ TEST_CASE("typed character input reindents every selection head in one transacti
     CHECK_FALSE(application.session().undo());
 }
 
-TEST_CASE("frontend commands join the shared default keymap") {
+TEST_CASE("query replace is a shared scripted command") {
     EditorApplication application = make_application("sample.cc", "text");
-    bool called = false;
-    application.runtime().commands().define(
-        "search.replace", [&](CommandContext&, const CommandInvocation&) -> CommandResult {
-            called = true;
-            return CommandCompleted{};
-        });
-    application.refresh_default_keymap();
 
     send_keys(application, "M-%");
-    CHECK(called);
     CHECK(application.last_command() == "search.replace");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Replace: ");
+    CHECK(application.runtime()
+              .commands()
+              .definition(require_command(application.runtime(), "search.replace"))
+              .source == "scheme:(cind core)");
+}
+
+TEST_CASE("query replace composes minibuffer and single-key input policy") {
+    EditorApplication application = make_application("sample.cc", "é two é");
+
+    send_keys(application, "M-%");
+    application.insert_text("é");
+    send_keys(application, "RET");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Replace é with: ");
+
+    application.insert_text("e");
+    send_keys(application, "RET");
+    CHECK_FALSE(application.interaction().active());
+    REQUIRE(application.session().active_selection().has_value());
+    const ViewSelection first_match = *application.session().active_selection();
+    CHECK(first_match.ranges[first_match.primary].ordered() ==
+          TextRange{TextOffset{0}, TextOffset{2}});
+
+    send_keys(application, "y");
+    CHECK(application.session().snapshot().content() == "e two é");
+    REQUIRE(application.session().active_selection().has_value());
+    const ViewSelection second_match = *application.session().active_selection();
+    CHECK(second_match.ranges[second_match.primary].ordered() ==
+          TextRange{TextOffset{6}, TextOffset{8}});
+
+    send_keys(application, "!");
+    CHECK(application.session().snapshot().content() == "e two e");
+    CHECK_FALSE(application.session().active_selection().has_value());
+    CHECK(application.message() == "replaced 2 occurrences");
 }
 
 TEST_CASE("application modes join the scripted core hierarchy") {

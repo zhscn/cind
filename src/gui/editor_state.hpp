@@ -38,6 +38,8 @@ struct InteractionStateSnapshot {
     std::uint32_t origin_view_slot = 0;
     std::uint32_t origin_view_generation = 0;
     std::string kind;
+    std::string keymap;
+    std::string input_state;
     std::string prompt;
     std::string input;
     std::size_t input_cursor = 0;

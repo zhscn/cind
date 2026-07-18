@@ -312,9 +312,6 @@ private:
     CommandLoop command_loop_;
     KeymapId keymap_;
     KeymapId application_keymap_;
-    KeymapId system_keymap_;
-    KeymapId interaction_text_keymap_;
-    KeymapId interaction_picker_keymap_;
     ModeId fundamental_mode_;
     ModeId special_mode_;
     ModeId location_list_mode_;

@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <format>
-#include <initializer_list>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -1542,16 +1541,14 @@ void EditorApplication::register_input_states() {
         throw std::runtime_error(
             std::format("Guile input state policy failed: {}", installed.error()));
     }
-    const std::optional<InputStateId> state = runtime_.input_states().find("emacs");
-    if (!state) {
-        throw std::logic_error("Guile input state policy did not define emacs");
+    const std::optional<InputStrategyId> strategy = runtime_.input_strategies().default_strategy();
+    if (!strategy) {
+        throw std::logic_error("Guile input policy did not define a default input strategy");
     }
-    const std::optional<InputStrategyId> strategy = runtime_.input_strategies().find("emacs");
-    if (!strategy || runtime_.input_strategies().default_strategy() != strategy ||
-        runtime_.input_strategies().state(*strategy, InteractionClass::Editing) != state ||
-        runtime_.input_strategies().state(*strategy, InteractionClass::Interface) != state) {
-        throw std::logic_error("Guile input policy did not install the default Emacs strategy");
-    }
+    (void)runtime_.input_states().definition(
+        runtime_.input_strategies().state(*strategy, InteractionClass::Editing));
+    (void)runtime_.input_states().definition(
+        runtime_.input_strategies().state(*strategy, InteractionClass::Interface));
 }
 
 void EditorApplication::register_modes() {
@@ -2046,47 +2043,17 @@ void EditorApplication::register_interaction_providers() {
 }
 
 void EditorApplication::register_keymaps() {
-    system_keymap_ = runtime_.keymaps().define("editor.system");
-    interaction_text_keymap_ = runtime_.keymaps().define("interaction.text");
-    interaction_picker_keymap_ = runtime_.keymaps().define("interaction.picker");
     refresh_default_keymap();
-    const std::optional<KeymapId> text_input_keymap = runtime_.keymaps().find("editor.text-input");
     const std::optional<KeymapId> editor_keymap = runtime_.keymaps().find("editor.default");
     const std::optional<KeymapId> application_keymap =
         runtime_.keymaps().find("application.global");
-    if (!text_input_keymap || !editor_keymap || !application_keymap) {
+    const std::optional<KeymapId> system_keymap = runtime_.keymaps().find("editor.system");
+    if (!editor_keymap || !application_keymap || !system_keymap) {
         throw std::logic_error("Guile keymap policy did not define its root keymaps");
     }
-    runtime_.keymaps().set_parent(interaction_text_keymap_, text_input_keymap);
-    runtime_.keymaps().set_parent(interaction_picker_keymap_, interaction_text_keymap_);
     keymap_ = *editor_keymap;
     application_keymap_ = *application_keymap;
-
-    const auto command = [this](std::string_view name) {
-        const std::optional<CommandId> id = runtime_.commands().find(name);
-        if (!id) {
-            throw std::logic_error(std::format("missing built-in command '{}'", name));
-        }
-        return *id;
-    };
-    runtime_.keymaps().bind(system_keymap_, "C-g", command("keyboard.quit"));
-    for (const auto& [keys, name] :
-         std::initializer_list<std::pair<std::string_view, std::string_view>>{
-             {"RET", "interaction.submit"},
-             {"ESC", "keyboard.quit"},
-             {"M-p", "interaction.previous-history"},
-             {"M-n", "interaction.next-history"}}) {
-        runtime_.keymaps().bind(interaction_text_keymap_, keys, command(name));
-    }
-    for (std::string_view keys : {"C-n", "Down", "TAB"}) {
-        runtime_.keymaps().bind(interaction_picker_keymap_, keys,
-                                command("interaction.next-candidate"));
-    }
-    for (std::string_view keys : {"C-p", "Up"}) {
-        runtime_.keymaps().bind(interaction_picker_keymap_, keys,
-                                command("interaction.previous-candidate"));
-    }
-    command_loop_.set_override_keymaps({system_keymap_});
+    command_loop_.set_override_keymaps({*system_keymap});
 }
 
 std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_id) const {
@@ -2177,24 +2144,12 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
     }
     if (result.interaction) {
         CommandContext context = command_context();
-        const KeymapId interaction_keymap = result.interaction->kind == InteractionKind::Picker
-                                                ? interaction_picker_keymap_
-                                                : interaction_text_keymap_;
         std::expected<void, std::string> started =
-            interaction_.start(std::move(*result.interaction), context, interaction_keymap);
+            interaction_.start(std::move(*result.interaction), context);
         if (!started) {
             message_ = started.error();
         } else {
             const InteractionState& state = *interaction_.state();
-            const std::optional<InputStateId> minibuffer_state =
-                runtime_.input_states().find("emacs");
-            if (!minibuffer_state) {
-                interaction_session_.reset();
-                (void)interaction_.cancel();
-                message_ = "minibuffer input state is unavailable";
-                return result.consumed;
-            }
-            runtime_.views().set_base_input_state(state.view, *minibuffer_state);
             interaction_session_ =
                 std::make_unique<EditSession>(runtime_, state.buffer, state.view, CppIndentStyle{});
             message_.clear();

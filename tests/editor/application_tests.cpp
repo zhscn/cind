@@ -56,6 +56,18 @@ void insert_interaction_text(EditorRuntime& runtime, const InteractionController
     (void)transaction.commit();
 }
 
+InputStateId define_test_input_state(EditorRuntime& runtime, std::string name) {
+    return runtime.input_states().define({.name = std::move(name),
+                                          .keymaps = {},
+                                          .text_input = TextInputPolicy::Accept,
+                                          .cursor = CursorShape::Beam,
+                                          .indicator = {},
+                                          .handler = {},
+                                          .position_hints = {},
+                                          .on_enter = {},
+                                          .on_exit = {}});
+}
+
 } // namespace
 
 TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
@@ -1251,6 +1263,8 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const CommandId start = runtime.commands().define(
         "prompt.start", [accept](CommandContext&, const CommandInvocation&) -> CommandResult {
             return InteractionRequest{.kind = InteractionKind::Text,
+                                      .keymap = "interaction-test",
+                                      .input_state = "interaction-input-test",
                                       .prompt = "find: ",
                                       .initial_input = "needle",
                                       .history = "search",
@@ -1270,8 +1284,10 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const std::size_t initial_buffers = runtime.buffers().all().size();
     const std::size_t initial_windows = runtime.windows().all().size();
     const KeymapId interaction_keymap = runtime.keymaps().define("interaction-test");
+    const InputStateId interaction_input =
+        define_test_input_state(runtime, "interaction-input-test");
     InteractionController interaction(runtime, runtime.interaction_providers());
-    REQUIRE(interaction.start(*started.interaction, context, interaction_keymap).has_value());
+    REQUIRE(interaction.start(*started.interaction, context).has_value());
     REQUIRE(interaction.state() != nullptr);
     const BufferId minibuffer = interaction.state()->buffer;
     const ViewId minibuffer_view = interaction.state()->view;
@@ -1281,6 +1297,9 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     CHECK(runtime.windows().all().size() == initial_windows + 1);
     CHECK(interaction.state()->origin ==
           CommandTarget{.window = window, .buffer = buffer, .view = view});
+    CHECK(runtime.views().get(minibuffer_view).keymaps() ==
+          std::vector<KeymapId>{interaction_keymap});
+    CHECK(runtime.views().get(minibuffer_view).input_states().top() == interaction_input);
     CHECK(interaction.input_text() == "needle");
     CHECK(interaction.input_caret() == TextOffset{6});
 
@@ -1319,10 +1338,13 @@ TEST_CASE("interaction history preserves the current draft while navigating") {
         "history.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
             return CommandCompleted{};
         });
-    const KeymapId keymap = runtime.keymaps().define("history-interaction-test");
+    (void)runtime.keymaps().define("history-interaction-test");
+    (void)define_test_input_state(runtime, "history-interaction-input-test");
     InteractionController interaction(runtime, runtime.interaction_providers());
     const auto request = [&](std::string initial_input) {
         return InteractionRequest{.kind = InteractionKind::Text,
+                                  .keymap = "history-interaction-test",
+                                  .input_state = "history-interaction-input-test",
                                   .prompt = "History: ",
                                   .initial_input = std::move(initial_input),
                                   .history = "commands",
@@ -1332,11 +1354,11 @@ TEST_CASE("interaction history preserves the current draft while navigating") {
                                   .arguments = {}};
     };
 
-    REQUIRE(interaction.start(request("first"), context, keymap).has_value());
+    REQUIRE(interaction.start(request("first"), context).has_value());
     REQUIRE(interaction.submit().has_value());
-    REQUIRE(interaction.start(request("second"), context, keymap).has_value());
+    REQUIRE(interaction.start(request("second"), context).has_value());
     REQUIRE(interaction.submit().has_value());
-    REQUIRE(interaction.start(request("draft"), context, keymap).has_value());
+    REQUIRE(interaction.start(request("draft"), context).has_value());
 
     CHECK(interaction.previous_history());
     CHECK(interaction.input_text() == "second");
@@ -1392,11 +1414,14 @@ TEST_CASE("async interaction providers discard cancelled generations") {
 
     WakeSignal wake;
     AsyncRuntime async([&wake] { wake.notify(); });
-    const KeymapId interaction_keymap = runtime.keymaps().define("async-interaction-test");
+    (void)runtime.keymaps().define("async-interaction-test");
+    (void)define_test_input_state(runtime, "async-interaction-input-test");
     InteractionController interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
+                        .keymap = "async-interaction-test",
+                        .input_state = "async-interaction-input-test",
                         .prompt = "async: ",
                         .initial_input = "a",
                         .history = {},
@@ -1404,7 +1429,7 @@ TEST_CASE("async interaction providers discard cancelled generations") {
                         .allow_custom_input = false,
                         .accept_command = accept,
                         .arguments = {}},
-                       context, interaction_keymap)
+                       context)
                 .has_value());
     REQUIRE(interaction.state() != nullptr);
     CHECK(interaction.state()->loading);
@@ -1464,11 +1489,14 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
 
     WakeSignal wake;
     AsyncRuntime async([&wake] { wake.notify(); });
-    const KeymapId interaction_keymap = runtime.keymaps().define("retained-interaction-test");
+    (void)runtime.keymaps().define("retained-interaction-test");
+    (void)define_test_input_state(runtime, "retained-interaction-input-test");
     InteractionController interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
+                        .keymap = "retained-interaction-test",
+                        .input_state = "retained-interaction-input-test",
                         .prompt = "async: ",
                         .initial_input = {},
                         .history = {},
@@ -1476,7 +1504,7 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
                         .allow_custom_input = false,
                         .accept_command = accept,
                         .arguments = {}},
-                       context, interaction_keymap)
+                       context)
                 .has_value());
     REQUIRE(interaction.state() != nullptr);
     REQUIRE(interaction.state()->candidates.size() == 1);

@@ -395,18 +395,38 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const CommandId save = define_command(runtime, "file.save");
     const CommandId replace = define_command(runtime, "search.replace");
     const CommandId quit = define_command(runtime, "application.quit");
+    const CommandId keyboard_quit = define_command(runtime, "keyboard.quit");
+    const CommandId interaction_submit = define_command(runtime, "interaction.submit");
+    const CommandId interaction_next = define_command(runtime, "interaction.next-candidate");
+    const CommandId interaction_previous =
+        define_command(runtime, "interaction.previous-candidate");
+    const CommandId history_previous = define_command(runtime, "interaction.previous-history");
+    const CommandId history_next = define_command(runtime, "interaction.next-history");
 
     GuileRuntime guile(runtime);
     const std::expected<std::size_t, std::string> installed = guile.install_default_keymaps();
 
     REQUIRE(installed.has_value());
-    CHECK(*installed == 4);
+    CHECK(*installed == 15);
     const KeymapId editor = require_keymap(runtime, "editor.default");
     const KeymapId application = require_keymap(runtime, "application.global");
     const KeymapId control_x = require_keymap(runtime, "editor.control-x");
+    const KeymapId system = require_keymap(runtime, "editor.system");
+    const KeymapId interaction_text = require_keymap(runtime, "interaction.text");
+    const KeymapId interaction_picker = require_keymap(runtime, "interaction.picker");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(resolve_command(runtime, editor, "M-%") == replace);
     CHECK(resolve_command(runtime, application, "C-x C-c") == quit);
+    CHECK(resolve_command(runtime, system, "C-g") == keyboard_quit);
+    CHECK(resolve_command(runtime, interaction_text, "RET") == interaction_submit);
+    CHECK(resolve_command(runtime, interaction_text, "ESC") == keyboard_quit);
+    CHECK(resolve_command(runtime, interaction_text, "M-p") == history_previous);
+    CHECK(resolve_command(runtime, interaction_text, "M-n") == history_next);
+    CHECK(resolve_command(runtime, interaction_picker, "C-n") == interaction_next);
+    CHECK(resolve_command(runtime, interaction_picker, "C-p") == interaction_previous);
+    CHECK(runtime.keymaps().parent(interaction_text) ==
+          runtime.keymaps().find("editor.text-input"));
+    CHECK(runtime.keymaps().parent(interaction_picker) == interaction_text);
     const std::vector<KeymapCompletion> root = runtime.keymaps().completions(editor, {});
     const auto prefix = std::ranges::find_if(root, [](const KeymapCompletion& completion) {
         return format_key_stroke(completion.key) == "C-x";
@@ -898,7 +918,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 155);
+    CHECK(*installed == 158);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1006,6 +1026,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const auto* request = std::get_if<InteractionRequest>(&*palette_result);
     REQUIRE(request != nullptr);
     CHECK(request->kind == InteractionKind::Picker);
+    CHECK(request->keymap == "interaction.picker");
+    CHECK(request->input_state == "emacs");
     CHECK(request->prompt == "Command: ");
     CHECK(request->provider == "commands");
     CHECK(runtime.commands().definition(request->accept_command).name == "command.palette.accept");
@@ -1016,6 +1038,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const auto* search_prompt = std::get_if<InteractionRequest>(&*search_prompt_result);
     REQUIRE(search_prompt != nullptr);
     CHECK(search_prompt->kind == InteractionKind::Text);
+    CHECK(search_prompt->keymap == "interaction.text");
+    CHECK(search_prompt->input_state == "emacs");
     CHECK(search_prompt->prompt == "search: ");
     CHECK(search_prompt->history == "search");
     CHECK(search_prompt->accept_command == native_search_accept);
@@ -1350,7 +1374,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 155);
+    CHECK(snapshot.scripted_commands == 158);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

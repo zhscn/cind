@@ -308,6 +308,10 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
                           interaction.origin_view_slot, interaction.origin_view_generation);
     output += ",\"kind\":";
     append_json_string(output, interaction.kind);
+    output += ",\"keymap\":";
+    append_json_string(output, interaction.keymap);
+    output += ",\"input_state\":";
+    append_json_string(output, interaction.input_state);
     output += ",\"prompt\":";
     append_json_string(output, interaction.prompt);
     output += ",\"input\":";
@@ -1326,9 +1330,7 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.editor.input_focus != expected_focus) {
         violations.emplace_back("editor input focus does not match interaction state");
     }
-    const std::string_view expected_cursor_shape =
-        frame.editor.interaction.active ? std::string_view("beam")
-                                        : std::string_view(frame.editor.input_cursor_shape);
+    const std::string_view expected_cursor_shape = frame.editor.input_cursor_shape;
     if (cursor_shape_name(frame.scene.cursor_shape) != expected_cursor_shape) {
         violations.emplace_back("scene cursor shape does not match active input policy");
     }
@@ -1356,6 +1358,15 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
          frame.editor.interaction.origin_window_generation !=
              frame.editor.active_window_generation)) {
         violations.emplace_back("minibuffer origin does not match the active document window");
+    }
+    if (frame.editor.interaction.active &&
+        !std::ranges::contains(frame.editor.command_loop.keymaps,
+                               frame.editor.interaction.keymap)) {
+        violations.emplace_back("interaction keymap is absent from the command layer stack");
+    }
+    if (frame.editor.interaction.active &&
+        frame.editor.input_state != frame.editor.interaction.input_state) {
+        violations.emplace_back("interaction input state does not match the active view");
     }
     if (frame.editor.command_loop.layers.empty() ||
         frame.editor.command_loop.layers.back().scope != "global") {
@@ -2548,6 +2559,8 @@ std::string inspection_tree_text(const FrameInspection& frame) {
     }
     output << "    interaction=" << (frame.editor.interaction.active ? "active" : "inactive")
            << " kind=" << printable(frame.editor.interaction.kind)
+           << " keymap=" << printable(frame.editor.interaction.keymap)
+           << " input-state=" << printable(frame.editor.interaction.input_state)
            << " provider=" << printable(frame.editor.interaction.provider)
            << " input-cursor=" << frame.editor.interaction.input_cursor
            << " history=" << frame.editor.interaction.history_entries;

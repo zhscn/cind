@@ -133,8 +133,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     scene.rows = input.rows;
     scene.cols = input.cols;
     scene.grid_offset_rows = -viewport.top_line_offset;
-    scene.cursor_shape =
-        input.echo_cursor_column || input.popup_input ? CursorShape::Beam : input.cursor_shape;
+    scene.cursor_shape = input.cursor_shape;
     if (caret_position.line >= viewport.top_line) {
         const std::uint32_t row = caret_position.line - viewport.top_line;
         if (row < static_cast<std::uint32_t>(text_rows)) {

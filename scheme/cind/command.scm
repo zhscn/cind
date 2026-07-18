@@ -56,10 +56,12 @@
 (define (command-dispatch name . arguments)
   (vector 'dispatch name (list->vector arguments)))
 
-(define (interaction kind prompt initial-input history provider
+(define (interaction kind keymap input-state prompt initial-input history provider
                      allow-custom-input? accept-command . arguments)
   (vector 'interaction
           kind
+          keymap
+          input-state
           prompt
           initial-input
           history

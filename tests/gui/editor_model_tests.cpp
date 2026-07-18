@@ -134,7 +134,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
               "cind toy-modal", "cind meow", "cind vim", "cind helix", "cind structural",
               "cind minibuffer", "cind development", "cind ares", "cind introspect", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 155);
+    CHECK(state.scripting.scripted_commands == 158);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 6);
     CHECK(state.scripting.binding_revision == 1);
@@ -335,6 +335,8 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
     CHECK(model.handle_key(KeyStroke::character_key(U's', KeyModifier::Control), 10));
     EditorStateSnapshot state = model.inspect();
     CHECK(state.interaction.active);
+    CHECK(state.interaction.keymap == "interaction.text");
+    CHECK(state.interaction.input_state == "emacs");
     CHECK(state.interaction.prompt == "search: ");
     CHECK(state.input_focus == "minibuffer");
     CHECK(state.interaction.origin_window_slot == state.active_window_slot);

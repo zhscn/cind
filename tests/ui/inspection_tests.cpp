@@ -119,6 +119,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .origin_view_slot = 0,
              .origin_view_generation = 1,
              .kind = "picker",
+             .keymap = "interaction.picker",
+             .input_state = "emacs",
              .prompt = "Command: ",
              .input = {},
              .input_cursor = 0,
@@ -507,6 +509,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);
     CHECK(interaction.payload.find("\"provider\":\"commands\"") != std::string::npos);
+    CHECK(interaction.payload.find("\"keymap\":\"interaction.picker\"") != std::string::npos);
+    CHECK(interaction.payload.find("\"input_state\":\"emacs\"") != std::string::npos);
     CHECK(interaction.payload.find("\"input_cursor\":0") != std::string::npos);
     CHECK(interaction.payload.find("\"history_entries\":0") != std::string::npos);
     CHECK(interaction.payload.find("\"history_index\":null") != std::string::npos);
