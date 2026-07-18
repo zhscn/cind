@@ -249,6 +249,18 @@ TEST_CASE("interaction and position command policy is owned by Guile") {
     CHECK(application.message() == "line 1/2, column 3, byte 2/4");
 }
 
+TEST_CASE("location-list command policy is owned by Guile") {
+    EditorApplication application = make_application("sample.cc", "abc\n");
+    constexpr std::array<std::string_view, 5> commands{
+        "location.visit", "location.next", "location.previous", "location.next-error",
+        "location.previous-error"};
+    for (const std::string_view name : commands) {
+        const CommandRegistry::Definition& definition = application.runtime().commands().definition(
+            require_command(application.runtime(), name));
+        CHECK(definition.source == "scheme:(cind core)");
+    }
+}
+
 TEST_CASE("query replace composes minibuffer and single-key input policy") {
     EditorApplication application = make_application("sample.cc", "é two é");
 

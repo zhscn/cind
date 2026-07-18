@@ -402,18 +402,22 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
         define_command(runtime, "interaction.previous-candidate");
     const CommandId history_previous = define_command(runtime, "interaction.previous-history");
     const CommandId history_next = define_command(runtime, "interaction.next-history");
+    const CommandId location_visit = define_command(runtime, "location.visit");
+    const CommandId location_next = define_command(runtime, "location.next");
+    const CommandId location_previous = define_command(runtime, "location.previous");
 
     GuileRuntime guile(runtime);
     const std::expected<std::size_t, std::string> installed = guile.install_default_keymaps();
 
     REQUIRE(installed.has_value());
-    CHECK(*installed == 15);
+    CHECK(*installed == 18);
     const KeymapId editor = require_keymap(runtime, "editor.default");
     const KeymapId application = require_keymap(runtime, "application.global");
     const KeymapId control_x = require_keymap(runtime, "editor.control-x");
     const KeymapId system = require_keymap(runtime, "editor.system");
     const KeymapId interaction_text = require_keymap(runtime, "interaction.text");
     const KeymapId interaction_picker = require_keymap(runtime, "interaction.picker");
+    const KeymapId location_list = require_keymap(runtime, "cind.location-list.map");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(resolve_command(runtime, editor, "M-%") == replace);
     CHECK(resolve_command(runtime, application, "C-x C-c") == quit);
@@ -424,6 +428,9 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(resolve_command(runtime, interaction_text, "M-n") == history_next);
     CHECK(resolve_command(runtime, interaction_picker, "C-n") == interaction_next);
     CHECK(resolve_command(runtime, interaction_picker, "C-p") == interaction_previous);
+    CHECK(resolve_command(runtime, location_list, "RET") == location_visit);
+    CHECK(resolve_command(runtime, location_list, "M-n") == location_next);
+    CHECK(resolve_command(runtime, location_list, "M-p") == location_previous);
     CHECK(runtime.keymaps().parent(interaction_text) ==
           runtime.keymaps().find("editor.text-input"));
     CHECK(runtime.keymaps().parent(interaction_picker) == interaction_text);
@@ -581,16 +588,18 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 4);
-    CHECK(*second == 4);
+    CHECK(*first == 5);
+    CHECK(*second == 5);
     const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
     const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
     const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
     const ModeId scheme = runtime.modes().find("scheme-mode").value_or(ModeId{});
+    const ModeId location_list = runtime.modes().find("cind.location-list").value_or(ModeId{});
     REQUIRE(fundamental);
     REQUIRE(prog);
     REQUIRE(special);
     REQUIRE(scheme);
+    REQUIRE(location_list);
     CHECK(runtime.modes().definition(prog).parent == fundamental);
     CHECK(runtime.modes().definition(prog).things ==
           std::vector<ModeThingBinding>{{.name = "word", .definition = "cind.word"},
@@ -604,12 +613,16 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK(runtime.modes().definition(scheme).parent == prog);
     CHECK(runtime.modes().definition(scheme).keymaps ==
           std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
+    CHECK(runtime.modes().definition(location_list).parent == special);
+    CHECK_FALSE(runtime.modes().definition(location_list).language.has_value());
+    CHECK(runtime.modes().definition(location_list).keymaps ==
+          std::vector<KeymapId>{require_keymap(runtime, "cind.location-list.map")});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
-    CHECK(guile.snapshot().scripted_modes == 4);
+    CHECK(guile.snapshot().scripted_modes == 5);
 }
 
 TEST_CASE("bundled Guile policy defines file modes and project discovery providers") {
@@ -742,6 +755,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .cancel_interaction = {},
          .cancel_pending_input = {},
          .view_position = {},
+         .location_navigation = {},
+         .set_location_navigation = {},
+         .position_buffer_view = {},
+         .open_file_at = {},
          .set_message = [&](std::string value) { message = std::move(value); },
          .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
@@ -935,7 +952,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 185);
+    CHECK(*installed == 190);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1415,7 +1432,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 185);
+    CHECK(snapshot.scripted_commands == 190);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

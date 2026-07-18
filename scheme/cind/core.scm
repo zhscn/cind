@@ -560,6 +560,145 @@
       "/" (number->string (vector-ref position 4))))
     (command-completed/preserve)))
 
+(define (location-list-context? host context)
+  (eq? (vector-ref (buffer-mode-summary host (context-buffer context)) 0)
+       'cind.location-list))
+
+(define (location-navigation-available? host context)
+  (or (> (vector-length (buffer-locations host (context-buffer context))) 0)
+      (> (vector-ref (location-navigation host) 2) 0)))
+
+(define (location-message host index count)
+  (set-message! host
+                (string-append "location " (number->string (+ index 1))
+                               "/" (number->string count))))
+
+(define (location-visit-index host context list index)
+  (let ((locations (buffer-locations host list)))
+    (if (or (< index 0) (>= index (vector-length locations)))
+        (command-error "location list is no longer available")
+        (let ((location (vector-ref locations index)))
+          (set-location-navigation! host list index)
+          (position-buffer-view! host (context-window context) list
+                                 (vector-ref location 0))
+          (location-message host index (vector-length locations))
+          (open-file-at! host (context-window context)
+                         (vector-ref location 2)
+                         (vector-ref location 3)
+                         (vector-ref location 4))
+          (command-completed/preserve)))))
+
+(define (location-at-point locations caret)
+  (let loop ((index 0))
+    (if (= index (vector-length locations))
+        #f
+        (let ((location (vector-ref locations index)))
+          (if (or (and (<= (vector-ref location 0) caret)
+                       (< caret (vector-ref location 1)))
+                  (>= (vector-ref location 0) caret))
+              index
+              (loop (+ index 1)))))))
+
+(define (location-visit host context invocation)
+  (let* ((locations (buffer-locations host (context-buffer context)))
+         (index (location-at-point locations
+                                   (view-caret host (context-view context)))))
+    (if index
+        (location-visit-index host context (context-buffer context) index)
+        (command-error "no location at point"))))
+
+(define (location-index-after locations caret)
+  (let loop ((index 0))
+    (cond ((= index (vector-length locations)) #f)
+          ((> (vector-ref (vector-ref locations index) 0) caret) index)
+          (else (loop (+ index 1))))))
+
+(define (location-index-before locations caret)
+  (let loop ((index (- (vector-length locations) 1)))
+    (cond ((< index 0) #f)
+          ((< (vector-ref (vector-ref locations index) 0) caret) index)
+          (else (loop (- index 1))))))
+
+(define (location-move host context direction)
+  (let* ((locations (buffer-locations host (context-buffer context)))
+         (count (vector-length locations)))
+    (if (= count 0)
+        (command-error "location list is empty")
+        (let* ((view (context-view context))
+               (caret (view-caret host view))
+               (index (if (> direction 0)
+                          (location-index-after locations caret)
+                          (location-index-before locations caret))))
+          (if (not index)
+              (command-error (if (> direction 0)
+                                 "end of location list"
+                                 "beginning of location list"))
+              (begin
+                (set-view-caret! host view
+                                 (vector-ref (vector-ref locations index) 0))
+                (reset-preferred-column! host view)
+                (request-redraw! host)
+                (location-message host index count)
+                (command-completed/preserve)))))))
+
+(define (location-index-at-or-after locations caret)
+  (let loop ((index 0))
+    (cond ((= index (vector-length locations)) #f)
+          ((> (vector-ref (vector-ref locations index) 1) caret) index)
+          (else (loop (+ index 1))))))
+
+(define (location-index-at-or-before locations caret)
+  (let loop ((index (- (vector-length locations) 1)))
+    (cond ((< index 0) #f)
+          ((<= (vector-ref (vector-ref locations index) 0) caret) index)
+          (else (loop (- index 1))))))
+
+(define (location-navigate host context direction)
+  (let* ((context-locations (buffer-locations host (context-buffer context)))
+         (at-list? (> (vector-length context-locations) 0))
+         (navigation (location-navigation host))
+         (navigation-buffer (vector-ref navigation 0))
+         (list (if at-list? (context-buffer context) navigation-buffer)))
+    (if (not list)
+        (command-error "no current location list")
+        (let* ((locations (if at-list?
+                              context-locations
+                              (buffer-locations host list)))
+               (count (vector-length locations)))
+          (if (= count 0)
+              (begin
+                (set-location-navigation! host #f #f)
+                (command-error "no current location list"))
+              (let* ((same-list? (and navigation-buffer
+                                      (equal? navigation-buffer list)))
+                     (current (and same-list? (vector-ref navigation 1)))
+                     (valid? (and current (< current count)))
+                     (caret (view-caret host (context-view context)))
+                     (continuing?
+                      (and valid?
+                           (or (not at-list?)
+                               (= caret
+                                  (vector-ref (vector-ref locations current) 0)))))
+                     (selected
+                      (cond
+                       (continuing?
+                        (cond ((and (> direction 0) (< (+ current 1) count))
+                               (+ current 1))
+                              ((and (< direction 0) (> current 0))
+                               (- current 1))
+                              (else #f)))
+                       (at-list?
+                        (if (> direction 0)
+                            (location-index-at-or-after locations caret)
+                            (location-index-at-or-before locations caret)))
+                       ((> direction 0) 0)
+                       (else (- count 1)))))
+                (if selected
+                    (location-visit-index host context list selected)
+                    (command-error (if (> direction 0)
+                                       "end of location list"
+                                       "beginning of location list")))))))))
+
 (define kill-ring-limit 60)
 
 (define (take-at-most values count)
@@ -934,6 +1073,28 @@
                (lambda (context invocation)
                  (editor-position host context invocation))
                #f)
+         (list "location.visit"
+               (lambda (context invocation)
+                 (location-visit host context invocation))
+               (lambda (context) (location-list-context? host context)))
+         (list "location.next"
+               (lambda (context invocation)
+                 (location-move host context 1))
+               (lambda (context) (location-list-context? host context)))
+         (list "location.previous"
+               (lambda (context invocation)
+                 (location-move host context -1))
+               (lambda (context) (location-list-context? host context)))
+         (list "location.next-error"
+               (lambda (context invocation)
+                 (location-navigate host context 1))
+               (lambda (context)
+                 (location-navigation-available? host context)))
+         (list "location.previous-error"
+               (lambda (context invocation)
+                 (location-navigate host context -1))
+               (lambda (context)
+                 (location-navigation-available? host context)))
          (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
         (list "file.open.accept"
@@ -1148,6 +1309,7 @@
   (define-motion! host 'cind.backward-expression 'backward-expression)
   (define-motion! host 'cind.up-list 'up-list)
   (define-keymap! host 'scheme-mode-map #f)
+  (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
     #:interaction-class 'editing)
   (define-major-mode! host 'prog-mode
@@ -1162,7 +1324,11 @@
     #:parent 'prog-mode
     #:keymap 'scheme-mode-map
     #:interaction-class 'editing)
-  4)
+  (define-major-mode! host 'cind.location-list
+    #:parent 'special-mode
+    #:keymap 'cind.location-list.map
+    #:interaction-class 'interface)
+  5)
 
 (define (install-core-resource-policies! host)
   (define-file-mode-rule!
@@ -1292,6 +1458,11 @@
     ("C-c C-r" . "scheme.eval-region")
     ("C-c C-b" . "scheme.eval-buffer")))
 
+(define location-list-bindings
+  '(("RET" . "location.visit")
+    ("M-n" . "location.next")
+    ("M-p" . "location.previous")))
+
 (define (bind-all! host keymap bindings)
   (let loop ((remaining bindings)
              (count 0))
@@ -1315,6 +1486,7 @@
   (define-keymap! host 'interaction.text 'editor.text-input)
   (define-keymap! host 'interaction.picker 'interaction.text)
   (define-keymap! host 'scheme-mode-map #f)
+  (define-keymap! host 'cind.location-list.map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
   (+ 1
      (bind-all! host 'editor.control-x control-x-bindings)
@@ -1325,6 +1497,7 @@
      (bind-all! host 'interaction.text interaction-text-bindings)
      (bind-all! host 'interaction.picker interaction-picker-bindings)
      (bind-all! host 'scheme-mode-map scheme-mode-bindings)
+     (bind-all! host 'cind.location-list.map location-list-bindings)
      (install-helix-keymaps! host)
      (install-meow-keymaps! host)
      (install-structural-keymap! host)

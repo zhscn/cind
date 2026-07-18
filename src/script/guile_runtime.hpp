@@ -46,6 +46,12 @@ struct GuileViewPosition {
     std::uint32_t byte_count = 0;
 };
 
+struct GuileLocationNavigation {
+    std::optional<BufferId> buffer;
+    std::optional<std::size_t> selected_index;
+    std::size_t location_count = 0;
+};
+
 enum class GuileDeleteOutcome : std::uint8_t {
     Unchanged,
     Deleted,
@@ -76,6 +82,15 @@ struct GuileHostServices {
     std::function<bool()> cancel_interaction;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
+    std::function<GuileLocationNavigation()> location_navigation;
+    std::function<std::expected<void, std::string>(std::optional<BufferId>,
+                                                   std::optional<std::size_t>)>
+        set_location_navigation;
+    std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
+        position_buffer_view;
+    std::function<std::expected<void, std::string>(WindowId, std::string, std::uint32_t,
+                                                   std::uint32_t)>
+        open_file_at;
     std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
     std::function<std::expected<void, std::string>(WindowId, std::string)> open_file;

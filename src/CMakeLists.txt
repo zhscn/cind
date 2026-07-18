@@ -71,7 +71,6 @@ add_library(cind_application STATIC
   editor/interaction.cpp
   editor/keymap.cpp
   editor/language.cpp
-  editor/location_list_mode.cpp
   editor/mode.cpp
   editor/noun.cpp
   editor/project.cpp

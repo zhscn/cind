@@ -2794,6 +2794,35 @@ SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+// Returns #(source-start source-end resource target-line target-byte-column) entries.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_locations(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-locations");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-locations", 2);
+        const std::vector<BufferLocation>& locations =
+            host.runtime->buffers().get(buffer).locations();
+        SCM result = scm_c_make_vector(locations.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < locations.size(); ++index) {
+            const BufferLocation& location = locations[index];
+            SCM entry = scm_c_make_vector(5, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(entry, 0, scm_from_uint32(location.source_range.start.value));
+            scm_c_vector_set_x(entry, 1, scm_from_uint32(location.source_range.end.value));
+            scm_c_vector_set_x(entry, 2, scm_from_utf8_string(location.resource.c_str()));
+            scm_c_vector_set_x(entry, 3, scm_from_uint32(location.target.line));
+            scm_c_vector_set_x(entry, 4, scm_from_uint32(location.target.byte_column));
+            scm_c_vector_set_x(result, index, entry);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-locations", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-locations", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
     try {
@@ -3673,6 +3702,118 @@ SCM view_position(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
+SCM location_navigation(SCM host_object) {
+    HostLease& host = require_host(host_object, "location-navigation");
+    if (!host.services.location_navigation) {
+        SCM empty = scm_c_make_vector(3, SCM_BOOL_F);
+        scm_c_vector_set_x(empty, 2, scm_from_size_t(0));
+        return empty;
+    }
+    try {
+        const GuileLocationNavigation navigation = host.services.location_navigation();
+        SCM result = scm_c_make_vector(3, SCM_BOOL_F);
+        if (navigation.buffer) {
+            scm_c_vector_set_x(result, 0,
+                               entity_id(navigation.buffer->slot, navigation.buffer->generation));
+        }
+        if (navigation.selected_index) {
+            scm_c_vector_set_x(result, 1, scm_from_size_t(*navigation.selected_index));
+        }
+        scm_c_vector_set_x(result, 2, scm_from_size_t(navigation.location_count));
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("location-navigation", exception.what());
+    } catch (...) {
+        scm_misc_error("location-navigation", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_location_navigation(SCM host_object, SCM buffer_value, SCM selected_value) {
+    HostLease& host = require_host(host_object, "set-location-navigation!");
+    if (!host.services.set_location_navigation) {
+        scm_misc_error("set-location-navigation!", "location navigation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        std::optional<BufferId> buffer;
+        if (!scheme_false(buffer_value)) {
+            buffer = entity_id_from_scheme<BufferTag>(buffer_value, "set-location-navigation!", 2);
+        }
+        std::optional<std::size_t> selected;
+        if (!scheme_false(selected_value)) {
+            selected = scm_to_size_t(selected_value);
+        }
+        const std::expected<void, std::string> updated =
+            host.services.set_location_navigation(buffer, selected);
+        if (!updated) {
+            raise_host_error("set-location-navigation!", updated.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-location-navigation!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-location-navigation!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SCM offset_value) {
+    HostLease& host = require_host(host_object, "position-buffer-view!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "position-buffer-view!", 2);
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "position-buffer-view!", 3);
+    const TextOffset offset = text_offset_from_scheme(offset_value, "position-buffer-view!", 4);
+    if (!host.services.position_buffer_view) {
+        scm_misc_error("position-buffer-view!", "buffer view capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> positioned =
+            host.services.position_buffer_view(window, buffer, offset.value);
+        if (!positioned) {
+            raise_host_error("position-buffer-view!", positioned.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("position-buffer-view!", exception.what());
+    } catch (...) {
+        scm_misc_error("position-buffer-view!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes five adjacent SCM arguments; Scheme wrappers preserve
+// their semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM open_file_at(SCM host_object, SCM window_value, SCM path_value, SCM line_value,
+                 SCM column_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("open-file-at!", 3, path_value, "string");
+    }
+    HostLease& host = require_host(host_object, "open-file-at!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "open-file-at!", 2);
+    if (!host.services.open_file_at) {
+        scm_misc_error("open-file-at!", "positioned file-open capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> opened =
+            host.services.open_file_at(window, scheme_string(path_value), scm_to_uint32(line_value),
+                                       scm_to_uint32(column_value));
+        if (!opened) {
+            raise_host_error("open-file-at!", opened.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("open-file-at!", exception.what());
+    } catch (...) {
+        scm_misc_error("open-file-at!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -3814,6 +3955,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
+    (void)scm_c_define_gsubr("buffer-locations", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_locations));
     (void)scm_c_define_gsubr("buffer-read-only?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_read_only_p));
     (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
@@ -3854,6 +3997,13 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_pending_input));
     (void)scm_c_define_gsubr("view-position", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_position));
+    (void)scm_c_define_gsubr("location-navigation", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(location_navigation));
+    (void)scm_c_define_gsubr("set-location-navigation!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_location_navigation));
+    (void)scm_c_define_gsubr("position-buffer-view!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(position_buffer_view));
+    (void)scm_c_define_gsubr("open-file-at!", 5, 0, 0, reinterpret_cast<scm_t_subr>(open_file_at));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(ensure_project_index));
@@ -3891,21 +4041,23 @@ void initialize_host_module(void*) {
         "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "active-key-bindings",
         "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-byte-size",
-        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
-        "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",
-        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
-        "page-rows", "interaction-status", "submit-interaction!", "move-interaction-candidate!",
-        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
-        "view-position", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-        "select-other-window!", "request-redraw!", nullptr);
+        "buffer-locations", "buffer-read-only?", "path-parent", "directory-path?",
+        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
+        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
+        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
+        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "submit-interaction!", "move-interaction-candidate!", "move-interaction-history!",
+        "cancel-interaction!", "cancel-pending-input!", "view-position", "location-navigation",
+        "set-location-navigation!", "position-buffer-view!", "open-file-at!", "set-message!",
+        "ensure-project-index!", "open-file!", "start-project-search!", "set-buffer-resource!",
+        "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!", "split-window!",
+        "delete-window!", "delete-other-windows!", "select-other-window!", "request-redraw!",
+        nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 

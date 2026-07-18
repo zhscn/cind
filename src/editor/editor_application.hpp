@@ -6,7 +6,6 @@
 #include "editor/editing_mechanisms.hpp"
 #include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
-#include "editor/location_list_mode.hpp"
 #include "editor/project_service.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "script/guile_runtime.hpp"
@@ -260,12 +259,6 @@ private:
     void fail_project_search(std::uint64_t generation, const std::exception_ptr& failure);
     void cancel_project_search(std::uint64_t generation);
     void apply_position(WindowId window, LinePosition position);
-    CommandResult visit_location(CommandContext& context);
-    CommandResult move_location(CommandContext& context, int direction);
-    CommandResult navigate_location(CommandContext& context, int direction);
-    CommandResult visit_location_at(BufferId list, std::size_t index, WindowId target_window);
-    bool location_navigation_available(const CommandContext& context) const;
-
     void register_commands();
     void register_input_states();
     void register_modes();

@@ -4,7 +4,6 @@
 #include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/interaction.hpp"
-#include "editor/location_list_mode.hpp"
 #include "editor/runtime.hpp"
 
 #include <algorithm>
@@ -210,30 +209,6 @@ TEST_CASE("runtime noun registries own validated named mechanisms") {
             angle, {.kind = ThingPatternKind::Pair, .arguments = {"[", "]"}, .alternatives = {}}),
         std::logic_error);
     CHECK_THROWS_AS(runtime.motions().define("late", MotionMechanism::UpList), std::logic_error);
-}
-
-TEST_CASE("location-list mode owns sparse navigation bindings without a language profile") {
-    EditorRuntime runtime;
-    const auto command = [&](std::string name) {
-        return runtime.commands().define(
-            std::move(name), [](CommandContext&, const CommandInvocation&) -> CommandResult {
-                return CommandCompleted{};
-            });
-    };
-    const CommandId visit = command("location.visit");
-    const CommandId next = command("location.next");
-    const CommandId previous = command("location.previous");
-    const LocationListModeRegistration mode =
-        ensure_location_list_mode(runtime, {.visit = visit, .next = next, .previous = previous});
-
-    CHECK_FALSE(runtime.modes().definition(mode.mode).language.has_value());
-    CHECK(runtime.modes().definition(mode.mode).keymaps == std::vector<KeymapId>{mode.keymap});
-    const KeySequence enter = *parse_key_sequence("RET");
-    const KeySequence alt_next = *parse_key_sequence("M-n");
-    CHECK(runtime.keymaps().resolve(mode.keymap, enter).command == visit);
-    CHECK(runtime.keymaps().resolve(mode.keymap, alt_next).command == next);
-    CHECK(ensure_location_list_mode(runtime, {.visit = visit, .next = next, .previous = previous})
-              .mode == mode.mode);
 }
 
 TEST_CASE("major modes select composed language profiles instead of inheriting parsers") {
