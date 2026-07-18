@@ -353,11 +353,60 @@ void InteractionController::refresh(bool input_edited) {
             state.selected = 0;
             return;
         }
+        state.loading = true;
+        if (auto* asynchronous = std::get_if<InteractionCandidateAsync>(&result)) {
+            if (!asynchronous->start) {
+                state.loading = false;
+                state.error = "async interaction provider has no start operation";
+                return;
+            }
+            auto settled = std::make_shared<bool>(false);
+            std::expected<InteractionCandidateAsync::Cancel, std::string> started =
+                asynchronous->start(
+                    // The provider boundary reports allocation and ranking failures through the
+                    // interaction error channel below.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    [generation, query, controller = this,
+                     settled](std::vector<InteractionCandidate> candidates) {
+                        *settled = true;
+                        try {
+                            controller->apply_candidates(
+                                generation,
+                                InteractionController::rank(std::move(candidates), query));
+                        } catch (...) {
+                            controller->apply_failure(generation, std::current_exception());
+                        }
+                    },
+                    [generation, controller = this, settled](std::string message) {
+                        *settled = true;
+                        if (controller->state_ && controller->state_->generation == generation) {
+                            controller->state_->loading = false;
+                            controller->state_->error = std::move(message);
+                            controller->cancel_pending_task_ = {};
+                        }
+                    },
+                    [generation, controller = this, settled] {
+                        *settled = true;
+                        if (controller->state_ && controller->state_->generation == generation) {
+                            controller->state_->loading = false;
+                            controller->cancel_pending_task_ = {};
+                        }
+                    });
+            if (!started) {
+                state.loading = false;
+                state.error = std::move(started.error());
+                return;
+            }
+            if (!*settled) {
+                cancel_pending_task_ = std::move(*started);
+            }
+            return;
+        }
         if (async_runtime_ == nullptr) {
+            state.loading = false;
             state.error = "async interaction provider has no runtime";
             return;
         }
-        state.loading = true;
         struct Job {
             std::uint64_t generation = 0;
             std::string query;
@@ -369,7 +418,7 @@ void InteractionController::refresh(bool input_edited) {
                                       .query = query,
                                       .work = std::move(std::get<InteractionCandidateWork>(result)),
                                       .controller = this});
-        pending_task_ = async_runtime_->submit({
+        const AsyncTaskId task = async_runtime_->submit({
             .work = [job](const std::stop_token& cancellation) -> AsyncCompletion {
                 std::vector<InteractionCandidate> candidates = job->work(cancellation);
                 if (cancellation.stop_requested()) {
@@ -391,7 +440,7 @@ void InteractionController::refresh(bool input_edited) {
                 [generation, controller = this] {
                     if (controller->state_ && controller->state_->generation == generation) {
                         controller->state_->loading = false;
-                        controller->pending_task_ = {};
+                        controller->cancel_pending_task_ = {};
                     }
                 },
             .failed =
@@ -399,6 +448,7 @@ void InteractionController::refresh(bool input_edited) {
                     controller->apply_failure(generation, failure);
                 },
         });
+        cancel_pending_task_ = [runtime = async_runtime_, task] { (void)runtime->cancel(task); };
     } catch (const std::exception& exception) {
         state.loading = false;
         state.error = exception.what();
@@ -406,10 +456,16 @@ void InteractionController::refresh(bool input_edited) {
 }
 
 void InteractionController::cancel_pending() noexcept {
-    if (async_runtime_ != nullptr && pending_task_.valid()) {
-        (void)async_runtime_->cancel(pending_task_);
+    if (cancel_pending_task_) {
+        try {
+            cancel_pending_task_();
+            // Cancellation is best-effort; generation checks make late
+            // completion inert.
+            // NOLINTNEXTLINE(bugprone-empty-catch)
+        } catch (...) {
+        }
     }
-    pending_task_ = {};
+    cancel_pending_task_ = {};
 }
 
 void InteractionController::apply_candidates(std::uint64_t generation,
@@ -421,7 +477,7 @@ void InteractionController::apply_candidates(std::uint64_t generation,
     state_->selected = 0;
     state_->loading = false;
     state_->error.clear();
-    pending_task_ = {};
+    cancel_pending_task_ = {};
 }
 
 void InteractionController::apply_failure(std::uint64_t generation,
@@ -430,7 +486,7 @@ void InteractionController::apply_failure(std::uint64_t generation,
         return;
     }
     state_->loading = false;
-    pending_task_ = {};
+    cancel_pending_task_ = {};
     try {
         if (failure) {
             std::rethrow_exception(failure);

@@ -1449,6 +1449,61 @@ TEST_CASE("async interaction providers discard cancelled generations") {
     CHECK(interaction.state()->candidates.front().value == "ab");
 }
 
+TEST_CASE("callback interaction providers support synchronous completion") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "prompt",
+                                                      .initial_text = "",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    const CommandId accept = runtime.commands().define(
+        "callback.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
+            return CommandCompleted{};
+        });
+    int cancellations = 0;
+    runtime.interaction_providers().define(
+        "callback", [&](CommandContext&, std::string_view query) -> InteractionProviderResult {
+            return InteractionCandidateAsync{
+                .start = [query = std::string(query),
+                          &cancellations](InteractionCandidateAsync::Completed completed,
+                                          InteractionCandidateAsync::Failed,
+                                          InteractionCandidateAsync::Cancelled)
+                    -> std::expected<InteractionCandidateAsync::Cancel, std::string> {
+                    completed({{.value = query,
+                                .label = query,
+                                .detail = "callback",
+                                .filter_text = query}});
+                    return InteractionCandidateAsync::Cancel{[&cancellations] { ++cancellations; }};
+                }};
+        });
+    (void)runtime.keymaps().define("callback-interaction-test");
+    (void)define_test_input_state(runtime, "callback-interaction-input-test");
+    InteractionController interaction(runtime, runtime.interaction_providers());
+
+    REQUIRE(interaction
+                .start({.kind = InteractionKind::Picker,
+                        .keymap = "callback-interaction-test",
+                        .input_state = "callback-interaction-input-test",
+                        .prompt = "callback: ",
+                        .initial_input = "value",
+                        .history = {},
+                        .provider = "callback",
+                        .allow_custom_input = false,
+                        .accept_command = accept,
+                        .arguments = {}},
+                       context)
+                .has_value());
+    REQUIRE(interaction.state() != nullptr);
+    CHECK_FALSE(interaction.state()->loading);
+    REQUIRE(interaction.state()->candidates.size() == 1);
+    CHECK(interaction.state()->candidates.front().value == "value");
+    CHECK(interaction.cancel());
+    CHECK(cancellations == 0);
+}
+
 TEST_CASE("async interaction refresh retains candidates until replacement is ready") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "prompt",

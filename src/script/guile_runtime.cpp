@@ -278,7 +278,8 @@ bool script_command_enabled(const std::shared_ptr<GuileState>& state, std::size_
                             const CommandContext& context);
 InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
                                                  std::size_t provider_index,
-                                                 CommandContext& context, std::string_view query);
+                                                 CommandContext& context, std::string_view query,
+                                                 GuileAsyncBridge* async_bridge);
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,
                                                     std::size_t state_index, EditorRuntime& runtime,
                                                     CommandContext& context, KeyStroke key);
@@ -428,14 +429,15 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
             state->providers.push_back({.complete = complete_value});
             appended = true;
             const std::weak_ptr<GuileState> weak = state;
+            GuileAsyncBridge* async_bridge = host.async_bridge;
             InteractionProviderRegistry::Complete complete =
-                [weak, provider_index](CommandContext& context,
-                                       std::string_view query) -> InteractionProviderResult {
+                [weak, provider_index, async_bridge](
+                    CommandContext& context, std::string_view query) -> InteractionProviderResult {
                 const std::shared_ptr<GuileState> locked = weak.lock();
                 if (!locked || !locked->active) {
                     throw std::runtime_error("Guile provider runtime has expired");
                 }
-                return invoke_script_provider(locked, provider_index, context, query);
+                return invoke_script_provider(locked, provider_index, context, query, async_bridge);
             };
             if (host.runtime->interaction_providers().contains(name)) {
                 host.runtime->interaction_providers().configure(name, std::move(complete));
@@ -4233,6 +4235,7 @@ struct GuileCall {
         StopAres,
         InvokeCommand,
         InvokeProvider,
+        TransformProviderResult,
         InvokeInputHandler,
         InvokePositionHints,
         InvokeInputStateObserver,
@@ -4247,6 +4250,7 @@ struct GuileCall {
     SCM host = SCM_UNDEFINED;
     SCM module = SCM_UNDEFINED;
     SCM procedure = SCM_UNDEFINED;
+    SCM argument = SCM_UNDEFINED;
     SCM result = SCM_UNDEFINED;
     std::size_t count = 0;
     std::string query;
@@ -4660,6 +4664,9 @@ SCM call_body(void* data) {
         case GuileCall::Operation::InvokeProvider:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      scm_from_utf8_string(call.query.c_str()));
+            break;
+        case GuileCall::Operation::TransformProviderResult:
+            call.result = scm_call_1(call.procedure, call.argument);
             call.provider_candidates = provider_candidates_from_scheme(call.result);
             break;
         case GuileCall::Operation::InvokeInputHandler:
@@ -4900,7 +4907,8 @@ CommandResult invoke_script_command(const std::shared_ptr<GuileState>& state,
 
 InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
                                                  std::size_t provider_index,
-                                                 CommandContext& context, std::string_view query) {
+                                                 CommandContext& context, std::string_view query,
+                                                 GuileAsyncBridge* async_bridge) {
     if (std::this_thread::get_id() != state->owner) {
         throw std::logic_error("Guile provider invoked outside its editor thread");
     }
@@ -4918,7 +4926,106 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
         throw std::runtime_error(std::format("Guile provider failed: {}", result.error()));
     }
     state->last_error.reset();
-    return std::move(call.provider_candidates);
+    if (!scm_is_vector(*result) || scm_c_vector_length(*result) == 0 ||
+        !symbol_is(scm_c_vector_ref(*result, 0), "async-provider")) {
+        return provider_candidates_from_scheme(*result);
+    }
+    if (scm_c_vector_length(*result) != 3 ||
+        !scheme_true(scm_procedure_p(scm_c_vector_ref(*result, 2)))) {
+        throw std::invalid_argument(
+            "Guile async provider result must be #(async-provider request transform)");
+    }
+
+    struct AsyncProviderState {
+        AsyncProviderState(std::weak_ptr<GuileState> runtime_value,
+                           ScriptAsyncRequest request_value, SCM transform_value,
+                           GuileAsyncBridge* bridge_value, std::thread::id owner_value)
+            : runtime(std::move(runtime_value)), request(std::move(request_value)),
+              transform(transform_value), bridge(bridge_value), owner(owner_value) {}
+
+        AsyncProviderState(const AsyncProviderState&) = delete;
+        AsyncProviderState& operator=(const AsyncProviderState&) = delete;
+
+        std::weak_ptr<GuileState> runtime;
+        std::optional<ScriptAsyncRequest> request;
+        SCM transform = SCM_UNDEFINED;
+        GuileAsyncBridge* bridge = nullptr;
+        std::thread::id owner;
+
+        ~AsyncProviderState() {
+            if (std::this_thread::get_id() != owner) {
+                std::terminate();
+            }
+            (void)scm_gc_unprotect_object(transform);
+        }
+    };
+
+    ScriptAsyncRequest request = script_async_request_from_scheme(scm_c_vector_ref(*result, 1),
+                                                                  "interaction-provider-task", 1);
+    SCM transform = scm_c_vector_ref(*result, 2);
+    (void)scm_gc_protect_object(transform);
+    auto task = std::make_shared<AsyncProviderState>(state, std::move(request), transform,
+                                                     async_bridge, state->owner);
+    return InteractionCandidateAsync{
+        .start = [task](InteractionCandidateAsync::Completed completed,
+                        InteractionCandidateAsync::Failed failed,
+                        InteractionCandidateAsync::Cancelled cancelled)
+            -> std::expected<InteractionCandidateAsync::Cancel, std::string> {
+            const std::shared_ptr<GuileState> runtime = task->runtime.lock();
+            if (!runtime || !runtime->active || std::this_thread::get_id() != task->owner) {
+                return std::unexpected("Guile provider runtime has expired");
+            }
+            if (!task->request) {
+                return std::unexpected("Guile async provider task was already started");
+            }
+            if (task->bridge == nullptr) {
+                return std::unexpected("Guile async provider host capability is unavailable");
+            }
+            std::expected<std::uint64_t, std::string> started = task->bridge->start_native_task(
+                std::move(*task->request),
+                {.completed =
+                     [task, completed = std::move(completed),
+                      failed](std::uint64_t, ScriptAsyncResult async_result) mutable {
+                         const std::shared_ptr<GuileState> state = task->runtime.lock();
+                         if (!state || !state->active ||
+                             std::this_thread::get_id() != task->owner) {
+                             failed("Guile provider runtime has expired");
+                             return;
+                         }
+                         GuileCall transform_call;
+                         transform_call.operation = GuileCall::Operation::TransformProviderResult;
+                         transform_call.procedure = task->transform;
+                         transform_call.argument =
+                             script_async_result_to_scheme(std::move(async_result));
+                         std::expected<SCM, std::string> transformed =
+                             run_guile_call(transform_call);
+                         if (!transformed) {
+                             state->last_error = transformed.error();
+                             failed(std::format("Guile async provider transform failed: {}",
+                                                transformed.error()));
+                             return;
+                         }
+                         state->last_error.reset();
+                         completed(std::move(transform_call.provider_candidates));
+                     },
+                 .cancelled = [cancelled =
+                                   std::move(cancelled)](std::uint64_t) mutable { cancelled(); },
+                 .failed =
+                     [failed = std::move(failed)](std::uint64_t, std::string message) mutable {
+                         failed(std::move(message));
+                     }});
+            task->request.reset();
+            if (!started) {
+                return std::unexpected(std::move(started.error()));
+            }
+            const std::uint64_t id = *started;
+            return InteractionCandidateAsync::Cancel{[task, id] {
+                const std::shared_ptr<GuileState> runtime = task->runtime.lock();
+                if (runtime && runtime->active && task->bridge != nullptr) {
+                    (void)task->bridge->cancel_native_task(id);
+                }
+            }};
+        }};
 }
 
 InputStateHandlerResult invoke_script_input_handler(const std::shared_ptr<GuileState>& state,

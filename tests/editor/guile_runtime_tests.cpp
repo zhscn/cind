@@ -373,6 +373,70 @@ TEST_CASE("Guile async tasks deliver typed results and cancellation on the edito
     drain_until(async, [&] { return async_host.tasks().empty(); });
 }
 
+TEST_CASE("Guile interaction providers transform cancellable async host results") {
+    AsyncRuntime async;
+    AsyncScriptHost async_host(async);
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime, async_services(async_host));
+    REQUIRE(guile.install_core_providers().has_value());
+
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / "cind-guile-files-provider-test";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory / "nested");
+    {
+        std::ofstream file(directory / "example.cpp", std::ios::binary | std::ios::trunc);
+        file << "int value;\n";
+    }
+
+    const BufferId buffer =
+        runtime.buffers().create({.name = "current.cpp",
+                                  .initial_text = {},
+                                  .kind = BufferKind::File,
+                                  .resource_uri = (directory / "current.cpp").string(),
+                                  .read_only = false});
+    const ViewId view = runtime.views().create(buffer);
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    InteractionProviderResult result =
+        runtime.interaction_providers().complete("files", context, "");
+    auto* provider_task = std::get_if<InteractionCandidateAsync>(&result);
+    REQUIRE(provider_task != nullptr);
+
+    bool completed = false;
+    std::string failure;
+    std::vector<InteractionCandidate> candidates;
+    std::expected<InteractionCandidateAsync::Cancel, std::string> started = provider_task->start(
+        [&](std::vector<InteractionCandidate> values) {
+            candidates = std::move(values);
+            completed = true;
+        },
+        [&](std::string message) { failure = std::move(message); }, [] {});
+    REQUIRE(started.has_value());
+    CHECK(guile.snapshot().outstanding_async_tasks == 1);
+    drain_until(async, [&] { return completed || !failure.empty(); });
+
+    CHECK(failure.empty());
+    CHECK(guile.snapshot().outstanding_async_tasks == 0);
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.value == (directory / "example.cpp").string() &&
+               candidate.label == "example.cpp" && candidate.detail == directory.string();
+    }));
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.value ==
+                   (directory / "nested").string() + std::filesystem::path::preferred_separator &&
+               candidate.label ==
+                   std::string("nested") + std::filesystem::path::preferred_separator;
+    }));
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.label == "../" &&
+               candidate.value ==
+                   directory.parent_path().string() + std::filesystem::path::preferred_separator;
+    }));
+    std::filesystem::remove_all(directory, ignored);
+}
+
 TEST_CASE("embedded Guile provides the vendored Scheme development runtime") {
     EditorRuntime runtime;
     GuileRuntime guile(runtime);
@@ -1013,7 +1077,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(*installed == 190);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 6);
+    CHECK(*providers == 7);
     const CommandId save = require_command(runtime, "file.save");
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -1492,6 +1556,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(snapshot.command_revision == 1);
     CHECK(snapshot.scripted_commands == 190);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 6);
+    CHECK(snapshot.scripted_providers == 7);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

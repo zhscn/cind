@@ -9,6 +9,7 @@
             command-dispatch-to
             interaction
             interaction-candidate
+            interaction-provider-task
             context-window
             context-buffer
             context-view
@@ -77,6 +78,11 @@
 
 (define (interaction-candidate value label detail filter-text)
   (vector value label detail filter-text))
+
+(define (interaction-provider-task request transform)
+  (unless (procedure? transform)
+    (error "interaction provider transform must be a procedure" transform))
+  (vector 'async-provider request transform))
 
 (define (context-value context key)
   (let ((entry (assq key context)))

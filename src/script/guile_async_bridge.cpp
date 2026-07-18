@@ -80,16 +80,17 @@ std::vector<std::string> string_sequence(SCM value, const char* caller) {
     return result;
 }
 
-ScriptAsyncRequest request_from_scheme(SCM value) {
-    constexpr const char* caller = "%start-async-task!";
+} // namespace
+
+ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* caller, int position) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) == 0) {
-        scm_wrong_type_arg_msg(caller, 2, value, "async request vector");
+        scm_wrong_type_arg_msg(caller, position, value, "async request vector");
     }
     const std::size_t size = scm_c_vector_length(value);
     const SCM tag = scm_c_vector_ref(value, 0);
     if (symbol_is(tag, "file-read")) {
         if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {
-            scm_wrong_type_arg_msg(caller, 2, value, "#(file-read path) request");
+            scm_wrong_type_arg_msg(caller, position, value, "#(file-read path) request");
         }
         return ScriptFileReadRequest{.path = scheme_string(scm_c_vector_ref(value, 1))};
     }
@@ -97,7 +98,7 @@ ScriptAsyncRequest request_from_scheme(SCM value) {
         if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
             scm_is_unsigned_integer(scm_c_vector_ref(value, 2), 0,
                                     std::numeric_limits<std::size_t>::max()) == 0) {
-            scm_wrong_type_arg_msg(caller, 2, value,
+            scm_wrong_type_arg_msg(caller, position, value,
                                    "#(directory-list path non-negative-maximum-entries) request");
         }
         return ScriptDirectoryListRequest{.path = scheme_string(scm_c_vector_ref(value, 1)),
@@ -108,7 +109,7 @@ ScriptAsyncRequest request_from_scheme(SCM value) {
         if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
             !scm_is_string(scm_c_vector_ref(value, 3))) {
             scm_wrong_type_arg_msg(
-                caller, 2, value,
+                caller, position, value,
                 "#(process executable string-sequence working-directory) request");
         }
         return ScriptProcessRequest{.file = scheme_string(scm_c_vector_ref(value, 1)),
@@ -119,6 +120,8 @@ ScriptAsyncRequest request_from_scheme(SCM value) {
     scm_misc_error(caller, "unknown async request kind", SCM_EOL);
     return ScriptFileReadRequest{};
 }
+
+namespace {
 
 void protect_callbacks(const CallbackSet& callbacks) {
     (void)scm_gc_protect_object(callbacks.completed);
@@ -152,7 +155,9 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
     return "unknown";
 }
 
-SCM result_value(ScriptAsyncResult result) {
+} // namespace
+
+SCM script_async_result_to_scheme(ScriptAsyncResult result) {
     return std::visit(
         [](auto value) {
             using Result = decltype(value);
@@ -198,6 +203,8 @@ SCM result_value(ScriptAsyncResult result) {
         },
         std::move(result));
 }
+
+namespace {
 
 struct ProcedureCall {
     SCM procedure = SCM_UNDEFINED;
@@ -276,6 +283,7 @@ struct GuileAsyncBridgeState {
     GuileAsyncBridge::Inspect inspect;
     GuileAsyncBridge::ReportError report_error;
     std::unordered_map<std::uint64_t, CallbackSet> callbacks;
+    std::unordered_map<std::uint64_t, ScriptAsyncCallbacks> native_callbacks;
 };
 
 namespace {
@@ -322,8 +330,8 @@ void complete_task(const std::weak_ptr<GuileAsyncBridgeState>& weak_state, std::
         return;
     }
     try {
-        invoke_callback(state, task, callbacks->completed, {result_value(std::move(result))},
-                        "completion");
+        invoke_callback(state, task, callbacks->completed,
+                        {script_async_result_to_scheme(std::move(result))}, "completion");
     } catch (const std::exception& exception) {
         report(state,
                std::format("failed to deliver Guile async completion: {}", exception.what()));
@@ -365,6 +373,72 @@ void fail_task(const std::weak_ptr<GuileAsyncBridgeState>& weak_state, std::uint
     unprotect_callbacks(*callbacks);
 }
 
+std::optional<ScriptAsyncCallbacks>
+take_native_callbacks(const std::shared_ptr<GuileAsyncBridgeState>& state, std::uint64_t task) {
+    auto node = state->native_callbacks.extract(task);
+    if (node.empty()) {
+        return std::nullopt;
+    }
+    return std::move(node.mapped());
+}
+
+void deliver_native_completion(const std::weak_ptr<GuileAsyncBridgeState>& weak_state,
+                               std::uint64_t task, ScriptAsyncResult result) {
+    const std::shared_ptr<GuileAsyncBridgeState> state = weak_state.lock();
+    if (!state || !state->active || std::this_thread::get_id() != state->owner) {
+        return;
+    }
+    std::optional<ScriptAsyncCallbacks> callbacks = take_native_callbacks(state, task);
+    if (callbacks && callbacks->completed) {
+        try {
+            callbacks->completed(task, std::move(result));
+        } catch (const std::exception& exception) {
+            report(state,
+                   std::format("native Guile async completion failed: {}", exception.what()));
+        } catch (...) {
+            report(state, "native Guile async completion failed");
+        }
+    }
+}
+
+void deliver_native_cancellation(const std::weak_ptr<GuileAsyncBridgeState>& weak_state,
+                                 std::uint64_t task) {
+    const std::shared_ptr<GuileAsyncBridgeState> state = weak_state.lock();
+    if (!state || !state->active || std::this_thread::get_id() != state->owner) {
+        return;
+    }
+    std::optional<ScriptAsyncCallbacks> callbacks = take_native_callbacks(state, task);
+    if (callbacks && callbacks->cancelled) {
+        try {
+            callbacks->cancelled(task);
+        } catch (const std::exception& exception) {
+            report(state,
+                   std::format("native Guile async cancellation failed: {}", exception.what()));
+        } catch (...) {
+            report(state, "native Guile async cancellation failed");
+        }
+    }
+}
+
+void deliver_native_failure(const std::weak_ptr<GuileAsyncBridgeState>& weak_state,
+                            std::uint64_t task, std::string message) {
+    const std::shared_ptr<GuileAsyncBridgeState> state = weak_state.lock();
+    if (!state || !state->active || std::this_thread::get_id() != state->owner) {
+        return;
+    }
+    std::optional<ScriptAsyncCallbacks> callbacks = take_native_callbacks(state, task);
+    if (callbacks && callbacks->failed) {
+        try {
+            callbacks->failed(task, std::move(message));
+        } catch (const std::exception& exception) {
+            report(state,
+                   std::format("native Guile async failure callback failed: {}", exception.what()));
+        } catch (...) {
+            report(state, "native Guile async failure callback failed");
+        }
+    }
+}
+
 } // namespace
 
 GuileAsyncBridge::GuileAsyncBridge(Start start, Cancel cancel, Inspect inspect,
@@ -376,7 +450,8 @@ GuileAsyncBridge::GuileAsyncBridge(Start start, Cancel cancel, Inspect inspect,
                                 .cancel = std::move(cancel),
                                 .inspect = std::move(inspect),
                                 .report_error = std::move(report_error),
-                                .callbacks = {}})) {}
+                                .callbacks = {},
+                                .native_callbacks = {}})) {}
 
 GuileAsyncBridge::~GuileAsyncBridge() {
     release(false);
@@ -402,7 +477,7 @@ SCM GuileAsyncBridge::start(SCM request, SCM completed, SCM failed, SCM cancelle
     if (!scheme_false(cancelled) && !scheme_true(scm_procedure_p(cancelled))) {
         scm_wrong_type_arg_msg(caller, 5, cancelled, "procedure or #f");
     }
-    ScriptAsyncRequest native_request = request_from_scheme(request);
+    ScriptAsyncRequest native_request = script_async_request_from_scheme(request, caller, 2);
     const CallbackSet callbacks{.completed = completed, .failed = failed, .cancelled = cancelled};
     protect_callbacks(callbacks);
     try {
@@ -487,14 +562,64 @@ SCM GuileAsyncBridge::summaries() const {
     return SCM_BOOL_F;
 }
 
+std::expected<std::uint64_t, std::string>
+GuileAsyncBridge::start_native_task(ScriptAsyncRequest request, ScriptAsyncCallbacks callbacks) {
+    if (std::this_thread::get_id() != state_->owner || !state_->active) {
+        return std::unexpected("Guile async task capability is shut down");
+    }
+    if (!state_->start) {
+        return std::unexpected("Guile async task capability is unavailable");
+    }
+    if (!callbacks.completed) {
+        return std::unexpected("native Guile async task requires a completion callback");
+    }
+    const std::weak_ptr<GuileAsyncBridgeState> state = state_;
+    std::expected<std::uint64_t, std::string> started = state_->start(
+        std::move(request),
+        {.completed =
+             [state](std::uint64_t task, ScriptAsyncResult result) {
+                 deliver_native_completion(state, task, std::move(result));
+             },
+         .cancelled = [state](std::uint64_t task) { deliver_native_cancellation(state, task); },
+         .failed =
+             [state](std::uint64_t task, std::string message) {
+                 deliver_native_failure(state, task, std::move(message));
+             }});
+    if (!started) {
+        return std::unexpected(std::move(started.error()));
+    }
+    const auto [iterator, inserted] =
+        state_->native_callbacks.emplace(*started, std::move(callbacks));
+    (void)iterator;
+    if (!inserted) {
+        if (state_->cancel) {
+            (void)state_->cancel(*started);
+        }
+        return std::unexpected("async task ID is already active");
+    }
+    return *started;
+}
+
+bool GuileAsyncBridge::cancel_native_task(std::uint64_t task) {
+    if (std::this_thread::get_id() != state_->owner || !state_->active || !state_->cancel ||
+        !state_->native_callbacks.contains(task)) {
+        return false;
+    }
+    return state_->cancel(task);
+}
+
 std::size_t GuileAsyncBridge::outstanding() const {
-    return state_->callbacks.size();
+    return state_->callbacks.size() + state_->native_callbacks.size();
 }
 
 std::vector<std::uint64_t> GuileAsyncBridge::checkpoint() const {
     std::vector<std::uint64_t> result;
-    result.reserve(state_->callbacks.size());
+    result.reserve(state_->callbacks.size() + state_->native_callbacks.size());
     for (const auto& [task, callbacks] : state_->callbacks) {
+        (void)callbacks;
+        result.push_back(task);
+    }
+    for (const auto& [task, callbacks] : state_->native_callbacks) {
         (void)callbacks;
         result.push_back(task);
     }
@@ -517,6 +642,21 @@ void GuileAsyncBridge::rollback_to(std::span<const std::uint64_t> checkpoint) no
         unprotect_callbacks(iterator->second);
         iterator = state_->callbacks.erase(iterator);
     }
+    for (auto iterator = state_->native_callbacks.begin();
+         iterator != state_->native_callbacks.end();) {
+        if (std::ranges::find(checkpoint, iterator->first) != checkpoint.end()) {
+            ++iterator;
+            continue;
+        }
+        if (state_->cancel) {
+            try {
+                (void)state_->cancel(iterator->first);
+            } catch (...) {
+                state_->active = false;
+            }
+        }
+        iterator = state_->native_callbacks.erase(iterator);
+    }
 }
 
 void GuileAsyncBridge::shutdown() noexcept {
@@ -536,7 +676,18 @@ void GuileAsyncBridge::release(bool cancel_tasks) noexcept {
         }
         unprotect_callbacks(callbacks);
     }
+    for (const auto& [task, callbacks] : state_->native_callbacks) {
+        (void)callbacks;
+        if (cancel_tasks && state_->cancel) {
+            try {
+                (void)state_->cancel(task);
+            } catch (...) {
+                state_->cancel = {};
+            }
+        }
+    }
     state_->callbacks.clear();
+    state_->native_callbacks.clear();
 }
 
 void initialize_guile_async_host_bindings(GuileAsyncBridgeResolver resolver) {

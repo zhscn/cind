@@ -105,6 +105,12 @@ executable, argument vector and working directory. No worker callback enters Gui
 invokes the protected Scheme callback on the editor thread. The task record is removed before the
 callback runs, allowing callbacks to start or cancel other tasks without re-entering a live record.
 
+An interaction provider may return a typed request with a Scheme result transform. The bridge
+tracks that native callback in the same task set as `start-async-task!`; after draining, it converts
+the native result to the stable Scheme value form, invokes the transform, validates the candidate
+vector, and hands it to the interaction generation that requested it. Refresh and shutdown use the
+same cancellation path.
+
 Destroying the adapter makes its callbacks inert and requests cancellation of every native task.
 The Guile runtime independently releases its protected procedures, so undrained completion records
 cannot access an expired interpreter.

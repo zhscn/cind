@@ -621,10 +621,17 @@ structural semantics and bindings.
 
 ## Scripted interaction providers
 
-`(cind core)` defines the synchronous `commands`, `buffers`, `project-files`, `key-bindings`,
+`interaction-provider-task` from `(cind command)` constructs an asynchronous provider result from
+an `(cind async)` request and a one-argument result transform. The transform returns the same vector
+of four-string `interaction-candidate` values accepted from an immediate provider.
+
+`(cind core)` defines the `commands`, `buffers`, `files`, `project-files`, `key-bindings`,
 `scheme-functions`, and `scheme-variables` providers. Scheme filters internal commands and formats
-semantic candidate fields from native snapshots. Query ranking remains in `InteractionController`,
-so native and scripted providers share the same ordering, selection and viewport behavior.
+semantic candidate fields from native snapshots. The `files` provider returns an
+`interaction-provider-task` containing a typed directory-list request and an editor-thread result
+transform; native code performs only the cancellable enumeration. Query ranking remains in
+`InteractionController`, so immediate and asynchronous providers share the same ordering,
+selection, cancellation, and viewport behavior.
 
 ## Editor self-description
 
@@ -640,10 +647,10 @@ before formatting, and a missing or changed binding produces a command error ins
 raw module pointer in interaction state. The command palette, Help providers, GUI inspector, and an
 Ares lookup client can therefore consume the same authoritative identities and metadata.
 
-The `files` provider remains native because directory enumeration is cancellable worker-thread I/O.
-It captures immutable query and resource values, runs through `AsyncRuntime`, and returns the same
-candidate structure to `InteractionController`. Scripted providers are editor-thread procedures and
-do not perform blocking work.
+Scripted providers run their preparation and result transforms on the editor thread. Blocking work
+is expressed as a typed native request and never enters Guile. The Guile async bridge owns both
+Scheme callbacks and provider transforms while their tasks are outstanding, so shutdown,
+inspection, cancellation, and extension rollback observe one task namespace.
 
 Additional host APIs follow the same boundary:
 

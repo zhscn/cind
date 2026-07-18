@@ -298,12 +298,13 @@ toward older entries, and `M-n` moves toward newer entries before restoring the 
 a recalled value exits history traversal while leaving the edited text in the ordinary minibuffer
 Buffer. History replacement updates the same View caret and candidate generation as direct editing.
 
-Candidate providers return semantic values, labels, details, and filter text either immediately or
-through a cancellable worker job. Provider preparation runs on the editor thread and captures
-immutable worker input; filesystem traversal and large candidate ranking run through the async
-runtime. Every input change receives a monotonically increasing generation, and only results for
-the active generation can update the interaction. An asynchronous refresh retains the last complete
-candidate snapshot until the replacement is ready, then swaps the candidate list atomically.
+Candidate providers return semantic values, labels, details, and filter text immediately, through
+a cancellable native worker job, or through a scripted async request paired with an editor-thread
+result transform. Provider preparation runs on the editor thread and captures immutable worker
+input; filesystem traversal and large candidate ranking run through the async runtime. Every input
+change receives a monotonically increasing generation, and only results for the active generation
+can update the interaction. An asynchronous refresh retains the last complete candidate snapshot
+until the replacement is ready, then swaps the candidate list atomically.
 Command, key-binding, open-buffer, and filesystem
 providers implement the command palette, key help, buffer switching, and file opening. GUI and TUI
 render the same candidate and loading state through frontend-specific layout. Interactive pickers

@@ -25,8 +25,19 @@ struct InteractionCandidate {
 
 using InteractionCandidateWork =
     std::function<std::vector<InteractionCandidate>(const std::stop_token&)>;
-using InteractionProviderResult =
-    std::variant<std::vector<InteractionCandidate>, InteractionCandidateWork>;
+
+struct InteractionCandidateAsync {
+    using Completed = std::function<void(std::vector<InteractionCandidate>)>;
+    using Failed = std::function<void(std::string)>;
+    using Cancelled = std::function<void()>;
+    using Cancel = std::function<void()>;
+    using Start = std::function<std::expected<Cancel, std::string>(Completed, Failed, Cancelled)>;
+
+    Start start;
+};
+
+using InteractionProviderResult = std::variant<std::vector<InteractionCandidate>,
+                                               InteractionCandidateWork, InteractionCandidateAsync>;
 
 class InteractionProviderRegistry {
 public:
@@ -116,7 +127,7 @@ private:
     EditorRuntime* runtime_;
     InteractionProviderRegistry* providers_;
     AsyncRuntime* async_runtime_ = nullptr;
-    AsyncTaskId pending_task_;
+    std::function<void()> cancel_pending_task_;
     std::uint64_t next_generation_ = 0;
     std::optional<InteractionState> state_;
     std::unordered_map<std::string, std::vector<std::string>> histories_;

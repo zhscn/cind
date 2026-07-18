@@ -136,7 +136,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.command_revision == 1);
     CHECK(state.scripting.scripted_commands == 190);
     CHECK(state.scripting.provider_revision == 1);
-    CHECK(state.scripting.scripted_providers == 6);
+    CHECK(state.scripting.scripted_providers == 7);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
     CHECK(state.scripting.scripted_input_states == 17);

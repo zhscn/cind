@@ -1,6 +1,7 @@
 (define-module (cind core)
   #:use-module (ice-9 optargs)
   #:use-module (cind ares)
+  #:use-module (cind async)
   #:use-module (cind command)
   #:use-module (cind development)
   #:use-module (cind emacs)
@@ -77,6 +78,46 @@
             (loop (+ index 1)
                   (cons (interaction-candidate name name detail filter-text)
                         candidates)))))))
+
+(define (files-provider-directory host context query)
+  (cond ((= (string-length query) 0)
+         (let ((resource (buffer-resource host (context-buffer context))))
+           (if resource
+               (let ((parent (path-parent host resource)))
+                 (if (= (string-length parent) 0) "." parent))
+               ".")))
+        ((directory-path? host query) query)
+        (else
+         (let ((parent (path-parent host query)))
+           (if (= (string-length parent) 0) "." parent)))))
+
+(define (directory-list-candidates host result)
+  (let* ((directory (vector-ref result 1))
+         (entries (vector-ref result 2))
+         (parent (path-parent host directory))
+         (parent-candidate
+          (and (> (string-length parent) 0)
+               (not (string=? parent directory))
+               (let ((value (path-as-directory host parent)))
+                 (interaction-candidate value "../" parent value)))))
+    (let loop ((index 0)
+               (candidates (if parent-candidate (list parent-candidate) '())))
+      (if (= index (vector-length entries))
+          (list->vector (reverse candidates))
+          (let* ((entry (vector-ref entries index))
+                 (path (vector-ref entry 0))
+                 (name (vector-ref entry 1))
+                 (directory? (vector-ref entry 2))
+                 (value (if directory? (path-as-directory host path) path))
+                 (label (if directory? (path-as-directory host name) name)))
+            (loop (+ index 1)
+                  (cons (interaction-candidate value label directory value)
+                        candidates)))))))
+
+(define (files-provider host context query)
+  (interaction-provider-task
+   (async-directory-list (files-provider-directory host context query) 1000)
+   (lambda (result) (directory-list-candidates host result))))
 
 (define (project-files-provider host context query)
   (let ((project (context-project context)))
@@ -1250,6 +1291,9 @@
          (cons "buffers"
                (lambda (context query)
                  (buffers-provider host context query)))
+         (cons "files"
+               (lambda (context query)
+                 (files-provider host context query)))
          (cons "project-files"
                (lambda (context query)
                  (project-files-provider host context query)))

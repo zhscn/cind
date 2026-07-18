@@ -34,14 +34,6 @@ std::expected<std::string, std::string> normalized_path(std::string_view input) 
     return path.string();
 }
 
-std::string directory_input(const fs::path& path) {
-    std::string result = path.lexically_normal().string();
-    if (result.empty() || result.back() != fs::path::preferred_separator) {
-        result.push_back(fs::path::preferred_separator);
-    }
-    return result;
-}
-
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
     const TextOffset content_end = text.line_content_end(line);
@@ -575,9 +567,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
 }
 
 EditorApplication::~EditorApplication() {
-    guile_.shutdown_async_tasks();
     interaction_session_.reset();
     (void)interaction_.cancel();
+    guile_.shutdown_async_tasks();
 }
 
 BufferId EditorApplication::buffer_id() const {
@@ -1808,60 +1800,6 @@ void EditorApplication::register_commands() {
 }
 
 void EditorApplication::register_interaction_providers() {
-    runtime_.interaction_providers().define(
-        "files",
-        [this](CommandContext&, std::string_view requested_query) -> InteractionProviderResult {
-            const Buffer& buffer = session().buffer();
-            std::optional<std::string> resource = buffer.resource_uri();
-            std::string query(requested_query);
-            return InteractionCandidateWork{[query = std::move(query),
-                                             resource = std::move(resource)](
-                                                const std::stop_token& cancellation) {
-                const fs::path typed(query);
-                fs::path directory;
-                if (query.empty()) {
-                    directory = resource ? fs::path(*resource).parent_path() : fs::path(".");
-                } else if (query.ends_with(fs::path::preferred_separator)) {
-                    directory = typed;
-                } else {
-                    directory = typed.has_parent_path() ? typed.parent_path() : fs::path(".");
-                }
-                std::expected<DirectoryListing, std::error_code> listing =
-                    list_directory(directory, 1000, cancellation);
-                if (!listing) {
-                    if (listing.error() == std::make_error_code(std::errc::operation_canceled)) {
-                        throw AsyncTaskCancelled();
-                    }
-                    return std::vector<InteractionCandidate>{};
-                }
-
-                std::vector<InteractionCandidate> candidates;
-                candidates.reserve(listing->entries.size() + 1);
-                if (listing->directory.has_parent_path()) {
-                    const std::string parent = directory_input(listing->directory.parent_path());
-                    candidates.push_back({.value = parent,
-                                          .label = "../",
-                                          .detail = listing->directory.parent_path().string(),
-                                          .filter_text = parent});
-                }
-                for (const DirectoryEntry& entry : listing->entries) {
-                    if (cancellation.stop_requested()) {
-                        throw AsyncTaskCancelled();
-                    }
-                    std::string value = entry.path.string();
-                    std::string label = entry.name;
-                    if (entry.directory) {
-                        value = directory_input(value);
-                        label.push_back(fs::path::preferred_separator);
-                    }
-                    candidates.push_back({.value = value,
-                                          .label = std::move(label),
-                                          .detail = listing->directory.string(),
-                                          .filter_text = value});
-                }
-                return candidates;
-            }};
-        });
     std::expected<std::size_t, std::string> installed = guile_.install_core_providers();
     if (!installed) {
         throw std::runtime_error(

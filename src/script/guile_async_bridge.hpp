@@ -17,6 +17,9 @@ namespace cind {
 
 struct GuileAsyncBridgeState;
 
+ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* caller, int position);
+SCM script_async_result_to_scheme(ScriptAsyncResult result);
+
 class GuileAsyncBridge {
 public:
     using Start = std::function<std::expected<std::uint64_t, std::string>(ScriptAsyncRequest,
@@ -34,6 +37,10 @@ public:
     SCM start(SCM request, SCM completed, SCM failed, SCM cancelled);
     SCM cancel(SCM task);
     SCM summaries() const;
+
+    std::expected<std::uint64_t, std::string> start_native_task(ScriptAsyncRequest request,
+                                                                ScriptAsyncCallbacks callbacks);
+    bool cancel_native_task(std::uint64_t task);
 
     std::size_t outstanding() const;
     std::vector<std::uint64_t> checkpoint() const;
