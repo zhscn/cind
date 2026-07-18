@@ -27,6 +27,14 @@ ui::Scene compose_frame(EditorModel& model, int rows, int columns, float visible
     return model.compose(rows, columns, visible_text_rows);
 }
 
+void send_keys(EditorModel& model, std::string_view notation) {
+    const std::expected<KeySequence, KeyParseError> sequence = parse_key_sequence(notation);
+    REQUIRE(sequence.has_value());
+    for (const KeyStroke key : *sequence) {
+        CHECK(model.handle_key(key, 10));
+    }
+}
+
 } // namespace
 
 TEST_CASE("critical spring preserves motion when its target changes") {
@@ -159,12 +167,40 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.buffers.front().initial_input_state == "emacs");
     REQUIRE(state.windows.size() == 1);
     CHECK(state.windows.front().input_states == std::vector<std::string>{"emacs"});
+    REQUIRE(state.workbenches.size() == 1);
+    CHECK(state.workbenches.front().active);
+    CHECK(state.workbenches.front().windows.size() == 1);
+    CHECK(state.workbenches.front().layout.leaf);
     CHECK_FALSE(scrolled.cursor_visible);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 6));
     const ui::Scene revealed = compose_frame(model, 8, 80);
     CHECK(model.inspect().caret_position.line == 1);
     CHECK(revealed.cursor_visible);
+}
+
+TEST_CASE("inspection retains inactive workbench layouts and window state") {
+    EditorModel model("sample.cc", "one\ntwo\n", 1);
+    send_keys(model, "C-x 3");
+    send_keys(model, "C-x w n");
+    model.insert_text("notes");
+    send_keys(model, "RET");
+
+    const EditorStateSnapshot state = model.inspect();
+    REQUIRE(state.workbenches.size() == 2);
+    const auto original =
+        std::ranges::find_if(state.workbenches, [](const WorkbenchStateSnapshot& workbench) {
+            return workbench.name.empty();
+        });
+    const auto notes =
+        std::ranges::find(state.workbenches, std::string{"notes"}, &WorkbenchStateSnapshot::name);
+    REQUIRE(original != state.workbenches.end());
+    REQUIRE(notes != state.workbenches.end());
+    CHECK_FALSE(original->active);
+    CHECK(original->windows.size() == 2);
+    CHECK_FALSE(original->layout.leaf);
+    CHECK(notes->active);
+    CHECK(notes->windows.size() == 1);
 }
 
 TEST_CASE("fractional wheel scrolling preserves trackpad precision") {

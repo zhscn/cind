@@ -35,7 +35,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                         bool echo_frame = false, bool echo_cursor_mismatch = false,
                         bool scroll_frame = false, bool scroll_cursor_detached = false,
                         bool document_cursor_animation = false,
-                        bool document_cursor_desynced = false) {
+                        bool document_cursor_desynced = false,
+                        bool invalid_workbench_layout = false) {
     const std::uint64_t event = hub.record_event({.type = "text-input",
                                                   .detail = "text=x",
                                                   .handled = true,
@@ -172,6 +173,29 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .created_by_policy = true,
                      .active = true,
                      .input_states = {"emacs"}}},
+        .workbenches = {{.workbench = {.slot = 0, .generation = 1},
+                         .name = "code",
+                         .active = true,
+                         .scope = {{.slot = 0, .generation = 1}},
+                         .mru = {{.slot = 0, .generation = 1}},
+                         .active_window = {.slot = 0, .generation = 1},
+                         .slots = {{.role = "tools", .window = {.slot = 0, .generation = 1}}},
+                         .layout = {.leaf = true,
+                                    .window = {.slot = 0, .generation = 1},
+                                    .axis = {},
+                                    .ratio = 0.5F,
+                                    .children = {}},
+                         .windows = {{.window_slot = 0,
+                                      .window_generation = 1,
+                                      .view_slot = 0,
+                                      .view_generation = 1,
+                                      .buffer_slot = 0,
+                                      .buffer_generation = 1,
+                                      .role = "tools",
+                                      .pinned = true,
+                                      .created_by_policy = true,
+                                      .active = true,
+                                      .input_states = {"emacs"}}}}},
         .projects = {{.project_slot = 0,
                       .project_generation = 1,
                       .name = "sample",
@@ -412,6 +436,9 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
     if (document_cursor_animation) {
         render.primitives.resize(1);
     }
+    if (invalid_workbench_layout) {
+        editor.workbenches.front().layout.window.generation = 2;
+    }
     hub.publish(std::move(editor), std::move(scene), std::move(render), event);
 }
 
@@ -429,7 +456,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":49") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":50") != std::string::npos);
     CHECK(snapshot.find("\"buffer_name\":\" *minibuffer*\"") != std::string::npos);
     CHECK(snapshot.find("\"styles\":{\"inactive_alpha\":176") != std::string::npos);
     CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
@@ -464,6 +491,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
           std::string::npos);
     CHECK(snapshot.find("\"pending_keymap\":\"application.global\"") != std::string::npos);
     CHECK(snapshot.find("\"pending_input_state\":\"\"") != std::string::npos);
+    CHECK(snapshot.find("\"workbenches\":[{\"workbench\":{\"slot\":0") != std::string::npos);
     CHECK(snapshot.find("\"register\":\"a\"") != std::string::npos);
     CHECK(snapshot.find("\"prefix_extra\":[{\"name\":\"scope\",\"value\":\"word\"}]") !=
           std::string::npos);
@@ -568,6 +596,14 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(windows.payload.find("\"created_by_policy\":true") != std::string::npos);
     CHECK(windows.payload.find("\"active\":true") != std::string::npos);
     CHECK(windows.payload.find("\"input_states\":[\"emacs\"]") != std::string::npos);
+
+    const InspectionResponse workbenches = run_inspection_query(hub, "get editor.workbenches");
+    REQUIRE(workbenches.ok);
+    CHECK(workbenches.payload.find("\"name\":\"code\"") != std::string::npos);
+    CHECK(workbenches.payload.find("\"scope\":[{\"slot\":0") != std::string::npos);
+    CHECK(workbenches.payload.find("\"mru\":[{\"slot\":0") != std::string::npos);
+    CHECK(workbenches.payload.find("\"slots\":[{\"role\":\"tools\"") != std::string::npos);
+    CHECK(workbenches.payload.find("\"layout\":{\"kind\":\"leaf\"") != std::string::npos);
 
     const InspectionResponse projects = run_inspection_query(hub, "get editor.projects");
     REQUIRE(projects.ok);
@@ -701,6 +737,16 @@ TEST_CASE("inspection reports a scroll cursor detached from the current view") {
     REQUIRE(frame);
     REQUIRE(frame->violations.size() == 1);
     CHECK(frame->violations.front() == "render scroll cursor does not match the visual viewport");
+}
+
+TEST_CASE("inspection reports a workbench layout detached from its owned windows") {
+    InspectionHub hub;
+    publish_test_frame(hub, false, true, false, false, false, false, false, false, false, true);
+
+    const std::shared_ptr<const FrameInspection> frame = hub.latest();
+    REQUIRE(frame);
+    REQUIRE(frame->violations.size() == 1);
+    CHECK(frame->violations.front() == "workbench layout leaves do not match owned windows");
 }
 
 TEST_CASE("inspection reports a document cursor and active line out of phase") {

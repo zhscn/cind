@@ -138,6 +138,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.interaction` | minibuffer Window/View/Buffer、策略提供的 buffer name、origin target、prompt/picker 输入、provider、候选、选中项、history 大小/游标/草稿、generation、loading 和错误 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
+| `editor.workbenches` | 所有 active/inactive workbench 的 scope、MRU、active window、slot、完整 layout 树及保活的 window/view/buffer 状态 |
 | `editor.projects` | project roots、discovery provider/marker、索引 revision、文件数、刷新状态和错误 |
 | `editor.location` | caret 所在 location-list 项的 source range 和目标文件位置 |
 | `editor.location_navigation` | 当前 location-list buffer、选中项和结果总数；跳到源码后仍保留 |
@@ -177,6 +178,7 @@ cmk run -p gui cind-ui-inspect -- get editor.scripting
 cmk run -p gui cind-ui-inspect -- get editor.interaction
 cmk run -p gui cind-ui-inspect -- get editor.buffers
 cmk run -p gui cind-ui-inspect -- get editor.windows
+cmk run -p gui cind-ui-inspect -- get editor.workbenches
 cmk run -p gui cind-ui-inspect -- get editor.focus
 cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
@@ -194,7 +196,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
 
 - `editor`：活动文件、revision、文档大小、行数、dirty 状态、caret、selection、连续行单位的
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
-  command loop、交互状态以及 buffer/window 列表。Command loop 的 layer 同时记录 keymap
+  command loop、交互状态以及 buffer/window/workbench 列表。Workbench 项包含 scope/MRU 的
+  generational ID、具名 slot、active Window、递归 layout 节点，以及 inactive layout 中仍然
+  存活的 Window/View/Buffer 绑定。Command loop 的 layer 同时记录 keymap
   名称、parent chain 和 window/view/buffer/mode/editor/global/minibuffer 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset，

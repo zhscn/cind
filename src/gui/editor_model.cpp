@@ -429,23 +429,83 @@ EditorStateSnapshot EditorModel::inspect() {
                            .things = std::move(things),
                            .location_count = buffer.location_count});
     }
-    std::vector<OpenWindowStateSnapshot> windows;
-    for (const OpenWindowSnapshot& window : application_.open_windows()) {
+    const auto inspect_window = [&](WindowId window, bool active) {
+        const Window& definition = runtime.windows().get(window);
+        const ViewId view = definition.view_id();
+        const BufferId buffer = runtime.views().get(view).buffer_id();
         std::vector<std::string> input_states;
-        for (const InputStateId state : runtime.views().get(window.view).input_states().stack()) {
+        for (const InputStateId state : runtime.views().get(view).input_states().stack()) {
             input_states.push_back(runtime.input_states().definition(state).name);
         }
-        windows.push_back({.window_slot = window.window.slot,
-                           .window_generation = window.window.generation,
-                           .view_slot = window.view.slot,
-                           .view_generation = window.view.generation,
-                           .buffer_slot = window.buffer.slot,
-                           .buffer_generation = window.buffer.generation,
-                           .role = window.role.value_or(std::string{}),
-                           .pinned = window.pinned,
-                           .created_by_policy = window.created_by_policy,
-                           .active = window.active,
-                           .input_states = std::move(input_states)});
+        return OpenWindowStateSnapshot{.window_slot = window.slot,
+                                       .window_generation = window.generation,
+                                       .view_slot = view.slot,
+                                       .view_generation = view.generation,
+                                       .buffer_slot = buffer.slot,
+                                       .buffer_generation = buffer.generation,
+                                       .role = definition.role().value_or(std::string{}),
+                                       .pinned = definition.pinned(),
+                                       .created_by_policy = definition.created_by_policy(),
+                                       .active = active,
+                                       .input_states = std::move(input_states)};
+    };
+    std::vector<OpenWindowStateSnapshot> windows;
+    for (const OpenWindowSnapshot& window : application_.open_windows()) {
+        windows.push_back(inspect_window(window.window, window.active));
+    }
+    const auto inspect_layout =
+        [](this const auto& self,
+           const WorkbenchLayoutSnapshot& node) -> WorkbenchLayoutStateSnapshot {
+        if (node.window) {
+            return {.leaf = true,
+                    .window = {.slot = node.window->slot, .generation = node.window->generation},
+                    .axis = {},
+                    .ratio = 0.5F,
+                    .children = {}};
+        }
+        std::vector<WorkbenchLayoutStateSnapshot> children;
+        children.reserve(node.children.size());
+        for (const WorkbenchLayoutSnapshot& child : node.children) {
+            children.push_back(self(child));
+        }
+        return {.leaf = false,
+                .window = {},
+                .axis = node.axis == WindowSplitAxis::Rows ? "rows" : "columns",
+                .ratio = node.ratio,
+                .children = std::move(children)};
+    };
+    std::vector<WorkbenchStateSnapshot> workbenches;
+    for (const WorkbenchSnapshot& workbench : application_.workbench_snapshots()) {
+        WorkbenchStateSnapshot inspected{
+            .workbench = {.slot = workbench.workbench.slot,
+                          .generation = workbench.workbench.generation},
+            .name = workbench.name,
+            .active = workbench.active,
+            .scope = {},
+            .mru = {},
+            .active_window = {.slot = workbench.active_window.slot,
+                              .generation = workbench.active_window.generation},
+            .slots = {},
+            .layout = inspect_layout(workbench.layout),
+            .windows = {}};
+        inspected.scope.reserve(workbench.scope.size());
+        for (const ProjectId project : workbench.scope) {
+            inspected.scope.push_back({.slot = project.slot, .generation = project.generation});
+        }
+        inspected.mru.reserve(workbench.mru.size());
+        for (const BufferId buffer : workbench.mru) {
+            inspected.mru.push_back({.slot = buffer.slot, .generation = buffer.generation});
+        }
+        inspected.slots.reserve(workbench.slots.size());
+        for (const auto& [role, window] : workbench.slots) {
+            inspected.slots.push_back(
+                {.role = role, .window = {.slot = window.slot, .generation = window.generation}});
+        }
+        inspected.windows.reserve(workbench.windows.size());
+        for (const WindowId window : workbench.windows) {
+            inspected.windows.push_back(inspect_window(window, window == workbench.active_window));
+        }
+        workbenches.push_back(std::move(inspected));
     }
     std::vector<ProjectStateSnapshot> projects;
     for (const ProjectId project_id : runtime.projects().all()) {
@@ -562,6 +622,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .interaction = std::move(interaction_state),
             .buffers = std::move(buffers),
             .windows = std::move(windows),
+            .workbenches = std::move(workbenches),
             .projects = std::move(projects),
             .location_at_caret = std::move(location_at_caret),
             .location_navigation = location_navigation,

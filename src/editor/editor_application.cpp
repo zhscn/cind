@@ -1376,8 +1376,25 @@ std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench
 std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
     std::vector<WorkbenchSnapshot> result;
     result.reserve(workbenches_.size());
+    const auto snapshot_layout = [](this const auto& self,
+                                    const WindowLayoutNode& node) -> WorkbenchLayoutSnapshot {
+        if (node.leaf()) {
+            return {.window = node.window,
+                    .axis = WindowSplitAxis::Rows,
+                    .ratio = 0.5F,
+                    .children = {}};
+        }
+        return {.window = std::nullopt,
+                .axis = node.axis,
+                .ratio = node.ratio,
+                .children = {self(*node.first), self(*node.second)}};
+    };
     for (const WorkbenchId id : workbenches_.all()) {
         const Workbench& workbench = workbenches_.get(id);
+        std::vector<std::pair<std::string, WindowId>> slots(workbench.slots().begin(),
+                                                            workbench.slots().end());
+        std::ranges::sort(slots, {},
+                          [](const auto& slot) -> const std::string& { return slot.first; });
         result.push_back(
             {.workbench = id,
              .name = workbench.name(),
@@ -1386,6 +1403,8 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
              .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
                                               workbench.layout().leaves().end()),
              .active_window = workbench.active_window(),
+             .slots = std::move(slots),
+             .layout = snapshot_layout(*workbench.layout().root()),
              .active = id == workbenches_.active_id()});
     }
     return result;

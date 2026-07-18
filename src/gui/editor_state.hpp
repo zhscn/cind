@@ -89,6 +89,38 @@ struct OpenWindowStateSnapshot {
     std::vector<std::string> input_states;
 };
 
+struct EntityStateSnapshot {
+    std::uint32_t slot = 0;
+    std::uint32_t generation = 0;
+
+    friend bool operator==(const EntityStateSnapshot&, const EntityStateSnapshot&) = default;
+};
+
+struct WorkbenchSlotStateSnapshot {
+    std::string role;
+    EntityStateSnapshot window;
+};
+
+struct WorkbenchLayoutStateSnapshot {
+    bool leaf = false;
+    EntityStateSnapshot window;
+    std::string axis;
+    float ratio = 0.5F;
+    std::vector<WorkbenchLayoutStateSnapshot> children;
+};
+
+struct WorkbenchStateSnapshot {
+    EntityStateSnapshot workbench;
+    std::string name;
+    bool active = false;
+    std::vector<EntityStateSnapshot> scope;
+    std::vector<EntityStateSnapshot> mru;
+    EntityStateSnapshot active_window;
+    std::vector<WorkbenchSlotStateSnapshot> slots;
+    WorkbenchLayoutStateSnapshot layout;
+    std::vector<OpenWindowStateSnapshot> windows;
+};
+
 struct ProjectStateSnapshot {
     std::uint32_t project_slot = 0;
     std::uint32_t project_generation = 0;
@@ -233,6 +265,7 @@ struct EditorStateSnapshot {
     InteractionStateSnapshot interaction;
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;
+    std::vector<WorkbenchStateSnapshot> workbenches;
     std::vector<ProjectStateSnapshot> projects;
     LocationStateSnapshot location_at_caret;
     LocationNavigationStateSnapshot location_navigation;

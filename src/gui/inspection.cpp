@@ -476,6 +476,82 @@ void append_windows(std::string& output, const std::vector<OpenWindowStateSnapsh
     output.push_back(']');
 }
 
+void append_entity(std::string& output, const EntityStateSnapshot& entity) {
+    output += std::format("{{\"slot\":{},\"generation\":{}}}", entity.slot, entity.generation);
+}
+
+void append_entities(std::string& output, const std::vector<EntityStateSnapshot>& entities) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < entities.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_entity(output, entities[index]);
+    }
+    output.push_back(']');
+}
+
+void append_workbench_layout(std::string& output, const WorkbenchLayoutStateSnapshot& layout) {
+    output += "{\"kind\":";
+    append_json_string(output, layout.leaf ? "leaf" : "branch");
+    if (layout.leaf) {
+        output += ",\"window\":";
+        append_entity(output, layout.window);
+    } else {
+        output += ",\"axis\":";
+        append_json_string(output, layout.axis);
+        output += std::format(",\"ratio\":{},\"children\":[", layout.ratio);
+        for (std::size_t index = 0; index < layout.children.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            append_workbench_layout(output, layout.children[index]);
+        }
+        output.push_back(']');
+    }
+    output.push_back('}');
+}
+
+void append_workbenches(std::string& output,
+                        const std::vector<WorkbenchStateSnapshot>& workbenches) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < workbenches.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const WorkbenchStateSnapshot& workbench = workbenches[index];
+        output += "{\"workbench\":";
+        append_entity(output, workbench.workbench);
+        output += ",\"name\":";
+        append_json_string(output, workbench.name);
+        output += ",\"active\":";
+        append_bool(output, workbench.active);
+        output += ",\"scope\":";
+        append_entities(output, workbench.scope);
+        output += ",\"mru\":";
+        append_entities(output, workbench.mru);
+        output += ",\"active_window\":";
+        append_entity(output, workbench.active_window);
+        output += ",\"slots\":[";
+        for (std::size_t slot = 0; slot < workbench.slots.size(); ++slot) {
+            if (slot != 0) {
+                output.push_back(',');
+            }
+            output += "{\"role\":";
+            append_json_string(output, workbench.slots[slot].role);
+            output += ",\"window\":";
+            append_entity(output, workbench.slots[slot].window);
+            output.push_back('}');
+        }
+        output += "],\"layout\":";
+        append_workbench_layout(output, workbench.layout);
+        output += ",\"windows\":";
+        append_windows(output, workbench.windows);
+        output.push_back('}');
+    }
+    output.push_back(']');
+}
+
 void append_projects(std::string& output, const std::vector<ProjectStateSnapshot>& projects) {
     output.push_back('[');
     for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -664,6 +740,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_buffers(output, editor.buffers);
     output += ",\"windows\":";
     append_windows(output, editor.windows);
+    output += ",\"workbenches\":";
+    append_workbenches(output, editor.workbenches);
     output += ",\"projects\":";
     append_projects(output, editor.projects);
     output += ",\"location_at_caret\":";
@@ -1416,6 +1494,129 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             violations.emplace_back("editor active window identity does not match window state");
         }
     }
+    const std::size_t active_workbenches = static_cast<std::size_t>(std::ranges::count_if(
+        frame.editor.workbenches,
+        [](const WorkbenchStateSnapshot& workbench) { return workbench.active; }));
+    if (frame.editor.workbenches.empty() || active_workbenches != 1) {
+        violations.emplace_back("editor must have exactly one active workbench");
+    }
+    const auto has_duplicate_entity = [](const std::vector<EntityStateSnapshot>& entities) {
+        for (std::size_t index = 0; index < entities.size(); ++index) {
+            if (std::ranges::find(entities.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                                  entities.end(), entities[index]) != entities.end()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<EntityStateSnapshot> owned_windows;
+    for (const WorkbenchStateSnapshot& workbench : frame.editor.workbenches) {
+        const std::size_t focused = static_cast<std::size_t>(
+            std::ranges::count_if(workbench.windows, [](const OpenWindowStateSnapshot& window) {
+                return window.active;
+            }));
+        if (workbench.windows.empty() || focused != 1) {
+            violations.emplace_back("workbench must have exactly one active window");
+        } else {
+            const auto selected =
+                std::ranges::find_if(workbench.windows, [](const OpenWindowStateSnapshot& window) {
+                    return window.active;
+                });
+            if (selected->window_slot != workbench.active_window.slot ||
+                selected->window_generation != workbench.active_window.generation) {
+                violations.emplace_back(
+                    "workbench active window identity does not match window state");
+            }
+        }
+        if (workbench.active &&
+            (workbench.active_window.slot != frame.editor.active_window_slot ||
+             workbench.active_window.generation != frame.editor.active_window_generation)) {
+            violations.emplace_back("active workbench does not own the editor active window");
+        }
+        for (const OpenWindowStateSnapshot& window : workbench.windows) {
+            const EntityStateSnapshot identity{.slot = window.window_slot,
+                                               .generation = window.window_generation};
+            if (std::ranges::find(owned_windows, identity) != owned_windows.end()) {
+                violations.emplace_back("window belongs to more than one workbench");
+            } else {
+                owned_windows.push_back(identity);
+            }
+        }
+        if (has_duplicate_entity(workbench.scope)) {
+            violations.emplace_back("workbench scope contains duplicate projects");
+        }
+        if (std::ranges::any_of(workbench.scope, [&](const EntityStateSnapshot& project) {
+                return std::ranges::none_of(
+                    frame.editor.projects, [&](const ProjectStateSnapshot& candidate) {
+                        return candidate.project_slot == project.slot &&
+                               candidate.project_generation == project.generation;
+                    });
+            })) {
+            violations.emplace_back("workbench scope contains a stale project");
+        }
+        if (has_duplicate_entity(workbench.mru)) {
+            violations.emplace_back("workbench MRU contains duplicate buffers");
+        }
+        if (std::ranges::any_of(workbench.mru, [&](const EntityStateSnapshot& buffer) {
+                return std::ranges::none_of(
+                    frame.editor.buffers, [&](const OpenBufferStateSnapshot& candidate) {
+                        return candidate.buffer_slot == buffer.slot &&
+                               candidate.buffer_generation == buffer.generation;
+                    });
+            })) {
+            violations.emplace_back("workbench MRU contains a stale buffer");
+        }
+        std::vector<EntityStateSnapshot> layout_windows;
+        const auto validate_layout = [&](this const auto& self,
+                                         const WorkbenchLayoutStateSnapshot& node) -> void {
+            if (node.leaf) {
+                if (!node.children.empty()) {
+                    violations.emplace_back("workbench layout leaf has children");
+                }
+                layout_windows.push_back(node.window);
+                return;
+            }
+            if (node.children.size() != 2 || (node.axis != "rows" && node.axis != "columns") ||
+                !std::isfinite(node.ratio) || node.ratio <= 0.0F || node.ratio >= 1.0F) {
+                violations.emplace_back("workbench layout branch is invalid");
+                return;
+            }
+            self(node.children[0]);
+            self(node.children[1]);
+        };
+        validate_layout(workbench.layout);
+        if (layout_windows.size() != workbench.windows.size() ||
+            std::ranges::any_of(workbench.windows, [&](const OpenWindowStateSnapshot& window) {
+                return std::ranges::find(
+                           layout_windows,
+                           EntityStateSnapshot{.slot = window.window_slot,
+                                               .generation = window.window_generation}) ==
+                       layout_windows.end();
+            })) {
+            violations.emplace_back("workbench layout leaves do not match owned windows");
+        }
+        for (const WorkbenchSlotStateSnapshot& slot : workbench.slots) {
+            const auto window = std::ranges::find_if(
+                workbench.windows, [&](const OpenWindowStateSnapshot& candidate) {
+                    return candidate.window_slot == slot.window.slot &&
+                           candidate.window_generation == slot.window.generation;
+                });
+            if (slot.role.empty() || window == workbench.windows.end() ||
+                window->role != slot.role) {
+                violations.emplace_back("workbench slot does not match a role-bearing window");
+            }
+        }
+        for (std::size_t index = 0; index < workbench.slots.size(); ++index) {
+            if (std::ranges::any_of(
+                    workbench.slots.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                    workbench.slots.end(), [&](const WorkbenchSlotStateSnapshot& slot) {
+                        return slot.role == workbench.slots[index].role;
+                    })) {
+                violations.emplace_back("workbench contains duplicate slot roles");
+                break;
+            }
+        }
+    }
     const std::size_t active_buffers = static_cast<std::size_t>(std::ranges::count_if(
         frame.editor.buffers, [](const OpenBufferStateSnapshot& buffer) { return buffer.active; }));
     if (frame.editor.buffers.empty() || active_buffers != 1) {
@@ -2140,6 +2341,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_buffers(output, frame.editor.buffers);
     } else if (path == "editor.windows") {
         append_windows(output, frame.editor.windows);
+    } else if (path == "editor.workbenches") {
+        append_workbenches(output, frame.editor.workbenches);
     } else if (path == "editor.projects") {
         append_projects(output, frame.editor.projects);
     } else if (path == "editor.location") {
@@ -2719,6 +2922,24 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                 output << ',';
             }
             output << printable(window.input_states[index]);
+        }
+        output << '\n';
+    }
+    output << "    workbenches=" << frame.editor.workbenches.size() << '\n';
+    for (const WorkbenchStateSnapshot& workbench : frame.editor.workbenches) {
+        output << "      workbench:" << workbench.workbench.slot << ':'
+               << workbench.workbench.generation << (workbench.active ? " active" : "")
+               << " name=\"" << printable(workbench.name) << "\" scope=" << workbench.scope.size()
+               << " mru=" << workbench.mru.size() << " windows=" << workbench.windows.size()
+               << " active-window:" << workbench.active_window.slot << ':'
+               << workbench.active_window.generation << " slots=";
+        for (std::size_t index = 0; index < workbench.slots.size(); ++index) {
+            if (index != 0) {
+                output << ',';
+            }
+            output << printable(workbench.slots[index].role) << "->"
+                   << workbench.slots[index].window.slot << ':'
+                   << workbench.slots[index].window.generation;
         }
         output << '\n';
     }

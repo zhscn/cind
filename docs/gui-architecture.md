@@ -49,6 +49,12 @@ state that belongs to this frontend composition, such as the popup list viewport
 cache. Document and minibuffer text, carets, selections, and view state remain owned by runtime
 Buffer/View objects.
 
+Each Workbench owns one persistent `WindowLayout`, an active Window, a Project scope, a Buffer MRU
+and named placement slots. Switching the active Workbench changes the tree projected by
+`EditorModel`; inactive Window/View objects remain live and keep their selection, input and
+viewport state. Buffers and Projects remain application-global registries, so the presentation
+container does not become an IDE-style ownership boundary.
+
 `WindowLayout` is the persistent split tree. Its leaves are `WindowId` values and its branches
 carry row/column orientation plus a normalized ratio. Splitting creates a new View for the same
 Buffer, so caret, selection and viewport can diverge without duplicating document state. Deleting
@@ -197,7 +203,8 @@ ready; the event loop drains those completions before deciding whether to compos
 
 ## Inspector boundary
 
-The inspector publishes model state, semantic Scene content, ViewTree order, prepared layout
+The inspector publishes model state, all active and inactive Workbench layouts, semantic Scene
+content, ViewTree order, prepared layout
 diagnostics, animation state, damage and recent input events for the same `PresentedFrame`. Stable
 view and primitive IDs connect these layers. Pixel picking follows the presented frame's prepared
 layers and returns a semantic target, allowing a rendering defect and an editor-state defect to be
@@ -221,6 +228,7 @@ The following contracts prevent local rendering fixes from becoming alternate ar
     separately reconstructed debug model.
 11. Pane geometry, focus and active styling originate in the WindowLayout and Scene; presenters do
     not maintain an alternate split tree.
+12. Every Window belongs to exactly one Workbench layout, and exactly one Workbench is active.
 
 New GUI features join these boundaries by adding semantic Scene content, ViewTree structure or a
 prepared-layout type. A feature that needs separate geometry in paint, hit testing and inspection

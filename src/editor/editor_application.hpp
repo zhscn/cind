@@ -73,6 +73,13 @@ struct OpenWindowSnapshot {
     bool active = false;
 };
 
+struct WorkbenchLayoutSnapshot {
+    std::optional<WindowId> window;
+    WindowSplitAxis axis = WindowSplitAxis::Rows;
+    float ratio = 0.5F;
+    std::vector<WorkbenchLayoutSnapshot> children;
+};
+
 struct WorkbenchSnapshot {
     WorkbenchId workbench;
     std::string name;
@@ -80,6 +87,8 @@ struct WorkbenchSnapshot {
     std::vector<BufferId> mru;
     std::vector<WindowId> windows;
     WindowId active_window;
+    std::vector<std::pair<std::string, WindowId>> slots;
+    WorkbenchLayoutSnapshot layout;
     bool active = false;
 };
 

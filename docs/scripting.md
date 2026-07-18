@@ -116,6 +116,19 @@ The native module exports:
 (enabled-command-names host context)
 (command-properties host context command-name)
 (open-buffer-summaries host)
+(workbench-list host)
+(current-workbench host)
+(workbench-scope host workbench-id)
+(workbench-mru host workbench-id)
+(workbench-buffer-summaries host workbench-id widen?)
+(workbench-buffer-ids host workbench-id widen?)
+(new-workbench! host name project-id-or-#f)
+(switch-workbench! host workbench-id)
+(close-workbench! host workbench-id)
+(adopt-project! host workbench-id project-id)
+(expel-buffer! host workbench-id buffer-id)
+(workbench-session-state host)
+(restore-workbench-session! host serialized-state)
 (owned-user-modules host)
 (project-root host project-id)
 (project-files host project-id)
@@ -198,6 +211,12 @@ The native module exports:
 (open-window-ids host)
 (active-window-id host)
 (window-view-id host window-id)
+(window-role host window-id)
+(set-window-role! host window-id role-or-#f)
+(window-pinned? host window-id)
+(set-window-pinned! host window-id pinned?)
+(window-created-by-policy? host window-id)
+(workbench-slot host workbench-id role)
 (focus-window! host window-id)
 (request-redraw! host)
 (%start-async-task! host request completed failed-or-#f cancelled-or-#f)
@@ -753,6 +772,21 @@ uses these mechanisms for window cycling and asynchronous open targeting. `exit-
 marks the native event loop for termination, and `request-redraw!` requests caret reveal. Scheme
 commands inspect buffer state and own the quit confirmation interaction before invoking the exit
 mechanism.
+
+Workbench capabilities expose durable editing surfaces without transferring Buffer or Project
+ownership. `workbench-list` returns `#(id name active?)` summaries; scope and MRU queries return
+generational Project and Buffer IDs. The scoped Buffer queries optionally widen to the global
+Buffer pool. Lifecycle mutations validate names and registry membership in native code while the
+bundled commands own picker interaction and feedback. Window roles, pinning, policy provenance and
+named slots are explicit mechanisms used by the Scheme display policy.
+
+`workbench-session-state` returns the versioned serialization of every workbench, and
+`restore-workbench-session!` validates and installs serialized state before resource loading
+continues through the asynchronous runtime. The bundled `workbench.save-session` and
+`workbench.restore-session` commands select a path through the minibuffer, compose
+`async-file-write` or `async-file-read`, cancel a superseded restore request, and report completion
+through the ordinary message area. Session state contains stable Project roots and Buffer resource
+paths rather than runtime IDs.
 
 `project-id-by-root` and `create-project!` expose registry identity and validated construction;
 `set-buffer-project!` applies the chosen attachment. `project-index-state` returns
