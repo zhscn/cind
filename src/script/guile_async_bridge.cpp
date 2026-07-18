@@ -251,7 +251,6 @@ SCM call_body(void* data) {
     return call.result;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM call_handler(void* data, SCM tag, SCM arguments) {
     auto& call = *static_cast<ProcedureCall*>(data);
     try {
@@ -287,7 +286,6 @@ std::expected<SCM, std::string> invoke(SCM procedure, std::vector<SCM> arguments
 GuileAsyncBridgeResolver bridge_resolver = nullptr;
 std::once_flag bridge_bindings_once;
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM start_binding(SCM host, SCM request, SCM completed, SCM failed, SCM cancelled) {
     return bridge_resolver(host, "%start-async-task!").start(request, completed, failed, cancelled);
 }
@@ -486,7 +484,6 @@ GuileAsyncBridge::~GuileAsyncBridge() {
 
 // The Guile ABI fixes four adjacent SCM arguments; validation preserves their
 // semantic positions.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM GuileAsyncBridge::start(SCM request, SCM completed, SCM failed, SCM cancelled) {
     constexpr const char* caller = "%start-async-task!";
     if (!state_->active) {

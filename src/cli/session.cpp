@@ -431,7 +431,6 @@ std::string EditSession::render_with_caret() const {
 }
 
 // key/value order mirrors the textual `key: value` configuration contract.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool set_style_field(CppIndentStyle& style, std::string_view key, std::string_view value) {
     auto parse_int = [&](int& out) {
         auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), out);

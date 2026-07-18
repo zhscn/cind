@@ -299,7 +299,6 @@ void invoke_script_mode_policy_observer(const std::shared_ptr<GuileState>& state
 
 // The Guile ABI fixes four adjacent SCM arguments; Scheme-level names and
 // validation preserve their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabled_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("define-command!", 2, name_value, "string");
@@ -377,7 +376,6 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("set-command-documentation!", 2, name_value, "string");
@@ -407,7 +405,6 @@ SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("define-interaction-provider!", 2, name_value, "string");
@@ -464,7 +461,6 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // names and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM command_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("bind-key-if-command!", 3, keys_value, "string");
@@ -489,7 +485,6 @@ SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM c
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_keymap(SCM host_object, SCM name_value, SCM parent_value) {
     try {
         HostLease& host = require_host(host_object, "define-keymap!");
@@ -510,7 +505,6 @@ SCM define_keymap(SCM host_object, SCM name_value, SCM parent_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM bind_key(SCM host_object, SCM keymap_value, SCM keys_value, SCM binding_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("bind-key!", 3, keys_value, "string");
@@ -551,7 +545,6 @@ SCM bind_key(SCM host_object, SCM keymap_value, SCM keys_value, SCM binding_valu
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM bind_remap(SCM host_object, SCM keymap_value, SCM command_value, SCM replacement_value) {
     try {
         HostLease& host = require_host(host_object, "bind-remap!");
@@ -570,7 +563,6 @@ SCM bind_remap(SCM host_object, SCM keymap_value, SCM command_value, SCM replace
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; validation preserves their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM keymap_bindings(SCM host_object, SCM keymap_value) {
     try {
         HostLease& host = require_host(host_object, "keymap-bindings");
@@ -688,7 +680,6 @@ std::vector<PositionHint> position_hints_from_scheme(SCM hints_value, const char
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("resolve-key-sequence", 3, keys_value, "string");
@@ -733,7 +724,6 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM base_keymap_layers(SCM host_object, SCM context_value) {
     try {
         HostLease& host = require_host(host_object, "base-keymap-layers");
@@ -758,7 +748,6 @@ SCM base_keymap_layers(SCM host_object, SCM context_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM active_keymap_layers(SCM host_object, SCM context_value) {
     try {
         HostLease& host = require_host(host_object, "active-keymap-layers");
@@ -785,7 +774,6 @@ SCM active_keymap_layers(SCM host_object, SCM context_value) {
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM key_sequence_completions(SCM host_object, SCM layers_value, SCM keys_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("key-sequence-completions", 3, keys_value, "string");
@@ -828,7 +816,6 @@ SCM key_sequence_completions(SCM host_object, SCM layers_value, SCM keys_value) 
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; validation preserves their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_input_feedback(SCM host_object, SCM view_value, SCM sequence_value, SCM hints_value) {
     if (!scm_is_string(sequence_value)) {
         scm_wrong_type_arg_msg("set-input-feedback!", 3, sequence_value, "string");
@@ -847,7 +834,6 @@ SCM set_input_feedback(SCM host_object, SCM view_value, SCM sequence_value, SCM 
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM clear_input_feedback(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "clear-input-feedback!");
@@ -864,7 +850,6 @@ SCM clear_input_feedback(SCM host_object, SCM view_value) {
 // The low-level Guile ABI fixes eight adjacent SCM arguments. The `(cind
 // input)` wrapper supplies the public keyword interface and state-local
 // optional capabilities.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM text_input_value,
                        SCM text_command_value, SCM cursor_value, SCM indicator_value,
                        SCM handler_value) {
@@ -969,7 +954,6 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_value,
                               SCM on_exit_value) {
     if (!scheme_false(on_enter_value) && !scheme_true(scm_procedure_p(on_enter_value))) {
@@ -1058,7 +1042,6 @@ SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_valu
 
 // The provider is an optional capability of a named state rather than part of
 // the fixed-arity state-definition ABI.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_input_state_position_hints(SCM host_object, SCM name_value, SCM provider_value) {
     if (!scheme_false(provider_value) && !scheme_true(scm_procedure_p(provider_value))) {
         scm_wrong_type_arg_msg("set-input-state-position-hints!", 3, provider_value,
@@ -1144,7 +1127,6 @@ SelectionEditPolicy selection_edit_policy_from_scheme(SCM value, const char* cal
 }
 
 // The Guile ABI fixes five adjacent SCM arguments; validation preserves their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SCM interface_value,
                           SCM selection_policy_value) {
     try {
@@ -1176,7 +1158,6 @@ SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SC
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_default_input_strategy(SCM host_object, SCM strategy_value) {
     try {
         HostLease& host = require_host(host_object, "set-default-input-strategy!");
@@ -1191,7 +1172,6 @@ SCM set_default_input_strategy(SCM host_object, SCM strategy_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_view_input_strategy(SCM host_object, SCM view_value, SCM strategy_value) {
     try {
         HostLease& host = require_host(host_object, "set-view-input-strategy!");
@@ -1210,7 +1190,6 @@ SCM set_view_input_strategy(SCM host_object, SCM view_value, SCM strategy_value)
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_input_strategy(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-input-strategy");
@@ -1397,7 +1376,6 @@ MotionMechanism motion_mechanism_from_scheme(SCM value, const char* caller, int 
     return MotionMechanism::ForwardCharacter;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_thing(SCM host_object, SCM name_value, SCM pattern_value) {
     try {
         HostLease& host = require_host(host_object, "define-thing!");
@@ -1418,7 +1396,6 @@ SCM define_thing(SCM host_object, SCM name_value, SCM pattern_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
     try {
         HostLease& host = require_host(host_object, "define-motion!");
@@ -1441,7 +1418,6 @@ SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
 }
 
 // The public Scheme wrapper names the provider/default association lists.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value,
                             SCM defaults_value) {
     try {
@@ -1524,7 +1500,6 @@ SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value
 
 // The Guile ABI fixes nine adjacent SCM arguments; the public Scheme wrappers
 // provide keyword arguments and preserve this normalized host boundary.
-// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value,
                 SCM language_value, SCM keymap_value, SCM interaction_class_value,
                 SCM initial_state_value, SCM things_value) {
@@ -1589,11 +1564,9 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
     }
     return SCM_BOOL_F;
 }
-// NOLINTEND(bugprone-easily-swappable-parameters)
 
 // The Guile ABI fixes five adjacent SCM arguments; the public Scheme policy
 // supplies declarative matcher lists.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_file_mode_rule(SCM host_object, SCM name_value, SCM mode_value, SCM suffixes_value,
                           SCM filenames_value) {
     try {
@@ -1617,7 +1590,6 @@ SCM define_file_mode_rule(SCM host_object, SCM name_value, SCM mode_value, SCM s
 }
 
 // Guile requires callbacks to expose one SCM parameter per Scheme argument.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_project_provider(SCM host_object, SCM name_value, SCM markers_value) {
     try {
         HostLease& host = require_host(host_object, "define-project-provider!");
@@ -1635,7 +1607,6 @@ SCM define_project_provider(SCM host_object, SCM name_value, SCM markers_value) 
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM mode_properties(SCM host_object, SCM mode_value) {
     try {
         HostLease& host = require_host(host_object, "mode-properties");
@@ -1682,7 +1653,6 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
     try {
         HostLease& host = require_host(host_object, "set-buffer-major-mode!");
@@ -1702,7 +1672,6 @@ SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_buffer_minor_mode(SCM host_object, SCM buffer_value, SCM mode_value, SCM enabled_value) {
     if (!scheme_boolean(enabled_value)) {
         scm_wrong_type_arg_msg("set-buffer-minor-mode!", 4, enabled_value, "boolean");
@@ -1725,7 +1694,6 @@ SCM set_buffer_minor_mode(SCM host_object, SCM buffer_value, SCM mode_value, SCM
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_mode_policy(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-mode-policy");
@@ -1743,7 +1711,6 @@ SCM buffer_mode_policy(SCM host_object, SCM buffer_value) {
 }
 
 // Returns #(major-mode-or-#f minor-modes effective-policy).
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_mode_summary(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-mode-summary");
@@ -1774,7 +1741,6 @@ SCM buffer_mode_summary(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
     if (!scheme_true(scm_procedure_p(procedure_value))) {
         scm_wrong_type_arg_msg("observe-mode-policy-changes!", 2, procedure_value, "procedure");
@@ -1816,7 +1782,6 @@ SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_base_input_state(SCM host_object, SCM view_value, SCM state_value) {
     try {
         HostLease& host = require_host(host_object, "set-base-input-state!");
@@ -1832,7 +1797,6 @@ SCM set_base_input_state(SCM host_object, SCM view_value, SCM state_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM push_input_state(SCM host_object, SCM view_value, SCM state_value) {
     try {
         HostLease& host = require_host(host_object, "push-input-state!");
@@ -1847,7 +1811,6 @@ SCM push_input_state(SCM host_object, SCM view_value, SCM state_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM pop_input_state(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "pop-input-state!");
@@ -1863,7 +1826,6 @@ SCM pop_input_state(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM reset_input_states(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "reset-input-states!");
@@ -1877,7 +1839,6 @@ SCM reset_input_states(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_input_states(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-input-states");
@@ -1899,7 +1860,6 @@ SCM view_input_states(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM observe_input_state_changes(SCM host_object, SCM procedure_value) {
     if (!scheme_true(scm_procedure_p(procedure_value))) {
         scm_wrong_type_arg_msg("observe-input-state-changes!", 2, procedure_value, "procedure");
@@ -1943,7 +1903,6 @@ SCM observe_input_state_changes(SCM host_object, SCM procedure_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM enabled_command_names(SCM host_object, SCM context_value) {
     try {
         HostLease& host = require_host(host_object, "enabled-command-names");
@@ -1969,7 +1928,6 @@ SCM enabled_command_names(SCM host_object, SCM context_value) {
 }
 
 // Returns #(name documentation-or-#f source enabled? bindings).
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("command-properties", 3, name_value, "string");
@@ -2079,7 +2037,6 @@ SCM owned_user_modules(SCM host_object) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM project_root(SCM host_object, SCM project_value) {
     try {
         HostLease& host = require_host(host_object, "project-root");
@@ -2099,7 +2056,6 @@ SCM project_root(SCM host_object, SCM project_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM project_files(SCM host_object, SCM project_value) {
     try {
         HostLease& host = require_host(host_object, "project-files");
@@ -2121,7 +2077,6 @@ SCM project_files(SCM host_object, SCM project_value) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM path_relative(SCM host_object, SCM path_value, SCM base_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("path-relative", 2, path_value, "string");
@@ -2146,7 +2101,6 @@ SCM path_relative(SCM host_object, SCM path_value, SCM base_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM path_filename(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("path-filename", 2, path_value, "string");
@@ -2288,7 +2242,6 @@ ViewSelection view_selection_from_scheme(SCM value, const char* caller, int posi
     return selection;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_caret(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-caret");
@@ -2302,7 +2255,6 @@ SCM view_caret(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_mark(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-mark");
@@ -2317,7 +2269,6 @@ SCM view_mark(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_selection(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "view-selection");
@@ -2331,7 +2282,6 @@ SCM view_selection(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_selection(SCM host_object, SCM view_value, SCM selection_value) {
     HostLease& host = require_host(host_object, "set-selection!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-selection!", 2);
@@ -2350,7 +2300,6 @@ SCM set_selection(SCM host_object, SCM view_value, SCM selection_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM clear_selection(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "clear-selection!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "clear-selection!", 2);
@@ -2368,7 +2317,6 @@ SCM clear_selection(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM push_selection_history(SCM host_object, SCM view_value, SCM selection_value) {
     try {
         HostLease& host = require_host(host_object, "push-selection-history!");
@@ -2385,7 +2333,6 @@ SCM push_selection_history(SCM host_object, SCM view_value, SCM selection_value)
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM pop_selection_history(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "pop-selection-history!");
@@ -2401,7 +2348,6 @@ SCM pop_selection_history(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM clear_selection_history(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "clear-selection-history!");
@@ -2417,7 +2363,6 @@ SCM clear_selection_history(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM selection_history_depth(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "selection-history-depth");
@@ -2485,7 +2430,6 @@ SCM string_vector_value(const std::vector<std::string>& values) {
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
                       SCM replacements_value) {
     HostLease& host = require_host(host_object, "replace-selection!");
@@ -2512,7 +2456,6 @@ SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
     HostLease& host = require_host(host_object, "selection-texts");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "selection-texts", 2);
@@ -2538,7 +2481,6 @@ SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-substring");
@@ -2562,7 +2504,6 @@ SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end
 
 // The low-level text search primitive operates on UTF-8 bytes so its ranges
 // share the same coordinate space as Buffer, View, and edit transactions.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM find_buffer_text(SCM host_object, SCM buffer_value, SCM query_value, SCM start_value,
                      SCM direction_value) {
     if (!scm_is_string(query_value)) {
@@ -2604,7 +2545,6 @@ SCM find_buffer_text(SCM host_object, SCM buffer_value, SCM query_value, SCM sta
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM erase_range(SCM host_object, SCM view_value, SCM start_value, SCM end_value) {
     HostLease& host = require_host(host_object, "erase-range!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "erase-range!", 2);
@@ -2633,7 +2573,6 @@ SCM erase_range(SCM host_object, SCM view_value, SCM start_value, SCM end_value)
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
     HostLease& host = require_host(host_object, "insert-text!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "insert-text!", 2);
@@ -2655,7 +2594,6 @@ SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM soft_kill_range(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "soft-kill-range");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "soft-kill-range", 2);
@@ -2676,7 +2614,6 @@ SCM soft_kill_range(SCM host_object, SCM view_value) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
     try {
         HostLease& host = require_host(host_object, "set-view-caret!");
@@ -2696,7 +2633,6 @@ SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM reset_preferred_column(SCM host_object, SCM view_value) {
     try {
         HostLease& host = require_host(host_object, "reset-preferred-column!");
@@ -2712,7 +2648,6 @@ SCM reset_preferred_column(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM thing_selection(SCM host_object, SCM view_value, SCM selection_value, SCM thing_value,
                     SCM extent_value) {
     HostLease& host = require_host(host_object, "thing-selection");
@@ -2741,7 +2676,6 @@ SCM thing_selection(SCM host_object, SCM view_value, SCM selection_value, SCM th
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM motion_selection(SCM host_object, SCM view_value, SCM selection_value, SCM motion_value,
                      SCM count_value, SCM extend_value) {
     HostLease& host = require_host(host_object, "motion-selection");
@@ -2773,7 +2707,6 @@ SCM motion_selection(SCM host_object, SCM view_value, SCM selection_value, SCM m
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM expand_node_selection(SCM host_object, SCM view_value, SCM selection_value) {
     HostLease& host = require_host(host_object, "expand-node-selection");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "expand-node-selection", 2);
@@ -2798,7 +2731,6 @@ SCM expand_node_selection(SCM host_object, SCM view_value, SCM selection_value) 
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM write_clipboard(SCM host_object, SCM text_value) {
     if (!scm_is_string(text_value)) {
         scm_wrong_type_arg_msg("write-clipboard!", 2, text_value, "string");
@@ -2844,7 +2776,6 @@ SCM read_clipboard(SCM host_object) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_id_by_name(SCM host_object, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("buffer-id-by-name", 2, name_value, "string");
@@ -2864,7 +2795,6 @@ SCM buffer_id_by_name(SCM host_object, SCM name_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_resource(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-resource");
@@ -2883,7 +2813,6 @@ SCM buffer_resource(SCM host_object, SCM buffer_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_name(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-name");
@@ -2900,7 +2829,6 @@ SCM buffer_name(SCM host_object, SCM buffer_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_text(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-text");
@@ -2916,7 +2844,6 @@ SCM buffer_text(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-byte-size");
@@ -2933,7 +2860,6 @@ SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
 }
 
 // Returns #(source-start source-end resource target-line target-byte-column) entries.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_locations(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-locations");
@@ -2961,7 +2887,6 @@ SCM buffer_locations(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-read-only?");
@@ -2978,7 +2903,6 @@ SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM path_parent(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("path-parent", 2, path_value, "string");
@@ -2998,7 +2922,6 @@ SCM path_parent(SCM host_object, SCM path_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM directory_path_p(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("directory-path?", 2, path_value, "string");
@@ -3018,7 +2941,6 @@ SCM directory_path_p(SCM host_object, SCM path_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM path_as_directory(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("path-as-directory", 2, path_value, "string");
@@ -3041,7 +2963,6 @@ SCM path_as_directory(SCM host_object, SCM path_value) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
     HostLease& host = require_host(host_object, "display-buffer!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "display-buffer!", 2);
@@ -3064,7 +2985,6 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("display-generated-buffer!", 3, name_value, "string");
@@ -3096,7 +3016,6 @@ SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, 
 
 // The Guile ABI fixes three adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM evaluate_scheme(SCM host_object, SCM source_value, SCM source_name_value) {
     if (!scm_is_string(source_value)) {
         scm_wrong_type_arg_msg("evaluate-scheme!", 2, source_value, "string");
@@ -3137,7 +3056,6 @@ SCM evaluate_scheme(SCM host_object, SCM source_value, SCM source_name_value) {
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM column_value) {
     HostLease& host = require_host(host_object, "move-caret-to-line!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-to-line!", 2);
@@ -3165,7 +3083,6 @@ SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM colu
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM undo_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "undo!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "undo!", 2);
@@ -3182,7 +3099,6 @@ SCM undo_edit(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM redo_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "redo!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "redo!", 2);
@@ -3199,7 +3115,6 @@ SCM redo_edit(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM move_caret_lines(SCM host_object, SCM view_value, SCM delta_value) {
     HostLease& host = require_host(host_object, "move-caret-lines!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-lines!", 2);
@@ -3221,7 +3136,6 @@ SCM move_caret_lines(SCM host_object, SCM view_value, SCM delta_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM move_caret_line_boundary(SCM host_object, SCM view_value, SCM boundary_value) {
     HostLease& host = require_host(host_object, "move-caret-line-boundary!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-line-boundary!", 2);
@@ -3248,7 +3162,6 @@ SCM move_caret_line_boundary(SCM host_object, SCM view_value, SCM boundary_value
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM delete_grapheme(SCM host_object, SCM view_value, SCM direction_value, SCM mode_value) {
     HostLease& host = require_host(host_object, "delete-grapheme!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "delete-grapheme!", 2);
@@ -3282,7 +3195,6 @@ SCM delete_grapheme(SCM host_object, SCM view_value, SCM direction_value, SCM mo
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM newline_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "newline!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "newline!", 2);
@@ -3300,7 +3212,6 @@ SCM newline_edit(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM indent_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "indent!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "indent!", 2);
@@ -3318,7 +3229,6 @@ SCM indent_edit(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
     if (!scm_is_string(text_value)) {
         scm_wrong_type_arg_msg("type-text!", 3, text_value, "string");
@@ -3356,7 +3266,6 @@ SCM page_rows(SCM host_object) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_message(SCM host_object, SCM message_value) {
     if (!scm_is_string(message_value)) {
         scm_wrong_type_arg_msg("set-message!", 2, message_value, "string");
@@ -3378,7 +3287,6 @@ SCM set_message(SCM host_object, SCM message_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM ensure_project_index(SCM host_object, SCM project_value) {
     HostLease& host = require_host(host_object, "ensure-project-index!");
     const ProjectId project =
@@ -3403,7 +3311,6 @@ SCM ensure_project_index(SCM host_object, SCM project_value) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM open_file(SCM host_object, SCM window_value, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("open-file!", 3, path_value, "string");
@@ -3430,7 +3337,6 @@ SCM open_file(SCM host_object, SCM window_value, SCM path_value) {
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, SCM query_value) {
     if (!scm_is_string(query_value)) {
         scm_wrong_type_arg_msg("start-project-search!", 4, query_value, "string");
@@ -3459,7 +3365,6 @@ SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, S
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM normalize_resource(SCM host_object, SCM path_value) {
     (void)require_host(host_object, "normalize-resource-path");
     if (!scm_is_string(path_value)) {
@@ -3473,7 +3378,6 @@ SCM normalize_resource(SCM host_object, SCM path_value) {
     return scm_from_utf8_string(path->c_str());
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("set-buffer-resource!", 3, path_value, "string");
@@ -3492,7 +3396,6 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM rename_buffer(SCM host_object, SCM buffer_value, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("rename-buffer!", 3, name_value, "string");
@@ -3510,7 +3413,6 @@ SCM rename_buffer(SCM host_object, SCM buffer_value, SCM name_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_id_by_resource(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("buffer-id-by-resource", 2, path_value, "string");
@@ -3528,7 +3430,6 @@ SCM buffer_id_by_resource(SCM host_object, SCM path_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM resource_mode(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("resource-mode", 2, path_value, "string");
@@ -3546,7 +3447,6 @@ SCM resource_mode(SCM host_object, SCM path_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM project_for_resource(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("project-for-resource", 2, path_value, "string");
@@ -3564,7 +3464,6 @@ SCM project_for_resource(SCM host_object, SCM path_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
     try {
         HostLease& host = require_host(host_object, "set-buffer-project!");
@@ -3584,7 +3483,6 @@ SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM begin_buffer_save(SCM host_object, SCM buffer_value) {
     HostLease& host = require_host(host_object, "begin-buffer-save!");
     const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "begin-buffer-save!", 2);
@@ -3607,7 +3505,6 @@ SCM begin_buffer_save(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM complete_buffer_save(SCM host_object, SCM buffer_value) {
     HostLease& host = require_host(host_object, "complete-buffer-save!");
     const BufferId buffer =
@@ -3630,7 +3527,6 @@ SCM complete_buffer_save(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM abort_buffer_save(SCM host_object, SCM buffer_value) {
     HostLease& host = require_host(host_object, "abort-buffer-save!");
     const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "abort-buffer-save!", 2);
@@ -3673,7 +3569,6 @@ SCM open_buffers(SCM host_object) {
 
 // The low-level ABI is positional; policy wrappers choose names, kinds, modes,
 // and presentation metadata before entering this mechanism boundary.
-// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_value,
                   SCM read_only_value, SCM mode_value, SCM style_origin_value) {
     if (!scm_is_string(name_value)) {
@@ -3726,9 +3621,7 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
     }
     return SCM_BOOL_F;
 }
-// NOLINTEND(bugprone-easily-swappable-parameters)
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_saving_p(SCM host_object, SCM buffer_value) {
     HostLease& host = require_host(host_object, "buffer-saving?");
     const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-saving?", 2);
@@ -3745,7 +3638,6 @@ SCM buffer_saving_p(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM buffer_modified_p(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-modified?");
@@ -3760,7 +3652,6 @@ SCM buffer_modified_p(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
     HostLease& host = require_host(host_object, "release-buffer!");
     const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "release-buffer!", 2);
@@ -3799,7 +3690,6 @@ SCM exit_editor(SCM host_object) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM split_window(SCM host_object, SCM window_value, SCM axis_value) {
     HostLease& host = require_host(host_object, "split-window!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "split-window!", 2);
@@ -3827,7 +3717,6 @@ SCM split_window(SCM host_object, SCM window_value, SCM axis_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM delete_window(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "delete-window!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "delete-window!", 2);
@@ -3847,7 +3736,6 @@ SCM delete_window(SCM host_object, SCM window_value) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM delete_other_windows(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "delete-other-windows!");
     const WindowId window =
@@ -3888,7 +3776,6 @@ SCM open_windows(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM focus_window(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "focus-window!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "focus-window!", 2);
@@ -3982,7 +3869,6 @@ SCM submit_interaction(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM move_interaction_candidate(SCM host_object, SCM delta_value) {
     HostLease& host = require_host(host_object, "move-interaction-candidate!");
     if (!host.services.move_interaction_candidate) {
@@ -3999,7 +3885,6 @@ SCM move_interaction_candidate(SCM host_object, SCM delta_value) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM move_interaction_history(SCM host_object, SCM delta_value) {
     HostLease& host = require_host(host_object, "move-interaction-history!");
     if (!host.services.move_interaction_history) {
@@ -4048,7 +3933,6 @@ SCM cancel_pending_input(SCM host_object) {
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM view_position(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "view-position");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-position", 2);
@@ -4099,7 +3983,6 @@ SCM location_navigation(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_location_navigation(SCM host_object, SCM buffer_value, SCM selected_value) {
     HostLease& host = require_host(host_object, "set-location-navigation!");
     if (!host.services.set_location_navigation) {
@@ -4129,7 +4012,6 @@ SCM set_location_navigation(SCM host_object, SCM buffer_value, SCM selected_valu
     return SCM_UNSPECIFIED;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SCM offset_value) {
     HostLease& host = require_host(host_object, "position-buffer-view!");
     const WindowId window =
@@ -4157,7 +4039,6 @@ SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SC
 
 // The Guile ABI fixes five adjacent SCM arguments; Scheme wrappers preserve
 // their semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM open_file_at(SCM host_object, SCM window_value, SCM path_value, SCM line_value,
                  SCM column_value) {
     if (!scm_is_string(path_value)) {
@@ -4670,7 +4551,6 @@ bool symbol_is(SCM value, const char* expected) {
            scheme_true(scm_eq_p(value, scm_from_utf8_symbol(expected)));
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 CommandPrefix command_prefix_from_scheme(SCM count_value, SCM register_value, SCM extra_value,
                                          const char* caller) {
     CommandPrefix prefix;

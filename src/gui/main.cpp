@@ -626,7 +626,6 @@ private:
         return true;
     }
 
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     bool texture_matches_pixels(const std::byte* expected, int pixel_width, int pixel_height,
                                 std::size_t row_bytes) const {
         std::unique_ptr<SDL_Surface, SurfaceDeleter> captured(

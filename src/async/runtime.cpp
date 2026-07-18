@@ -656,7 +656,6 @@ struct AsyncRuntime::Impl {
     }
 
     // Signature is fixed by uv_exit_cb.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static void on_process_exit(uv_process_t* handle, std::int64_t exit_status, int term_signal) {
         auto* raw_process = static_cast<Process*>(handle->data);
         std::shared_ptr<Process> process = raw_process->owner->find_process(raw_process->id);
@@ -756,7 +755,6 @@ struct AsyncRuntime::Impl {
     }
 
     // Signature is fixed by uv_fs_event_cb.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static void on_fs_event(uv_fs_event_t* handle, const char* filename, int events, int status) {
         auto* raw_watch = static_cast<Watch*>(handle->data);
         Impl& self = *raw_watch->owner;
