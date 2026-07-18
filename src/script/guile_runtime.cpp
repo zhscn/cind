@@ -2487,6 +2487,48 @@ SCM expel_buffer(SCM host_object, SCM workbench_value, SCM buffer_value) {
     return SCM_UNSPECIFIED;
 }
 
+SCM workbench_session_state(SCM host_object) {
+    HostLease& host = require_host(host_object, "workbench-session-state");
+    if (!host.services.workbench_session_state) {
+        scm_misc_error("workbench-session-state", "workbench session capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::string state = host.services.workbench_session_state();
+        return scm_from_utf8_stringn(state.data(), state.size());
+    } catch (const std::exception& exception) {
+        raise_host_error("workbench-session-state", exception.what());
+    } catch (...) {
+        scm_misc_error("workbench-session-state", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM restore_workbench_session(SCM host_object, SCM state_value) {
+    if (!scm_is_string(state_value)) {
+        scm_wrong_type_arg_msg("restore-workbench-session!", 2, state_value, "string");
+    }
+    HostLease& host = require_host(host_object, "restore-workbench-session!");
+    if (!host.services.restore_workbench_session) {
+        scm_misc_error("restore-workbench-session!", "workbench session capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::string state = scheme_string(state_value);
+        const std::expected<void, std::string> restored =
+            host.services.restore_workbench_session(state);
+        if (!restored) {
+            raise_host_error("restore-workbench-session!", restored.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("restore-workbench-session!", exception.what());
+    } catch (...) {
+        scm_misc_error("restore-workbench-session!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM owned_user_modules(SCM host_object) {
     try {
         HostLease& host = require_host(host_object, "owned-user-modules");
@@ -5074,6 +5116,10 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("adopt-project!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(adopt_project));
     (void)scm_c_define_gsubr("expel-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(expel_buffer));
+    (void)scm_c_define_gsubr("workbench-session-state", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(workbench_session_state));
+    (void)scm_c_define_gsubr("restore-workbench-session!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(restore_workbench_session));
     (void)scm_c_define_gsubr("project-list", 1, 0, 0, reinterpret_cast<scm_t_subr>(project_list));
     (void)scm_c_define_gsubr("owned-user-modules", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(owned_user_modules));
@@ -5280,22 +5326,23 @@ void initialize_host_module(void*) {
         "command-properties", "open-buffer-summaries", "workbench-list", "current-workbench",
         "workbench-scope", "workbench-mru", "workbench-buffer-summaries", "workbench-buffer-ids",
         "new-workbench!", "switch-workbench!", "close-workbench!", "adopt-project!",
-        "expel-buffer!", "project-list", "owned-user-modules", "project-root", "project-files",
-        "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
-        "set-buffer-locations!", "buffer-read-only?", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
-        "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!",
-        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
-        "page-rows", "interaction-status", "interaction-provider", "set-interaction-provider!",
-        "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
-        "interaction-history", "set-interaction-history!", "select-interaction-candidate!",
+        "expel-buffer!", "workbench-session-state", "restore-workbench-session!", "project-list",
+        "owned-user-modules", "project-root", "project-files", "path-relative", "path-filename",
+        "active-key-bindings", "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text",
+        "buffer-byte-size", "buffer-locations", "set-buffer-locations!", "buffer-read-only?",
+        "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
+        "view-selection", "set-selection!", "clear-selection!", "push-selection-history!",
+        "pop-selection-history!", "clear-selection-history!", "selection-history-depth",
+        "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
+        "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "set-caret-reveal!",
+        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
+        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
+        "refresh-interaction!", "submit-interaction!", "interaction-history",
+        "set-interaction-history!", "select-interaction-candidate!",
         "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "set-message!", "project-index-state", "request-project-index!", "normalize-resource-path",

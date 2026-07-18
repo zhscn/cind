@@ -1017,6 +1017,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool requested_motion_extend = false;
     const WorkbenchId workbench{0, 1};
     std::vector<ProjectId> workbench_scope;
+    const std::string workbench_session = "serialized workbench session";
+    std::optional<std::string> restored_workbench_session;
     std::string interaction_provider;
     GuileRuntime guile(
         runtime,
@@ -1122,6 +1124,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .expel_buffer = [](WorkbenchId, BufferId) -> std::expected<void, std::string> {
+             return {};
+         },
+         .workbench_session_state = [&] { return workbench_session; },
+         .restore_workbench_session =
+             [&](std::string_view state) -> std::expected<void, std::string> {
+             restored_workbench_session = state;
+             message = "workbench session restored";
              return {};
          },
          .create_buffer = [&](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
@@ -1305,7 +1314,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 204);
+    CHECK(*installed == 208);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 11);
@@ -1326,6 +1335,34 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(buffer_save_completed);
     CHECK_FALSE(buffer_save_aborted);
     CHECK(message == "saved /tmp/sample");
+
+    const CommandResult session_saved = runtime.commands().invoke(
+        require_command(runtime, "workbench.save-session.accept"), context,
+        CommandInvocation{.arguments = {std::string("/tmp/cind-session")}, .prefix = {}});
+    REQUIRE(session_saved.has_value());
+    const auto* session_write = std::get_if<ScriptFileWriteRequest>(&*pending_async_request);
+    REQUIRE(session_write != nullptr);
+    CHECK(session_write->path == "/tmp/cind-session");
+    CHECK(session_write->contents == workbench_session);
+    CHECK(message == "saving workbench session…");
+    pending_async_callbacks.completed(next_async_task - 1,
+                                      ScriptFileWriteResult{.path = "/tmp/cind-session"});
+    CHECK(message == "saved workbench session /tmp/cind-session");
+
+    const CommandResult session_restoring = runtime.commands().invoke(
+        require_command(runtime, "workbench.restore-session.accept"), context,
+        CommandInvocation{.arguments = {std::string("/tmp/cind-session")}, .prefix = {}});
+    REQUIRE(session_restoring.has_value());
+    const auto* session_read = std::get_if<ScriptFileReadRequest>(&*pending_async_request);
+    REQUIRE(session_read != nullptr);
+    CHECK(session_read->path == "/tmp/cind-session");
+    CHECK(message == "reading workbench session…");
+    pending_async_callbacks.completed(next_async_task - 1,
+                                      ScriptFileReadResult{.path = "/tmp/cind-session",
+                                                           .exists = true,
+                                                           .contents = workbench_session});
+    CHECK(restored_workbench_session == std::optional{workbench_session});
+    CHECK(message == "workbench session restored");
 
     const std::vector<InteractionCandidate> command_candidates =
         complete_provider(runtime, "commands", context);
@@ -1977,7 +2014,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 204);
+    CHECK(snapshot.scripted_commands == 208);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 11);
     CHECK_FALSE(snapshot.last_error.has_value());

@@ -192,6 +192,8 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WorkbenchId)> close_workbench;
     std::function<std::expected<void, std::string>(WorkbenchId, ProjectId)> adopt_project;
     std::function<std::expected<void, std::string>(WorkbenchId, BufferId)> expel_buffer;
+    std::function<std::string()> workbench_session_state;
+    std::function<std::expected<void, std::string>(std::string_view)> restore_workbench_session;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<bool(BufferId)> buffer_saving;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;

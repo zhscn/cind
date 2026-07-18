@@ -2148,6 +2148,59 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     CHECK(application.message() == "workbench session restored · 1 resources unavailable");
 }
 
+TEST_CASE("workbench session commands persist and restore through the async runtime") {
+    TemporaryDirectory directory(
+        std::format("cind-workbench-command-{}", static_cast<long>(::getpid())));
+    const std::filesystem::path source = directory.write("main.cc", "int main() {}\n");
+    const std::filesystem::path session_path = directory.path() / "workbench.session";
+    WakeSignal wake;
+    EditorApplication application =
+        make_application(source.string(), "int main() {}\n",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    const WorkbenchId first = application.workbench_id();
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WorkbenchId notes = application.create_workbench("notes");
+
+    send_keys(application, "C-x w S");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Save workbench session: ");
+    application.insert_text(session_path.string());
+    send_keys(application, "RET");
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    CHECK(std::filesystem::is_regular_file(session_path));
+    CHECK(application.message() ==
+          std::format("saved workbench session {}", session_path.string()));
+
+    REQUIRE(application.close_workbench(notes));
+    CHECK(application.workbench_id() == first);
+    CHECK(application.workbench_snapshots().size() == 1);
+
+    send_keys(application, "C-x w R");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "Restore workbench session: ");
+    application.insert_text(session_path.string());
+    send_keys(application, "RET");
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+
+    const std::vector<WorkbenchSnapshot> restored = application.workbench_snapshots();
+    REQUIRE(restored.size() == 2);
+    CHECK(std::ranges::any_of(restored, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name == "notes" && workbench.active;
+    }));
+    CHECK(std::ranges::any_of(restored, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name.empty() && workbench.windows.size() == 2;
+    }));
+    CHECK(application.message() == "workbench session restored");
+}
+
 TEST_CASE("window roles pinning and policy provenance stay frontend independent") {
     EditorApplication application = make_application("sample.cc", "one\n");
     const WindowId first = application.window_id();

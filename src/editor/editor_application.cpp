@@ -372,6 +372,11 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
+           .workbench_session_state = [this] { return serialize_workbench_session(); },
+           .restore_workbench_session =
+               [this](std::string_view serialized) {
+                   return restore_workbench_session(serialized);
+               },
            .create_buffer =
                [this](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
                try {

@@ -1067,6 +1067,89 @@
   (set-message! host "buffer expelled from workbench")
   (command-completed))
 
+(define pending-workbench-session-restores (make-weak-key-hash-table))
+
+(define (workbench-save-session context invocation)
+  (read-from-minibuffer "Save workbench session: "
+                        "workbench.save-session.accept"
+                        #:history "workbench-sessions"))
+
+(define (workbench-save-session-accept host context invocation)
+  (let ((path (last-string-argument invocation)))
+    (if (or (not path) (zero? (string-length path)))
+        (command-error "workbench session path is empty")
+        (let ((resource (normalize-resource-path host path))
+              (state (workbench-session-state host)))
+          (start-async-task!
+           host (async-file-write resource state)
+           (lambda (task result)
+             (set-message! host (string-append "saved workbench session " resource)))
+           #:failed
+           (lambda (task message)
+             (set-message! host
+                           (string-append "workbench session save failed: " message)))
+           #:cancelled
+           (lambda (task)
+             (set-message! host "workbench session save cancelled")))
+          (set-message! host "saving workbench session…")
+          (command-completed)))))
+
+(define (workbench-restore-session context invocation)
+  (read-from-minibuffer "Restore workbench session: "
+                        "workbench.restore-session.accept"
+                        #:history "workbench-sessions"))
+
+(define (workbench-session-restore-live? host task)
+  (eqv? (hashq-ref pending-workbench-session-restores host) task))
+
+(define (finish-workbench-session-restore! host task)
+  (when (workbench-session-restore-live? host task)
+    (hashq-remove! pending-workbench-session-restores host)))
+
+(define (workbench-restore-session-accept host context invocation)
+  (let ((path (last-string-argument invocation)))
+    (if (or (not path) (zero? (string-length path)))
+        (command-error "workbench session path is empty")
+        (let* ((resource (normalize-resource-path host path))
+               (previous (hashq-ref pending-workbench-session-restores host))
+               (task #f))
+          (when previous
+            (hashq-remove! pending-workbench-session-restores host)
+            (cancel-async-task! host previous))
+          (set! task
+                (start-async-task!
+                 host (async-file-read resource)
+                 (lambda (completed result)
+                   (when (workbench-session-restore-live? host completed)
+                     (finish-workbench-session-restore! host completed)
+                     (if (vector-ref result 2)
+                         (catch #t
+                           (lambda ()
+                             (set-message! host "restoring workbench session…")
+                             (restore-workbench-session! host (vector-ref result 3)))
+                           (lambda (key . arguments)
+                             (set-message!
+                              host
+                              (string-append
+                               "workbench session restore failed: "
+                               (format #f "~S: ~S" key arguments)))))
+                         (set-message! host "workbench session file does not exist"))))
+                 #:failed
+                 (lambda (failed message)
+                   (when (workbench-session-restore-live? host failed)
+                     (finish-workbench-session-restore! host failed)
+                     (set-message! host
+                                   (string-append
+                                    "workbench session restore failed: " message))))
+                 #:cancelled
+                 (lambda (cancelled)
+                   (when (workbench-session-restore-live? host cancelled)
+                     (finish-workbench-session-restore! host cancelled)
+                     (set-message! host "workbench session restore cancelled")))))
+          (hashq-set! pending-workbench-session-restores host task)
+          (set-message! host "reading workbench session…")
+          (command-completed)))))
+
 (define (first-other-buffer buffers target)
   (let loop ((index 0))
     (cond ((= index (vector-length buffers)) #f)
@@ -2333,6 +2416,16 @@
               (lambda (context invocation)
                 (workbench-expel-buffer host context invocation))
               #f)
+        (list "workbench.save-session.accept"
+              (lambda (context invocation)
+                (workbench-save-session-accept host context invocation))
+              #f)
+        (list "workbench.save-session" workbench-save-session #f)
+        (list "workbench.restore-session.accept"
+              (lambda (context invocation)
+                (workbench-restore-session-accept host context invocation))
+              #f)
+        (list "workbench.restore-session" workbench-restore-session #f)
         (list "application.quit"
               (lambda (context invocation)
                 (application-quit host))
@@ -2716,6 +2809,8 @@
     ("k" . "workbench.close")
     ("a" . "workbench.adopt-project")
     ("e" . "workbench.expel")
+    ("S" . "workbench.save-session")
+    ("R" . "workbench.restore-session")
     ("r" . "window.set-role")
     ("p" . "window.toggle-pinned")
     ("d" . "window.dismiss")))
