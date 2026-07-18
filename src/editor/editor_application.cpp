@@ -504,6 +504,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             message_ = std::format("init failed: {}", loaded.error());
         }
     }
+    const std::expected<PresentationTheme, std::string> presentation_theme =
+        guile_.presentation_theme();
+    if (!presentation_theme) {
+        throw std::runtime_error(
+            std::format("Guile theme policy failed: {}", presentation_theme.error()));
+    }
+    presentation_theme_ = *presentation_theme;
 
     std::expected<StartupPlan, std::string> startup = guile_.startup_plan(
         {.requested_resource = spec.path, .has_initial_text = spec.initial_text.has_value()});

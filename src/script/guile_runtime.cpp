@@ -5129,6 +5129,39 @@ SCM scroll_input_value(ScrollInput input) {
     return value;
 }
 
+PresentationTheme presentation_theme_from_scheme(SCM value, const char* caller) {
+    constexpr std::size_t color_count = 16;
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != color_count + 1 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-theme")) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(presentation-theme 16-argb-colors)");
+    }
+    std::uint32_t colors[color_count]{};
+    for (std::size_t index = 0; index < color_count; ++index) {
+        const SCM color = scm_c_vector_ref(value, index + 1);
+        if (scm_is_unsigned_integer(color, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+            scm_wrong_type_arg_msg(caller, static_cast<int>(index + 1), color,
+                                   "unsigned 32-bit ARGB color");
+        }
+        colors[index] = scm_to_uint32(color);
+    }
+    return {.canvas = colors[0],
+            .highlight = colors[1],
+            .band = colors[2],
+            .selection = colors[3],
+            .divider = colors[4],
+            .text = colors[5],
+            .strong = colors[6],
+            .faded = colors[7],
+            .faint = colors[8],
+            .salient = colors[9],
+            .popout = colors[10],
+            .critical = colors[11],
+            .cursor = colors[12],
+            .sign_added = colors[13],
+            .sign_modified = colors[14],
+            .sign_deleted = colors[15]};
+}
+
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
@@ -5222,6 +5255,7 @@ struct GuileCall {
         ResolveBaseKeymapPolicy,
         ChromeContent,
         ModelineContent,
+        PresentationTheme,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -5265,6 +5299,7 @@ struct GuileCall {
     StartupPlan startup_plan;
     ModelineContent modeline_content;
     ChromeContent chrome_content;
+    PresentationTheme presentation_theme;
     const StartupFacts* startup_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
@@ -5747,6 +5782,12 @@ SCM call_body(void* data) {
                                      modeline_facts_value(*call.modeline_facts));
             call.modeline_content =
                 modeline_content_from_scheme(call.result, "resolve-modeline-content");
+            break;
+        case GuileCall::Operation::PresentationTheme:
+            call.result = scm_call_1(scm_c_public_ref("cind command", "resolve-presentation-theme"),
+                                     call.host);
+            call.presentation_theme =
+                presentation_theme_from_scheme(call.result, "resolve-presentation-theme");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -6476,7 +6517,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 2) {
+        if (call.count != 3) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6746,6 +6787,18 @@ public:
         return std::move(call.modeline_content);
     }
 
+    std::expected<PresentationTheme, std::string> presentation_theme() const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::PresentationTheme;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return call.presentation_theme;
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -7006,6 +7059,10 @@ GuileRuntime::chrome_content(const CommandContext& context, const ChromeFacts& f
 std::expected<ModelineContent, std::string>
 GuileRuntime::modeline_content(const CommandContext& context, const ModelineFacts& facts) const {
     return impl_->modeline_content(context, facts);
+}
+
+std::expected<PresentationTheme, std::string> GuileRuntime::presentation_theme() const {
+    return impl_->presentation_theme();
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

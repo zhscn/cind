@@ -21,6 +21,25 @@ using namespace cind::ui;
 
 namespace {
 
+PresentationTheme test_theme() {
+    return {.canvas = 0xFF1E1E2E,
+            .highlight = 0xFF2A2B3C,
+            .band = 0xFF313244,
+            .selection = 0xFF45475A,
+            .divider = 0xFF11111B,
+            .text = 0xFFCDD6F4,
+            .strong = 0xFFDEE4F7,
+            .faded = 0xFF7F849C,
+            .faint = 0xFF6C7086,
+            .salient = 0xFF89B4FA,
+            .popout = 0xFFFAB387,
+            .critical = 0xFFF9E2AF,
+            .cursor = 0xFFF5E0DC,
+            .sign_added = 0xFFA6E3A1,
+            .sign_modified = 0xFFF9E2AF,
+            .sign_deleted = 0xFFF38BA8};
+}
+
 // Lex a snippet and lay out its single line with the given viewport.
 std::vector<Run> runs_of(const std::string& text, int left_col = 0, int width = 80,
                          std::optional<TextRange> selection = std::nullopt, int tab_width = 4) {
@@ -134,10 +153,10 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     REQUIRE(popup->popup() != nullptr);
     CHECK(first.cursor_shape == CursorShape::Block);
     CHECK(status->status()->segments.back().text == "N");
-    CHECK(render_ansi(first).find("sample.cc") != std::string::npos);
-    CHECK(render_ansi(first).find("hello") != std::string::npos);
-    CHECK(render_ansi(first).find("command") != std::string::npos);
-    CHECK(render_ansi(first).find("\x1b[2 q") != std::string::npos);
+    CHECK(render_ansi(first, test_theme()).find("sample.cc") != std::string::npos);
+    CHECK(render_ansi(first, test_theme()).find("hello") != std::string::npos);
+    CHECK(render_ansi(first, test_theme()).find("command") != std::string::npos);
+    CHECK(render_ansi(first, test_theme()).find("\x1b[2 q") != std::string::npos);
 }
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
@@ -272,7 +291,7 @@ TEST_CASE("position hints replace document cells without changing text layout") 
     CHECK(hint->style == StyleClass::PositionHint);
     CHECK(hint->span_cols == 2);
     CHECK(hint->id == "hint:0/byte:1");
-    CHECK(render_ansi(scene).find("\x1b[30;44m1 \x1b[0m") != std::string::npos);
+    CHECK(render_ansi(scene, test_theme()).find("1 \x1b[0m") != std::string::npos);
 }
 
 TEST_CASE("view layers define paint order independently of region storage order") {
@@ -288,7 +307,7 @@ TEST_CASE("view layers define paint order independently of region storage order"
     document.primitives().push_back({0, 0, "body", StyleClass::Text, false});
     scene.regions = {overlay, document};
 
-    const std::string rendered = render_ansi(scene);
+    const std::string rendered = render_ansi(scene, test_theme());
     CHECK(rendered.find("body") < rendered.find("top"));
 
     SceneDamageTracker tracker;
@@ -495,23 +514,24 @@ TEST_CASE("ansi renderer: regions paint at absolute positions") {
     scene.cursor_row = 1;
     scene.cursor_col = 5;
 
-    const std::string frame = render_ansi(scene);
+    const std::string frame = render_ansi(scene, test_theme());
     CHECK(frame.starts_with("\x1b[?25l\x1b[H\x1b[2J"));
     // Region-local coordinates offset by the region's rect (1-based).
-    CHECK(frame.find("\x1b[1;1H\x1b[90m 1 ") != std::string::npos);   // numbers
-    CHECK(frame.find("\x1b[1;4H\x1b[33m▎") != std::string::npos);     // sign strip
-    CHECK(frame.find("\x1b[1;5H\x1b[1;34mint") != std::string::npos); // text at rect.col
-    CHECK(frame.find("\x1b[1;8H") != std::string::npos);              // second run offset
-    CHECK(frame.find("\x1b[2;5H\x1b[90m~") != std::string::npos);     // past-EOF marker
-    CHECK(frame.find("\x1b[4;1H\x1b[7m f.cc ") != std::string::npos); // status row
-    CHECK(frame.find("\x1b[5;1Hhello") != std::string::npos);         // echo row
+    CHECK(frame.find("\x1b[1;1H\x1b[38;2;108;112;134m 1 ") != std::string::npos);
+    CHECK(frame.find("\x1b[1;4H\x1b[38;2;249;226;175m▎") != std::string::npos);
+    CHECK(frame.find("\x1b[1;5H\x1b[38;2;137;180;250;1mint") != std::string::npos);
+    CHECK(frame.find("\x1b[1;8H") != std::string::npos);
+    CHECK(frame.find("\x1b[2;5H\x1b[38;2;108;112;134m~") != std::string::npos);
+    CHECK(frame.find("\x1b[4;1H\x1b[38;2;205;214;244m\x1b[48;2;49;50;68m f.cc ") !=
+          std::string::npos);
+    CHECK(frame.find("\x1b[5;1H\x1b[38;2;205;214;244mhello") != std::string::npos);
     CHECK(frame.ends_with("\x1b[1;5H\x1b[6 q\x1b[?25h"));
 
     // Selected primitives add reverse video.
     Scene sel = scene;
     sel.regions[2].primitives()[1].selected = true;
-    CHECK(render_ansi(sel).find("\x1b[1;34m") != std::string::npos);
-    CHECK(render_ansi(sel).find("\x1b[7m x;") != std::string::npos);
+    CHECK(render_ansi(sel, test_theme()).find("\x1b[38;2;137;180;250;1m") != std::string::npos);
+    CHECK(render_ansi(sel, test_theme()).find("\x1b[7m x;") != std::string::npos);
 
     // find() locates regions by role.
     CHECK(scene.find(RegionRole::TextArea) != nullptr);

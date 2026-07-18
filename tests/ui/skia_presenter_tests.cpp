@@ -20,6 +20,25 @@ using namespace cind::ui;
 
 namespace {
 
+SkiaTheme test_theme() {
+    return {.canvas = 0xFF1E1E2E,
+            .highlight = 0xFF2A2B3C,
+            .band = 0xFF313244,
+            .selection = 0xFF45475A,
+            .divider = 0xFF11111B,
+            .text = 0xFFCDD6F4,
+            .strong = 0xFFDEE4F7,
+            .faded = 0xFF7F849C,
+            .faint = 0xFF6C7086,
+            .salient = 0xFF89B4FA,
+            .popout = 0xFFFAB387,
+            .critical = 0xFFF9E2AF,
+            .cursor = 0xFFF5E0DC,
+            .sign_added = 0xFFA6E3A1,
+            .sign_modified = 0xFFF9E2AF,
+            .sign_deleted = 0xFFF38BA8};
+}
+
 int editor_viewport_height(const SkiaPresenter& presenter, int grid_rows) {
     const float height = static_cast<float>(grid_rows * presenter.cell_height()) +
                          presenter.status_bar_height() + presenter.echo_area_height();
@@ -37,7 +56,7 @@ int main(int argc, char** argv) {
 }
 
 TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     REQUIRE(presenter.cell_width() > 0);
     REQUIRE(presenter.cell_height() > 0);
@@ -95,7 +114,7 @@ TEST_CASE("Skia presenter paints cell regions, selection, and caret offscreen") 
 }
 
 TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     Scene scene;
     scene.rows = 3;
     scene.cols = 60;
@@ -146,7 +165,7 @@ TEST_CASE("Skia document caret and hit testing use the prepared shaped line") {
 }
 
 TEST_CASE("Skia position hints overlay shaped document cells without extending the line") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     Scene scene;
     scene.rows = 2;
@@ -182,7 +201,7 @@ TEST_CASE("Skia position hints overlay shaped document cells without extending t
 }
 
 TEST_CASE("Skia presenter derives beam block and underline geometry from the Scene") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     Scene scene;
     scene.rows = 2;
     scene.cols = 20;
@@ -215,7 +234,7 @@ TEST_CASE("Skia presenter derives beam block and underline geometry from the Sce
 }
 
 TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     SceneDamageTracker tracker;
 
@@ -278,7 +297,7 @@ TEST_CASE("Skia presenter derives echo caret from the painted shaped text") {
 }
 
 TEST_CASE("Skia presenter paints semantic change-sign colors") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
 
     Scene scene;
@@ -309,7 +328,7 @@ TEST_CASE("Skia presenter paints semantic change-sign colors") {
 }
 
 TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
 
     Scene scene;
@@ -367,7 +386,7 @@ TEST_CASE("Skia presenter keeps glyph ink in its scene row") {
 }
 
 TEST_CASE("Skia presenter anchors complete footer rows below a partial text row") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
 
     Scene scene;
@@ -421,7 +440,7 @@ TEST_CASE("Skia presenter anchors complete footer rows below a partial text row"
 }
 
 TEST_CASE("Skia presenter clips the top row when the bottom caret row is complete") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
 
     Scene scene;
@@ -469,7 +488,7 @@ TEST_CASE("Skia presenter clips the top row when the bottom caret row is complet
 }
 
 TEST_CASE("Skia presenter limits fractional scroll damage to the document grid") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     SceneDamageTracker tracker;
 
     Scene scene;
@@ -526,7 +545,7 @@ TEST_CASE("Skia presenter limits fractional scroll damage to the document grid")
 }
 
 TEST_CASE("Skia presenter reuses shaped text runs across layouts") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     Scene scene;
     scene.rows = 3;
     scene.cols = 20;
@@ -548,7 +567,7 @@ TEST_CASE("Skia presenter reuses shaped text runs across layouts") {
 }
 
 TEST_CASE("Skia presenter keeps popup painting and damage independent of fractional scrolling") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     SceneDamageTracker tracker;
 
     Scene scene;
@@ -590,7 +609,7 @@ TEST_CASE("Skia presenter keeps popup painting and damage independent of fractio
 }
 
 TEST_CASE("Skia presenter lays the interactive picker out as a bottom minibuffer") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     SceneDamageTracker tracker;
 
@@ -711,7 +730,7 @@ TEST_CASE("Skia presenter lays the interactive picker out as a bottom minibuffer
 }
 
 TEST_CASE("Skia damage rendering matches a full reference frame") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     SceneDamageTracker tracker;
 
     const auto make_scene = [](std::string text, int cursor_col) {
@@ -800,7 +819,7 @@ TEST_CASE("Skia document view presentation keeps caret and active line in phase"
 }
 
 TEST_CASE("Skia animation frames scroll only the grid") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     const auto make_scene = [](std::string first, std::string second) {
         Scene scene;
@@ -886,7 +905,7 @@ TEST_CASE("Skia animation frames scroll only the grid") {
 }
 
 TEST_CASE("Skia scroll keeps the current cursor at both viewport edges") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     const auto make_scene = [](int cursor_row) {
         Scene scene;
@@ -953,7 +972,7 @@ TEST_CASE("Skia scroll keeps the current cursor at both viewport edges") {
 }
 
 TEST_CASE("Skia scroll layers keep the leading edge populated after sustained retargeting") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     const auto make_scene = [](int first_line) {
         Scene scene;
@@ -1011,7 +1030,7 @@ TEST_CASE("Skia scroll layers keep the leading edge populated after sustained re
 }
 
 TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     const auto make_scene = [](int first_line, int active_row) {
         Scene scene;
@@ -1097,7 +1116,7 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
 }
 
 TEST_CASE("Skia line-number emphasis follows the animated document caret midpoint") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     Scene scene;
     scene.rows = 5;
@@ -1152,7 +1171,7 @@ TEST_CASE("Skia line-number emphasis follows the animated document caret midpoin
 }
 
 TEST_CASE("Skia presenter lays the modeline out from structured status content") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     SceneDamageTracker tracker;
 
@@ -1219,7 +1238,7 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
 }
 
 TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     Scene scene;
     scene.rows = 4;
@@ -1317,7 +1336,7 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
 }
 
 TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
-    SkiaTheme theme;
+    SkiaTheme theme = test_theme();
     SkiaPresenter presenter("monospace", 16.0F, theme);
     Scene scene;
     scene.rows = 7;
@@ -1377,7 +1396,7 @@ TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
 }
 
 TEST_CASE("Skia partial rendering clears a cancelled cursor animation position") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     SceneDamageTracker tracker;
     const auto make_scene = [](int cursor_row, int cursor_col) {
         Scene scene;

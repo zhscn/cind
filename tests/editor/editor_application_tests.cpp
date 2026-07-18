@@ -512,6 +512,31 @@ TEST_CASE("user initialization owns editor chrome policy") {
     CHECK(content.popup_input_cursor == 2);
 }
 
+TEST_CASE("user initialization owns the frontend semantic palette") {
+    TemporaryFile init(std::format("cind-theme-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-theme-policy!
+ host
+ (lambda (host)
+   (vector 'presentation-theme
+           #xff000001 #xff000002 #xff000003 #xff000004
+           #xff000005 #xff000006 #xff000007 #xff000008
+           #xff000009 #xff00000a #xff00000b #xff00000c
+           #xff00000d #xff00000e #xff00000f #xff000010)))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "text",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    const PresentationTheme theme = application.presentation_theme();
+    CHECK(theme.canvas == 0xFF000001);
+    CHECK(theme.salient == 0xFF00000A);
+    CHECK(theme.sign_deleted == 0xFF000010);
+}
+
 TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {
     TemporaryFile init(std::format("cind-startup-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-startup-policy!

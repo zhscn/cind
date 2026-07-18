@@ -26,6 +26,25 @@ int main(int argc, char** argv) {
 
 namespace {
 
+SkiaTheme test_theme() {
+    return {.canvas = 0xFF1E1E2E,
+            .highlight = 0xFF2A2B3C,
+            .band = 0xFF313244,
+            .selection = 0xFF45475A,
+            .divider = 0xFF11111B,
+            .text = 0xFFCDD6F4,
+            .strong = 0xFFDEE4F7,
+            .faded = 0xFF7F849C,
+            .faint = 0xFF6C7086,
+            .salient = 0xFF89B4FA,
+            .popout = 0xFFFAB387,
+            .critical = 0xFFF9E2AF,
+            .cursor = 0xFFF5E0DC,
+            .sign_added = 0xFFA6E3A1,
+            .sign_modified = 0xFFF9E2AF,
+            .sign_deleted = 0xFFF38BA8};
+}
+
 Scene frame_scene(int cursor_row, int marker, bool popup_visible = false) {
     Scene scene;
     scene.rows = 30;
@@ -97,7 +116,7 @@ FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top
 } // namespace
 
 TEST_CASE("presented frame exposes the animated caret used for IME placement") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -119,7 +138,7 @@ TEST_CASE("presented frame exposes the animated caret used for IME placement") {
 }
 
 TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -133,7 +152,7 @@ TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") 
 }
 
 TEST_CASE("direct scroll input bypasses the spring animation") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -149,7 +168,7 @@ TEST_CASE("direct scroll input bypasses the spring animation") {
 }
 
 TEST_CASE("animated document chrome follows the visual scroll transform") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -175,7 +194,7 @@ TEST_CASE("animated document chrome follows the visual scroll transform") {
 }
 
 TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     const FrameClock::time_point start{};
 
     SUBCASE("downward motion catches up at the bottom edge") {
@@ -242,7 +261,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
 }
 
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -286,7 +305,7 @@ TEST_CASE("presented frame hit testing follows the visible scroll layer") {
 }
 
 TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 
@@ -314,7 +333,7 @@ TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
 }
 
 TEST_CASE("presented frame gives fixed overlays priority over animated document layers") {
-    SkiaPresenter presenter("monospace", 16.0F);
+    SkiaPresenter presenter("monospace", 16.0F, test_theme());
     GuiFrameController controller(presenter);
     const FrameClock::time_point start{};
 

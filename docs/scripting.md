@@ -289,6 +289,8 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-modeline-content host context facts)
 (configure-chrome-policy! host procedure)
 (resolve-chrome-content host context facts)
+(configure-theme-policy! host procedure)
+(resolve-presentation-theme host)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -325,6 +327,17 @@ Caret positions are UTF-8 byte offsets. Picker ownership of the minibuffer input
 layout, and which-key presentation are identical in terminal and pixel frontends.
 `configure-chrome-policy!` replaces the procedure for one application; C++ validates byte offsets
 and popup indices and projects the result into the shared Scene.
+
+The theme policy returns a semantic ARGB palette shared by terminal and pixel presenters:
+
+```scheme
+#(presentation-theme canvas highlight band selection divider
+                     text strong faded faint salient popout critical cursor
+                     sign-added sign-modified sign-deleted)
+```
+
+Each color is an unsigned 32-bit straight-alpha ARGB value. Scheme owns the palette; Skia maps it
+to pixels and the terminal presenter maps the same semantic roles to true-color SGR sequences.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

@@ -1179,7 +1179,8 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
         wakeup.wait();
         (void)editor.poll_background_work();
     }
-    SkiaPresenter presenter(std::move(font_family), geometry.font_size, {}, smoothing);
+    SkiaPresenter presenter(std::move(font_family), geometry.font_size, editor.presentation_theme(),
+                            smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
     const float cell_width = static_cast<float>(presenter.cell_width());
@@ -1281,7 +1282,8 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
             }};
     EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
                        std::move(platform_services), discover_user_init_file());
-    SkiaPresenter presenter(std::move(font_family), font_size, {}, smoothing);
+    SkiaPresenter presenter(std::move(font_family), font_size, editor.presentation_theme(),
+                            smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {

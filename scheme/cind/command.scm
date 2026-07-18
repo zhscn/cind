@@ -25,6 +25,8 @@
             resolve-modeline-content
             configure-chrome-policy!
             resolve-chrome-content
+            configure-theme-policy!
+            resolve-presentation-theme
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -273,6 +275,20 @@
     (unless procedure
       (error "chrome policy is not configured"))
     (procedure host context facts)))
+
+(define theme-policies (make-weak-key-hash-table))
+
+(define (configure-theme-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "theme policy must be a procedure" procedure))
+  (hashq-set! theme-policies host procedure)
+  procedure)
+
+(define (resolve-presentation-theme host)
+  (let ((procedure (hashq-ref theme-policies host)))
+    (unless procedure
+      (error "theme policy is not configured"))
+    (procedure host)))
 
 (define (invocation-arguments invocation)
   (vector-ref invocation 1))

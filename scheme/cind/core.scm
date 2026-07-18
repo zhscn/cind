@@ -223,6 +223,13 @@
   (vector 'chrome pending-key echo echo-caret popup-title popup-items popup-capacity
           popup-selection popup-input popup-input-caret))
 
+(define (default-presentation-theme host)
+  (vector 'presentation-theme
+          #xff1e1e2e #xff2a2b3c #xff313244 #xff45475a
+          #xff11111b #xffcdd6f4 #xffdee4f7 #xff7f849c
+          #xff6c7086 #xff89b4fa #xfffab387 #xfff9e2af
+          #xfff5e0dc #xffa6e3a1 #xfff9e2af #xfff38ba8))
+
 (define (default-chrome-content host context facts)
   (let* ((kind (vector-ref facts 1))
          (prompt (vector-ref facts 2))
@@ -277,7 +284,8 @@
 (define (install-presentation-policies! host)
   (configure-modeline-policy! host modeline-content)
   (configure-chrome-policy! host default-chrome-content)
-  2)
+  (configure-theme-policy! host default-presentation-theme)
+  3)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

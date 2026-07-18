@@ -1,5 +1,6 @@
 #pragma once
 
+#include "presentation/theme.hpp"
 #include "ui/scene.hpp"
 #include "ui/scene_damage.hpp"
 #include "ui/scene_layout.hpp"
@@ -36,30 +37,7 @@ enum class SkiaFontSmoothing : std::uint8_t {
 
 SkiaFontSmoothing parse_font_smoothing(std::string_view name);
 
-// Nano-emacs visual language over configurable colors: flat color-block
-// chrome with no borders, shadows, or rounded shells. The document, gutter,
-// and echo strip share the canvas ground; the modeline and the minibuffer are
-// bands one step up; the status chip and the selected picker row are the only
-// solid accents, always paired with canvas-colored ink. Default values are
-// catppuccin Mocha.
-struct SkiaTheme {
-    std::uint32_t canvas = 0xFF1E1E2E;    // base — document, gutter, echo ground
-    std::uint32_t highlight = 0xFF2A2B3C; // active line; inactive modeline band
-    std::uint32_t band = 0xFF313244;      // surface0 — modeline + minibuffer ground
-    std::uint32_t selection = 0xFF45475A; // surface1 — selection; inactive status chip
-    std::uint32_t divider = 0xFF11111B;   // crust — split pane divider line
-    std::uint32_t text = 0xFFCDD6F4;
-    std::uint32_t strong = 0xFFDEE4F7;   // bold ink: file names, picker input
-    std::uint32_t faded = 0xFF7F849C;    // overlay1 — secondary ink; RW chip / selected row ground
-    std::uint32_t faint = 0xFF6C7086;    // overlay0 — line numbers, counters
-    std::uint32_t salient = 0xFF89B4FA;  // blue — keywords, prompts
-    std::uint32_t popout = 0xFFFAB387;   // peach — strings, numbers
-    std::uint32_t critical = 0xFFF9E2AF; // yellow — dirty-buffer chip
-    std::uint32_t cursor = 0xFFF5E0DC;   // rosewater
-    std::uint32_t sign_added = 0xFFA6E3A1;
-    std::uint32_t sign_modified = 0xFFF9E2AF;
-    std::uint32_t sign_deleted = 0xFFF38BA8;
-};
+using SkiaTheme = PresentationTheme;
 
 struct SkiaLogicalRect {
     float x = 0.0F;
@@ -256,8 +234,7 @@ struct SkiaPreparedAnimationFrame {
 // logical-pixel coordinate space with system font fallback.
 class SkiaPresenter {
 public:
-    explicit SkiaPresenter(std::string font_family = "monospace", float font_size = 16.0F,
-                           SkiaTheme theme = {},
+    explicit SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme,
                            SkiaFontSmoothing smoothing = SkiaFontSmoothing::Smooth);
     ~SkiaPresenter();
 

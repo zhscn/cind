@@ -11,42 +11,54 @@ namespace cind::ui {
 
 namespace {
 
+std::string color_sgr(std::uint32_t argb, bool background = false, bool strong = false) {
+    const std::uint32_t red = (argb >> 16U) & 0xFFU;
+    const std::uint32_t green = (argb >> 8U) & 0xFFU;
+    const std::uint32_t blue = argb & 0xFFU;
+    return std::format("\x1b[{};2;{};{};{}{}m", background ? 48 : 38, red, green, blue,
+                       strong ? ";1" : "");
+}
+
+std::string foreground_background(std::uint32_t foreground, std::uint32_t background,
+                                  bool strong = false) {
+    return color_sgr(foreground, false, strong) + color_sgr(background, true);
+}
+
 // Theme: semantic style -> SGR attributes. The only place in the presenter
-// that knows colors.
-std::string_view sgr_of(StyleClass style) {
+// that knows terminal color encoding.
+std::string sgr_of(StyleClass style, const PresentationTheme& theme) {
     switch (style) {
     case StyleClass::Text:
-        return "";
+        return color_sgr(theme.text);
     case StyleClass::Keyword:
-        return "\x1b[1;34m";
+        return color_sgr(theme.salient, false, true);
     case StyleClass::String:
-        return "\x1b[32m";
     case StyleClass::Number:
-        return "\x1b[35m";
+        return color_sgr(theme.popout);
     case StyleClass::Comment:
-        return "\x1b[90m";
+        return color_sgr(theme.faded);
     case StyleClass::Preprocessor:
-        return "\x1b[33m";
+        return color_sgr(theme.critical);
     case StyleClass::Gutter:
-        return "\x1b[90m";
+        return color_sgr(theme.faint);
     case StyleClass::SignAdded:
-        return "\x1b[32m";
+        return color_sgr(theme.sign_added);
     case StyleClass::SignModified:
-        return "\x1b[33m";
+        return color_sgr(theme.sign_modified);
     case StyleClass::SignDeleted:
-        return "\x1b[31m";
+        return color_sgr(theme.sign_deleted);
     case StyleClass::StatusBar:
-        return "\x1b[7m";
+        return foreground_background(theme.text, theme.band);
     case StyleClass::StatusKey:
-        return "\x1b[7m\x1b[1m";
+        return foreground_background(theme.strong, theme.band, true);
     case StyleClass::Message:
-        return "";
+        return color_sgr(theme.text);
     case StyleClass::Popup:
-        return "\x1b[48;5;236m";
+        return foreground_background(theme.text, theme.band);
     case StyleClass::PositionHint:
-        return "\x1b[30;44m";
+        return foreground_background(theme.canvas, theme.salient, true);
     }
-    return "";
+    return color_sgr(theme.text);
 }
 
 std::string_view cursor_sgr(CursorShape shape) {
@@ -63,7 +75,7 @@ std::string_view cursor_sgr(CursorShape shape) {
 
 } // namespace
 
-std::string render_ansi(const Scene& scene) {
+std::string render_ansi(const Scene& scene, const PresentationTheme& theme) {
     std::string out;
     out += "\x1b[?25l\x1b[H\x1b[2J"; // hide cursor, home, clear
 
@@ -73,9 +85,9 @@ std::string render_ansi(const Scene& scene) {
                                     : 0;
         out += std::format("\x1b[{};{}H", region.rect.row + prim.row + content_row + 1,
                            region.rect.col + prim.col + 1);
-        const std::string_view sgr = prim.style == StyleClass::StatusBar && !region.active
-                                         ? std::string_view("\x1b[48;5;236m\x1b[90m")
-                                         : sgr_of(prim.style);
+        const std::string sgr = prim.style == StyleClass::StatusBar && !region.active
+                                    ? foreground_background(theme.faded, theme.highlight)
+                                    : sgr_of(prim.style, theme);
         out += sgr;
         if (prim.selected) {
             out += "\x1b[7m";
@@ -159,8 +171,8 @@ std::string render_ansi(const Scene& scene) {
     for (const SceneDivider& divider : scene.dividers) {
         if (divider.axis == DividerAxis::Vertical) {
             for (int offset = 0; offset < divider.length; ++offset) {
-                out += std::format("\x1b[{};{}H\x1b[90m│\x1b[0m", divider.start + offset + 1,
-                                   divider.position + 1);
+                out += std::format("\x1b[{};{}H{}│\x1b[0m", divider.start + offset + 1,
+                                   divider.position + 1, color_sgr(theme.faint));
             }
         }
     }

@@ -41,6 +41,9 @@ public:
     void request_close(bool force = false) { (void)application_.request_close(force); }
 
     RevisionId revision() const { return application_.revision(); }
+    const PresentationTheme& presentation_theme() const {
+        return application_.presentation_theme();
+    }
     EditorRenderState render_state();
     EditorStateSnapshot inspect();
 
