@@ -3487,22 +3487,67 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM save_buffer(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "save-buffer!");
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "save-buffer!", 2);
-    if (!host.services.save_buffer) {
-        scm_misc_error("save-buffer!", "buffer-save capability is unavailable", SCM_EOL);
+SCM begin_buffer_save(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "begin-buffer-save!");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "begin-buffer-save!", 2);
+    if (!host.services.begin_buffer_save) {
+        scm_misc_error("begin-buffer-save!", "buffer-save lease capability is unavailable",
+                       SCM_EOL);
     }
     try {
-        host.services.save_buffer(buffer);
+        const std::expected<std::string, std::string> content =
+            host.services.begin_buffer_save(buffer);
+        if (!content) {
+            raise_host_error("begin-buffer-save!", content.error());
+        }
+        return scm_from_utf8_stringn(content->data(), content->size());
+    } catch (const std::exception& exception) {
+        raise_host_error("begin-buffer-save!", exception.what());
+    } catch (...) {
+        scm_misc_error("begin-buffer-save!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM complete_buffer_save(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "complete-buffer-save!");
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "complete-buffer-save!", 2);
+    if (!host.services.complete_buffer_save) {
+        scm_misc_error("complete-buffer-save!", "buffer-save completion capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<bool, std::string> newer = host.services.complete_buffer_save(buffer);
+        if (!newer) {
+            raise_host_error("complete-buffer-save!", newer.error());
+        }
+        return scm_from_bool(*newer);
+    } catch (const std::exception& exception) {
+        raise_host_error("complete-buffer-save!", exception.what());
+    } catch (...) {
+        scm_misc_error("complete-buffer-save!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM abort_buffer_save(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "abort-buffer-save!");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "abort-buffer-save!", 2);
+    if (!host.services.abort_buffer_save) {
+        scm_misc_error("abort-buffer-save!", "buffer-save abort capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        host.services.abort_buffer_save(buffer);
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("save-buffer!", exception.what());
+        raise_host_error("abort-buffer-save!", exception.what());
     } catch (...) {
-        scm_misc_error("save-buffer!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("abort-buffer-save!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4242,7 +4287,12 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(start_project_search));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_resource));
-    (void)scm_c_define_gsubr("save-buffer!", 2, 0, 0, reinterpret_cast<scm_t_subr>(save_buffer));
+    (void)scm_c_define_gsubr("begin-buffer-save!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(begin_buffer_save));
+    (void)scm_c_define_gsubr("complete-buffer-save!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(complete_buffer_save));
+    (void)scm_c_define_gsubr("abort-buffer-save!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(abort_buffer_save));
     (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffers));
     (void)scm_c_define_gsubr("create-buffer!", 7, 0, 0,
@@ -4293,10 +4343,11 @@ void initialize_host_module(void*) {
         "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "create-buffer!", "buffer-saving?", "buffer-modified?", "release-buffer!", "exit-editor!",
-        "split-window!", "delete-window!", "delete-other-windows!", "open-window-ids",
-        "focus-window!", "request-redraw!", nullptr);
+        "start-project-search!", "set-buffer-resource!", "begin-buffer-save!",
+        "complete-buffer-save!", "abort-buffer-save!", "open-buffer-ids", "create-buffer!",
+        "buffer-saving?", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",
+        "delete-window!", "delete-other-windows!", "open-window-ids", "focus-window!",
+        "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 

@@ -815,6 +815,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool buffer_resource_set = false;
     BufferId saved_buffer;
     bool buffer_saved = false;
+    bool buffer_save_completed = false;
+    bool buffer_save_aborted = false;
+    std::optional<ScriptAsyncRequest> pending_async_request;
+    ScriptAsyncCallbacks pending_async_callbacks;
     std::optional<GuileBufferCreation> created_buffer;
     bool buffer_saving = false;
     bool only_buffer = false;
@@ -912,10 +916,21 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              buffer_resource_set = true;
              return {};
          },
-         .save_buffer =
+         .begin_buffer_save =
+             [&](BufferId target_buffer) -> std::expected<std::string, std::string> {
+             saved_buffer = target_buffer;
+             buffer_saved = true;
+             return "abc\n";
+         },
+         .complete_buffer_save = [&](BufferId target_buffer) -> std::expected<bool, std::string> {
+             saved_buffer = target_buffer;
+             buffer_save_completed = true;
+             return false;
+         },
+         .abort_buffer_save =
              [&](BufferId target_buffer) {
                  saved_buffer = target_buffer;
-                 buffer_saved = true;
+                 buffer_save_aborted = true;
              },
          .open_buffers =
              [&] {
@@ -1080,9 +1095,14 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return clipboard.empty() ? std::optional<std::string>{}
                                       : std::optional<std::string>{clipboard};
          },
-         .start_async_task = {},
-         .cancel_async_task = {},
-         .async_tasks = {}});
+         .start_async_task = [&](ScriptAsyncRequest request, ScriptAsyncCallbacks callbacks)
+             -> std::expected<std::uint64_t, std::string> {
+             pending_async_request = std::move(request);
+             pending_async_callbacks = std::move(callbacks);
+             return 1;
+         },
+         .cancel_async_task = [](std::uint64_t) { return true; },
+         .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
     CHECK(*installed == 191);
@@ -1090,11 +1110,22 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(providers.has_value());
     CHECK(*providers == 7);
     const CommandId save = require_command(runtime, "file.save");
+    runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
     const CommandResult saved = runtime.commands().invoke(save, context);
     REQUIRE(saved.has_value());
     REQUIRE(buffer_saved);
     CHECK(saved_buffer == buffer);
+    REQUIRE(pending_async_request.has_value());
+    const auto* write = std::get_if<ScriptFileWriteRequest>(&*pending_async_request);
+    REQUIRE(write != nullptr);
+    CHECK(write->path == "/tmp/sample");
+    CHECK(write->contents == "abc\n");
+    CHECK(message == "saving /tmp/sample…");
+    pending_async_callbacks.completed(1, ScriptFileWriteResult{.path = "/tmp/sample"});
+    CHECK(buffer_save_completed);
+    CHECK_FALSE(buffer_save_aborted);
+    CHECK(message == "saved /tmp/sample");
 
     const std::vector<InteractionCandidate> command_candidates =
         complete_provider(runtime, "commands", context);
@@ -1267,7 +1298,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(open_request->kind == InteractionKind::Picker);
     CHECK(open_request->prompt == "Open file: ");
     CHECK(open_request->initial_input ==
-          std::string(".") + std::filesystem::path::preferred_separator);
+          std::string("/tmp") + std::filesystem::path::preferred_separator);
     CHECK(open_request->provider == "files");
     CHECK(runtime.commands().definition(open_request->accept_command).name == "file.open.accept");
 
@@ -1296,7 +1327,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(save_as_request != nullptr);
     CHECK(save_as_request->kind == InteractionKind::Text);
     CHECK(save_as_request->prompt == "Write file: ");
-    CHECK(save_as_request->initial_input.empty());
+    CHECK(save_as_request->initial_input == "/tmp/sample");
     CHECK(runtime.commands().definition(save_as_request->accept_command).name ==
           "file.save-as.accept");
     const CommandResult save_as_accepted = runtime.commands().invoke(

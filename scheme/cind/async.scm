@@ -2,6 +2,7 @@
   #:use-module (ice-9 optargs)
   #:use-module (cind host)
   #:export (async-file-read
+            async-file-write
             async-directory-list
             async-process
             start-async-task!
@@ -12,6 +13,13 @@
   (unless (string? path)
     (error "async file-read path must be a string" path))
   (vector 'file-read path))
+
+(define (async-file-write path contents)
+  (unless (string? path)
+    (error "async file-write path must be a string" path))
+  (unless (string? contents)
+    (error "async file-write contents must be a string" contents))
+  (vector 'file-write path contents))
 
 (define* (async-directory-list path #:optional (maximum-entries 4096))
   (unless (string? path)

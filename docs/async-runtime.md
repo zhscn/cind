@@ -99,7 +99,8 @@ enumeration and child processes. Each request receives a stable integer ID and f
 completed, cancelled or failed terminal path. The adapter retains the native `AsyncTaskId` or
 `AsyncProcessId` internally, so cancellation does not expose libuv handle types to language code.
 
-File and directory workers receive copied paths and limits. Process requests receive a copied
+File workers receive copied paths and immutable read or write payloads. Directory workers receive
+copied paths and limits. Process requests receive a copied
 executable, argument vector and working directory. No worker callback enters Guile or retains an
 `SCM` value. `AsyncRuntime::drain()` transfers a typed native result to the Guile bridge, which then
 invokes the protected Scheme callback on the editor thread. The task record is removed before the

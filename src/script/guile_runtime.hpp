@@ -107,7 +107,9 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ProjectId, WindowId, std::string)>
         start_project_search;
     std::function<std::expected<void, std::string>(BufferId, std::string)> set_buffer_resource;
-    std::function<void(BufferId)> save_buffer;
+    std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
+    std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
+    std::function<void(BufferId)> abort_buffer_save;
     std::function<std::vector<BufferId>()> open_buffers;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<bool(BufferId)> buffer_saving;

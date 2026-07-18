@@ -15,12 +15,18 @@ namespace cind {
 
 enum class ScriptAsyncTaskKind : std::uint8_t {
     FileRead,
+    FileWrite,
     DirectoryList,
     Process,
 };
 
 struct ScriptFileReadRequest {
     std::string path;
+};
+
+struct ScriptFileWriteRequest {
+    std::string path;
+    std::string contents;
 };
 
 struct ScriptDirectoryListRequest {
@@ -34,13 +40,17 @@ struct ScriptProcessRequest {
     std::string working_directory;
 };
 
-using ScriptAsyncRequest =
-    std::variant<ScriptFileReadRequest, ScriptDirectoryListRequest, ScriptProcessRequest>;
+using ScriptAsyncRequest = std::variant<ScriptFileReadRequest, ScriptFileWriteRequest,
+                                        ScriptDirectoryListRequest, ScriptProcessRequest>;
 
 struct ScriptFileReadResult {
     std::string path;
     bool exists = false;
     std::string contents;
+};
+
+struct ScriptFileWriteResult {
+    std::string path;
 };
 
 struct ScriptDirectoryEntry {
@@ -61,8 +71,8 @@ struct ScriptProcessResult {
     std::string standard_error;
 };
 
-using ScriptAsyncResult =
-    std::variant<ScriptFileReadResult, ScriptDirectoryListResult, ScriptProcessResult>;
+using ScriptAsyncResult = std::variant<ScriptFileReadResult, ScriptFileWriteResult,
+                                       ScriptDirectoryListResult, ScriptProcessResult>;
 
 struct ScriptAsyncCallbacks {
     std::function<void(std::uint64_t, ScriptAsyncResult)> completed;

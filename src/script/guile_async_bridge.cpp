@@ -42,6 +42,17 @@ std::string scheme_string(SCM value) {
     return result;
 }
 
+std::string scheme_string_with_nuls(SCM value) {
+    std::size_t length = 0;
+    char* converted = scm_to_utf8_stringn(value, &length);
+    if (converted == nullptr) {
+        throw std::runtime_error("Guile failed to convert a string");
+    }
+    std::string result(converted, length);
+    std::free(converted);
+    return result;
+}
+
 bool symbol_is(SCM value, const char* expected) {
     return scheme_true(scm_symbol_p(value)) &&
            scheme_true(scm_eq_p(value, scm_from_utf8_symbol(expected)));
@@ -93,6 +104,15 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
             scm_wrong_type_arg_msg(caller, position, value, "#(file-read path) request");
         }
         return ScriptFileReadRequest{.path = scheme_string(scm_c_vector_ref(value, 1))};
+    }
+    if (symbol_is(tag, "file-write")) {
+        if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
+            !scm_is_string(scm_c_vector_ref(value, 2))) {
+            scm_wrong_type_arg_msg(caller, position, value, "#(file-write path contents) request");
+        }
+        return ScriptFileWriteRequest{.path = scheme_string(scm_c_vector_ref(value, 1)),
+                                      .contents =
+                                          scheme_string_with_nuls(scm_c_vector_ref(value, 2))};
     }
     if (symbol_is(tag, "directory-list")) {
         if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
@@ -147,6 +167,8 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
     switch (kind) {
     case ScriptAsyncTaskKind::FileRead:
         return "file-read";
+    case ScriptAsyncTaskKind::FileWrite:
+        return "file-write";
     case ScriptAsyncTaskKind::DirectoryList:
         return "directory-list";
     case ScriptAsyncTaskKind::Process:
@@ -159,8 +181,8 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
 
 SCM script_async_result_to_scheme(ScriptAsyncResult result) {
     return std::visit(
-        [](auto value) {
-            using Result = decltype(value);
+        [](const auto& value) {
+            using Result = std::remove_cvref_t<decltype(value)>;
             if constexpr (std::is_same_v<Result, ScriptFileReadResult>) {
                 SCM converted = scm_c_make_vector(4, SCM_UNSPECIFIED);
                 scm_c_vector_set_x(converted, 0, name_symbol("file-read"));
@@ -169,6 +191,11 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 scm_c_vector_set_x(
                     converted, 3,
                     scm_from_utf8_stringn(value.contents.data(), value.contents.size()));
+                return converted;
+            } else if constexpr (std::is_same_v<Result, ScriptFileWriteResult>) {
+                SCM converted = scm_c_make_vector(2, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(converted, 0, name_symbol("file-write"));
+                scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
                 return converted;
             } else if constexpr (std::is_same_v<Result, ScriptDirectoryListResult>) {
                 SCM entries = scm_c_make_vector(value.entries.size(), SCM_UNSPECIFIED);
@@ -201,7 +228,7 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 return converted;
             }
         },
-        std::move(result));
+        result);
 }
 
 namespace {

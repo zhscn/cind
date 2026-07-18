@@ -99,8 +99,8 @@ AsyncScriptHost::~AsyncScriptHost() {
     state_->runtime = nullptr;
 }
 
-std::expected<std::uint64_t, std::string>
-AsyncScriptHost::start(ScriptAsyncRequest request, ScriptAsyncCallbacks callbacks) {
+std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequest request,
+                                                                 ScriptAsyncCallbacks callbacks) {
     require_owner(state_->owner);
     if (!state_->active || state_->runtime == nullptr) {
         return std::unexpected("script async host is unavailable");
@@ -127,44 +127,96 @@ AsyncScriptHost::start(ScriptAsyncRequest request, ScriptAsyncCallbacks callback
                     // NOLINTNEXTLINE(bugprone-exception-escape)
                     AsyncWork work = [path, weak_state, id, completed = callbacks.completed](
                                          const std::stop_token& cancellation) mutable {
-                             std::expected<FileReadResult, std::error_code> read =
-                                 read_file_contents(std::filesystem::path(path), cancellation);
-                             if (!read) {
-                                 throw_file_error(read.error());
-                             }
-                             ScriptAsyncResult result = ScriptFileReadResult{
-                                 .path = path,
-                                 .exists = read->exists,
-                                 .contents = std::move(read->contents)};
-                             return [weak_state, id, completed = std::move(completed),
-                                     result = std::move(result)]() mutable {
-                                 finish_task(weak_state, id,
-                                             [id, completed = std::move(completed),
-                                              result = std::move(result)]() mutable {
-                                     completed(id, std::move(result));
-                                 });
-                             };
-                         };
+                        std::expected<FileReadResult, std::error_code> read =
+                            read_file_contents(std::filesystem::path(path), cancellation);
+                        if (!read) {
+                            throw_file_error(read.error());
+                        }
+                        ScriptAsyncResult result =
+                            ScriptFileReadResult{.path = path,
+                                                 .exists = read->exists,
+                                                 .contents = std::move(read->contents)};
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
                     const AsyncTaskId native = state_->runtime->submit(
                         {.work = std::move(work),
-                         .cancelled = [weak_state, id, cancelled = callbacks.cancelled]() mutable {
-                             finish_task(weak_state, id, [id, cancelled = std::move(cancelled)] {
-                                 if (cancelled) {
-                                     cancelled(id);
-                                 }
-                             });
-                         },
-                         .failed = [weak_state, id, failed = callbacks.failed](
-                                       const std::exception_ptr& failure) mutable {
-                             const std::string message = exception_message(failure);
-                             finish_task(weak_state, id,
-                                         [id, failed = std::move(failed), message] {
-                                 if (failed) {
-                                     failed(id, message);
-                                 }
-                             });
-                         }});
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
                     return {.kind = ScriptAsyncTaskKind::FileRead, .native = native};
+                } else if constexpr (std::is_same_v<Request, ScriptFileWriteRequest>) {
+                    if (operation.path.empty()) {
+                        throw std::invalid_argument("file-write path is empty");
+                    }
+                    const std::string path = operation.path;
+                    Text content(operation.contents);
+                    // Throwing reports worker failures through AsyncRuntime::failed.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    AsyncWork work = [path, content = std::move(content), weak_state, id,
+                                      completed = callbacks.completed](
+                                         const std::stop_token& cancellation) mutable {
+                        const std::error_code error =
+                            save_file_atomically(path, content, cancellation);
+                        if (error) {
+                            throw_file_error(error);
+                        }
+                        ScriptAsyncResult result = ScriptFileWriteResult{.path = path};
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
+                    const AsyncTaskId native = state_->runtime->submit(
+                        {.work = std::move(work),
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
+                    return {.kind = ScriptAsyncTaskKind::FileWrite, .native = native};
                 } else if constexpr (std::is_same_v<Request, ScriptDirectoryListRequest>) {
                     if (operation.path.empty()) {
                         throw std::invalid_argument("directory-list path is empty");
@@ -176,49 +228,51 @@ AsyncScriptHost::start(ScriptAsyncRequest request, ScriptAsyncCallbacks callback
                     AsyncWork work = [path, maximum_entries, weak_state, id,
                                       completed = callbacks.completed](
                                          const std::stop_token& cancellation) mutable {
-                             std::expected<DirectoryListing, std::error_code> listing =
-                                 list_directory(std::filesystem::path(path), maximum_entries,
-                                                cancellation);
-                             if (!listing) {
-                                 throw_file_error(listing.error());
-                             }
-                             ScriptDirectoryListResult directory{
-                                 .path = listing->directory.string(), .entries = {}};
-                             directory.entries.reserve(listing->entries.size());
-                             for (DirectoryEntry& entry : listing->entries) {
-                                 directory.entries.push_back({.path = entry.path.string(),
-                                                              .name = std::move(entry.name),
-                                                              .directory = entry.directory});
-                             }
-                             ScriptAsyncResult result = std::move(directory);
-                             return [weak_state, id, completed = std::move(completed),
-                                     result = std::move(result)]() mutable {
-                                 finish_task(weak_state, id,
-                                             [id, completed = std::move(completed),
-                                              result = std::move(result)]() mutable {
-                                     completed(id, std::move(result));
-                                 });
-                             };
-                         };
+                        std::expected<DirectoryListing, std::error_code> listing = list_directory(
+                            std::filesystem::path(path), maximum_entries, cancellation);
+                        if (!listing) {
+                            throw_file_error(listing.error());
+                        }
+                        ScriptDirectoryListResult directory{.path = listing->directory.string(),
+                                                            .entries = {}};
+                        directory.entries.reserve(listing->entries.size());
+                        for (DirectoryEntry& entry : listing->entries) {
+                            directory.entries.push_back({.path = entry.path.string(),
+                                                         .name = std::move(entry.name),
+                                                         .directory = entry.directory});
+                        }
+                        ScriptAsyncResult result = std::move(directory);
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
                     const AsyncTaskId native = state_->runtime->submit(
                         {.work = std::move(work),
-                         .cancelled = [weak_state, id, cancelled = callbacks.cancelled]() mutable {
-                             finish_task(weak_state, id, [id, cancelled = std::move(cancelled)] {
-                                 if (cancelled) {
-                                     cancelled(id);
-                                 }
-                             });
-                         },
-                         .failed = [weak_state, id, failed = callbacks.failed](
-                                       const std::exception_ptr& failure) mutable {
-                             const std::string message = exception_message(failure);
-                             finish_task(weak_state, id,
-                                         [id, failed = std::move(failed), message] {
-                                 if (failed) {
-                                     failed(id, message);
-                                 }
-                             });
-                         }});
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
                     return {.kind = ScriptAsyncTaskKind::DirectoryList, .native = native};
                 } else {
                     if (operation.file.empty()) {
@@ -228,36 +282,40 @@ AsyncScriptHost::start(ScriptAsyncRequest request, ScriptAsyncCallbacks callback
                         {.file = std::move(operation.file),
                          .arguments = std::move(operation.arguments),
                          .working_directory = std::move(operation.working_directory),
-                         .completed = [weak_state, id, completed = callbacks.completed](
-                                          AsyncProcessResult native_result) mutable {
-                             ScriptAsyncResult result = ScriptProcessResult{
-                                 .exit_status = native_result.exit_status,
-                                 .term_signal = native_result.term_signal,
-                                 .standard_output = std::move(native_result.standard_output),
-                                 .standard_error = std::move(native_result.standard_error)};
-                             finish_task(weak_state, id,
-                                         [id, completed = std::move(completed),
-                                          result = std::move(result)]() mutable {
-                                 completed(id, std::move(result));
-                             });
-                         },
-                         .cancelled = [weak_state, id, cancelled = callbacks.cancelled]() mutable {
-                             finish_task(weak_state, id, [id, cancelled = std::move(cancelled)] {
-                                 if (cancelled) {
-                                     cancelled(id);
-                                 }
-                             });
-                         },
-                         .failed = [weak_state, id, failed = callbacks.failed](
-                                       const std::exception_ptr& failure) mutable {
-                             const std::string message = exception_message(failure);
-                             finish_task(weak_state, id,
-                                         [id, failed = std::move(failed), message] {
-                                 if (failed) {
-                                     failed(id, message);
-                                 }
-                             });
-                         }});
+                         .completed =
+                             [weak_state, id, completed = callbacks.completed](
+                                 AsyncProcessResult native_result) mutable {
+                                 ScriptAsyncResult result = ScriptProcessResult{
+                                     .exit_status = native_result.exit_status,
+                                     .term_signal = native_result.term_signal,
+                                     .standard_output = std::move(native_result.standard_output),
+                                     .standard_error = std::move(native_result.standard_error)};
+                                 finish_task(weak_state, id,
+                                             [id, completed = std::move(completed),
+                                              result = std::move(result)]() mutable {
+                                                 completed(id, std::move(result));
+                                             });
+                             },
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
                     return {.kind = ScriptAsyncTaskKind::Process, .native = native};
                 }
             },

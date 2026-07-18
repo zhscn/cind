@@ -155,7 +155,9 @@ The native module exports:
 (open-file! host window-id path)
 (start-project-search! host project-id window-id query)
 (set-buffer-resource! host buffer-id path)
-(save-buffer! host buffer-id)
+(begin-buffer-save! host buffer-id)
+(complete-buffer-save! host buffer-id)
+(abort-buffer-save! host buffer-id)
 (open-buffer-ids host)
 (create-buffer! host name initial-text kind read-only? mode-or-#f style-origin)
 (buffer-saving? host buffer-id)
@@ -177,6 +179,7 @@ The native module exports:
 
 ```scheme
 (async-file-read path)
+(async-file-write path contents)
 (async-directory-list path [maximum-entries])
 (async-process executable arguments [working-directory])
 (start-async-task! host request completed
@@ -186,9 +189,10 @@ The native module exports:
 ```
 
 `start-async-task!` returns a positive application-local task ID. `completed` receives the ID and a
-typed result. File reads produce `#(file-read path exists? contents)`. Directory enumeration
-produces `#(directory-list normalized-path entries)`, where each entry is
-`#(path name directory?)`. Processes produce
+typed result. File reads produce `#(file-read path exists? contents)` and atomic writes produce
+`#(file-write path)`. Directory enumeration produces
+`#(directory-list normalized-path entries)`, where each entry is `#(path name directory?)`.
+Processes produce
 `#(process exit-status termination-signal standard-output standard-error)`. A nonzero process exit
 status remains a completed result; Scheme policy interprets tool-specific statuses.
 
@@ -475,8 +479,11 @@ clipboard success. This result domain lets Scheme own kill-ring policy without m
 `set-buffer-resource!` normalizes a path, changes the buffer to file-backed storage, derives its
 display name, resolves its major mode through the resource-policy registry and attaches the
 matching project. File commands use these primitives to keep prompt and save-as policy in Scheme.
-`save-buffer!` snapshots the identified buffer and schedules the native atomic-write pipeline
-without consulting frontend focus.
+`begin-buffer-save!` acquires a Buffer save lease and returns the immutable snapshot contents.
+`complete-buffer-save!` publishes that snapshot as the saved baseline, releases the lease and
+reports whether newer edits remain. `abort-buffer-save!` releases a failed or cancelled lease.
+The bundled Scheme command chooses the destination, schedules `async-file-write`, owns completion
+and failure feedback and closes the lease from the corresponding callback.
 
 `open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-saving?` and
 `buffer-modified?` expose lifecycle state without deciding how commands respond to it.

@@ -6,8 +6,9 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -15,8 +16,7 @@ using namespace cind;
 
 namespace {
 
-template <typename Predicate>
-void drain_until(AsyncRuntime& runtime, Predicate&& predicate) {
+template <typename Predicate> void drain_until(AsyncRuntime& runtime, Predicate&& predicate) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!predicate() && std::chrono::steady_clock::now() < deadline) {
         (void)runtime.drain();
@@ -51,6 +51,7 @@ private:
 TEST_CASE("script async host delivers file and directory results on its owner") {
     TemporaryDirectory directory;
     const std::filesystem::path file = directory.path() / "value.txt";
+    const std::filesystem::path written_file = directory.path() / "written.txt";
     {
         std::ofstream output(file);
         output << "hello";
@@ -60,32 +61,45 @@ TEST_CASE("script async host delivers file and directory results on its owner") 
     const std::thread::id owner = std::this_thread::get_id();
     ScriptAsyncResult file_result;
     ScriptAsyncResult directory_result;
+    ScriptAsyncResult write_result;
     bool file_completed = false;
     bool directory_completed = false;
+    bool write_completed = false;
     std::thread::id callback_thread;
 
-    const auto started_file = host.start(
-        ScriptFileReadRequest{.path = file.string()},
-         {.completed = [&](std::uint64_t, ScriptAsyncResult result) {
-             callback_thread = std::this_thread::get_id();
-             file_result = std::move(result);
-             file_completed = true;
-         },
-         .cancelled = {},
-         .failed = {}});
+    const auto started_file = host.start(ScriptFileReadRequest{.path = file.string()},
+                                         {.completed =
+                                              [&](std::uint64_t, ScriptAsyncResult result) {
+                                                  callback_thread = std::this_thread::get_id();
+                                                  file_result = std::move(result);
+                                                  file_completed = true;
+                                              },
+                                          .cancelled = {},
+                                          .failed = {}});
     const auto started_directory = host.start(
         ScriptDirectoryListRequest{.path = directory.path().string(), .maximum_entries = 32},
-         {.completed = [&](std::uint64_t, ScriptAsyncResult result) {
-             directory_result = std::move(result);
-             directory_completed = true;
-         },
+        {.completed =
+             [&](std::uint64_t, ScriptAsyncResult result) {
+                 directory_result = std::move(result);
+                 directory_completed = true;
+             },
          .cancelled = {},
          .failed = {}});
+    const auto started_write =
+        host.start(ScriptFileWriteRequest{.path = written_file.string(), .contents = "written\n"},
+                   {.completed =
+                        [&](std::uint64_t, ScriptAsyncResult result) {
+                            write_result = std::move(result);
+                            write_completed = true;
+                        },
+                    .cancelled = {},
+                    .failed = {}});
 
     REQUIRE(started_file.has_value());
     REQUIRE(started_directory.has_value());
-    CHECK(host.tasks().size() == 2);
-    drain_until(runtime, [&] { return file_completed && directory_completed; });
+    REQUIRE(started_write.has_value());
+    CHECK(host.tasks().size() == 3);
+    drain_until(runtime, [&] { return file_completed && directory_completed && write_completed; });
     REQUIRE(std::holds_alternative<ScriptFileReadResult>(file_result));
     const ScriptFileReadResult& read = std::get<ScriptFileReadResult>(file_result);
     CHECK(read.path == file.string());
@@ -97,6 +111,10 @@ TEST_CASE("script async host delivers file and directory results on its owner") 
     CHECK(std::ranges::any_of(listing.entries, [](const ScriptDirectoryEntry& entry) {
         return entry.name == "value.txt" && !entry.directory;
     }));
+    REQUIRE(std::holds_alternative<ScriptFileWriteResult>(write_result));
+    CHECK(std::get<ScriptFileWriteResult>(write_result).path == written_file.string());
+    std::ifstream written(written_file);
+    CHECK(std::string(std::istreambuf_iterator<char>(written), {}) == "written\n");
     CHECK(callback_thread == owner);
     CHECK(host.tasks().empty());
 }
@@ -108,28 +126,28 @@ TEST_CASE("script async host unifies process completion and cancellation") {
     bool process_completed = false;
     bool cancelled = false;
 
-    const auto process = host.start(
-        ScriptProcessRequest{.file = "/bin/sh",
-                             .arguments = {"-c", "printf output; exit 3"},
-                             .working_directory = {}},
-         {.completed = [&](std::uint64_t, ScriptAsyncResult result) {
-             process_result = std::get<ScriptProcessResult>(std::move(result));
-             process_completed = true;
-         },
-         .cancelled = {},
-         .failed = {}});
+    const auto process =
+        host.start(ScriptProcessRequest{.file = "/bin/sh",
+                                        .arguments = {"-c", "printf output; exit 3"},
+                                        .working_directory = {}},
+                   {.completed =
+                        [&](std::uint64_t, ScriptAsyncResult result) {
+                            process_result = std::get<ScriptProcessResult>(std::move(result));
+                            process_completed = true;
+                        },
+                    .cancelled = {},
+                    .failed = {}});
     REQUIRE(process.has_value());
     drain_until(runtime, [&] { return process_completed; });
     CHECK(process_result.exit_status == 3);
     CHECK(process_result.standard_output == "output");
 
-    const auto sleeping = host.start(
-        ScriptProcessRequest{.file = "/bin/sh",
-                             .arguments = {"-c", "sleep 30"},
-                             .working_directory = {}},
-        {.completed = [](std::uint64_t, const ScriptAsyncResult&) {},
-         .cancelled = [&](std::uint64_t) { cancelled = true; },
-         .failed = {}});
+    const auto sleeping = host.start(ScriptProcessRequest{.file = "/bin/sh",
+                                                          .arguments = {"-c", "sleep 30"},
+                                                          .working_directory = {}},
+                                     {.completed = [](std::uint64_t, const ScriptAsyncResult&) {},
+                                      .cancelled = [&](std::uint64_t) { cancelled = true; },
+                                      .failed = {}});
     REQUIRE(sleeping.has_value());
     CHECK(host.cancel(*sleeping));
     drain_until(runtime, [&] { return cancelled; });

@@ -190,9 +190,46 @@
            (open-file! host (context-window context) path)
            (command-completed)))))
 
+(define (file-save-completed host buffer resource task result)
+  (let ((newer? (complete-buffer-save! host buffer)))
+    (set-message! host
+                  (string-append "saved " resource
+                                 (if newer? " · newer edits remain" "")))))
+
+(define (file-save-failed host buffer message)
+  (abort-buffer-save! host buffer)
+  (set-message! host (string-append "save failed: " message)))
+
+(define (file-save-cancelled host buffer)
+  (abort-buffer-save! host buffer)
+  (set-message! host "save cancelled"))
+
 (define (file-save host context invocation)
-  (save-buffer! host (context-buffer context))
-  (command-completed))
+  (let* ((buffer (context-buffer context))
+         (resource (buffer-resource host buffer)))
+    (cond ((not resource)
+           (command-dispatch "file.save-as"))
+          ((buffer-saving? host buffer)
+           (command-error "save already in progress"))
+          (else
+           (let ((contents (begin-buffer-save! host buffer)))
+             (catch #t
+               (lambda ()
+                 (start-async-task!
+                  host (async-file-write resource contents)
+                  (lambda (task result)
+                    (file-save-completed host buffer resource task result))
+                  #:failed
+                  (lambda (task message)
+                    (file-save-failed host buffer message))
+                  #:cancelled
+                  (lambda (task)
+                    (file-save-cancelled host buffer)))
+                 (set-message! host (string-append "saving " resource "…"))
+                 (command-completed))
+               (lambda (key . arguments)
+                 (abort-buffer-save! host buffer)
+                 (apply throw key arguments))))))))
 
 (define (file-save-as host context invocation)
   (let ((resource (buffer-resource host (context-buffer context))))
