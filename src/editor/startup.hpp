@@ -28,4 +28,12 @@ struct StartupPlan {
     bool startup_placeholder = false;
 };
 
+struct SessionFacts {
+    bool has_initial_text = false;
+};
+
+struct SessionPlan {
+    StartupBufferPlan buffer;
+};
+
 } // namespace cind

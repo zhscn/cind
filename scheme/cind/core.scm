@@ -60,18 +60,25 @@
               (startup-buffer "*scratch*" 'empty 'scratch #f #f 'fundamental-mode)
               (normalize-resource-path host path) #t)))))
 
+(define (default-session-plan host facts)
+  (vector 'session-plan
+          (startup-buffer "*session*"
+                          (if (vector-ref facts 1) 'initial-text 'empty)
+                          'scratch #f #f 'cind.cpp)))
+
 (define (default-fallback-buffer host)
   (create-buffer! host "*scratch*" "" 'scratch #f #f 'fundamental-mode #f
                   "plain text"))
 
 (define (install-buffer-lifecycle-policies! host)
   (configure-startup-policy! host default-startup-plan)
+  (configure-session-policy! host default-session-plan)
   (configure-fallback-buffer-policy! host default-fallback-buffer)
   (configure-close-policy!
    host
    (lambda (host context force?)
      (if force? 'application.force-quit 'application.quit)))
-  3)
+  4)
 
 (define (default-pointer-policy host context event)
   (let ((kind (vector-ref event 1))

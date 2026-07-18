@@ -241,6 +241,7 @@ public:
     std::expected<void, std::string> install_pointer_policies();
     std::expected<void, std::string> install_presentation_policies();
     std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const;
+    std::expected<SessionPlan, std::string> session_plan(const SessionFacts& facts) const;
     std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer);
     std::expected<CommandId, std::string> close_command(const CommandContext& context,
                                                         bool force) const;

@@ -833,6 +833,38 @@ TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
     CHECK(deferred->buffer.major_mode == fundamental);
     CHECK(deferred->resource_to_open == normalized);
     CHECK(deferred->startup_placeholder);
+
+    const std::expected<SessionPlan, std::string> session =
+        guile.session_plan({.has_initial_text = true});
+    REQUIRE(session.has_value());
+    CHECK(session->buffer.name == "*session*");
+    CHECK(session->buffer.kind == BufferKind::Scratch);
+    CHECK(session->buffer.major_mode == cpp);
+    CHECK(session->buffer.use_initial_text);
+    CHECK_FALSE(session->buffer.resource.has_value());
+    CHECK_FALSE(session->buffer.read_only);
+
+    const std::expected<GuileEvaluationResult, std::string> configured =
+        guile.evaluate({.source = R"((use-modules (cind lifecycle))
+(configure-session-policy!
+ host
+ (lambda (host facts)
+   #(session-plan
+     #(startup-buffer "generated-session" empty generated #f #t fundamental-mode))))
+)",
+                        .source_name = "session-policy-test.scm"});
+    REQUIRE(configured.has_value());
+    CHECK_FALSE(configured->error.has_value());
+
+    const std::expected<SessionPlan, std::string> overridden =
+        guile.session_plan({.has_initial_text = true});
+    REQUIRE(overridden.has_value());
+    CHECK(overridden->buffer.name == "generated-session");
+    CHECK(overridden->buffer.kind == BufferKind::Generated);
+    CHECK(overridden->buffer.major_mode == fundamental);
+    CHECK_FALSE(overridden->buffer.use_initial_text);
+    CHECK_FALSE(overridden->buffer.resource.has_value());
+    CHECK(overridden->buffer.read_only);
 }
 
 TEST_CASE("bundled Guile commands return editor command actions") {

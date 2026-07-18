@@ -688,6 +688,20 @@ retains the placeholder Buffer identity in per-host Scheme state so successful a
 policy can release it. `configure-fallback-buffer-policy!` replaces the procedure used when a
 command needs a Buffer after releasing the last open Buffer.
 
+Standalone editor sessions use a separate per-host procedure configured with
+`configure-session-policy!`. The procedure receives `#(session-facts has-initial-text?)` and
+returns:
+
+```scheme
+#(session-plan
+  #(startup-buffer name contents kind resource-or-#f read-only? mode))
+```
+
+The native session mechanism validates this plan through the same startup-buffer contract and
+constructs the requested Buffer and View around the supplied text. This contract is used by
+headless editing sessions and fixture-driven editor operations, allowing Scheme to select their
+buffer identity, kind, resource, mutability and major mode.
+
 `configure-close-policy!` maps a normalized close request and its `force?` flag to a registered
 command name. GUI window-close and terminal EOF paths submit the same request through
 `EditorApplication`; C++ validates the selected command against the registry and executes it

@@ -1,6 +1,8 @@
 (define-module (cind lifecycle)
   #:export (configure-startup-policy!
             resolve-startup-plan
+            configure-session-policy!
+            resolve-session-plan
             configure-fallback-buffer-policy!
             create-fallback-buffer!
             configure-close-policy!
@@ -9,6 +11,7 @@
             set-startup-placeholder!))
 
 (define startup-policies (make-weak-key-hash-table))
+(define session-policies (make-weak-key-hash-table))
 (define fallback-buffer-policies (make-weak-key-hash-table))
 (define startup-placeholders (make-weak-key-hash-table))
 (define close-policies (make-weak-key-hash-table))
@@ -23,6 +26,18 @@
   (let ((procedure (hashq-ref startup-policies host)))
     (unless procedure
       (error "startup policy is not configured"))
+    (procedure host facts)))
+
+(define (configure-session-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "session policy must be a procedure" procedure))
+  (hashq-set! session-policies host procedure)
+  procedure)
+
+(define (resolve-session-plan host facts)
+  (let ((procedure (hashq-ref session-policies host)))
+    (unless procedure
+      (error "session policy is not configured"))
     (procedure host facts)))
 
 (define (configure-fallback-buffer-policy! host procedure)

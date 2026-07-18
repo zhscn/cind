@@ -15,21 +15,28 @@ namespace {
 
 BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text) {
     GuileRuntime guile(runtime);
-    const std::expected<std::size_t, std::string> installed = guile.install_core_modes();
-    if (!installed) {
+    if (const std::expected<std::size_t, std::string> installed = guile.install_core_modes();
+        !installed) {
         throw std::runtime_error("cannot install session mode policy: " + installed.error());
     }
-    const std::optional<ModeId> cpp = runtime.modes().find("cind.cpp");
-    if (!cpp) {
-        throw std::logic_error("session mode policy did not define cind.cpp");
+    if (const std::expected<void, std::string> installed =
+            guile.install_buffer_lifecycle_policies();
+        !installed) {
+        throw std::runtime_error("cannot install session lifecycle policy: " + installed.error());
     }
-    const BufferId buffer =
-        runtime.buffers().create(BufferSpec{.name = "*session*",
-                                            .initial_text = std::move(initial_text),
-                                            .kind = BufferKind::Scratch,
-                                            .resource_uri = std::nullopt,
-                                            .read_only = false});
-    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp);
+    const std::expected<SessionPlan, std::string> plan =
+        guile.session_plan({.has_initial_text = true});
+    if (!plan) {
+        throw std::runtime_error("cannot resolve session bootstrap policy: " + plan.error());
+    }
+    const StartupBufferPlan& buffer_plan = plan->buffer;
+    const BufferId buffer = runtime.buffers().create(
+        BufferSpec{.name = buffer_plan.name,
+                   .initial_text = buffer_plan.use_initial_text ? std::move(initial_text) : "",
+                   .kind = buffer_plan.kind,
+                   .resource_uri = buffer_plan.resource,
+                   .read_only = buffer_plan.read_only});
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), buffer_plan.major_mode);
     return buffer;
 }
 

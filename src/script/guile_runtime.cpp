@@ -5084,6 +5084,13 @@ SCM startup_facts_value(const StartupFacts& facts) {
     return value;
 }
 
+SCM session_facts_value(const SessionFacts& facts) {
+    SCM value = scm_c_make_vector(2, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("session-facts"));
+    scm_c_vector_set_x(value, 1, scm_from_bool(facts.has_initial_text));
+    return value;
+}
+
 SCM pointer_target_symbol(PointerTargetKind target) {
     switch (target) {
     case PointerTargetKind::DocumentText:
@@ -5355,16 +5362,8 @@ PresentationProfile presentation_profile_from_scheme(SCM value, const char* call
     };
 }
 
-StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
-                                     const char* caller) {
-    if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
-        !symbol_is(scm_c_vector_ref(value, 0), "startup-plan") ||
-        !scheme_boolean(scm_c_vector_ref(value, 3))) {
-        scm_wrong_type_arg_msg(
-            caller, 0, value,
-            "#(startup-plan startup-buffer resource-to-open-or-#f startup-placeholder?)");
-    }
-    const SCM buffer_value = scm_c_vector_ref(value, 1);
+StartupBufferPlan startup_buffer_plan_from_scheme(HostLease& host, SCM buffer_value,
+                                                  bool has_initial_text, const char* caller) {
     if (!scm_is_vector(buffer_value) || scm_c_vector_length(buffer_value) != 7 ||
         !symbol_is(scm_c_vector_ref(buffer_value, 0), "startup-buffer") ||
         !scm_is_string(scm_c_vector_ref(buffer_value, 1)) ||
@@ -5374,37 +5373,52 @@ StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFa
             "#(startup-buffer name contents kind resource-or-#f read-only? mode)");
     }
 
-    StartupPlan plan;
-    plan.buffer.name = scheme_string(scm_c_vector_ref(buffer_value, 1));
-    if (plan.buffer.name.empty()) {
+    StartupBufferPlan plan;
+    plan.name = scheme_string(scm_c_vector_ref(buffer_value, 1));
+    if (plan.name.empty()) {
         scm_misc_error(caller, "startup buffer name must not be empty", SCM_EOL);
     }
     const SCM contents = scm_c_vector_ref(buffer_value, 2);
     if (symbol_is(contents, "initial-text")) {
-        if (!facts.has_initial_text) {
+        if (!has_initial_text) {
             scm_misc_error(caller, "startup plan requested unavailable initial text", SCM_EOL);
         }
-        plan.buffer.use_initial_text = true;
+        plan.use_initial_text = true;
     } else if (!symbol_is(contents, "empty")) {
         scm_wrong_type_arg_msg(caller, 0, contents, "'initial-text or 'empty");
     }
-    plan.buffer.kind = buffer_kind_from_scheme(scm_c_vector_ref(buffer_value, 3), caller, 0);
+    plan.kind = buffer_kind_from_scheme(scm_c_vector_ref(buffer_value, 3), caller, 0);
 
     const SCM resource = scm_c_vector_ref(buffer_value, 4);
     if (!scheme_false(resource)) {
         if (!scm_is_string(resource)) {
             scm_wrong_type_arg_msg(caller, 0, resource, "string or #f");
         }
-        plan.buffer.resource = scheme_string(resource);
-        if (plan.buffer.resource->empty()) {
+        plan.resource = scheme_string(resource);
+        if (plan.resource->empty()) {
             scm_misc_error(caller, "startup buffer resource must not be empty", SCM_EOL);
         }
     }
-    if (plan.buffer.kind == BufferKind::File && !plan.buffer.resource) {
+    if (plan.kind == BufferKind::File && !plan.resource) {
         scm_misc_error(caller, "startup file buffer requires a resource", SCM_EOL);
     }
-    plan.buffer.read_only = scheme_true(scm_c_vector_ref(buffer_value, 5));
-    plan.buffer.major_mode = require_mode(host, scm_c_vector_ref(buffer_value, 6), caller, 0);
+    plan.read_only = scheme_true(scm_c_vector_ref(buffer_value, 5));
+    plan.major_mode = require_mode(host, scm_c_vector_ref(buffer_value, 6), caller, 0);
+    return plan;
+}
+
+StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
+                                     const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "startup-plan") ||
+        !scheme_boolean(scm_c_vector_ref(value, 3))) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value,
+            "#(startup-plan startup-buffer resource-to-open-or-#f startup-placeholder?)");
+    }
+    StartupPlan plan;
+    plan.buffer = startup_buffer_plan_from_scheme(host, scm_c_vector_ref(value, 1),
+                                                  facts.has_initial_text, caller);
 
     const SCM resource_to_open = scm_c_vector_ref(value, 2);
     if (!scheme_false(resource_to_open)) {
@@ -5423,6 +5437,16 @@ StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFa
     return plan;
 }
 
+SessionPlan session_plan_from_scheme(HostLease& host, SCM value, const SessionFacts& facts,
+                                     const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 2 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "session-plan")) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(session-plan startup-buffer)");
+    }
+    return {.buffer = startup_buffer_plan_from_scheme(host, scm_c_vector_ref(value, 1),
+                                                      facts.has_initial_text, caller)};
+}
+
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
@@ -5439,6 +5463,7 @@ struct GuileCall {
         InstallPointerPolicies,
         InstallPresentationPolicies,
         ResolveStartupPlan,
+        ResolveSessionPlan,
         SetStartupPlaceholder,
         ResolveCloseCommand,
         HandlePointer,
@@ -5474,6 +5499,7 @@ struct GuileCall {
     const BufferModePolicyChange* mode_policy_change = nullptr;
     EditorRuntime* runtime = nullptr;
     const StartupFacts* startup_facts = nullptr;
+    const SessionFacts* session_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
@@ -5489,6 +5515,7 @@ struct GuileCall {
     std::string error;
     GuileKeymapPolicy keymap_policy;
     StartupPlan startup_plan;
+    SessionPlan session_plan;
     ChromeContent chrome_content;
     std::optional<CommandResult> command_result;
     CommandId command;
@@ -5910,6 +5937,13 @@ SCM call_body(void* data) {
             call.startup_plan =
                 startup_plan_from_scheme(require_host(call.host, "resolve-startup-plan"),
                                          call.result, *call.startup_facts, "resolve-startup-plan");
+            break;
+        case GuileCall::Operation::ResolveSessionPlan:
+            call.result = scm_call_2(scm_c_public_ref("cind lifecycle", "resolve-session-plan"),
+                                     call.host, session_facts_value(*call.session_facts));
+            call.session_plan =
+                session_plan_from_scheme(require_host(call.host, "resolve-session-plan"),
+                                         call.result, *call.session_facts, "resolve-session-plan");
             break;
         case GuileCall::Operation::SetStartupPlaceholder:
             call.result = scm_call_2(
@@ -6793,7 +6827,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 3) {
+        if (call.count != 4) {
             state_->last_error =
                 "Guile buffer lifecycle policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
@@ -6831,6 +6865,20 @@ public:
         }
         state_->last_error.reset();
         return std::move(call.startup_plan);
+    }
+
+    std::expected<SessionPlan, std::string> session_plan(const SessionFacts& facts) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ResolveSessionPlan;
+        call.host = host_;
+        call.session_facts = &facts;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return std::move(call.session_plan);
     }
 
     std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer) {
@@ -7201,6 +7249,11 @@ std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
 std::expected<StartupPlan, std::string>
 GuileRuntime::startup_plan(const StartupFacts& facts) const {
     return impl_->startup_plan(facts);
+}
+
+std::expected<SessionPlan, std::string>
+GuileRuntime::session_plan(const SessionFacts& facts) const {
+    return impl_->session_plan(facts);
 }
 
 std::expected<void, std::string>
