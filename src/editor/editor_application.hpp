@@ -111,6 +111,7 @@ public:
 
     bool handle_key(KeyStroke key, int page_rows);
     bool handle_pointer(const PointerEvent& event);
+    bool handle_scroll(double lines);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;
@@ -226,6 +227,7 @@ private:
                                                               std::string text);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
+    void scroll_view_lines(ViewId view, double lines);
     bool split_window(WindowId target, WindowSplitAxis axis);
     bool delete_window(WindowId target);
     bool delete_other_windows(WindowId retained);

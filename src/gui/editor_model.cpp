@@ -5,7 +5,6 @@
 #include "ui/text_position.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <format>
 #include <optional>
 #include <stdexcept>
@@ -354,18 +353,7 @@ void EditorModel::click(const ui::HitTarget& target) {
 }
 
 void EditorModel::scroll_lines(float delta) {
-    EditSession& session = application_.session();
-    const DocumentSnapshot snapshot = session.snapshot();
-    const int last_line = static_cast<int>(snapshot.content().line_count()) - 1;
-    ViewportState& viewport = session.view().viewport();
-    const double position = static_cast<double>(viewport.top_line) +
-                            static_cast<double>(viewport.top_line_offset) +
-                            static_cast<double>(delta);
-    const double clamped = std::clamp(position, 0.0, static_cast<double>(last_line));
-    const double integral = std::floor(clamped);
-    viewport.top_line = static_cast<std::uint32_t>(integral);
-    viewport.top_line_offset = static_cast<float>(clamped - integral);
-    application_.hide_caret();
+    (void)application_.handle_scroll(static_cast<double>(delta));
 }
 
 EditorRenderState EditorModel::render_state() {

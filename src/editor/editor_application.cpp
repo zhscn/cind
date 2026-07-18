@@ -6,6 +6,7 @@
 #include "ui/text_position.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <limits>
 #include <new>
@@ -61,6 +62,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](ViewId view, std::int64_t delta) {
                    editing_mechanisms_.move_lines(view, delta);
                },
+           .scroll_view_lines = [this](ViewId view,
+                                       double lines) { scroll_view_lines(view, lines); },
            .move_caret_line_boundary =
                [this](ViewId view, bool end) { editing_mechanisms_.move_line_boundary(view, end); },
            .delete_grapheme =
@@ -258,6 +261,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                            : std::unexpected("unknown window");
            },
            .request_redraw = [this] { reveal_caret_ = true; },
+           .set_caret_reveal = [this](bool reveal) { reveal_caret_ = reveal; },
            .active_key_bindings =
                [this] {
                    std::vector<GuileKeyBindingSummary> result;
@@ -747,6 +751,11 @@ const InputStateRegistry::Definition& EditorApplication::input_state(WindowId wi
 bool EditorApplication::handle_pointer(const PointerEvent& event) {
     const std::expected<bool, std::string> handled =
         guile_.handle_pointer(command_context(), event, !command_loop_.pending_sequence().empty());
+    return handled.value_or(false);
+}
+
+bool EditorApplication::handle_scroll(double lines) {
+    const std::expected<bool, std::string> handled = guile_.handle_scroll(command_context(), lines);
     return handled.value_or(false);
 }
 
@@ -1384,6 +1393,22 @@ EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
     }
+}
+
+void EditorApplication::scroll_view_lines(ViewId view, double lines) {
+    if (!std::isfinite(lines)) {
+        throw std::invalid_argument("scroll delta must be finite");
+    }
+    EditSession& target = session_for(view);
+    const DocumentSnapshot snapshot = target.snapshot();
+    const double last_line = static_cast<double>(snapshot.content().line_count() - 1);
+    ViewportState& viewport = target.view().viewport();
+    const double position = static_cast<double>(viewport.top_line) +
+                            static_cast<double>(viewport.top_line_offset) + lines;
+    const double clamped = std::clamp(position, 0.0, last_line);
+    const double integral = std::floor(clamped);
+    viewport.top_line = static_cast<std::uint32_t>(integral);
+    viewport.top_line_offset = static_cast<float>(clamped - integral);
 }
 
 void EditorApplication::apply_position(WindowId window, LinePosition position) {

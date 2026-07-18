@@ -8,6 +8,7 @@
 #include <libguile.h>
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -3284,6 +3285,50 @@ SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM colu
     return SCM_UNSPECIFIED;
 }
 
+SCM scroll_view_lines(SCM host_object, SCM view_value, SCM lines_value) {
+    HostLease& host = require_host(host_object, "scroll-view-lines!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "scroll-view-lines!", 2);
+    if (scm_is_real(lines_value) == 0) {
+        scm_wrong_type_arg_msg("scroll-view-lines!", 3, lines_value, "real number");
+    }
+    const double lines = scm_to_double(lines_value);
+    if (!std::isfinite(lines)) {
+        scm_misc_error("scroll-view-lines!", "scroll delta must be finite", SCM_EOL);
+    }
+    if (!host.services.scroll_view_lines) {
+        scm_misc_error("scroll-view-lines!", "viewport scroll capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.scroll_view_lines(view, lines);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("scroll-view-lines!", exception.what());
+    } catch (...) {
+        scm_misc_error("scroll-view-lines!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM set_caret_reveal(SCM host_object, SCM reveal_value) {
+    HostLease& host = require_host(host_object, "set-caret-reveal!");
+    if (!scheme_boolean(reveal_value)) {
+        scm_wrong_type_arg_msg("set-caret-reveal!", 2, reveal_value, "boolean");
+    }
+    if (!host.services.set_caret_reveal) {
+        scm_misc_error("set-caret-reveal!", "caret presentation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        host.services.set_caret_reveal(scheme_true(reveal_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-caret-reveal!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-caret-reveal!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM undo_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "undo!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "undo!", 2);
@@ -4516,6 +4561,10 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(evaluate_scheme));
     (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_caret_to_line));
+    (void)scm_c_define_gsubr("scroll-view-lines!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(scroll_view_lines));
+    (void)scm_c_define_gsubr("set-caret-reveal!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_caret_reveal));
     (void)scm_c_define_gsubr("undo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(undo_edit));
     (void)scm_c_define_gsubr("redo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(redo_edit));
     (void)scm_c_define_gsubr("move-caret-lines!", 3, 0, 0,
@@ -4631,18 +4680,18 @@ void initialize_host_module(void*) {
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
         "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
         "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
-        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
-        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
-        "interaction-provider", "interaction-origin-project", "refresh-interaction!",
-        "submit-interaction!", "move-interaction-candidate!", "move-interaction-history!",
-        "cancel-interaction!", "cancel-pending-input!", "view-position", "location-navigation",
-        "set-location-navigation!", "position-buffer-view!", "set-message!", "project-index-state",
-        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
-        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
-        "project-provider-definitions", "project-id-by-root", "create-project!",
-        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
-        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
-        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!",
+        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
+        "page-rows", "interaction-status", "interaction-provider", "interaction-origin-project",
+        "refresh-interaction!", "submit-interaction!", "move-interaction-candidate!",
+        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
+        "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
+        "set-message!", "project-index-state", "request-project-index!", "normalize-resource-path",
+        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
+        "project-for-resource", "project-provider-definitions", "project-id-by-root",
+        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
+        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
+        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "focus-window!", "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
@@ -4929,6 +4978,7 @@ struct GuileCall {
         ResolveStartupPlan,
         SetStartupPlaceholder,
         HandlePointer,
+        HandleScroll,
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
@@ -4980,6 +5030,7 @@ struct GuileCall {
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
     bool pending_key_sequence = false;
+    double scroll_lines = 0.0;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -5403,6 +5454,15 @@ SCM call_body(void* data) {
                            pointer_event_value(*call.pointer_event, call.pending_key_sequence));
             if (!scheme_boolean(call.result)) {
                 scm_wrong_type_arg_msg("handle-pointer!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::HandleScroll:
+            call.result = scm_call_3(scm_c_public_ref("cind pointer", "handle-scroll!"), call.host,
+                                     command_context_value(*call.context),
+                                     scm_from_double(call.scroll_lines));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("handle-scroll!", 0, call.result, "boolean");
             }
             call.enabled = scheme_true(call.result);
             break;
@@ -6271,7 +6331,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 1) {
+        if (call.count != 2) {
             state_->last_error = "Guile pointer policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6321,6 +6381,25 @@ public:
         call.context = &context;
         call.pointer_event = &event;
         call.pending_key_sequence = pending_key_sequence;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return call.enabled;
+    }
+
+    std::expected<bool, std::string> handle_scroll(const CommandContext& context,
+                                                   double lines) const {
+        require_owner_thread();
+        if (!std::isfinite(lines)) {
+            return std::unexpected("scroll delta must be finite");
+        }
+        GuileCall call;
+        call.operation = GuileCall::Operation::HandleScroll;
+        call.host = host_;
+        call.context = &context;
+        call.scroll_lines = lines;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(result.error());
@@ -6623,6 +6702,11 @@ std::expected<bool, std::string> GuileRuntime::handle_pointer(const CommandConte
                                                               const PointerEvent& event,
                                                               bool pending_key_sequence) const {
     return impl_->handle_pointer(context, event, pending_key_sequence);
+}
+
+std::expected<bool, std::string> GuileRuntime::handle_scroll(const CommandContext& context,
+                                                             double lines) const {
+    return impl_->handle_scroll(context, lines);
 }
 
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,

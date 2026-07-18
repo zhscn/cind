@@ -98,6 +98,7 @@ struct GuileHostServices {
     std::function<bool(ViewId)> redo;
     std::function<void(ViewId, std::uint32_t)> set_view_caret;
     std::function<void(ViewId, std::int64_t)> move_caret_lines;
+    std::function<void(ViewId, double)> scroll_view_lines;
     std::function<void(ViewId, bool)> move_caret_line_boundary;
     std::function<GuileDeleteOutcome(ViewId, bool, bool)> delete_grapheme;
     std::function<void(ViewId)> newline;
@@ -137,6 +138,7 @@ struct GuileHostServices {
     std::function<WindowId()> active_window;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
+    std::function<void(bool)> set_caret_reveal;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;
@@ -226,6 +228,8 @@ public:
     std::expected<bool, std::string> handle_pointer(const CommandContext& context,
                                                     const PointerEvent& event,
                                                     bool pending_key_sequence) const;
+    std::expected<bool, std::string> handle_scroll(const CommandContext& context,
+                                                   double lines) const;
     std::expected<void, std::string>
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,

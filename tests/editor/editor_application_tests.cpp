@@ -533,11 +533,14 @@ TEST_CASE("user initialization owns the last-buffer fallback policy") {
     CHECK(application.style_origin() == "custom fallback");
 }
 
-TEST_CASE("user initialization owns semantic pointer behavior") {
+TEST_CASE("user initialization owns semantic pointer and scroll behavior") {
     TemporaryFile init(std::format("cind-pointer-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-pointer-policy!
  host
  (lambda (host context event) #f))
+(configure-scroll-policy!
+ host
+ (lambda (host context lines) #f))
 )");
     EditorApplication application({.path = {},
                                    .initial_text = "zero\none\n",
@@ -553,6 +556,10 @@ TEST_CASE("user initialization owns semantic pointer behavior") {
                                             .display_column = 2,
                                             .popup_item = std::nullopt}));
     CHECK(application.session().caret() == TextOffset{});
+    CHECK_FALSE(application.handle_scroll(1.5));
+    CHECK(application.session().view().viewport().top_line == 0);
+    CHECK(application.session().view().viewport().top_line_offset == doctest::Approx(0.0F));
+    CHECK(application.reveal_caret());
 }
 
 TEST_CASE("per-view input states precede window layers and may handle keys") {

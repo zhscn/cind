@@ -912,6 +912,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .redo = {},
          .set_view_caret = {},
          .move_caret_lines = {},
+         .scroll_view_lines = {},
          .move_caret_line_boundary = {},
          .delete_grapheme = {},
          .newline = {},
@@ -1011,6 +1012,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .request_redraw = [&] { redraw_requested = true; },
+         .set_caret_reveal = {},
          .active_key_bindings =
              [] {
                  return std::vector<GuileKeyBindingSummary>{

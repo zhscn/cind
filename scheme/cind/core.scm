@@ -90,7 +90,16 @@
 
 (define (install-pointer-policies! host)
   (configure-pointer-policy! host default-pointer-policy)
-  1)
+  (configure-scroll-policy!
+   host
+   (lambda (host context lines)
+     (if (zero? lines)
+         #f
+         (begin
+           (scroll-view-lines! host (context-view context) lines)
+           (set-caret-reveal! host #f)
+           #t))))
+  2)
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
