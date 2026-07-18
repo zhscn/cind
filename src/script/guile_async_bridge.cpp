@@ -91,6 +91,70 @@ std::vector<std::string> string_sequence(SCM value, const char* caller) {
     return result;
 }
 
+std::vector<ProjectDiscoveryProvider> project_providers(SCM value, const char* caller,
+                                                        int position) {
+    if (!scm_is_vector(value)) {
+        scm_wrong_type_arg_msg(caller, position, value, "project provider vector");
+    }
+    const std::size_t count = scm_c_vector_length(value);
+    std::vector<ProjectDiscoveryProvider> result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM provider = scm_c_vector_ref(value, index);
+        if (!scm_is_vector(provider) || scm_c_vector_length(provider) != 2 ||
+            !scm_is_string(scm_c_vector_ref(provider, 0))) {
+            scm_wrong_type_arg_msg(caller, position, provider, "#(provider-name marker-vector)");
+        }
+        result.push_back({.name = scheme_string(scm_c_vector_ref(provider, 0)),
+                          .markers = string_sequence(scm_c_vector_ref(provider, 1), caller)});
+    }
+    return result;
+}
+
+SCM cpp_indent_style_value(const CppIndentStyle& style) {
+    SCM converted = scm_c_make_vector(18, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(converted, 0, name_symbol("cpp-indent-style"));
+    scm_c_vector_set_x(converted, 1, scm_from_int(style.indent_width));
+    scm_c_vector_set_x(converted, 2, scm_from_int(style.continuation_indent));
+    scm_c_vector_set_x(converted, 3, scm_from_int(style.tab_width));
+    scm_c_vector_set_x(converted, 4, scm_from_bool(style.use_tabs));
+    scm_c_vector_set_x(converted, 5, scm_from_bool(style.align_open_bracket));
+    scm_c_vector_set_x(converted, 6, scm_from_bool(style.brace_init_continuation));
+    scm_c_vector_set_x(converted, 7, scm_from_bool(style.indent_wrapped_function_names));
+    scm_c_vector_set_x(converted, 8, scm_from_bool(style.align_operands));
+    scm_c_vector_set_x(converted, 9, scm_from_bool(style.break_before_ternary));
+    const char* namespace_indent =
+        style.namespace_indentation == CppIndentStyle::NamespaceIndentation::None    ? "none"
+        : style.namespace_indentation == CppIndentStyle::NamespaceIndentation::Inner ? "inner"
+                                                                                     : "all";
+    scm_c_vector_set_x(converted, 10, name_symbol(namespace_indent));
+    scm_c_vector_set_x(converted, 11, scm_from_bool(style.indent_type_body));
+    scm_c_vector_set_x(converted, 12, scm_from_bool(style.indent_case_label));
+    scm_c_vector_set_x(converted, 13, scm_from_bool(style.indent_case_body));
+    scm_c_vector_set_x(converted, 14, scm_from_int(style.access_specifier_offset));
+    const char* pp_indent =
+        style.pp_directive_indent == CppIndentStyle::PPDirectiveIndent::None        ? "none"
+        : style.pp_directive_indent == CppIndentStyle::PPDirectiveIndent::AfterHash ? "after-hash"
+                                                                                    : "before-hash";
+    scm_c_vector_set_x(converted, 15, name_symbol(pp_indent));
+    scm_c_vector_set_x(converted, 16, scm_from_int(style.pp_indent_width));
+    const char* constructor_style =
+        style.constructor_initializers == CppIndentStyle::ConstructorInitializerStyle::NormalIndent
+            ? "normal-indent"
+        : style.constructor_initializers ==
+                CppIndentStyle::ConstructorInitializerStyle::ContinuationIndent
+            ? "continuation-indent"
+        : style.constructor_initializers ==
+                CppIndentStyle::ConstructorInitializerStyle::AlignFirstInitializer
+            ? "align-first-initializer"
+        : style.constructor_initializers ==
+                CppIndentStyle::ConstructorInitializerStyle::AlignAfterColon
+            ? "align-after-colon"
+            : "align-with-colon";
+    scm_c_vector_set_x(converted, 17, name_symbol(constructor_style));
+    return converted;
+}
+
 } // namespace
 
 ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* caller, int position) {
@@ -124,6 +188,21 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
         return ScriptDirectoryListRequest{.path = scheme_string(scm_c_vector_ref(value, 1)),
                                           .maximum_entries =
                                               scm_to_size_t(scm_c_vector_ref(value, 2))};
+    }
+    if (symbol_is(tag, "clang-format-style")) {
+        if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {
+            scm_wrong_type_arg_msg(caller, position, value, "#(clang-format-style path) request");
+        }
+        return ScriptClangFormatStyleRequest{.path = scheme_string(scm_c_vector_ref(value, 1))};
+    }
+    if (symbol_is(tag, "project-discovery")) {
+        if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1))) {
+            scm_wrong_type_arg_msg(caller, position, value,
+                                   "#(project-discovery path provider-vector) request");
+        }
+        return ScriptProjectDiscoveryRequest{
+            .path = scheme_string(scm_c_vector_ref(value, 1)),
+            .providers = project_providers(scm_c_vector_ref(value, 2), caller, position)};
     }
     if (symbol_is(tag, "process")) {
         if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
@@ -171,6 +250,10 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
         return "file-write";
     case ScriptAsyncTaskKind::DirectoryList:
         return "directory-list";
+    case ScriptAsyncTaskKind::ClangFormatStyle:
+        return "clang-format-style";
+    case ScriptAsyncTaskKind::ProjectDiscovery:
+        return "project-discovery";
     case ScriptAsyncTaskKind::Process:
         return "process";
     }
@@ -213,6 +296,27 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 scm_c_vector_set_x(converted, 0, name_symbol("directory-list"));
                 scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
                 scm_c_vector_set_x(converted, 2, entries);
+                return converted;
+            } else if constexpr (std::is_same_v<Result, ScriptClangFormatStyleResult>) {
+                SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(converted, 0, name_symbol("clang-format-style"));
+                scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
+                scm_c_vector_set_x(converted, 2, scm_from_bool(value.found));
+                scm_c_vector_set_x(converted, 3, cpp_indent_style_value(value.style));
+                scm_c_vector_set_x(converted, 4, scm_from_utf8_string(value.origin.c_str()));
+                return converted;
+            } else if constexpr (std::is_same_v<Result, ScriptProjectDiscoveryResult>) {
+                SCM converted = scm_c_make_vector(5, SCM_BOOL_F);
+                scm_c_vector_set_x(converted, 0, name_symbol("project-discovery"));
+                scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
+                if (value.discovery) {
+                    scm_c_vector_set_x(converted, 2,
+                                       scm_from_utf8_string(value.discovery->root.c_str()));
+                    scm_c_vector_set_x(converted, 3,
+                                       scm_from_utf8_string(value.discovery->provider.c_str()));
+                    scm_c_vector_set_x(converted, 4,
+                                       scm_from_utf8_string(value.discovery->marker.c_str()));
+                }
                 return converted;
             } else {
                 SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);

@@ -152,7 +152,6 @@ The native module exports:
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
 (ensure-project-index! host project-id)
-(open-file! host window-id path)
 (start-project-search! host project-id window-id query)
 (normalize-resource-path host path)
 (set-buffer-resource! host buffer-id path)
@@ -160,12 +159,16 @@ The native module exports:
 (buffer-id-by-resource host path)
 (resource-mode host path)
 (project-for-resource host path)
+(project-provider-definitions host)
+(project-id-by-root host root)
+(create-project! host name roots provider marker)
 (set-buffer-project! host buffer-id project-id-or-#f)
 (begin-buffer-save! host buffer-id)
 (complete-buffer-save! host buffer-id)
 (abort-buffer-save! host buffer-id)
 (open-buffer-ids host)
-(create-buffer! host name initial-text kind read-only? mode-or-#f style-origin)
+(create-buffer! host name initial-text kind resource-or-#f read-only? mode-or-#f
+                cpp-indent-style-or-#f style-origin)
 (buffer-saving? host buffer-id)
 (buffer-modified? host buffer-id)
 (release-buffer! host buffer-id replacement-buffer-id)
@@ -174,6 +177,10 @@ The native module exports:
 (delete-window! host window-id)
 (delete-other-windows! host window-id)
 (open-window-ids host)
+(active-window-id host)
+(window-view-id host window-id)
+(startup-placeholder host)
+(set-startup-placeholder! host buffer-id-or-#f)
 (focus-window! host window-id)
 (request-redraw! host)
 (%start-async-task! host request completed failed-or-#f cancelled-or-#f)
@@ -187,6 +194,8 @@ The native module exports:
 (async-file-read path)
 (async-file-write path contents)
 (async-directory-list path [maximum-entries])
+(async-clang-format-style path)
+(async-project-discovery path provider-definitions)
 (async-process executable arguments [working-directory])
 (start-async-task! host request completed
                    #:key (failed #f) (cancelled #f))
@@ -198,7 +207,10 @@ The native module exports:
 typed result. File reads produce `#(file-read path exists? contents)` and atomic writes produce
 `#(file-write path)`. Directory enumeration produces
 `#(directory-list normalized-path entries)`, where each entry is `#(path name directory?)`.
-Processes produce
+Clang-format discovery produces
+`#(clang-format-style path found? cpp-indent-style origin)`. Project discovery produces
+`#(project-discovery path root-or-#f provider-or-#f marker-or-#f)` from the immutable provider
+definitions supplied with the request. Processes produce
 `#(process exit-status termination-signal standard-output standard-error)`. A nonzero process exit
 status remains a completed result; Scheme policy interprets tool-specific statuses.
 
@@ -368,10 +380,10 @@ syntax, indentation and structural-editing facets. Commands consult those facets
 implicitly applying the C++ analyzer to a language-less mode.
 
 `define-project-provider!` registers a named ordered set of single-component project markers.
-Provider definitions are copied before an asynchronous open begins. Native worker code searches
-the immutable snapshot and returns the provider, marker and root; it does not enter Guile. At one
-directory, the most recently defined provider has precedence, while a marker in a closer ancestor
-always wins over a farther one.
+`project-provider-definitions` returns an immutable Scheme value suitable for
+`async-project-discovery`. Native worker code searches that supplied snapshot and returns the
+provider, marker and root without entering Guile. At one directory, the most recently defined
+provider has precedence, while a marker in a closer ancestor always wins over a farther one.
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
@@ -494,8 +506,9 @@ and failure feedback and closes the lease from the corresponding callback.
 
 `open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-saving?` and
 `buffer-modified?` expose lifecycle state without deciding how commands respond to it.
-`create-buffer!` creates an undisplayed scratch, generated, or process buffer from explicit policy
-data. `release-buffer!` requires a distinct open replacement, redirects every Window displaying the
+`create-buffer!` atomically creates an undisplayed scratch, file, generated, or process buffer from
+explicit resource, mode, style and presentation data. `release-buffer!` requires a distinct open
+replacement, redirects every Window displaying the
 released buffer, destroys its Views, and removes the Buffer as one native lifecycle operation. It
 returns `#f` on success or an invariant error string. The bundled Scheme policy refuses an active
 save, applies the force/modified rule, chooses the first remaining Buffer, and creates its named
@@ -503,17 +516,26 @@ save, applies the force/modified rule, chooses the first remaining Buffer, and c
 
 Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
 `columns`; split, delete, retain and focus operations return `#f` on success or an invariant error
-string. `open-window-ids` returns layout order. The bundled Scheme policy uses that order for
-window cycling, handles single-window behavior and supplies operation feedback. `exit-editor!`
+string. `open-window-ids` returns layout order, `active-window-id` identifies the current focus,
+and `window-view-id` resolves presentation after a buffer is displayed. The startup placeholder
+accessors expose only its optional Buffer identity. The bundled Scheme policy uses these mechanisms
+for window cycling, asynchronous open targeting and placeholder cleanup. `exit-editor!`
 marks the native event loop for termination, and `request-redraw!` requests caret reveal. Scheme
 commands inspect buffer state and own the quit confirmation interaction before invoking the exit
 mechanism.
 
-`ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
-`open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the
-given window. `start-project-search!` runs the native project search pipeline and directs its result
-buffer to the given window. These procedures initiate work and return after the operation has been
-accepted; completion, cancellation and failure are applied later on the editor thread.
+`project-id-by-root` and `create-project!` expose registry identity and validated construction;
+`set-buffer-project!` applies the chosen attachment. `ensure-project-index!` idempotently schedules
+the native asynchronous indexer for a project. `(cind core)` implements `open-resource!` by
+normalizing and deduplicating the path, snapshotting mode and provider policy, scheduling file,
+clang-format and project-discovery tasks, and composing their results into buffer creation,
+project attachment, window presentation, startup-placeholder cleanup and user feedback. Duplicate
+opens update the pending target and position. The C++ `GuileRuntime::open_resource` entry point
+invokes the same Scheme policy for application startup and native callers.
+
+`start-project-search!` runs the native project search pipeline and directs its result buffer to the
+given window. It initiates work and returns after the operation has been accepted; completion,
+cancellation and failure are applied later on the editor thread.
 
 ## Scripted commands
 

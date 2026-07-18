@@ -178,13 +178,6 @@ private:
         Text content;
     };
 
-    struct PendingOpen {
-        std::string resource;
-        WindowId target_window;
-        std::optional<LinePosition> position;
-        AsyncTaskId task;
-    };
-
     struct BufferState {
         BufferId buffer;
         std::shared_ptr<CppIndentStyle> style;
@@ -271,13 +264,6 @@ private:
     std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
     std::expected<bool, std::string> complete_buffer_save(BufferId buffer);
     void abort_buffer_save(BufferId buffer);
-    std::expected<void, std::string> open_file(std::string_view path, WindowId target_window,
-                                               std::optional<LinePosition> position);
-    void finish_open(std::string resource, std::string contents, CppIndentStyle style,
-                     std::string style_origin, ModeId mode,
-                     const std::optional<ProjectDiscovery>& project);
-    void fail_open(std::string_view resource, const std::exception_ptr& failure);
-    void cancel_open(std::string_view resource);
     void mark_saved(BufferId buffer, Text content);
     ModeId mode_for_resource(std::string_view resource) const;
 
@@ -286,7 +272,6 @@ private:
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
-    std::vector<PendingOpen> pending_opens_;
     std::optional<BufferId> startup_placeholder_;
     ProjectSearchState project_search_;
     std::optional<LocationNavigationState> location_navigation_;

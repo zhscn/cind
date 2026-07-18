@@ -4,7 +4,6 @@
 #include "editor/runtime.hpp"
 
 #include <algorithm>
-#include <filesystem>
 #include <format>
 #include <memory>
 #include <span>
@@ -12,8 +11,6 @@
 #include <system_error>
 
 namespace cind {
-
-namespace fs = std::filesystem;
 
 ProjectService::ProjectService(EditorRuntime& runtime, AsyncRuntime& async_runtime,
                                IndexUpdated index_updated)
@@ -38,37 +35,6 @@ ProjectService::State* ProjectService::find_state(ProjectId project) {
             return candidate->project == project;
         });
     return found == states_.end() ? nullptr : found->get();
-}
-
-void ProjectService::attach_buffer(BufferId buffer,
-                                   const std::optional<ProjectDiscovery>& discovery) {
-    std::optional<ProjectId> project;
-    if (discovery) {
-        project = runtime_->projects().find_by_root(discovery->root);
-        if (!project) {
-            fs::path root(discovery->root);
-            std::string name = root.filename().string();
-            if (name.empty()) {
-                name = root.string();
-            }
-            project = runtime_->projects().create({.name = std::move(name),
-                                                   .roots = {discovery->root},
-                                                   .discovery_provider = discovery->provider,
-                                                   .discovery_marker = discovery->marker});
-        }
-    } else if (const std::optional<std::string>& resource =
-                   runtime_->buffers().get(buffer).resource_uri()) {
-        project = runtime_->projects().find_for_resource(*resource);
-    }
-    if (!project) {
-        return;
-    }
-    runtime_->projects().assign(buffer, project);
-    State& project_state = state(*project);
-    if (!project_state.index_task.valid() &&
-        runtime_->projects().get(*project).index_revision() == 0) {
-        request_index(*project);
-    }
 }
 
 void ProjectService::request_index(ProjectId project) {

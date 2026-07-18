@@ -119,6 +119,56 @@ TEST_CASE("script async host delivers file and directory results on its owner") 
     CHECK(host.tasks().empty());
 }
 
+TEST_CASE("script async host discovers language style and project metadata") {
+    TemporaryDirectory directory;
+    std::filesystem::create_directories(directory.path() / ".git");
+    {
+        std::ofstream style(directory.path() / ".clang-format");
+        style << "IndentWidth: 7\nTabWidth: 9\n";
+    }
+    const std::filesystem::path file = directory.path() / "sample.cpp";
+    AsyncRuntime runtime;
+    AsyncScriptHost host(runtime);
+    ScriptClangFormatStyleResult style_result;
+    ScriptProjectDiscoveryResult project_result;
+    bool style_completed = false;
+    bool project_completed = false;
+
+    const auto style = host.start(ScriptClangFormatStyleRequest{.path = file.string()},
+                                  {.completed =
+                                       [&](std::uint64_t, ScriptAsyncResult result) {
+                                           style_result = std::get<ScriptClangFormatStyleResult>(
+                                               std::move(result));
+                                           style_completed = true;
+                                       },
+                                   .cancelled = {},
+                                   .failed = {}});
+    const auto project = host.start(
+        ScriptProjectDiscoveryRequest{.path = file.string(),
+                                      .providers = {{.name = "test.vcs", .markers = {".git"}}}},
+        {.completed =
+             [&](std::uint64_t, ScriptAsyncResult result) {
+                 project_result = std::get<ScriptProjectDiscoveryResult>(std::move(result));
+                 project_completed = true;
+             },
+         .cancelled = {},
+         .failed = {}});
+
+    REQUIRE(style.has_value());
+    REQUIRE(project.has_value());
+    drain_until(runtime, [&] { return style_completed && project_completed; });
+    CHECK(style_result.path == file.string());
+    CHECK(style_result.found);
+    CHECK(style_result.origin == ".clang-format");
+    CHECK(style_result.style.indent_width == 7);
+    CHECK(style_result.style.tab_width == 9);
+    REQUIRE(project_result.discovery.has_value());
+    const ProjectDiscovery discovery = project_result.discovery.value_or(ProjectDiscovery{});
+    CHECK(discovery.root == directory.path().string());
+    CHECK(discovery.provider == "test.vcs");
+    CHECK(discovery.marker == ".git");
+}
+
 TEST_CASE("script async host unifies process completion and cancellation") {
     AsyncRuntime runtime;
     AsyncScriptHost host(runtime);

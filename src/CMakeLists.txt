@@ -52,6 +52,7 @@ add_library(cind_indent STATIC
   commands/editor_commands.cpp
   commands/file_io.cpp
   formatting/clang_format_style.cpp
+  cli/style_loader.cpp
 )
 target_link_libraries(cind_indent PUBLIC cind_syntax)
 
@@ -59,7 +60,10 @@ add_library(cind_script_async STATIC
   script/async_host.cpp
 )
 target_include_directories(cind_script_async PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(cind_script_async PUBLIC cind_async PRIVATE cind_indent)
+target_link_libraries(cind_script_async
+  PUBLIC cind_async
+  PRIVATE cind_indent cind_project_io
+)
 
 add_library(cind_application STATIC
   editor/buffer.cpp
@@ -207,7 +211,6 @@ target_link_libraries(cind_guile
 
 add_library(cind_editor STATIC
   cli/session.cpp
-  cli/style_loader.cpp
   editor/editing_mechanisms.cpp
   editor/editor_application.cpp
   editor/noun_evaluator.cpp

@@ -1,5 +1,8 @@
 (define-module (cind core)
+  #:use-module (ice-9 format)
   #:use-module (ice-9 optargs)
+  #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-9)
   #:use-module (cind ares)
   #:use-module (cind async)
   #:use-module (cind command)
@@ -21,7 +24,8 @@
             install-core-resource-policies!
             define-major-mode!
             define-minor-mode!
-            install-default-keymaps!))
+            install-default-keymaps!
+            open-resource!))
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -178,6 +182,218 @@
          (directory (if resource (path-parent host resource) ".")))
     (file-open-interaction (path-as-directory host directory))))
 
+(define-record-type <pending-open>
+  (make-pending-open resource window line column mode contents style style-origin
+                     discovery file-ready? style-ready? project-ready? tasks)
+  pending-open?
+  (resource pending-open-resource)
+  (window pending-open-window set-pending-open-window!)
+  (line pending-open-line set-pending-open-line!)
+  (column pending-open-column set-pending-open-column!)
+  (mode pending-open-mode)
+  (contents pending-open-contents set-pending-open-contents!)
+  (style pending-open-style set-pending-open-style!)
+  (style-origin pending-open-style-origin set-pending-open-style-origin!)
+  (discovery pending-open-discovery set-pending-open-discovery!)
+  (file-ready? pending-open-file-ready? set-pending-open-file-ready!)
+  (style-ready? pending-open-style-ready? set-pending-open-style-ready!)
+  (project-ready? pending-open-project-ready? set-pending-open-project-ready!)
+  (tasks pending-open-tasks set-pending-open-tasks!))
+
+;; Values do not retain the host. Outstanding callback closures keep their host
+;; alive only until the native task reaches a terminal state.
+(define pending-opens (make-weak-key-hash-table))
+
+(define (host-pending-opens host)
+  (or (hashq-ref pending-opens host) '()))
+
+(define (set-host-pending-opens! host opens)
+  (if (null? opens)
+      (hashq-remove! pending-opens host)
+      (hashq-set! pending-opens host opens)))
+
+(define (pending-open-live? host open)
+  (memq open (host-pending-opens host)))
+
+(define (remove-pending-open! host open)
+  (set-host-pending-opens! host (delq open (host-pending-opens host))))
+
+(define (find-pending-open host resource)
+  (find (lambda (open) (string=? resource (pending-open-resource open)))
+        (host-pending-opens host)))
+
+(define (remove-open-task! open task)
+  (set-pending-open-tasks! open (delv task (pending-open-tasks open))))
+
+(define (cancel-open-tasks! host open)
+  (for-each (lambda (task) (cancel-async-task! host task))
+            (pending-open-tasks open))
+  (set-pending-open-tasks! open '()))
+
+(define (fail-open! host open message)
+  (when (pending-open-live? host open)
+    (remove-pending-open! host open)
+    (cancel-open-tasks! host open)
+    (set-message! host (string-append "open failed: " message))))
+
+(define (cancel-open! host open)
+  (when (pending-open-live? host open)
+    (remove-pending-open! host open)
+    (cancel-open-tasks! host open)
+    (set-message! host
+                  (string-append "open cancelled: "
+                                 (pending-open-resource open)))))
+
+(define (window-open? host window)
+  (let ((windows (open-window-ids host)))
+    (let loop ((index 0))
+      (and (< index (vector-length windows))
+           (or (equal? window (vector-ref windows index))
+               (loop (+ index 1)))))))
+
+(define (display-open-buffer! host open buffer)
+  (let ((window (if (window-open? host (pending-open-window open))
+                    (pending-open-window open)
+                    (active-window-id host))))
+    (display-buffer! host window buffer)
+    (when (pending-open-line open)
+      (move-caret-to-line! host (window-view-id host window)
+                           (pending-open-line open)
+                           (or (pending-open-column open) 0)))))
+
+(define (project-from-discovery! host discovery)
+  (and discovery
+       (let* ((root (vector-ref discovery 0))
+              (provider (vector-ref discovery 1))
+              (marker (vector-ref discovery 2)))
+         (or (project-id-by-root host root)
+             (create-project! host
+                              (let ((name (path-filename host root)))
+                                (if (= (string-length name) 0) root name))
+                              (vector root) provider marker)))))
+
+(define (release-startup-placeholder! host buffer)
+  (let ((placeholder (startup-placeholder host)))
+    (when (and placeholder
+               (not (equal? placeholder buffer))
+               (not (buffer-modified? host placeholder)))
+      (set-startup-placeholder! host #f)
+      (catch #t
+        (lambda () (release-buffer! host placeholder buffer))
+        (lambda (key . arguments)
+          (set-startup-placeholder! host placeholder)
+          (apply throw key arguments))))))
+
+(define (finish-open! host open)
+  (when (and (pending-open-live? host open)
+             (pending-open-file-ready? open)
+             (pending-open-style-ready? open)
+             (pending-open-project-ready? open))
+    (catch #t
+      (lambda ()
+        (let* ((resource (pending-open-resource open))
+               (buffer
+                (or (buffer-id-by-resource host resource)
+                    (create-buffer! host (path-filename host resource)
+                                    (pending-open-contents open) 'file resource #f
+                                    (pending-open-mode open) (pending-open-style open)
+                                    (pending-open-style-origin open))))
+               (project
+                (or (project-from-discovery! host (pending-open-discovery open))
+                    (project-for-resource host resource))))
+          (set-buffer-project! host buffer project)
+          (when project (ensure-project-index! host project))
+          (display-open-buffer! host open buffer)
+          (release-startup-placeholder! host buffer)
+          (remove-pending-open! host open)
+          (set-message! host (string-append "opened " resource))))
+      (lambda (key . arguments)
+        (fail-open! host open (format #f "~S: ~S" key arguments))))))
+
+(define (track-open-task! open task)
+  (set-pending-open-tasks! open (cons task (pending-open-tasks open))))
+
+(define (start-open-task! host open request completed)
+  (let ((task
+         (start-async-task!
+          host request
+          (lambda (task result)
+            (remove-open-task! open task)
+            (when (pending-open-live? host open)
+              (completed result)
+              (finish-open! host open)))
+          #:failed
+          (lambda (task message)
+            (remove-open-task! open task)
+            (fail-open! host open message))
+          #:cancelled
+          (lambda (task)
+            (remove-open-task! open task)
+            (cancel-open! host open)))))
+    (track-open-task! open task)))
+
+(define (cpp-style-mode? host mode)
+  (eq? (vector-ref (mode-properties host mode) 7) 'cind.cpp))
+
+(define (start-open! host open providers)
+  (start-open-task!
+   host open (async-file-read (pending-open-resource open))
+   (lambda (result)
+     (set-pending-open-contents! open (vector-ref result 3))
+     (set-pending-open-file-ready! open #t)))
+  (unless (pending-open-style-ready? open)
+    (start-open-task!
+     host open (async-clang-format-style (pending-open-resource open))
+     (lambda (result)
+       (set-pending-open-style! open (vector-ref result 3))
+       (set-pending-open-style-origin! open (vector-ref result 4))
+       (set-pending-open-style-ready! open #t))))
+  (unless (pending-open-project-ready? open)
+    (start-open-task!
+     host open (async-project-discovery (pending-open-resource open) providers)
+     (lambda (result)
+       (set-pending-open-discovery!
+        open (and (vector-ref result 2)
+                  (vector (vector-ref result 2)
+                          (vector-ref result 3)
+                          (vector-ref result 4))))
+       (set-pending-open-project-ready! open #t)))))
+
+(define (open-resource! host window path line column)
+  (unless (string? path)
+    (error "resource path must be a string" path))
+  (unless (or (not line) (and (integer? line) (>= line 0)))
+    (error "resource line must be a non-negative integer or #f" line))
+  (unless (or (not column) (and (integer? column) (>= column 0)))
+    (error "resource column must be a non-negative integer or #f" column))
+  (let* ((resource (normalize-resource-path host path))
+         (buffer (buffer-id-by-resource host resource)))
+    (cond (buffer
+           (let ((open (make-pending-open resource window line column #f "" #f ""
+                                          #f #t #t #t '())))
+             (display-open-buffer! host open buffer)))
+          ((find-pending-open host resource)
+           => (lambda (open)
+                (set-pending-open-window! open window)
+                (set-pending-open-line! open line)
+                (set-pending-open-column! open column)
+                (set-message! host (string-append "opening " resource "…"))))
+          (else
+           (let* ((mode (or (resource-mode host resource) 'fundamental-mode))
+                  (providers (project-provider-definitions host))
+                  (style-ready? (not (cpp-style-mode? host mode)))
+                  (open (make-pending-open
+                         resource window line column mode "" #f
+                         (if style-ready? "plain text" "llvm (fallback)")
+                         #f #f style-ready? (= (vector-length providers) 0) '())))
+             (set-host-pending-opens! host (cons open (host-pending-opens host)))
+             (catch #t
+               (lambda () (start-open! host open providers))
+               (lambda (key . arguments)
+                 (fail-open! host open (format #f "~S: ~S" key arguments))
+                 (apply throw key arguments)))
+             (set-message! host (string-append "opening " resource "…")))))))
+
 (define (file-open-accept host context invocation)
   (let ((path (last-string-argument invocation)))
     (cond ((not path)
@@ -187,7 +403,7 @@
           ((directory-path? host path)
            (file-open-interaction (path-as-directory host path)))
           (else
-           (open-file! host (context-window context) path)
+           (open-resource! host (context-window context) path #f #f)
            (command-completed)))))
 
 (define (file-save-completed host buffer resource task result)
@@ -295,7 +511,8 @@
           (else (vector-ref buffers index)))))
 
 (define (make-scratch-buffer host)
-  (create-buffer! host "*scratch*" "" 'scratch #f 'fundamental-mode "plain text"))
+  (create-buffer! host "*scratch*" "" 'scratch #f #f 'fundamental-mode #f
+                  "plain text"))
 
 (define (buffer-kill host context force?)
   (let ((target (context-buffer context)))
@@ -655,7 +872,7 @@
           ((= (string-length path) 0)
            (command-error "file path is empty"))
           (else
-           (open-file! host (context-window context) path)
+           (open-resource! host (context-window context) path #f #f)
            (command-completed)))))
 
 (define (help-keys context invocation)
@@ -743,10 +960,10 @@
           (position-buffer-view! host (context-window context) list
                                  (vector-ref location 0))
           (location-message host index (vector-length locations))
-          (open-file-at! host (context-window context)
-                         (vector-ref location 2)
-                         (vector-ref location 3)
-                         (vector-ref location 4))
+          (open-resource! host (context-window context)
+                          (vector-ref location 2)
+                          (vector-ref location 3)
+                          (vector-ref location 4))
           (command-completed/preserve)))))
 
 (define (location-at-point locations caret)

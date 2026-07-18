@@ -1257,8 +1257,10 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
     CHECK(application.session().buffer().kind() == BufferKind::Scratch);
     CHECK(application.has_background_work());
 
-    REQUIRE(wake.wait());
-    REQUIRE(application.poll_background_work());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
     CHECK_FALSE(application.has_background_work());
     CHECK(application.buffer_count() == 1);
     CHECK(application.session().buffer().kind() == BufferKind::File);
@@ -1268,6 +1270,46 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+TEST_CASE("scripted open policy round-trips discovered C++ style into the buffer mechanism") {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        std::format("cind-application-style-{}", static_cast<long>(::getpid()));
+    std::filesystem::create_directories(root);
+    {
+        std::ofstream style(root / ".clang-format");
+        style << "IndentWidth: 7\nTabWidth: 9\n";
+    }
+    const std::filesystem::path source = root / "sample.cpp";
+    {
+        std::ofstream output(source);
+        output << "int main() {}\n";
+    }
+
+    WakeSignal wake;
+    EditorApplication application({
+        .path = source.string(),
+        .initial_text = std::nullopt,
+        .style = {},
+        .style_origin = "fallback",
+        .initial_line = 0,
+        .platform_services = {.write_clipboard = {},
+                              .read_clipboard = {},
+                              .wake_event_loop = [&wake] { wake.notify(); }},
+        .init_file = std::nullopt,
+    });
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+
+    CHECK(application.style_origin() == ".clang-format");
+    CHECK(application.session().style().indent_width == 7);
+    CHECK(application.session().style().tab_width == 9);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
 }
 
 TEST_CASE("asynchronous file open snapshots mode policy and skips unrelated style discovery") {
@@ -1291,8 +1333,10 @@ TEST_CASE("asynchronous file open snapshots mode policy and skips unrelated styl
     application.runtime().resource_policies().define_file_mode("late-test-rule", fundamental,
                                                                {".scm"});
 
-    REQUIRE(wake.wait());
-    REQUIRE(application.poll_background_work());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
     const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
     CHECK(application.runtime().modes().definition(major).name == "scheme-mode");
     CHECK(application.style_origin() == "plain text");
@@ -2049,8 +2093,10 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     REQUIRE(opened.has_value());
     application.runtime().resource_policies().define_project_provider("late-test-provider",
                                                                       {".git"});
-    REQUIRE(wake.wait());
-    REQUIRE(application.poll_background_work());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
     const BufferId second = application.buffer_id();
     CHECK(second != first);
     REQUIRE(application.session().buffer().project_id().has_value());

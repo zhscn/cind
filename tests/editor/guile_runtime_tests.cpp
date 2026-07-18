@@ -803,9 +803,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string message;
     ProjectId indexed_project;
     bool project_index_requested = false;
-    WindowId opened_window;
-    std::string opened_path;
-    bool file_opened = false;
     ProjectId searched_project;
     WindowId searched_window;
     std::string search_query;
@@ -816,6 +813,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool buffer_save_aborted = false;
     std::optional<ScriptAsyncRequest> pending_async_request;
     ScriptAsyncCallbacks pending_async_callbacks;
+    std::vector<ScriptAsyncRequest> async_requests;
+    std::uint64_t next_async_task = 1;
     std::optional<GuileBufferCreation> created_buffer;
     bool buffer_saving = false;
     bool only_buffer = false;
@@ -885,17 +884,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .location_navigation = {},
          .set_location_navigation = {},
          .position_buffer_view = {},
-         .open_file_at = {},
          .set_message = [&](std::string value) { message = std::move(value); },
          .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
              project_index_requested = true;
-             return {};
-         },
-         .open_file = [&](WindowId target, std::string path) -> std::expected<void, std::string> {
-             opened_window = target;
-             opened_path = std::move(path);
-             file_opened = true;
              return {};
          },
          .start_project_search = [&](ProjectId target_project, WindowId target_window,
@@ -970,6 +962,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
+         .active_window = [&] { return window; },
+         .startup_placeholder = [] { return std::optional<BufferId>{}; },
+         .set_startup_placeholder = [](std::optional<BufferId>) {},
          .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
@@ -1087,9 +1082,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          },
          .start_async_task = [&](ScriptAsyncRequest request, ScriptAsyncCallbacks callbacks)
              -> std::expected<std::uint64_t, std::string> {
+             async_requests.push_back(request);
              pending_async_request = std::move(request);
              pending_async_callbacks = std::move(callbacks);
-             return 1;
+             return next_async_task++;
          },
          .cancel_async_task = [](std::uint64_t) { return true; },
          .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
@@ -1293,6 +1289,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(runtime.commands().definition(open_request->accept_command).name == "file.open.accept");
 
     const std::string directory = std::string("/tmp") + std::filesystem::path::preferred_separator;
+    const std::size_t async_before_open = async_requests.size();
     const CommandResult directory_result =
         runtime.commands().invoke(open_request->accept_command, context,
                                   CommandInvocation{.arguments = {directory}, .prefix = {}});
@@ -1300,15 +1297,17 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const auto* directory_request = std::get_if<InteractionRequest>(&*directory_result);
     REQUIRE(directory_request != nullptr);
     CHECK(directory_request->initial_input == directory);
-    CHECK_FALSE(file_opened);
+    CHECK(async_requests.size() == async_before_open);
 
     const CommandResult opened = runtime.commands().invoke(
         open_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/example.cpp")}, .prefix = {}});
     REQUIRE(opened.has_value());
-    REQUIRE(file_opened);
-    CHECK(opened_window == window);
-    CHECK(opened_path == "/tmp/example.cpp");
+    REQUIRE(async_requests.size() == async_before_open + 1);
+    const auto* opened_read =
+        std::get_if<ScriptFileReadRequest>(&async_requests[async_before_open]);
+    REQUIRE(opened_read != nullptr);
+    CHECK(opened_read->path == "/tmp/example.cpp");
 
     const CommandResult save_as_result =
         runtime.commands().invoke(require_command(runtime, "file.save-as"), context);
@@ -1588,15 +1587,16 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(project_index_requested);
     CHECK(indexed_project == project);
 
-    file_opened = false;
-    opened_path.clear();
+    const std::size_t async_before_project_file = async_requests.size();
     const CommandResult file_accepted = runtime.commands().invoke(
         find_file_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/sample/main.cpp")}, .prefix = {}});
     REQUIRE(file_accepted.has_value());
-    REQUIRE(file_opened);
-    CHECK(opened_window == window);
-    CHECK(opened_path == "/tmp/sample/main.cpp");
+    REQUIRE(async_requests.size() == async_before_project_file + 1);
+    const auto* project_file_read =
+        std::get_if<ScriptFileReadRequest>(&async_requests[async_before_project_file]);
+    REQUIRE(project_file_read != nullptr);
+    CHECK(project_file_read->path == "/tmp/sample/main.cpp");
 
     const CommandResult search_result = runtime.commands().invoke(project_search, context);
     REQUIRE(search_result.has_value());

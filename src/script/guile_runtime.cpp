@@ -180,6 +180,93 @@ bool scheme_boolean(SCM value) {
 
 bool symbol_is(SCM value, const char* expected);
 
+std::string scheme_string_with_nuls(SCM value) {
+    std::size_t length = 0;
+    char* converted = scm_to_utf8_stringn(value, &length);
+    if (converted == nullptr) {
+        throw std::runtime_error("Guile failed to convert a string");
+    }
+    std::string result(converted, length);
+    std::free(converted);
+    return result;
+}
+
+CppIndentStyle cpp_indent_style_from_scheme(SCM value, const char* caller, int position) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 18 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "cpp-indent-style")) {
+        scm_wrong_type_arg_msg(caller, position, value, "cpp-indent-style vector");
+    }
+    const auto integer = [&](std::size_t index) {
+        const SCM field = scm_c_vector_ref(value, index);
+        if (scm_is_integer(field) == 0) {
+            scm_wrong_type_arg_msg(caller, position, field, "integer style field");
+        }
+        return scm_to_int(field);
+    };
+    const auto boolean = [&](std::size_t index) {
+        const SCM field = scm_c_vector_ref(value, index);
+        if (!scheme_boolean(field)) {
+            scm_wrong_type_arg_msg(caller, position, field, "boolean style field");
+        }
+        return scheme_true(field);
+    };
+    CppIndentStyle style;
+    style.indent_width = integer(1);
+    style.continuation_indent = integer(2);
+    style.tab_width = integer(3);
+    style.use_tabs = boolean(4);
+    style.align_open_bracket = boolean(5);
+    style.brace_init_continuation = boolean(6);
+    style.indent_wrapped_function_names = boolean(7);
+    style.align_operands = boolean(8);
+    style.break_before_ternary = boolean(9);
+    const SCM namespace_indent = scm_c_vector_ref(value, 10);
+    if (symbol_is(namespace_indent, "none")) {
+        style.namespace_indentation = CppIndentStyle::NamespaceIndentation::None;
+    } else if (symbol_is(namespace_indent, "inner")) {
+        style.namespace_indentation = CppIndentStyle::NamespaceIndentation::Inner;
+    } else if (symbol_is(namespace_indent, "all")) {
+        style.namespace_indentation = CppIndentStyle::NamespaceIndentation::All;
+    } else {
+        scm_wrong_type_arg_msg(caller, position, namespace_indent, "namespace indentation symbol");
+    }
+    style.indent_type_body = boolean(11);
+    style.indent_case_label = boolean(12);
+    style.indent_case_body = boolean(13);
+    style.access_specifier_offset = integer(14);
+    const SCM pp_indent = scm_c_vector_ref(value, 15);
+    if (symbol_is(pp_indent, "none")) {
+        style.pp_directive_indent = CppIndentStyle::PPDirectiveIndent::None;
+    } else if (symbol_is(pp_indent, "after-hash")) {
+        style.pp_directive_indent = CppIndentStyle::PPDirectiveIndent::AfterHash;
+    } else if (symbol_is(pp_indent, "before-hash")) {
+        style.pp_directive_indent = CppIndentStyle::PPDirectiveIndent::BeforeHash;
+    } else {
+        scm_wrong_type_arg_msg(caller, position, pp_indent, "preprocessor indentation symbol");
+    }
+    style.pp_indent_width = integer(16);
+    const SCM constructor_style = scm_c_vector_ref(value, 17);
+    if (symbol_is(constructor_style, "normal-indent")) {
+        style.constructor_initializers = CppIndentStyle::ConstructorInitializerStyle::NormalIndent;
+    } else if (symbol_is(constructor_style, "continuation-indent")) {
+        style.constructor_initializers =
+            CppIndentStyle::ConstructorInitializerStyle::ContinuationIndent;
+    } else if (symbol_is(constructor_style, "align-first-initializer")) {
+        style.constructor_initializers =
+            CppIndentStyle::ConstructorInitializerStyle::AlignFirstInitializer;
+    } else if (symbol_is(constructor_style, "align-after-colon")) {
+        style.constructor_initializers =
+            CppIndentStyle::ConstructorInitializerStyle::AlignAfterColon;
+    } else if (symbol_is(constructor_style, "align-with-colon")) {
+        style.constructor_initializers =
+            CppIndentStyle::ConstructorInitializerStyle::AlignWithColon;
+    } else {
+        scm_wrong_type_arg_msg(caller, position, constructor_style,
+                               "constructor initializer style symbol");
+    }
+    return style;
+}
+
 SCM entity_id(std::uint32_t slot, std::uint32_t generation) {
     SCM result = scm_c_make_vector(2, SCM_UNSPECIFIED);
     scm_c_vector_set_x(result, 0, scm_from_uint32(slot));
@@ -3309,32 +3396,6 @@ SCM ensure_project_index(SCM host_object, SCM project_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
-SCM open_file(SCM host_object, SCM window_value, SCM path_value) {
-    if (!scm_is_string(path_value)) {
-        scm_wrong_type_arg_msg("open-file!", 3, path_value, "string");
-    }
-    HostLease& host = require_host(host_object, "open-file!");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "open-file!", 2);
-    if (!host.services.open_file) {
-        scm_misc_error("open-file!", "file-open capability is unavailable", SCM_EOL);
-    }
-    try {
-        const std::expected<void, std::string> opened =
-            host.services.open_file(window, scheme_string(path_value));
-        if (!opened) {
-            raise_host_error("open-file!", opened.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("open-file!", exception.what());
-    } catch (...) {
-        scm_misc_error("open-file!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, SCM query_value) {
@@ -3464,6 +3525,77 @@ SCM project_for_resource(SCM host_object, SCM path_value) {
     return SCM_BOOL_F;
 }
 
+SCM project_provider_definitions(SCM host_object) {
+    HostLease& host = require_host(host_object, "project-provider-definitions");
+    try {
+        const std::vector<ProjectDiscoveryProvider>& providers =
+            host.runtime->resource_policies().project_providers();
+        SCM result = scm_c_make_vector(providers.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < providers.size(); ++index) {
+            const ProjectDiscoveryProvider& provider = providers[index];
+            SCM markers = scm_c_make_vector(provider.markers.size(), SCM_UNSPECIFIED);
+            for (std::size_t marker = 0; marker < provider.markers.size(); ++marker) {
+                scm_c_vector_set_x(markers, marker,
+                                   scm_from_utf8_string(provider.markers[marker].c_str()));
+            }
+            SCM definition = scm_c_make_vector(2, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(definition, 0, scm_from_utf8_string(provider.name.c_str()));
+            scm_c_vector_set_x(definition, 1, markers);
+            scm_c_vector_set_x(result, index, definition);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("project-provider-definitions", exception.what());
+    } catch (...) {
+        scm_misc_error("project-provider-definitions", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM project_id_by_root(SCM host_object, SCM root_value) {
+    HostLease& host = require_host(host_object, "project-id-by-root");
+    if (!scm_is_string(root_value)) {
+        scm_wrong_type_arg_msg("project-id-by-root", 2, root_value, "string");
+    }
+    try {
+        const std::optional<ProjectId> project =
+            host.runtime->projects().find_by_root(scheme_string(root_value));
+        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("project-id-by-root", exception.what());
+    } catch (...) {
+        scm_misc_error("project-id-by-root", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM create_project(SCM host_object, SCM name_value, SCM roots_value, SCM provider_value,
+                   SCM marker_value) {
+    HostLease& host = require_host(host_object, "create-project!");
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("create-project!", 2, name_value, "string");
+    }
+    if (!scm_is_string(provider_value)) {
+        scm_wrong_type_arg_msg("create-project!", 4, provider_value, "string");
+    }
+    if (!scm_is_string(marker_value)) {
+        scm_wrong_type_arg_msg("create-project!", 5, marker_value, "string");
+    }
+    try {
+        const ProjectId project = host.runtime->projects().create(
+            {.name = scheme_string(name_value),
+             .roots = string_sequence_from_scheme(roots_value, "create-project!", 3),
+             .discovery_provider = scheme_string(provider_value),
+             .discovery_marker = scheme_string(marker_value)});
+        return entity_id(project.slot, project.generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("create-project!", exception.what());
+    } catch (...) {
+        scm_misc_error("create-project!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
     try {
         HostLease& host = require_host(host_object, "set-buffer-project!");
@@ -3570,7 +3702,8 @@ SCM open_buffers(SCM host_object) {
 // The low-level ABI is positional; policy wrappers choose names, kinds, modes,
 // and presentation metadata before entering this mechanism boundary.
 SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_value,
-                  SCM read_only_value, SCM mode_value, SCM style_origin_value) {
+                  SCM resource_value, SCM read_only_value, SCM mode_value, SCM style_value,
+                  SCM style_origin_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("create-buffer!", 2, name_value, "string");
     }
@@ -3578,10 +3711,10 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
         scm_wrong_type_arg_msg("create-buffer!", 3, text_value, "string");
     }
     if (!scheme_boolean(read_only_value)) {
-        scm_wrong_type_arg_msg("create-buffer!", 5, read_only_value, "boolean");
+        scm_wrong_type_arg_msg("create-buffer!", 6, read_only_value, "boolean");
     }
     if (!scm_is_string(style_origin_value)) {
-        scm_wrong_type_arg_msg("create-buffer!", 7, style_origin_value, "string");
+        scm_wrong_type_arg_msg("create-buffer!", 9, style_origin_value, "string");
     }
     try {
         HostLease& host = require_host(host_object, "create-buffer!");
@@ -3591,24 +3724,39 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
         BufferKind kind;
         if (symbol_is(kind_value, "scratch")) {
             kind = BufferKind::Scratch;
+        } else if (symbol_is(kind_value, "file")) {
+            kind = BufferKind::File;
         } else if (symbol_is(kind_value, "generated")) {
             kind = BufferKind::Generated;
         } else if (symbol_is(kind_value, "process")) {
             kind = BufferKind::Process;
         } else {
             scm_wrong_type_arg_msg("create-buffer!", 4, kind_value,
-                                   "'scratch, 'generated, or 'process");
+                                   "'scratch, 'file, 'generated, or 'process");
+        }
+        std::optional<std::string> resource;
+        if (!scheme_false(resource_value)) {
+            if (!scm_is_string(resource_value)) {
+                scm_wrong_type_arg_msg("create-buffer!", 5, resource_value, "string or #f");
+            }
+            resource = scheme_string(resource_value);
         }
         std::optional<ModeId> mode;
         if (!scheme_false(mode_value)) {
-            mode = require_mode(host, mode_value, "create-buffer!", 6);
+            mode = require_mode(host, mode_value, "create-buffer!", 7);
         }
+        const CppIndentStyle style =
+            scheme_false(style_value)
+                ? CppIndentStyle{}
+                : cpp_indent_style_from_scheme(style_value, "create-buffer!", 8);
         std::expected<BufferId, std::string> created =
             host.services.create_buffer({.name = scheme_string(name_value),
-                                         .initial_text = scheme_string(text_value),
+                                         .initial_text = scheme_string_with_nuls(text_value),
                                          .kind = kind,
+                                         .resource = std::move(resource),
                                          .read_only = scheme_true(read_only_value),
                                          .major_mode = mode,
+                                         .style = style,
                                          .style_origin = scheme_string(style_origin_value)});
         if (!created) {
             raise_host_error("create-buffer!", created.error());
@@ -3774,6 +3922,76 @@ SCM open_windows(SCM host_object) {
         scm_misc_error("open-window-ids", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
+}
+
+SCM active_window(SCM host_object) {
+    HostLease& host = require_host(host_object, "active-window-id");
+    if (!host.services.active_window) {
+        scm_misc_error("active-window-id", "active-window capability is unavailable", SCM_EOL);
+    }
+    try {
+        const WindowId window = host.services.active_window();
+        (void)host.runtime->windows().get(window);
+        return entity_id(window.slot, window.generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("active-window-id", exception.what());
+    } catch (...) {
+        scm_misc_error("active-window-id", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM window_view(SCM host_object, SCM window_value) {
+    HostLease& host = require_host(host_object, "window-view-id");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-view-id", 2);
+    try {
+        const ViewId view = host.runtime->windows().get(window).view_id();
+        return entity_id(view.slot, view.generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("window-view-id", exception.what());
+    } catch (...) {
+        scm_misc_error("window-view-id", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM startup_placeholder(SCM host_object) {
+    HostLease& host = require_host(host_object, "startup-placeholder");
+    if (!host.services.startup_placeholder) {
+        scm_misc_error("startup-placeholder", "startup-placeholder capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::optional<BufferId> buffer = host.services.startup_placeholder();
+        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("startup-placeholder", exception.what());
+    } catch (...) {
+        scm_misc_error("startup-placeholder", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM set_startup_placeholder(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "set-startup-placeholder!");
+    if (!host.services.set_startup_placeholder) {
+        scm_misc_error("set-startup-placeholder!", "startup-placeholder capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        std::optional<BufferId> buffer;
+        if (!scheme_false(buffer_value)) {
+            buffer = entity_id_from_scheme<BufferTag>(buffer_value, "set-startup-placeholder!", 2);
+            (void)host.runtime->buffers().get(*buffer);
+        }
+        host.services.set_startup_placeholder(buffer);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-startup-placeholder!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-startup-placeholder!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
 }
 
 SCM focus_window(SCM host_object, SCM window_value) {
@@ -4037,34 +4255,6 @@ SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SC
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes five adjacent SCM arguments; Scheme wrappers preserve
-// their semantic order.
-SCM open_file_at(SCM host_object, SCM window_value, SCM path_value, SCM line_value,
-                 SCM column_value) {
-    if (!scm_is_string(path_value)) {
-        scm_wrong_type_arg_msg("open-file-at!", 3, path_value, "string");
-    }
-    HostLease& host = require_host(host_object, "open-file-at!");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "open-file-at!", 2);
-    if (!host.services.open_file_at) {
-        scm_misc_error("open-file-at!", "positioned file-open capability is unavailable", SCM_EOL);
-    }
-    try {
-        const std::expected<void, std::string> opened =
-            host.services.open_file_at(window, scheme_string(path_value), scm_to_uint32(line_value),
-                                       scm_to_uint32(column_value));
-        if (!opened) {
-            raise_host_error("open-file-at!", opened.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("open-file-at!", exception.what());
-    } catch (...) {
-        scm_misc_error("open-file-at!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -4256,11 +4446,9 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_location_navigation));
     (void)scm_c_define_gsubr("position-buffer-view!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(position_buffer_view));
-    (void)scm_c_define_gsubr("open-file-at!", 5, 0, 0, reinterpret_cast<scm_t_subr>(open_file_at));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(ensure_project_index));
-    (void)scm_c_define_gsubr("open-file!", 3, 0, 0, reinterpret_cast<scm_t_subr>(open_file));
     (void)scm_c_define_gsubr("start-project-search!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_project_search));
     (void)scm_c_define_gsubr("normalize-resource-path", 2, 0, 0,
@@ -4274,6 +4462,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("resource-mode", 2, 0, 0, reinterpret_cast<scm_t_subr>(resource_mode));
     (void)scm_c_define_gsubr("project-for-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(project_for_resource));
+    (void)scm_c_define_gsubr("project-provider-definitions", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(project_provider_definitions));
+    (void)scm_c_define_gsubr("project-id-by-root", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(project_id_by_root));
+    (void)scm_c_define_gsubr("create-project!", 5, 0, 0,
+                             reinterpret_cast<scm_t_subr>(create_project));
     (void)scm_c_define_gsubr("set-buffer-project!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_project));
     (void)scm_c_define_gsubr("begin-buffer-save!", 2, 0, 0,
@@ -4284,7 +4478,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(abort_buffer_save));
     (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffers));
-    (void)scm_c_define_gsubr("create-buffer!", 7, 0, 0,
+    (void)scm_c_define_gsubr("create-buffer!", 9, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_buffer));
     (void)scm_c_define_gsubr("buffer-saving?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_saving_p));
@@ -4300,6 +4494,13 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(delete_other_windows));
     (void)scm_c_define_gsubr("open-window-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_windows));
+    (void)scm_c_define_gsubr("active-window-id", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(active_window));
+    (void)scm_c_define_gsubr("window-view-id", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_view));
+    (void)scm_c_define_gsubr("startup-placeholder", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(startup_placeholder));
+    (void)scm_c_define_gsubr("set-startup-placeholder!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_startup_placeholder));
     (void)scm_c_define_gsubr("focus-window!", 2, 0, 0, reinterpret_cast<scm_t_subr>(focus_window));
     (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_redraw));
@@ -4331,13 +4532,15 @@ void initialize_host_module(void*) {
         "page-rows", "interaction-status", "submit-interaction!", "move-interaction-candidate!",
         "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
-        "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "normalize-resource-path", "set-buffer-resource!",
-        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
-        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
-        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
-        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
-        "delete-other-windows!", "open-window-ids", "focus-window!", "request-redraw!", nullptr);
+        "set-message!", "ensure-project-index!", "start-project-search!", "normalize-resource-path",
+        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
+        "project-for-resource", "project-provider-definitions", "project-id-by-root",
+        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
+        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
+        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
+        "startup-placeholder", "set-startup-placeholder!", "focus-window!", "request-redraw!",
+        nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -4373,6 +4576,7 @@ struct GuileCall {
         InstallInputStates,
         InstallModes,
         InstallResourcePolicies,
+        OpenResource,
         StopAres,
         InvokeCommand,
         InvokeProvider,
@@ -4395,6 +4599,9 @@ struct GuileCall {
     SCM result = SCM_UNDEFINED;
     std::size_t count = 0;
     std::string query;
+    WindowId window;
+    std::optional<std::uint32_t> line;
+    std::optional<std::uint32_t> column;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
     KeyStroke key;
@@ -4792,6 +4999,13 @@ SCM call_body(void* data) {
             call.result = scm_call_1(
                 scm_c_public_ref("cind core", "install-core-resource-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
+            break;
+        case GuileCall::Operation::OpenResource:
+            call.result = scm_call_5(scm_c_public_ref("cind core", "open-resource!"), call.host,
+                                     entity_id(call.window.slot, call.window.generation),
+                                     scm_from_utf8_string(call.path.c_str()),
+                                     call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
+                                     call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F);
             break;
         case GuileCall::Operation::StopAres:
             call.result = scm_call_1(scm_c_public_ref("cind ares", "stop-host-ares!"), call.host);
@@ -5570,6 +5784,25 @@ public:
         return call.count;
     }
 
+    std::expected<void, std::string> open_resource(WindowId window, std::string_view path,
+                                                   std::optional<std::uint32_t> line,
+                                                   std::optional<std::uint32_t> column) {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::OpenResource;
+        call.host = host_;
+        call.window = window;
+        call.path = path;
+        call.line = line;
+        call.column = column;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     std::expected<void, std::string> load_extension(const std::string& input_path) {
         require_owner_thread();
         std::error_code error;
@@ -5746,6 +5979,12 @@ std::expected<std::size_t, std::string> GuileRuntime::install_core_modes() {
 
 std::expected<std::size_t, std::string> GuileRuntime::install_core_resource_policies() {
     return impl_->install_core_resource_policies();
+}
+
+std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,
+                                                             std::optional<std::uint32_t> line,
+                                                             std::optional<std::uint32_t> column) {
+    return impl_->open_resource(window, path, line, column);
 }
 
 std::expected<void, std::string> GuileRuntime::load_extension(const std::string& path) {

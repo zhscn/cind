@@ -17,8 +17,7 @@ class EditorRuntime;
 
 // Owns project attachment, asynchronous file-index refreshes and native
 // directory watches. ProjectRegistry remains the main-thread domain store;
-// discovery providers supply ProjectDiscovery and this service applies the
-// resulting attachment and completed snapshots.
+// Scheme policy creates and attaches projects before requesting indexing.
 class ProjectService {
 public:
     using IndexUpdated = std::function<void(ProjectId)>;
@@ -26,7 +25,6 @@ public:
     ProjectService(EditorRuntime& runtime, AsyncRuntime& async_runtime,
                    IndexUpdated index_updated = {});
 
-    void attach_buffer(BufferId buffer, const std::optional<ProjectDiscovery>& discovery);
     void request_index(ProjectId project);
 
 private:

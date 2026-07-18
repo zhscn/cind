@@ -74,10 +74,11 @@ lifetime. Captured output is bounded to 64 MiB per stream.
 
 ## Editor integration
 
-File reads, directory enumeration and atomic saves run as worker tasks. Application startup opens
-its requested file asynchronously and replaces the temporary scratch buffer after the read, style
-discovery and project discovery complete. Project discovery consumes an immutable snapshot of the
-Scheme-defined provider registry, so worker tasks never call Guile or read mutable editor state.
+File reads, directory enumeration, clang-format discovery, project discovery and atomic saves run
+as worker tasks. Scheme open policy starts the applicable operations in parallel and replaces the
+temporary startup buffer after their typed results are ready. Project discovery consumes the
+immutable provider value supplied with its request, so worker tasks never call Guile or read
+mutable editor state.
 File save captures an immutable document snapshot and
 performs the atomic file replacement as one worker task. Its completion marks that snapshot as the
 save point. Edits made while the write is in progress stay modified, so asynchronous completion
@@ -94,13 +95,15 @@ work.
 
 ## Script tasks
 
-`AsyncScriptHost` gives embedded languages one task namespace over native file reads, directory
-enumeration and child processes. Each request receives a stable integer ID and follows the same
-completed, cancelled or failed terminal path. The adapter retains the native `AsyncTaskId` or
+`AsyncScriptHost` gives embedded languages one task namespace over native file reads and writes,
+directory enumeration, clang-format discovery, project discovery and child processes. Each request
+receives a stable integer ID and follows the same completed, cancelled or failed terminal path. The
+adapter retains the native `AsyncTaskId` or
 `AsyncProcessId` internally, so cancellation does not expose libuv handle types to language code.
 
-File workers receive copied paths and immutable read or write payloads. Directory workers receive
-copied paths and limits. Process requests receive a copied
+File and style workers receive copied paths and immutable read or write payloads. Directory workers
+receive copied paths and limits. Project discovery receives a copied ordered provider snapshot.
+Process requests receive a copied
 executable, argument vector and working directory. No worker callback enters Guile or retains an
 `SCM` value. `AsyncRuntime::drain()` transfers a typed native result to the Guile bridge, which then
 invokes the protected Scheme callback on the editor thread. The task record is removed before the

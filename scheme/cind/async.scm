@@ -4,6 +4,8 @@
   #:export (async-file-read
             async-file-write
             async-directory-list
+            async-clang-format-style
+            async-project-discovery
             async-process
             start-async-task!
             cancel-async-task!
@@ -28,6 +30,18 @@
     (error "async directory-list limit must be a non-negative integer"
            maximum-entries))
   (vector 'directory-list path maximum-entries))
+
+(define (async-clang-format-style path)
+  (unless (string? path)
+    (error "clang-format style path must be a string" path))
+  (vector 'clang-format-style path))
+
+(define (async-project-discovery path providers)
+  (unless (string? path)
+    (error "project discovery path must be a string" path))
+  (unless (vector? providers)
+    (error "project discovery providers must be a vector" providers))
+  (vector 'project-discovery path providers))
 
 (define* (async-process file arguments #:optional (working-directory ""))
   (unless (string? file)

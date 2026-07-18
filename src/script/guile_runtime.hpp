@@ -57,8 +57,10 @@ struct GuileBufferCreation {
     std::string name;
     std::string initial_text;
     BufferKind kind = BufferKind::Scratch;
+    std::optional<std::string> resource;
     bool read_only = false;
     std::optional<ModeId> major_mode;
+    CppIndentStyle style;
     std::string style_origin;
 };
 
@@ -98,12 +100,8 @@ struct GuileHostServices {
         set_location_navigation;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
-    std::function<std::expected<void, std::string>(WindowId, std::string, std::uint32_t,
-                                                   std::uint32_t)>
-        open_file_at;
     std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
-    std::function<std::expected<void, std::string>(WindowId, std::string)> open_file;
     std::function<std::expected<void, std::string>(ProjectId, WindowId, std::string)>
         start_project_search;
     std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
@@ -118,6 +116,9 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
     std::function<std::vector<WindowId>()> open_windows;
+    std::function<WindowId()> active_window;
+    std::function<std::optional<BufferId>()> startup_placeholder;
+    std::function<void(std::optional<BufferId>)> set_startup_placeholder;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
@@ -203,6 +204,10 @@ public:
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
     std::expected<std::size_t, std::string> install_core_resource_policies();
+    std::expected<void, std::string>
+    open_resource(WindowId window, std::string_view path,
+                  std::optional<std::uint32_t> line = std::nullopt,
+                  std::optional<std::uint32_t> column = std::nullopt);
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

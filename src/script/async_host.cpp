@@ -1,5 +1,6 @@
 #include "script/async_host.hpp"
 
+#include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 
 #include <algorithm>
@@ -274,6 +275,119 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                                              });
                              }});
                     return {.kind = ScriptAsyncTaskKind::DirectoryList, .native = native};
+                } else if constexpr (std::is_same_v<Request, ScriptClangFormatStyleRequest>) {
+                    if (operation.path.empty()) {
+                        throw std::invalid_argument("clang-format-style path is empty");
+                    }
+                    const std::string path = operation.path;
+                    // Throwing reports worker failures through AsyncRuntime::failed.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    AsyncWork work = [path, weak_state, id, completed = callbacks.completed](
+                                         const std::stop_token& cancellation) mutable {
+                        if (cancellation.stop_requested()) {
+                            throw AsyncTaskCancelled{};
+                        }
+                        ScriptClangFormatStyleResult style{
+                            .path = path,
+                            .found = false,
+                            .style = {},
+                            .origin = "llvm (fallback)",
+                        };
+                        if (std::optional<LoadedStyle> loaded = load_clang_format_style(
+                                std::filesystem::path(path).parent_path())) {
+                            style.found = true;
+                            style.style = loaded->style;
+                            style.origin = loaded->config_path.filename().string();
+                        }
+                        if (cancellation.stop_requested()) {
+                            throw AsyncTaskCancelled{};
+                        }
+                        ScriptAsyncResult result = std::move(style);
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
+                    const AsyncTaskId native = state_->runtime->submit(
+                        {.work = std::move(work),
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
+                    return {.kind = ScriptAsyncTaskKind::ClangFormatStyle, .native = native};
+                } else if constexpr (std::is_same_v<Request, ScriptProjectDiscoveryRequest>) {
+                    if (operation.path.empty()) {
+                        throw std::invalid_argument("project-discovery path is empty");
+                    }
+                    const std::string path = operation.path;
+                    std::vector<ProjectDiscoveryProvider> providers =
+                        std::move(operation.providers);
+                    // Throwing reports worker failures through AsyncRuntime::failed.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    AsyncWork work = [path, providers = std::move(providers), weak_state, id,
+                                      completed = callbacks.completed](
+                                         const std::stop_token& cancellation) mutable {
+                        std::expected<std::optional<ProjectDiscovery>, std::error_code> discovery =
+                            discover_project(path, providers, cancellation);
+                        if (!discovery) {
+                            throw_file_error(discovery.error());
+                        }
+                        ScriptAsyncResult result = ScriptProjectDiscoveryResult{
+                            .path = path,
+                            .discovery = std::move(*discovery),
+                        };
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
+                    const AsyncTaskId native = state_->runtime->submit(
+                        {.work = std::move(work),
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
+                    return {.kind = ScriptAsyncTaskKind::ProjectDiscovery, .native = native};
                 } else {
                     if (operation.file.empty()) {
                         throw std::invalid_argument("process executable is empty");

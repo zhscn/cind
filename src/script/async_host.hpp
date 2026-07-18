@@ -1,12 +1,15 @@
 #pragma once
 
 #include "async/runtime.hpp"
+#include "formatting/cpp_indent_style.hpp"
+#include "project/project_files.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -17,6 +20,8 @@ enum class ScriptAsyncTaskKind : std::uint8_t {
     FileRead,
     FileWrite,
     DirectoryList,
+    ClangFormatStyle,
+    ProjectDiscovery,
     Process,
 };
 
@@ -34,6 +39,15 @@ struct ScriptDirectoryListRequest {
     std::size_t maximum_entries = 4096;
 };
 
+struct ScriptClangFormatStyleRequest {
+    std::string path;
+};
+
+struct ScriptProjectDiscoveryRequest {
+    std::string path;
+    std::vector<ProjectDiscoveryProvider> providers;
+};
+
 struct ScriptProcessRequest {
     std::string file;
     std::vector<std::string> arguments;
@@ -41,7 +55,8 @@ struct ScriptProcessRequest {
 };
 
 using ScriptAsyncRequest = std::variant<ScriptFileReadRequest, ScriptFileWriteRequest,
-                                        ScriptDirectoryListRequest, ScriptProcessRequest>;
+                                        ScriptDirectoryListRequest, ScriptClangFormatStyleRequest,
+                                        ScriptProjectDiscoveryRequest, ScriptProcessRequest>;
 
 struct ScriptFileReadResult {
     std::string path;
@@ -64,6 +79,18 @@ struct ScriptDirectoryListResult {
     std::vector<ScriptDirectoryEntry> entries;
 };
 
+struct ScriptClangFormatStyleResult {
+    std::string path;
+    bool found = false;
+    CppIndentStyle style;
+    std::string origin;
+};
+
+struct ScriptProjectDiscoveryResult {
+    std::string path;
+    std::optional<ProjectDiscovery> discovery;
+};
+
 struct ScriptProcessResult {
     std::int64_t exit_status = 0;
     int term_signal = 0;
@@ -71,8 +98,9 @@ struct ScriptProcessResult {
     std::string standard_error;
 };
 
-using ScriptAsyncResult = std::variant<ScriptFileReadResult, ScriptFileWriteResult,
-                                       ScriptDirectoryListResult, ScriptProcessResult>;
+using ScriptAsyncResult =
+    std::variant<ScriptFileReadResult, ScriptFileWriteResult, ScriptDirectoryListResult,
+                 ScriptClangFormatStyleResult, ScriptProjectDiscoveryResult, ScriptProcessResult>;
 
 struct ScriptAsyncCallbacks {
     std::function<void(std::uint64_t, ScriptAsyncResult)> completed;

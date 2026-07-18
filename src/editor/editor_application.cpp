@@ -1,16 +1,12 @@
 #include "editor/editor_application.hpp"
 
-#include "cli/style_loader.hpp"
-#include "commands/file_io.hpp"
 #include "editor/noun_evaluator.hpp"
 #include "editor/resource_policy.hpp"
-#include "project/project_files.hpp"
 #include "project/search_results.hpp"
 #include "syntax/structure.hpp"
 #include "ui/text_position.hpp"
 
 #include <algorithm>
-#include <filesystem>
 #include <format>
 #include <limits>
 #include <new>
@@ -21,8 +17,6 @@ namespace cind {
 
 namespace {
 
-namespace fs = std::filesystem;
-
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
     const TextOffset content_end = text.line_content_end(line);
@@ -32,15 +26,6 @@ TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const TextOffset line_end = text.line_range(line).end;
     return caret < line_end ? TextRange{caret, line_end} : TextRange{caret, caret};
 }
-
-struct LoadedFileData {
-    std::string resource;
-    std::string contents;
-    CppIndentStyle style;
-    std::string style_origin;
-    ModeId mode;
-    std::optional<ProjectDiscovery> project;
-};
 
 } // namespace
 
@@ -195,12 +180,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .open_file_at =
-               [this](WindowId window, const std::string& path, std::uint32_t line,
-                      std::uint32_t column) {
-                   return open_file(path, window,
-                                    LinePosition{.line = line, .byte_column = column});
-               },
            .set_message = [this](std::string message) { message_ = std::move(message); },
            .ensure_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
                try {
@@ -213,10 +192,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .open_file =
-               [this](WindowId window, const std::string& path) {
-                   return open_file(path, window, std::nullopt);
-               },
            .start_project_search =
                [this](ProjectId project, WindowId window, std::string query) {
                    return start_project_search(project, std::move(query), window);
@@ -239,10 +214,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return create_buffer(BufferSpec{.name = std::move(spec.name),
                                                    .initial_text = std::move(spec.initial_text),
                                                    .kind = spec.kind,
-                                                   .resource_uri = std::nullopt,
+                                                   .resource_uri = std::move(spec.resource),
                                                    .read_only = spec.read_only},
-                                        CppIndentStyle{}, std::move(spec.style_origin),
-                                        spec.major_mode);
+                                        spec.style, std::move(spec.style_origin), spec.major_mode);
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
                }
@@ -272,6 +246,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::vector<WindowId>(window_layout_.leaves().begin(),
                                                 window_layout_.leaves().end());
                },
+           .active_window = [this] { return active_window_; },
+           .startup_placeholder = [this] { return startup_placeholder_; },
+           .set_startup_placeholder =
+               [this](std::optional<BufferId> buffer) { startup_placeholder_ = buffer; },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -554,11 +532,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     sync_keymaps();
     if (deferred_initial_load) {
         startup_placeholder_ = initial;
-        if (std::expected<void, std::string> opened = open_file(
-                spec.path, active_window_,
-                spec.initial_line > 0
-                    ? std::optional(LinePosition{.line = spec.initial_line - 1, .byte_column = 0})
-                    : std::nullopt);
+        if (std::expected<void, std::string> opened = guile_.open_resource(
+                active_window_, spec.path,
+                spec.initial_line > 0 ? std::optional(spec.initial_line - 1) : std::nullopt,
+                spec.initial_line > 0 ? std::optional<std::uint32_t>(0) : std::nullopt);
             !opened) {
             message_ = std::format("open failed: {}", opened.error());
         }
@@ -786,152 +763,7 @@ void EditorApplication::reset_preferred_column() {
 }
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
-    return open_file(input, active_window_, std::nullopt);
-}
-
-std::expected<void, std::string>
-EditorApplication::open_file(std::string_view input, WindowId target_window,
-                             std::optional<LinePosition> position) {
-    std::expected<std::string, std::string> normalized = normalize_resource_path(input);
-    if (!normalized) {
-        return std::unexpected(normalized.error());
-    }
-    if (const std::optional<BufferId> existing = runtime_.buffers().find_by_resource(*normalized)) {
-        (void)show_buffer(target_window, *existing);
-        if (position) {
-            apply_position(target_window, *position);
-        }
-        return {};
-    }
-    if (auto pending = std::ranges::find_if(
-            pending_opens_, [&](const PendingOpen& open) { return open.resource == *normalized; });
-        pending != pending_opens_.end()) {
-        pending->target_window = target_window;
-        pending->position = position;
-        message_ = std::format("opening {}…", *normalized);
-        return {};
-    }
-
-    const std::string resource = *normalized;
-    try {
-        pending_opens_.push_back({.resource = resource,
-                                  .target_window = target_window,
-                                  .position = position,
-                                  .task = {}});
-        PendingOpen& pending = pending_opens_.back();
-        auto requested_resource = std::make_shared<const std::string>(resource);
-        const ModeId requested_mode = mode_for_resource(resource);
-        const bool load_cpp_style =
-            runtime_.language_provider(requested_mode, LanguageFacet::Indentation).has_value();
-        auto project_providers = std::make_shared<const std::vector<ProjectDiscoveryProvider>>(
-            runtime_.resource_policies().project_providers());
-        pending.task = async_runtime_.submit({
-            .work = [this, requested_resource, requested_mode, load_cpp_style,
-                     project_providers](const std::stop_token& cancellation) -> AsyncCompletion {
-                std::expected<FileReadResult, std::error_code> file =
-                    read_file_contents(*requested_resource, cancellation);
-                if (!file) {
-                    if (file.error() == std::make_error_code(std::errc::operation_canceled)) {
-                        throw AsyncTaskCancelled();
-                    }
-                    throw std::system_error(file.error(),
-                                            std::format("cannot open {}", *requested_resource));
-                }
-                auto loaded_data = std::make_shared<LoadedFileData>(LoadedFileData{
-                    .resource = *requested_resource,
-                    .contents = std::move(file->contents),
-                    .style = {},
-                    .style_origin = load_cpp_style ? "llvm (fallback)" : "plain text",
-                    .mode = requested_mode,
-                    .project = std::nullopt,
-                });
-                if (load_cpp_style) {
-                    if (std::optional<LoadedStyle> loaded_style =
-                            load_clang_format_style(fs::path(*requested_resource).parent_path())) {
-                        loaded_data->style = loaded_style->style;
-                        loaded_data->style_origin = loaded_style->config_path.filename().string();
-                    }
-                }
-                std::expected<std::optional<ProjectDiscovery>, std::error_code> project =
-                    discover_project(*requested_resource, *project_providers, cancellation);
-                if (!project &&
-                    project.error() == std::make_error_code(std::errc::operation_canceled)) {
-                    throw AsyncTaskCancelled();
-                }
-                if (project) {
-                    loaded_data->project = std::move(*project);
-                }
-                return [this, loaded_data] {
-                    finish_open(std::move(loaded_data->resource), std::move(loaded_data->contents),
-                                loaded_data->style, std::move(loaded_data->style_origin),
-                                loaded_data->mode, loaded_data->project);
-                };
-            },
-            .cancelled = [this, requested_resource] { cancel_open(*requested_resource); },
-            .failed =
-                [this, requested_resource](const std::exception_ptr& failure) {
-                    fail_open(*requested_resource, failure);
-                },
-        });
-        message_ = std::format("opening {}…", resource);
-        return {};
-    } catch (const std::exception& exception) {
-        std::erase_if(pending_opens_,
-                      [&](const PendingOpen& open) { return open.resource == resource; });
-        return std::unexpected(exception.what());
-    }
-}
-
-void EditorApplication::finish_open(std::string resource, std::string contents,
-                                    CppIndentStyle style, std::string style_origin, ModeId mode,
-                                    const std::optional<ProjectDiscovery>& project) {
-    const auto pending = std::ranges::find_if(
-        pending_opens_, [&](const PendingOpen& open) { return open.resource == resource; });
-    if (pending == pending_opens_.end()) {
-        return;
-    }
-    const WindowId requested_window = pending->target_window;
-    const std::optional<LinePosition> position = pending->position;
-    pending_opens_.erase(pending);
-
-    try {
-        BufferId buffer;
-        if (const std::optional<BufferId> existing =
-                runtime_.buffers().find_by_resource(resource)) {
-            buffer = *existing;
-        } else {
-            buffer = create_buffer(BufferSpec{.name = {},
-                                              .initial_text = std::move(contents),
-                                              .kind = BufferKind::File,
-                                              .resource_uri = resource,
-                                              .read_only = false},
-                                   style, std::move(style_origin), mode);
-        }
-        project_service_->attach_buffer(buffer, project);
-        const WindowId target = runtime_.windows().try_get(requested_window) != nullptr
-                                    ? requested_window
-                                    : active_window_;
-        if (runtime_.windows().try_get(target) != nullptr) {
-            (void)show_buffer(target, buffer);
-            if (position) {
-                apply_position(target, *position);
-            }
-        }
-        if (startup_placeholder_ && *startup_placeholder_ != buffer) {
-            const BufferId placeholder = *startup_placeholder_;
-            startup_placeholder_.reset();
-            if (Buffer* startup = runtime_.buffers().try_get(placeholder);
-                startup != nullptr && !startup->modified()) {
-                std::expected<void, std::string> removed = release_buffer(placeholder, buffer);
-                if (!removed) {
-                    startup_placeholder_ = placeholder;
-                }
-            }
-        }
-        message_ = std::format("opened {}", resource);
-    } catch (const std::exception& exception) {
-        message_ = std::format("open failed: {}", exception.what());
-    }
+    return guile_.open_resource(active_window_, input);
 }
 
 std::expected<void, std::string> EditorApplication::start_project_search(ProjectId project,
@@ -1104,27 +936,6 @@ void EditorApplication::cancel_project_search(std::uint64_t generation) {
     project_search_.process = {};
     project_search_.parse_task = {};
     message_ = "project search cancelled";
-}
-
-void EditorApplication::fail_open(std::string_view resource, const std::exception_ptr& failure) {
-    std::erase_if(pending_opens_,
-                  [&](const PendingOpen& open) { return open.resource == resource; });
-    try {
-        if (failure) {
-            std::rethrow_exception(failure);
-        }
-        message_ = "open failed";
-    } catch (const std::exception& exception) {
-        message_ = std::format("open failed: {}", exception.what());
-    } catch (...) {
-        message_ = "open failed";
-    }
-}
-
-void EditorApplication::cancel_open(std::string_view resource) {
-    std::erase_if(pending_opens_,
-                  [&](const PendingOpen& open) { return open.resource == resource; });
-    message_ = std::format("open cancelled: {}", resource);
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
