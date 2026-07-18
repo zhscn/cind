@@ -2465,10 +2465,43 @@ TEST_CASE("buffer picker defaults to the active workbench and can widen globally
     send_keys(application, "C-g");
 
     CHECK(application.buffer_id() == help);
+    send_keys(application, "C-x b C-x b");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.provider == "buffers-global");
+    application.insert_text(first_only_name);
+    send_keys(application, "RET");
+    CHECK(application.buffer_id() == first_only);
+    CHECK(application.workbench_snapshots().back().scope.empty());
+
+    send_keys(application, "C-x b");
+    REQUIRE(application.interaction().state() != nullptr);
+    const auto visitor = std::ranges::find(application.interaction().state()->candidates,
+                                           first_only_name, &InteractionCandidate::value);
+    REQUIRE(visitor != application.interaction().state()->candidates.end());
+    CHECK(visitor->detail.ends_with("visitor"));
+    send_keys(application, "C-g");
+
+    send_keys(application, "C-x Right");
+    CHECK(application.buffer_id() == help);
     send_keys(application, "C-x Right");
     CHECK(application.buffer_id() == initial);
     send_keys(application, "C-x Right");
-    CHECK(application.buffer_id() == help);
+    CHECK(application.buffer_id() == first_only);
+    send_keys(application, "C-x Left");
+    CHECK(application.buffer_id() == initial);
+
+    REQUIRE(application.switch_buffer(first_only));
+    send_keys(application, "C-x w e");
+    send_keys(application, "C-x b");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(std::ranges::none_of(
+        application.interaction().state()->candidates,
+        [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
+    send_keys(application, "C-x b");
+    CHECK(std::ranges::any_of(
+        application.interaction().state()->candidates,
+        [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
+    send_keys(application, "C-g");
 }
 
 TEST_CASE("asynchronous display completion stays with its origin workbench") {

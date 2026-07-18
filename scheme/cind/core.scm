@@ -950,18 +950,46 @@
           ((equal? (vector-ref values index) target) index)
           (else (loop (+ index 1))))))
 
+(define buffer-cycle-states (make-weak-key-hash-table))
+
+(define (same-buffer-set? left right)
+  (and (= (vector-length left) (vector-length right))
+       (let loop ((index 0))
+         (or (= index (vector-length left))
+             (and (vector-index-of right (vector-ref left index))
+                  (loop (+ index 1)))))))
+
 (define (buffer-switch-relative host context delta)
-  (let* ((buffers (workbench-buffer-ids host (current-workbench host) #f))
+  (let* ((workbench (current-workbench host))
+         (buffers (workbench-buffer-ids host workbench #f))
          (count (vector-length buffers)))
     (if (< count 2)
-        (command-completed)
-        (let ((current (vector-index-of buffers (context-buffer context))))
+        (begin
+          (hashq-remove! buffer-cycle-states host)
+          (command-completed))
+        (let* ((current-buffer (context-buffer context))
+               (saved (hashq-ref buffer-cycle-states host))
+               (saved-order (and saved (vector-ref saved 1)))
+               (saved-index (and saved (vector-ref saved 2)))
+               (continuing?
+                (and saved
+                     (equal? workbench (vector-ref saved 0))
+                     (same-buffer-set? saved-order buffers)
+                     (< saved-index (vector-length saved-order))
+                     (equal? current-buffer (vector-ref saved-order saved-index))))
+               (order (if continuing? saved-order buffers))
+               (current (if continuing?
+                            saved-index
+                            (vector-index-of order current-buffer))))
           (if (not current)
               (command-error "current buffer is not open")
-              (begin
+              (let* ((target-index (modulo (+ current delta) count))
+                     (target (vector-ref order target-index)))
                 (display-buffer! host (context-window context)
-                                 (vector-ref buffers (modulo (+ current delta) count))
+                                 target
                                  'explicit)
+                (hashq-set! buffer-cycle-states host
+                            (vector workbench order target-index))
                 (command-completed)))))))
 
 (define (buffer-switch-widen host context invocation)
