@@ -244,11 +244,27 @@
                                  (vector-ref buffers (modulo (+ current delta) count)))
                 (command-completed)))))))
 
+(define (first-other-buffer buffers target)
+  (let loop ((index 0))
+    (cond ((= index (vector-length buffers)) #f)
+          ((equal? (vector-ref buffers index) target) (loop (+ index 1)))
+          (else (vector-ref buffers index)))))
+
+(define (make-scratch-buffer host)
+  (create-buffer! host "*scratch*" "" 'scratch #f 'fundamental-mode "plain text"))
+
 (define (buffer-kill host context force?)
-  (let ((error (kill-buffer! host (context-buffer context) force?)))
-    (if error
-        (command-error error)
-        (command-completed))))
+  (let ((target (context-buffer context)))
+    (cond ((buffer-saving? host target)
+           (command-error "buffer has a save in progress"))
+          ((and (buffer-modified? host target) (not force?))
+           (command-error "buffer has unsaved changes"))
+          (else
+           (let* ((buffers (open-buffer-ids host))
+                  (existing (first-other-buffer buffers target))
+                  (replacement (if existing existing (make-scratch-buffer host)))
+                  (error (release-buffer! host target replacement)))
+             (if error (command-error error) (command-completed)))))))
 
 (define (completed-or-error error)
   (if error (command-error error) (command-completed)))

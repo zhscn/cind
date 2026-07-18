@@ -1437,7 +1437,13 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         send_keys(application, "C-x `");
         CHECK(application.location_navigation().selected_index == 2);
 
-        REQUIRE(application.kill_buffer(result_buffer, true).has_value());
+        CommandContext kill_results(application.runtime(), secondary->window, result_buffer,
+                                    application.view_id(secondary->window));
+        const CommandId force_kill_results =
+            application.runtime().commands().find("buffer.force-kill").value_or(CommandId{});
+        REQUIRE(force_kill_results);
+        REQUIRE(
+            application.runtime().commands().invoke(force_kill_results, kill_results).has_value());
         CHECK_FALSE(application.location_navigation().buffer.has_value());
     }
     std::filesystem::remove_all(root);
@@ -2094,7 +2100,9 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     CHECK(application.buffer_count() == 1);
     CHECK(application.buffer_id() == first);
 
-    CHECK(application.kill_buffer(first, true).has_value());
+    CommandContext kill_last_context(application.runtime(), application.window_id(),
+                                     application.buffer_id(), application.view_id());
+    REQUIRE(application.runtime().commands().invoke(force_kill, kill_last_context).has_value());
     CHECK(application.buffer_count() == 1);
     CHECK(application.session().buffer().name() == "*scratch*");
     CHECK_FALSE(application.dirty());

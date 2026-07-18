@@ -124,7 +124,7 @@ public:
     bool delete_window();
     void delete_other_windows();
     bool select_other_window(int delta = 1);
-    std::expected<void, std::string> kill_buffer(BufferId buffer, bool force = false);
+    std::expected<void, std::string> release_buffer(BufferId buffer, BufferId replacement);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
     LocationNavigationSnapshot location_navigation() const;

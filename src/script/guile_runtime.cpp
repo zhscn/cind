@@ -3529,29 +3529,112 @@ SCM open_buffers(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM kill_buffer(SCM host_object, SCM buffer_value, SCM force_value) {
-    if (!scheme_boolean(force_value)) {
-        scm_wrong_type_arg_msg("kill-buffer!", 3, force_value, "boolean");
+// The low-level ABI is positional; policy wrappers choose names, kinds, modes,
+// and presentation metadata before entering this mechanism boundary.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_value,
+                  SCM read_only_value, SCM mode_value, SCM style_origin_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("create-buffer!", 2, name_value, "string");
     }
-    HostLease& host = require_host(host_object, "kill-buffer!");
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "kill-buffer!", 2);
-    if (!host.services.kill_buffer) {
-        scm_misc_error("kill-buffer!", "buffer-kill capability is unavailable", SCM_EOL);
+    if (!scm_is_string(text_value)) {
+        scm_wrong_type_arg_msg("create-buffer!", 3, text_value, "string");
+    }
+    if (!scheme_boolean(read_only_value)) {
+        scm_wrong_type_arg_msg("create-buffer!", 5, read_only_value, "boolean");
+    }
+    if (!scm_is_string(style_origin_value)) {
+        scm_wrong_type_arg_msg("create-buffer!", 7, style_origin_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "create-buffer!");
+        if (!host.services.create_buffer) {
+            scm_misc_error("create-buffer!", "buffer-create capability is unavailable", SCM_EOL);
+        }
+        BufferKind kind;
+        if (symbol_is(kind_value, "scratch")) {
+            kind = BufferKind::Scratch;
+        } else if (symbol_is(kind_value, "generated")) {
+            kind = BufferKind::Generated;
+        } else if (symbol_is(kind_value, "process")) {
+            kind = BufferKind::Process;
+        } else {
+            scm_wrong_type_arg_msg("create-buffer!", 4, kind_value,
+                                   "'scratch, 'generated, or 'process");
+        }
+        std::optional<ModeId> mode;
+        if (!scheme_false(mode_value)) {
+            mode = require_mode(host, mode_value, "create-buffer!", 6);
+        }
+        std::expected<BufferId, std::string> created =
+            host.services.create_buffer({.name = scheme_string(name_value),
+                                         .initial_text = scheme_string(text_value),
+                                         .kind = kind,
+                                         .read_only = scheme_true(read_only_value),
+                                         .major_mode = mode,
+                                         .style_origin = scheme_string(style_origin_value)});
+        if (!created) {
+            raise_host_error("create-buffer!", created.error());
+        }
+        return entity_id(created->slot, created->generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("create-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("create-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_saving_p(SCM host_object, SCM buffer_value) {
+    HostLease& host = require_host(host_object, "buffer-saving?");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-saving?", 2);
+    if (!host.services.buffer_saving) {
+        scm_misc_error("buffer-saving?", "buffer-save snapshot capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.buffer_saving(buffer));
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-saving?", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-saving?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_modified_p(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-modified?");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-modified?", 2);
+        return scm_from_bool(host.runtime->buffers().get(buffer).modified());
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-modified?", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-modified?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
+    HostLease& host = require_host(host_object, "release-buffer!");
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "release-buffer!", 2);
+    const BufferId replacement =
+        entity_id_from_scheme<BufferTag>(replacement_value, "release-buffer!", 3);
+    if (!host.services.release_buffer) {
+        scm_misc_error("release-buffer!", "buffer-release capability is unavailable", SCM_EOL);
     }
     try {
         const std::expected<void, std::string> removed =
-            host.services.kill_buffer(buffer, scheme_true(force_value));
-        if (!removed) {
-            return scm_from_utf8_string(removed.error().c_str());
-        }
-        return SCM_BOOL_F;
+            host.services.release_buffer(buffer, replacement);
+        return removed ? SCM_BOOL_F : scm_from_utf8_string(removed.error().c_str());
     } catch (const std::exception& exception) {
-        raise_host_error("kill-buffer!", exception.what());
+        raise_host_error("release-buffer!", exception.what());
     } catch (...) {
-        scm_misc_error("kill-buffer!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("release-buffer!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4154,7 +4237,14 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("save-buffer!", 2, 0, 0, reinterpret_cast<scm_t_subr>(save_buffer));
     (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffers));
-    (void)scm_c_define_gsubr("kill-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(kill_buffer));
+    (void)scm_c_define_gsubr("create-buffer!", 7, 0, 0,
+                             reinterpret_cast<scm_t_subr>(create_buffer));
+    (void)scm_c_define_gsubr("buffer-saving?", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_saving_p));
+    (void)scm_c_define_gsubr("buffer-modified?", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_modified_p));
+    (void)scm_c_define_gsubr("release-buffer!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(release_buffer));
     (void)scm_c_define_gsubr("request-quit!", 2, 0, 0, reinterpret_cast<scm_t_subr>(request_quit));
     (void)scm_c_define_gsubr("split-window!", 3, 0, 0, reinterpret_cast<scm_t_subr>(split_window));
     (void)scm_c_define_gsubr("delete-window!", 2, 0, 0,
@@ -4195,8 +4285,9 @@ void initialize_host_module(void*) {
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
         "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
-        "select-other-window!", "request-redraw!", nullptr);
+        "create-buffer!", "buffer-saving?", "buffer-modified?", "release-buffer!", "request-quit!",
+        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
+        "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 

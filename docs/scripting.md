@@ -157,7 +157,10 @@ The native module exports:
 (set-buffer-resource! host buffer-id path)
 (save-buffer! host buffer-id)
 (open-buffer-ids host)
-(kill-buffer! host buffer-id force?)
+(create-buffer! host name initial-text kind read-only? mode-or-#f style-origin)
+(buffer-saving? host buffer-id)
+(buffer-modified? host buffer-id)
+(release-buffer! host buffer-id replacement-buffer-id)
 (request-quit! host force?)
 (split-window! host window-id axis)
 (delete-window! host window-id)
@@ -474,10 +477,14 @@ matching project. File commands use these primitives to keep prompt and save-as 
 `save-buffer!` snapshots the identified buffer and schedules the native atomic-write pipeline
 without consulting frontend focus.
 
-`open-buffer-ids` returns the application-owned buffers in lifecycle order. `kill-buffer!` applies
-the native buffer/view/window teardown contract and returns `#f` on success or an expected error
-string. Scheme uses the snapshot to implement wrap-around next/previous policy and turns kill
-refusals into ordinary command errors.
+`open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-saving?` and
+`buffer-modified?` expose lifecycle state without deciding how commands respond to it.
+`create-buffer!` creates an undisplayed scratch, generated, or process buffer from explicit policy
+data. `release-buffer!` requires a distinct open replacement, redirects every Window displaying the
+released buffer, destroys its Views, and removes the Buffer as one native lifecycle operation. It
+returns `#f` on success or an invariant error string. The bundled Scheme policy refuses an active
+save, applies the force/modified rule, chooses the first remaining Buffer, and creates its named
+`*scratch*` replacement when necessary.
 
 Window capabilities operate on an explicit command-context window. `split-window!` accepts `rows`
 or `columns`; split, delete and focus operations return `#f` on success or an expected error string.

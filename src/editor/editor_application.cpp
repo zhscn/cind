@@ -259,8 +259,26 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
-           .kill_buffer = [this](BufferId buffer,
-                                 bool force) { return kill_buffer(buffer, force); },
+           .create_buffer =
+               [this](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
+               try {
+                   return create_buffer(BufferSpec{.name = std::move(spec.name),
+                                                   .initial_text = std::move(spec.initial_text),
+                                                   .kind = spec.kind,
+                                                   .resource_uri = std::nullopt,
+                                                   .read_only = spec.read_only},
+                                        CppIndentStyle{}, std::move(spec.style_origin),
+                                        spec.major_mode);
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .buffer_saving =
+               [this](BufferId buffer) { return state_for(buffer).pending_save.has_value(); },
+           .release_buffer =
+               [this](BufferId buffer, BufferId replacement) {
+                   return release_buffer(buffer, replacement);
+               },
            .request_quit = [this](bool force) { request_quit(force); },
            .split_window = [this](WindowId window,
                                   WindowSplitAxis axis) -> std::expected<void, std::string> {
@@ -906,7 +924,7 @@ void EditorApplication::finish_open(std::string resource, std::string contents,
             startup_placeholder_.reset();
             if (Buffer* startup = runtime_.buffers().try_get(placeholder);
                 startup != nullptr && !startup->modified()) {
-                std::expected<void, std::string> removed = kill_buffer(placeholder, true);
+                std::expected<void, std::string> removed = release_buffer(placeholder, buffer);
                 if (!removed) {
                     startup_placeholder_ = placeholder;
                 }
@@ -1216,7 +1234,8 @@ bool EditorApplication::select_other_window(WindowId from, int delta) {
     return focus_window(*target);
 }
 
-std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer, bool force) {
+std::expected<void, std::string> EditorApplication::release_buffer(BufferId buffer,
+                                                                   BufferId replacement) {
     auto found =
         std::ranges::find_if(buffers_, [buffer](const std::unique_ptr<BufferState>& state) {
             return state->buffer == buffer;
@@ -1228,22 +1247,17 @@ std::expected<void, std::string> EditorApplication::kill_buffer(BufferId buffer,
     if (target.pending_save) {
         return std::unexpected("buffer has a save in progress");
     }
-    if (runtime_.buffers().get(buffer).modified() && !force) {
-        return std::unexpected("buffer has unsaved changes");
+    if (buffer == replacement || runtime_.buffers().try_get(replacement) == nullptr ||
+        std::ranges::none_of(buffers_, [replacement](const std::unique_ptr<BufferState>& state) {
+            return state->buffer == replacement;
+        })) {
+        return std::unexpected("replacement buffer is not open");
     }
 
     if (location_navigation_ && location_navigation_->buffer == buffer) {
         location_navigation_.reset();
     }
 
-    if (buffers_.size() == 1) {
-        (void)create_scratch_buffer();
-        found = std::ranges::find_if(
-            buffers_, [buffer](const auto& state) { return state->buffer == buffer; });
-    }
-    const BufferId replacement = (*std::ranges::find_if(buffers_, [buffer](const auto& state) {
-                                     return state->buffer != buffer;
-                                 }))->buffer;
     std::vector<WindowId> affected_windows;
     for (const std::unique_ptr<ViewState>& view : views_) {
         if (view->buffer == buffer) {

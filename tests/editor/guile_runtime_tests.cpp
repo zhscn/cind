@@ -775,6 +775,7 @@ TEST_CASE("bundled Guile policy defines file modes and project discovery provide
 
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
+    const ModeId fundamental_mode = runtime.modes().define("fundamental-mode", ModeKind::Major);
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = "abc\n",
@@ -812,10 +813,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool buffer_resource_set = false;
     BufferId saved_buffer;
     bool buffer_saved = false;
-    BufferId killed_buffer;
-    bool kill_forced = false;
-    bool buffer_killed = false;
-    std::string kill_error;
+    std::optional<GuileBufferCreation> created_buffer;
+    bool buffer_saving = false;
+    bool only_buffer = false;
+    BufferId released_buffer;
+    BufferId replacement_buffer;
+    bool buffer_released = false;
+    std::string release_error;
     bool quit_requested = false;
     bool quit_forced = false;
     WindowId split_target;
@@ -913,15 +917,24 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  saved_buffer = target_buffer;
                  buffer_saved = true;
              },
-         .open_buffers = [&] { return std::vector<BufferId>{buffer, other}; },
-         .kill_buffer = [&](BufferId target_buffer,
-                            bool force) -> std::expected<void, std::string> {
-             if (!kill_error.empty()) {
-                 return std::unexpected(kill_error);
+         .open_buffers =
+             [&] {
+                 return only_buffer ? std::vector<BufferId>{buffer}
+                                    : std::vector<BufferId>{buffer, other};
+             },
+         .create_buffer = [&](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
+             created_buffer = std::move(spec);
+             return other;
+         },
+         .buffer_saving = [&](BufferId) { return buffer_saving; },
+         .release_buffer = [&](BufferId target_buffer,
+                               BufferId replacement) -> std::expected<void, std::string> {
+             if (!release_error.empty()) {
+                 return std::unexpected(release_error);
              }
-             killed_buffer = target_buffer;
-             kill_forced = force;
-             buffer_killed = true;
+             released_buffer = target_buffer;
+             replacement_buffer = replacement;
+             buffer_released = true;
              return {};
          },
          .request_quit =
@@ -1318,24 +1331,67 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const CommandResult killed =
         runtime.commands().invoke(require_command(runtime, "buffer.kill"), context);
     REQUIRE(killed.has_value());
-    REQUIRE(buffer_killed);
-    CHECK(killed_buffer == buffer);
-    CHECK_FALSE(kill_forced);
+    REQUIRE(buffer_released);
+    CHECK(released_buffer == buffer);
+    CHECK(replacement_buffer == other);
+    CHECK_FALSE(created_buffer.has_value());
 
-    buffer_killed = false;
+    buffer_released = false;
     const CommandResult force_killed =
         runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
     REQUIRE(force_killed.has_value());
-    REQUIRE(buffer_killed);
-    CHECK(killed_buffer == buffer);
-    CHECK(kill_forced);
+    REQUIRE(buffer_released);
+    CHECK(released_buffer == buffer);
+    CHECK(replacement_buffer == other);
 
-    kill_error = "buffer has unsaved changes";
+    EditTransaction modified = runtime.buffers().get(buffer).begin_transaction();
+    modified.insert(TextOffset{}, "changed");
+    (void)modified.commit();
+    buffer_released = false;
     const CommandResult refused_kill =
         runtime.commands().invoke(require_command(runtime, "buffer.kill"), context);
     REQUIRE_FALSE(refused_kill.has_value());
     CHECK(refused_kill.error().message == "buffer has unsaved changes");
-    kill_error.clear();
+    CHECK_FALSE(buffer_released);
+
+    buffer_saving = true;
+    const CommandResult saving_kill =
+        runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
+    REQUIRE_FALSE(saving_kill.has_value());
+    CHECK(saving_kill.error().message == "buffer has a save in progress");
+    buffer_saving = false;
+
+    release_error = "buffer release failed";
+    const CommandResult failed_release =
+        runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
+    REQUIRE_FALSE(failed_release.has_value());
+    CHECK(failed_release.error().message == "buffer release failed");
+    release_error.clear();
+
+    only_buffer = true;
+    created_buffer.reset();
+    buffer_released = false;
+    const CommandResult last_buffer_killed =
+        runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
+    REQUIRE(last_buffer_killed.has_value());
+    REQUIRE(created_buffer.has_value());
+    CHECK(created_buffer->name == "*scratch*");
+    CHECK(created_buffer->initial_text.empty());
+    CHECK(created_buffer->kind == BufferKind::Scratch);
+    CHECK_FALSE(created_buffer->read_only);
+    CHECK(created_buffer->major_mode == fundamental_mode);
+    CHECK(created_buffer->style_origin == "plain text");
+    REQUIRE(buffer_released);
+    CHECK(released_buffer == buffer);
+    CHECK(replacement_buffer == other);
+    only_buffer = false;
+
+    Buffer& restored_buffer = runtime.buffers().get(buffer);
+    EditTransaction restore = restored_buffer.begin_transaction();
+    restore.replace(TextRange{TextOffset{}, restored_buffer.snapshot().content().end_offset()},
+                    "abc\n");
+    (void)restore.commit();
+    restored_buffer.mark_saved(restored_buffer.snapshot().content());
 
     const CommandResult quit =
         runtime.commands().invoke(require_command(runtime, "application.quit"), context);

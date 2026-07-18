@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/buffer.hpp"
 #include "editor/command.hpp"
 #include "editor/ids.hpp"
 #include "editor/selection.hpp"
@@ -52,6 +53,15 @@ struct GuileLocationNavigation {
     std::size_t location_count = 0;
 };
 
+struct GuileBufferCreation {
+    std::string name;
+    std::string initial_text;
+    BufferKind kind = BufferKind::Scratch;
+    bool read_only = false;
+    std::optional<ModeId> major_mode;
+    std::string style_origin;
+};
+
 enum class GuileDeleteOutcome : std::uint8_t {
     Unchanged,
     Deleted,
@@ -99,7 +109,9 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(BufferId, std::string)> set_buffer_resource;
     std::function<void(BufferId)> save_buffer;
     std::function<std::vector<BufferId>()> open_buffers;
-    std::function<std::expected<void, std::string>(BufferId, bool)> kill_buffer;
+    std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
+    std::function<bool(BufferId)> buffer_saving;
+    std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;
     std::function<void(bool)> request_quit;
     std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
