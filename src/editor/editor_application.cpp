@@ -72,11 +72,11 @@ GuileDisplayPlan built_in_display_plan(const GuileDisplayFacts& facts) {
         return facts.windows[(index + 1) % facts.windows.size()].window;
     };
 
-    if (const std::optional<WindowId> target = slot()) {
-        return reuse_display_plan(*target);
-    }
     if (facts.intent == "explicit") {
         return reuse_display_plan(facts.origin);
+    }
+    if (const std::optional<WindowId> target = slot()) {
+        return reuse_display_plan(*target);
     }
     if (facts.intent == "tools" || facts.intent == "doc") {
         return split_display_plan(facts.active, WindowSplitAxis::Rows, 0.72F, facts.intent);
@@ -1052,20 +1052,33 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     }
     std::ranges::sort(facts.slots, {}, &GuileDisplaySlot::role);
 
+    const auto validate_plan = [&](const GuileDisplayPlan& plan) -> std::optional<std::string> {
+        if (!workbench.layout().contains(plan.target)) {
+            return "selected a window outside the active workbench";
+        }
+        if (plan.action == GuileDisplayPlan::Action::Reuse &&
+            runtime_.windows().get(plan.target).pinned() && intent != "explicit") {
+            return "selected a pinned window";
+        }
+        return std::nullopt;
+    };
     std::expected<GuileDisplayPlan, std::string> resolved = guile_.display_plan(facts);
+    std::optional<std::string> policy_error;
     if (!resolved) {
-        message_ =
-            std::format("display policy failed: {}; using built-in policy", resolved.error());
+        policy_error = resolved.error();
+    } else {
+        policy_error = validate_plan(*resolved);
+    }
+    if (policy_error) {
+        message_ = std::format("display policy failed: {}; using built-in policy", *policy_error);
         resolved = built_in_display_plan(facts);
+        if (const std::optional<std::string> fallback_error = validate_plan(*resolved)) {
+            return std::unexpected(
+                std::format("built-in display policy failed: {}", *fallback_error));
+        }
     }
     const GuileDisplayPlan& plan = *resolved;
-    if (!workbench.layout().contains(plan.target)) {
-        return std::unexpected("display policy selected a window outside the active workbench");
-    }
     if (plan.action == GuileDisplayPlan::Action::Reuse) {
-        if (runtime_.windows().get(plan.target).pinned() && intent != "explicit") {
-            return std::unexpected("display policy selected a pinned window");
-        }
         if (!show_buffer(plan.target, buffer) || !focus_window(plan.target)) {
             return std::unexpected("display policy target cannot show the buffer");
         }
@@ -1099,7 +1112,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
-    return show_buffer(window_id(), buffer);
+    return display_buffer(buffer, "explicit", window_id()).has_value();
 }
 
 bool EditorApplication::focus_window(WindowId window) {

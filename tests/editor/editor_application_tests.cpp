@@ -2253,6 +2253,13 @@ TEST_CASE("display intents reuse named slots and route jumps around pinned windo
     CHECK(application.runtime().windows().get(doc_window).created_by_policy());
     CHECK(application.buffer_id(edit_window) == edit_buffer);
 
+    REQUIRE(application.set_window_role(doc_window, "explicit").has_value());
+    const std::expected<WindowId, std::string> explicit_target =
+        application.display_buffer(edit_buffer, "explicit", edit_window);
+    REQUIRE(explicit_target.has_value());
+    CHECK(*explicit_target == edit_window);
+    REQUIRE(application.set_window_role(doc_window, "doc").has_value());
+
     send_keys(application, "C-h b");
     CHECK(application.open_windows().size() == 2);
     CHECK(application.window_id() == doc_window);
@@ -2271,6 +2278,30 @@ TEST_CASE("display intents reuse named slots and route jumps around pinned windo
     CHECK(application.window_id() == jump_window);
     CHECK(application.buffer_id(edit_window) == edit_buffer);
     CHECK(application.buffer_id(jump_window) == help_buffer);
+}
+
+TEST_CASE("invalid scripted display plans fall back to the built-in policy") {
+    TemporaryFile init(std::format("cind-display-fallback-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-display-policy!
+ host
+ (lambda (host facts)
+   (vector 'display-reuse (vector-ref facts 2))))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "one\n",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    const WindowId edit_window = application.window_id();
+    REQUIRE(application.set_window_pinned(edit_window, true).has_value());
+
+    send_keys(application, "C-h b");
+
+    REQUIRE(application.open_windows().size() == 2);
+    CHECK(application.window_id() != edit_window);
+    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.runtime().windows().get(application.window_id()).role() ==
+          std::optional<std::string>{"doc"});
 }
 
 TEST_CASE("workbench commands manage named editing surfaces") {
