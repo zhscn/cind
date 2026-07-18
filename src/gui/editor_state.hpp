@@ -40,6 +40,7 @@ struct InteractionStateSnapshot {
     std::string kind;
     std::string keymap;
     std::string input_state;
+    std::string buffer_name;
     std::string prompt;
     std::string input;
     std::size_t input_cursor = 0;

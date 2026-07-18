@@ -127,6 +127,9 @@ TEST_CASE("editor application owns normalized interaction dispatch") {
     send_keys(application, "C-s");
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(application.interaction().state()->request.prompt == "search: ");
+    CHECK(application.interaction().state()->request.buffer_name == " *minibuffer*");
+    CHECK(application.runtime().buffers().get(application.interaction().state()->buffer).name() ==
+          " *minibuffer*");
     CHECK(application.last_command() == "search.prompt");
 
     application.insert_text("two");

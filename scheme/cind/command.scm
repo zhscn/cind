@@ -84,12 +84,13 @@
   (vector 'dispatch-target name (list->vector arguments)
           (vector window buffer view)))
 
-(define (interaction kind keymap input-state prompt initial-input history provider
+(define (interaction kind keymap input-state buffer-name prompt initial-input history provider
                      allow-custom-input? accept-command . arguments)
   (vector 'interaction
           kind
           keymap
           input-state
+          buffer-name
           prompt
           initial-input
           history

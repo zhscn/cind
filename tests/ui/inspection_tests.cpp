@@ -134,6 +134,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .kind = "picker",
              .keymap = "interaction.picker",
              .input_state = "emacs",
+             .buffer_name = " *minibuffer*",
              .prompt = "Command: ",
              .input = {},
              .input_cursor = 0,
@@ -425,7 +426,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":48") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":49") != std::string::npos);
+    CHECK(snapshot.find("\"buffer_name\":\" *minibuffer*\"") != std::string::npos);
     CHECK(snapshot.find("\"styles\":{\"inactive_alpha\":176") != std::string::npos);
     CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);

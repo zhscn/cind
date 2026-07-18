@@ -162,6 +162,7 @@
                                (history "")
                                (keymap 'interaction.text)
                                (input-state 'emacs)
+                               (buffer-name " *minibuffer*")
                                (arguments '()))
   (require-string "read-from-minibuffer" "prompt" prompt)
   (require-string "read-from-minibuffer" "accept-command" accept-command)
@@ -169,8 +170,11 @@
   (require-string "read-from-minibuffer" "history" history)
   (require-symbol "read-from-minibuffer" "keymap" keymap)
   (require-symbol "read-from-minibuffer" "input-state" input-state)
+  (require-string "read-from-minibuffer" "buffer-name" buffer-name)
+  (when (zero? (string-length buffer-name))
+    (error "read-from-minibuffer: buffer-name must not be empty"))
   (require-arguments "read-from-minibuffer" arguments)
-  (apply interaction 'text keymap input-state prompt initial-input history "" #t
+  (apply interaction 'text keymap input-state buffer-name prompt initial-input history "" #t
          accept-command arguments))
 
 (define* (completing-read prompt provider accept-command
@@ -180,6 +184,7 @@
                           (allow-custom-input? #f)
                           (keymap 'interaction.picker)
                           (input-state 'emacs)
+                          (buffer-name " *minibuffer*")
                           (arguments '()))
   (require-string "completing-read" "prompt" prompt)
   (require-string "completing-read" "provider" provider)
@@ -188,6 +193,9 @@
   (require-string "completing-read" "history" history)
   (require-symbol "completing-read" "keymap" keymap)
   (require-symbol "completing-read" "input-state" input-state)
+  (require-string "completing-read" "buffer-name" buffer-name)
+  (when (zero? (string-length buffer-name))
+    (error "completing-read: buffer-name must not be empty"))
   (require-arguments "completing-read" arguments)
-  (apply interaction 'picker keymap input-state prompt initial-input history provider
+  (apply interaction 'picker keymap input-state buffer-name prompt initial-input history provider
          (and allow-custom-input? #t) accept-command arguments))

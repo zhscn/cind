@@ -57,6 +57,9 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
     if (!request.accept_command) {
         return std::unexpected("interaction request has no accept command");
     }
+    if (request.buffer_name.empty()) {
+        return std::unexpected("interaction buffer name must not be empty");
+    }
     const std::optional<KeymapId> keymap = runtime_->keymaps().find(request.keymap);
     if (!keymap) {
         return std::unexpected(std::format("unknown interaction keymap '{}'", request.keymap));
@@ -80,7 +83,7 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
     ViewId view;
     WindowId window;
     try {
-        buffer = runtime_->buffers().create({.name = " *minibuffer*",
+        buffer = runtime_->buffers().create({.name = request.buffer_name,
                                              .initial_text = request.initial_input,
                                              .kind = BufferKind::Minibuffer,
                                              .resource_uri = std::nullopt,

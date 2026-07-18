@@ -358,6 +358,8 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
     append_json_string(output, interaction.keymap);
     output += ",\"input_state\":";
     append_json_string(output, interaction.input_state);
+    output += ",\"buffer_name\":";
+    append_json_string(output, interaction.buffer_name);
     output += ",\"prompt\":";
     append_json_string(output, interaction.prompt);
     output += ",\"input\":";
@@ -1470,6 +1472,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.editor.interaction.active &&
         frame.editor.input_state != frame.editor.interaction.input_state) {
         violations.emplace_back("interaction input state does not match the active view");
+    }
+    if (frame.editor.interaction.active && frame.editor.interaction.buffer_name.empty()) {
+        violations.emplace_back("interaction buffer name is empty");
     }
     if (frame.editor.command_loop.layers.empty() ||
         frame.editor.command_loop.layers.back().scope != "global") {
@@ -2679,6 +2684,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " kind=" << printable(frame.editor.interaction.kind)
            << " keymap=" << printable(frame.editor.interaction.keymap)
            << " input-state=" << printable(frame.editor.interaction.input_state)
+           << " buffer=" << printable(frame.editor.interaction.buffer_name)
            << " provider=" << printable(frame.editor.interaction.provider)
            << " input-cursor=" << frame.editor.interaction.input_cursor
            << " history=" << frame.editor.interaction.history_entries;

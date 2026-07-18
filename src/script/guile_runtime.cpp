@@ -5818,16 +5818,17 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
                                .target = target};
     }
     if (symbol_is(tag, "interaction")) {
-        if (size != 11 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||
+        if (size != 12 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||
             !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 2))) ||
             !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 3))) ||
             !scm_is_string(scm_c_vector_ref(value, 4)) ||
             !scm_is_string(scm_c_vector_ref(value, 5)) ||
             !scm_is_string(scm_c_vector_ref(value, 6)) ||
             !scm_is_string(scm_c_vector_ref(value, 7)) ||
-            !scheme_boolean(scm_c_vector_ref(value, 8)) ||
-            !scm_is_string(scm_c_vector_ref(value, 9)) ||
-            !scm_is_vector(scm_c_vector_ref(value, 10))) {
+            !scm_is_string(scm_c_vector_ref(value, 8)) ||
+            !scheme_boolean(scm_c_vector_ref(value, 9)) ||
+            !scm_is_string(scm_c_vector_ref(value, 10)) ||
+            !scm_is_vector(scm_c_vector_ref(value, 11))) {
             return std::unexpected(CommandError{"Guile interaction result is malformed"});
         }
         const SCM kind_value = scm_c_vector_ref(value, 1);
@@ -5840,8 +5841,8 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
             return std::unexpected(CommandError{"Guile interaction kind is unknown"});
         }
         std::vector<SettingValue> arguments =
-            arguments_from_scheme(scm_c_vector_ref(value, 10), "command-interaction");
-        const std::string accept_name = scheme_string(scm_c_vector_ref(value, 9));
+            arguments_from_scheme(scm_c_vector_ref(value, 11), "command-interaction");
+        const std::string accept_name = scheme_string(scm_c_vector_ref(value, 10));
         const std::optional<CommandId> accept = context.runtime().commands().find(accept_name);
         if (!accept) {
             return std::unexpected(
@@ -5851,11 +5852,12 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
             .kind = kind,
             .keymap = scheme_name(scm_c_vector_ref(value, 2), "command-interaction", 2),
             .input_state = scheme_name(scm_c_vector_ref(value, 3), "command-interaction", 3),
-            .prompt = scheme_string(scm_c_vector_ref(value, 4)),
-            .initial_input = scheme_string(scm_c_vector_ref(value, 5)),
-            .history = scheme_string(scm_c_vector_ref(value, 6)),
-            .provider = scheme_string(scm_c_vector_ref(value, 7)),
-            .allow_custom_input = scheme_true(scm_c_vector_ref(value, 8)),
+            .buffer_name = scheme_string(scm_c_vector_ref(value, 4)),
+            .prompt = scheme_string(scm_c_vector_ref(value, 5)),
+            .initial_input = scheme_string(scm_c_vector_ref(value, 6)),
+            .history = scheme_string(scm_c_vector_ref(value, 7)),
+            .provider = scheme_string(scm_c_vector_ref(value, 8)),
+            .allow_custom_input = scheme_true(scm_c_vector_ref(value, 9)),
             .accept_command = *accept,
             .arguments = std::move(arguments)};
     }

@@ -824,12 +824,14 @@ Interactive commands import `(cind minibuffer)` and return one of its high-level
                  #:history "buffers")
 ```
 
-Both constructors accept `#:initial-input`, `#:history`, and `#:arguments`. `completing-read` also
-accepts `#:allow-custom-input?`; otherwise submission requires a provider candidate. `arguments`
-is a proper list of typed values placed before the accepted string in the accept command's
-invocation. Prompts, provider names, history names, and accept commands are explicit strings, so a
-request is independent of dynamically scoped editor state. `interaction` remains the lower-level
-tag constructor used by `(cind minibuffer)` and by code implementing another interaction policy.
+Both constructors accept `#:initial-input`, `#:history`, `#:buffer-name`, and `#:arguments`.
+`completing-read` also accepts `#:allow-custom-input?`; otherwise submission requires a provider
+candidate. `arguments` is a proper list of typed values placed before the accepted string in the
+accept command's invocation. The non-empty buffer name identifies the ephemeral native
+`minibuffer` Buffer and defaults to `" *minibuffer*"`. Prompts, provider names, history names,
+buffer names, and accept commands are explicit strings, so a request is independent of dynamically
+scoped editor state. `interaction` remains the lower-level tag constructor used by
+`(cind minibuffer)` and by code implementing another interaction policy.
 
 `configure-minibuffer-history-policy!` installs a per-application procedure that receives the
 current string vector and a submitted value and returns the replacement string vector.

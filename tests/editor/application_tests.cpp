@@ -1240,6 +1240,7 @@ TEST_CASE("interaction controller owns non-blocking command input") {
             return InteractionRequest{.kind = InteractionKind::Text,
                                       .keymap = "interaction-test",
                                       .input_state = "interaction-input-test",
+                                      .buffer_name = " *test-minibuffer*",
                                       .prompt = "find: ",
                                       .initial_input = "needle",
                                       .history = "search",
@@ -1268,6 +1269,7 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const ViewId minibuffer_view = interaction.state()->view;
     const WindowId minibuffer_window = interaction.state()->window;
     CHECK(runtime.buffers().get(minibuffer).kind() == BufferKind::Minibuffer);
+    CHECK(runtime.buffers().get(minibuffer).name() == " *test-minibuffer*");
     CHECK(runtime.buffers().all().size() == initial_buffers + 1);
     CHECK(runtime.windows().all().size() == initial_windows + 1);
     CHECK(interaction.state()->origin ==
@@ -1320,6 +1322,7 @@ TEST_CASE("interaction history exposes storage and navigation mechanisms") {
         return InteractionRequest{.kind = InteractionKind::Text,
                                   .keymap = "history-interaction-test",
                                   .input_state = "history-interaction-input-test",
+                                  .buffer_name = " *history-minibuffer*",
                                   .prompt = "History: ",
                                   .initial_input = std::move(initial_input),
                                   .history = "commands",
@@ -1390,6 +1393,7 @@ TEST_CASE("async interaction providers discard cancelled generations") {
                 .start({.kind = InteractionKind::Picker,
                         .keymap = "async-interaction-test",
                         .input_state = "async-interaction-input-test",
+                        .buffer_name = " *async-minibuffer*",
                         .prompt = "async: ",
                         .initial_input = "a",
                         .history = {},
@@ -1462,6 +1466,7 @@ TEST_CASE("callback interaction providers support synchronous completion") {
                 .start({.kind = InteractionKind::Picker,
                         .keymap = "callback-interaction-test",
                         .input_state = "callback-interaction-input-test",
+                        .buffer_name = " *callback-minibuffer*",
                         .prompt = "callback: ",
                         .initial_input = "value",
                         .history = {},
@@ -1524,6 +1529,7 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
                 .start({.kind = InteractionKind::Picker,
                         .keymap = "retained-interaction-test",
                         .input_state = "retained-interaction-input-test",
+                        .buffer_name = " *retained-minibuffer*",
                         .prompt = "async: ",
                         .initial_input = {},
                         .history = {},

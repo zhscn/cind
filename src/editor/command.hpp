@@ -123,6 +123,7 @@ struct InteractionRequest {
     InteractionKind kind = InteractionKind::Text;
     std::string keymap;
     std::string input_state;
+    std::string buffer_name;
     std::string prompt;
     std::string initial_input;
     std::string history;
