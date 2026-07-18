@@ -2,7 +2,6 @@
 
 #include "editor/noun_evaluator.hpp"
 #include "editor/resource_policy.hpp"
-#include "project/search_results.hpp"
 #include "syntax/structure.hpp"
 #include "ui/text_position.hpp"
 
@@ -192,10 +191,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .start_project_search =
-               [this](ProjectId project, WindowId window, std::string query) {
-                   return start_project_search(project, std::move(query), window);
-               },
            .begin_buffer_save = [this](BufferId buffer) { return begin_buffer_save(buffer); },
            .complete_buffer_save = [this](BufferId buffer) { return complete_buffer_save(buffer); },
            .abort_buffer_save = [this](BufferId buffer) { abort_buffer_save(buffer); },
@@ -764,178 +759,6 @@ void EditorApplication::reset_preferred_column() {
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
     return guile_.open_resource(active_window_, input);
-}
-
-std::expected<void, std::string> EditorApplication::start_project_search(ProjectId project,
-                                                                         std::string query,
-                                                                         WindowId target_window) {
-    const Project* definition = runtime_.projects().try_get(project);
-    if (definition == nullptr || definition->roots().empty()) {
-        return std::unexpected("project has no root");
-    }
-    if (project_search_.process.valid()) {
-        (void)async_runtime_.terminate(project_search_.process);
-    }
-    if (project_search_.parse_task.valid()) {
-        (void)async_runtime_.cancel(project_search_.parse_task);
-    }
-    const std::uint64_t generation = ++project_search_.generation;
-    const std::string root = definition->roots().front();
-    try {
-        project_search_.process = async_runtime_.spawn({
-            .file = "rg",
-            .arguments = {"--line-number", "--column", "--no-heading", "--color", "never",
-                          "--smart-case", "--null", "--", query, "."},
-            .working_directory = root,
-            .completed =
-                [this, project, target_window, generation,
-                 query = std::move(query)](AsyncProcessResult result) mutable {
-                    finish_project_search(project, target_window, generation, std::move(query),
-                                          std::move(result));
-                },
-            .cancelled = [this, generation] { cancel_project_search(generation); },
-            .failed =
-                [this, generation](const std::exception_ptr& failure) {
-                    fail_project_search(generation, failure);
-                },
-        });
-        message_ = std::format("searching project {}…", definition->name());
-        return {};
-    } catch (const std::exception& exception) {
-        project_search_.process = {};
-        return std::unexpected(exception.what());
-    }
-}
-
-void EditorApplication::finish_project_search(ProjectId project, WindowId target_window,
-                                              std::uint64_t generation, std::string query,
-                                              AsyncProcessResult result) {
-    if (project_search_.generation != generation || project_search_.process != result.process) {
-        return;
-    }
-    project_search_.process = {};
-    if (result.exit_status > 1 || result.term_signal != 0) {
-        std::string detail = std::move(result.standard_error);
-        while (!detail.empty() && (detail.back() == '\n' || detail.back() == '\r')) {
-            detail.pop_back();
-        }
-        message_ = detail.empty()
-                       ? std::format("project search failed with status {}", result.exit_status)
-                       : std::format("project search failed: {}", detail);
-        return;
-    }
-    try {
-        const Project* definition = runtime_.projects().try_get(project);
-        if (definition == nullptr || definition->roots().empty()) {
-            message_ = "project search failed: project is no longer available";
-            return;
-        }
-        struct ParseJob {
-            ProjectId project;
-            WindowId target_window;
-            std::uint64_t generation = 0;
-            std::string query;
-            std::string root;
-            std::string output;
-            EditorApplication* application = nullptr;
-        };
-        auto job = std::make_shared<ParseJob>(ParseJob{.project = project,
-                                                       .target_window = target_window,
-                                                       .generation = generation,
-                                                       .query = std::move(query),
-                                                       .root = definition->roots().front(),
-                                                       .output = std::move(result.standard_output),
-                                                       .application = this});
-        project_search_.parse_task = async_runtime_.submit({
-            .work = [job](const std::stop_token& cancellation) -> AsyncCompletion {
-                if (cancellation.stop_requested()) {
-                    throw AsyncTaskCancelled();
-                }
-                std::expected<LocationListDocument, std::string> document =
-                    parse_rg_search_results({.project_root = job->root, .output = job->output});
-                if (!document) {
-                    throw std::runtime_error(document.error());
-                }
-                if (document->text.empty()) {
-                    document->text = std::format("No matches for: {}\n", job->query);
-                }
-                if (cancellation.stop_requested()) {
-                    throw AsyncTaskCancelled();
-                }
-                auto shared_document = std::make_shared<LocationListDocument>(std::move(*document));
-                return [job, shared_document] {
-                    job->application->finish_project_search_document(
-                        job->project, job->target_window, job->generation, std::move(job->query),
-                        std::move(*shared_document));
-                };
-            },
-            .cancelled = [this, generation] { cancel_project_search(generation); },
-            .failed =
-                [this, generation](const std::exception_ptr& failure) {
-                    fail_project_search(generation, failure);
-                },
-        });
-        message_ = "preparing project search results…";
-    } catch (const std::exception& exception) {
-        project_search_.parse_task = {};
-        message_ = std::format("project search failed: {}", exception.what());
-    }
-}
-
-void EditorApplication::finish_project_search_document(ProjectId project, WindowId target_window,
-                                                       std::uint64_t generation, std::string query,
-                                                       LocationListDocument document) {
-    if (project_search_.generation != generation) {
-        return;
-    }
-    project_search_.parse_task = {};
-    try {
-        const BufferId buffer =
-            create_buffer(BufferSpec{.name = std::format("*project grep: {}*", query),
-                                     .initial_text = std::move(document.text),
-                                     .kind = BufferKind::Process,
-                                     .resource_uri = std::nullopt,
-                                     .read_only = true},
-                          CppIndentStyle{}, "location-list", location_list_mode_);
-        runtime_.buffers().set_locations(buffer, std::move(document.locations));
-        location_navigation_ =
-            LocationNavigationState{.buffer = buffer, .selected_index = std::nullopt};
-        runtime_.projects().assign(buffer, project);
-        const WindowId target =
-            runtime_.windows().try_get(target_window) != nullptr ? target_window : active_window_;
-        (void)show_buffer(target, buffer);
-        message_ = std::format("project search finished: {}", query);
-    } catch (const std::exception& exception) {
-        message_ = std::format("project search failed: {}", exception.what());
-    }
-}
-
-void EditorApplication::fail_project_search(std::uint64_t generation,
-                                            const std::exception_ptr& failure) {
-    if (project_search_.generation != generation) {
-        return;
-    }
-    project_search_.process = {};
-    project_search_.parse_task = {};
-    try {
-        if (failure) {
-            std::rethrow_exception(failure);
-        }
-        message_ = "project search failed";
-    } catch (const std::exception& exception) {
-        message_ = std::format("project search failed: {}", exception.what());
-    } catch (...) {
-        message_ = "project search failed";
-    }
-}
-
-void EditorApplication::cancel_project_search(std::uint64_t generation) {
-    if (project_search_.generation != generation) {
-        return;
-    }
-    project_search_.process = {};
-    project_search_.parse_task = {};
-    message_ = "project search cancelled";
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {

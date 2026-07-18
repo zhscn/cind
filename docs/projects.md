@@ -39,10 +39,11 @@ labels are relative to the project root, while submitted values are normalized a
 Index completion refreshes an open project-file picker without moving provider work onto the UI
 thread.
 
-`project.search` (`C-x p g`) prompts for a pattern and launches `rg` with the project root as its
-working directory. The libuv process service captures stdout and stderr without a shell. Exit
-statuses zero and one produce a read-only `cind.location-list` buffer; other statuses surface the
-diagnostic in the echo area. Result parsing runs on the worker pool and publishes semantic source
-locations with the generated text. `M-n` and `M-p` move between results, and `RET` opens the result
-at its exact byte line and column. Starting another search cancels the previous application-wide
-project search.
+`project.search` (`C-x p g`) is Scheme policy that prompts for a pattern and launches `rg` with the
+project root as its working directory. The libuv process mechanism captures stdout and stderr
+without a shell. Exit statuses zero and one produce a read-only `cind.location-list` buffer; other
+statuses surface the diagnostic in the echo area. A typed native task parses results on the worker
+pool and returns generated text with semantic source locations. Scheme installs both values,
+attaches the project and presents the buffer in the originating window when it remains live.
+`M-n` and `M-p` move between results, and `RET` opens the result at its exact byte line and column.
+Starting another search cancels the preceding host-scoped process or parser task.

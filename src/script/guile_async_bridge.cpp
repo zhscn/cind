@@ -204,6 +204,16 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
             .path = scheme_string(scm_c_vector_ref(value, 1)),
             .providers = project_providers(scm_c_vector_ref(value, 2), caller, position)};
     }
+    if (symbol_is(tag, "rg-result-parse")) {
+        if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
+            !scm_is_string(scm_c_vector_ref(value, 2))) {
+            scm_wrong_type_arg_msg(caller, position, value,
+                                   "#(rg-result-parse project-root output) request");
+        }
+        return ScriptRgResultParseRequest{.project_root = scheme_string(scm_c_vector_ref(value, 1)),
+                                          .output =
+                                              scheme_string_with_nuls(scm_c_vector_ref(value, 2))};
+    }
     if (symbol_is(tag, "process")) {
         if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
             !scm_is_string(scm_c_vector_ref(value, 3))) {
@@ -254,6 +264,8 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
         return "clang-format-style";
     case ScriptAsyncTaskKind::ProjectDiscovery:
         return "project-discovery";
+    case ScriptAsyncTaskKind::RgResultParse:
+        return "rg-result-parse";
     case ScriptAsyncTaskKind::Process:
         return "process";
     }
@@ -317,6 +329,29 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                     scm_c_vector_set_x(converted, 4,
                                        scm_from_utf8_string(value.discovery->marker.c_str()));
                 }
+                return converted;
+            } else if constexpr (std::is_same_v<Result, ScriptRgResultParseResult>) {
+                SCM locations = scm_c_make_vector(value.locations.size(), SCM_UNSPECIFIED);
+                for (std::size_t index = 0; index < value.locations.size(); ++index) {
+                    const BufferLocation& location = value.locations[index];
+                    SCM converted_location = scm_c_make_vector(5, SCM_UNSPECIFIED);
+                    scm_c_vector_set_x(converted_location, 0,
+                                       scm_from_uint32(location.source_range.start.value));
+                    scm_c_vector_set_x(converted_location, 1,
+                                       scm_from_uint32(location.source_range.end.value));
+                    scm_c_vector_set_x(converted_location, 2,
+                                       scm_from_utf8_string(location.resource.c_str()));
+                    scm_c_vector_set_x(converted_location, 3,
+                                       scm_from_uint32(location.target.line));
+                    scm_c_vector_set_x(converted_location, 4,
+                                       scm_from_uint32(location.target.byte_column));
+                    scm_c_vector_set_x(locations, index, converted_location);
+                }
+                SCM converted = scm_c_make_vector(3, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(converted, 0, name_symbol("rg-result-parse"));
+                scm_c_vector_set_x(converted, 1,
+                                   scm_from_utf8_stringn(value.text.data(), value.text.size()));
+                scm_c_vector_set_x(converted, 2, locations);
                 return converted;
             } else {
                 SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);

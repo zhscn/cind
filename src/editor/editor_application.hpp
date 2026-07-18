@@ -165,9 +165,7 @@ public:
     void hide_caret() { reveal_caret_ = false; }
 
     bool has_background_work() const;
-    bool project_search_running() const {
-        return project_search_.process.valid() || project_search_.parse_task.valid();
-    }
+    bool project_search_running() const { return guile_.project_search_running(); }
     bool poll_background_work();
     bool should_quit() const { return quit_; }
 
@@ -184,12 +182,6 @@ private:
         std::string style_origin;
         std::uint32_t save_generation = 0;
         std::optional<PendingSave> pending_save;
-    };
-
-    struct ProjectSearchState {
-        std::uint64_t generation = 0;
-        AsyncProcessId process;
-        AsyncTaskId parse_task;
     };
 
     struct LocationNavigationState {
@@ -238,15 +230,6 @@ private:
     bool delete_window(WindowId target);
     bool delete_other_windows(WindowId retained);
     void destroy_window(WindowId window);
-    std::expected<void, std::string> start_project_search(ProjectId project, std::string query,
-                                                          WindowId target_window);
-    void finish_project_search(ProjectId project, WindowId target_window, std::uint64_t generation,
-                               std::string query, AsyncProcessResult result);
-    void finish_project_search_document(ProjectId project, WindowId target_window,
-                                        std::uint64_t generation, std::string query,
-                                        LocationListDocument document);
-    void fail_project_search(std::uint64_t generation, const std::exception_ptr& failure);
-    void cancel_project_search(std::uint64_t generation);
     void apply_position(WindowId window, LinePosition position);
     void register_commands();
     void register_input_states();
@@ -273,7 +256,6 @@ private:
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
     std::optional<BufferId> startup_placeholder_;
-    ProjectSearchState project_search_;
     std::optional<LocationNavigationState> location_navigation_;
     WindowId active_window_;
     WindowLayout window_layout_;

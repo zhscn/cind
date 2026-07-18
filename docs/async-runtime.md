@@ -84,9 +84,10 @@ performs the atomic file replacement as one worker task. Its completion marks th
 save point. Edits made while the write is in progress stay modified, so asynchronous completion
 cannot mark newer content as saved.
 
-Project indexing uses worker tasks, directory watches and generation checks. Project search runs
-`rg` through the process service, parses its completed output on the worker pool and creates a
-read-only location-list buffer on the editor thread.
+Project indexing uses worker tasks, directory watches and generation checks. Scheme project-search
+policy runs `rg` through the process service, interprets tool exit status and schedules the typed
+ripgrep parser. Native parsing runs on the worker pool; its Scheme completion creates and presents
+the read-only location-list buffer on the editor thread.
 
 Modes and services can submit additional work through `EditorApplication::async_runtime()`. Their
 completion callbacks must validate any resource identity or revision they captured before applying
@@ -96,14 +97,14 @@ work.
 ## Script tasks
 
 `AsyncScriptHost` gives embedded languages one task namespace over native file reads and writes,
-directory enumeration, clang-format discovery, project discovery and child processes. Each request
-receives a stable integer ID and follows the same completed, cancelled or failed terminal path. The
-adapter retains the native `AsyncTaskId` or
+directory enumeration, clang-format discovery, project discovery, ripgrep result parsing and child
+processes. Each request receives a stable integer ID and follows the same completed, cancelled or
+failed terminal path. The adapter retains the native `AsyncTaskId` or
 `AsyncProcessId` internally, so cancellation does not expose libuv handle types to language code.
 
 File and style workers receive copied paths and immutable read or write payloads. Directory workers
 receive copied paths and limits. Project discovery receives a copied ordered provider snapshot.
-Process requests receive a copied
+The ripgrep parser receives a copied root and captured output. Process requests receive a copied
 executable, argument vector and working directory. No worker callback enters Guile or retains an
 `SCM` value. `AsyncRuntime::drain()` transfers a typed native result to the Guile bridge, which then
 invokes the protected Scheme callback on the editor thread. The task record is removed before the

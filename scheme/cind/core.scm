@@ -25,7 +25,8 @@
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!
-            open-resource!))
+            open-resource!
+            project-search-running?))
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -664,6 +665,168 @@
 (define (project-search context invocation)
   (read-from-minibuffer "Project search: " "project.search.accept"
                         #:history "project-search"))
+
+(define-record-type <pending-project-search>
+  (make-pending-project-search project window query root tasks)
+  pending-project-search?
+  (project pending-project-search-project)
+  (window pending-project-search-window)
+  (query pending-project-search-query)
+  (root pending-project-search-root)
+  (tasks pending-project-search-tasks set-pending-project-search-tasks!))
+
+(define pending-project-searches (make-weak-key-hash-table))
+
+(define (project-search-running? host)
+  (and (hashq-ref pending-project-searches host) #t))
+
+(define (project-search-live? host search)
+  (eq? search (hashq-ref pending-project-searches host)))
+
+(define (remove-project-search-task! search task)
+  (set-pending-project-search-tasks!
+   search (delv task (pending-project-search-tasks search))))
+
+(define (cancel-project-search-tasks! host search)
+  (for-each (lambda (task) (cancel-async-task! host task))
+            (pending-project-search-tasks search))
+  (set-pending-project-search-tasks! search '()))
+
+(define (clear-project-search! host search)
+  (when (project-search-live? host search)
+    (hashq-remove! pending-project-searches host)))
+
+(define (replace-project-search! host search)
+  (let ((previous (hashq-ref pending-project-searches host)))
+    (when previous
+      (hashq-remove! pending-project-searches host)
+      (cancel-project-search-tasks! host previous))
+    (hashq-set! pending-project-searches host search)))
+
+(define (trim-line-endings text)
+  (let loop ((end (string-length text)))
+    (if (and (> end 0)
+             (let ((character (string-ref text (- end 1))))
+               (or (char=? character #\newline)
+                   (char=? character #\return))))
+        (loop (- end 1))
+        (substring text 0 end))))
+
+(define (fail-project-search! host search message)
+  (when (project-search-live? host search)
+    (clear-project-search! host search)
+    (cancel-project-search-tasks! host search)
+    (set-message! host (string-append "project search failed: " message))))
+
+(define (cancel-project-search! host search)
+  (when (project-search-live? host search)
+    (clear-project-search! host search)
+    (cancel-project-search-tasks! host search)
+    (set-message! host "project search cancelled")))
+
+(define (project-search-target-window host search)
+  (if (window-open? host (pending-project-search-window search))
+      (pending-project-search-window search)
+      (active-window-id host)))
+
+(define (finish-project-search! host search result)
+  (when (project-search-live? host search)
+    (catch #t
+      (lambda ()
+        (let* ((query (pending-project-search-query search))
+               (text (vector-ref result 1))
+               (contents (if (= (string-length text) 0)
+                             (string-append "No matches for: " query "\n")
+                             text))
+               (buffer
+                (create-buffer! host (string-append "*project grep: " query "*")
+                                contents 'process #f #t 'cind.location-list #f
+                                "location-list")))
+          (set-buffer-locations! host buffer (vector-ref result 2))
+          (set-location-navigation! host buffer #f)
+          (set-buffer-project! host buffer
+                               (pending-project-search-project search))
+          (display-buffer! host (project-search-target-window host search) buffer)
+          (clear-project-search! host search)
+          (set-message! host (string-append "project search finished: " query))))
+      (lambda (key . arguments)
+        (fail-project-search! host search (format #f "~S: ~S" key arguments))))))
+
+(define (start-project-search-parser! host search output)
+  (catch #t
+    (lambda ()
+      (let ((task #f))
+        (set! task
+              (start-async-task!
+               host
+               (async-rg-result-parse (pending-project-search-root search) output)
+               (lambda (completed-task result)
+                 (remove-project-search-task! search completed-task)
+                 (finish-project-search! host search result))
+               #:failed
+               (lambda (failed-task message)
+                 (remove-project-search-task! search failed-task)
+                 (fail-project-search! host search message))
+               #:cancelled
+               (lambda (cancelled-task)
+                 (remove-project-search-task! search cancelled-task)
+                 (cancel-project-search! host search))))
+        (set-pending-project-search-tasks!
+         search (cons task (pending-project-search-tasks search)))
+        (set-message! host "preparing project search results…")))
+    (lambda (key . arguments)
+      (fail-project-search! host search (format #f "~S: ~S" key arguments)))))
+
+(define (project-search-process-completed! host search task result)
+  (remove-project-search-task! search task)
+  (when (project-search-live? host search)
+    (let ((status (vector-ref result 1))
+          (signal (vector-ref result 2))
+          (output (vector-ref result 3))
+          (error-output (trim-line-endings (vector-ref result 4))))
+      (if (or (not (= signal 0)) (> status 1))
+          (fail-project-search!
+           host search
+           (if (= (string-length error-output) 0)
+               (if (= signal 0)
+                   (string-append "process exited with status " (number->string status))
+                   (string-append "process terminated by signal "
+                                  (number->string signal)))
+               error-output))
+          (start-project-search-parser! host search output)))))
+
+(define (start-project-search! host project window query)
+  (let ((root (project-root host project)))
+    (unless root
+      (error "project has no root" project))
+    (let ((search (make-pending-project-search project window query root '())))
+      (replace-project-search! host search)
+      (catch #t
+        (lambda ()
+          (let ((task #f))
+            (set! task
+                  (start-async-task!
+                   host
+                   (async-process
+                    "rg"
+                    (list "--line-number" "--column" "--no-heading" "--color" "never"
+                          "--smart-case" "--null" "--" query ".")
+                    root)
+                   (lambda (completed-task result)
+                     (project-search-process-completed! host search completed-task result))
+                   #:failed
+                   (lambda (failed-task message)
+                     (remove-project-search-task! search failed-task)
+                     (fail-project-search! host search message))
+                   #:cancelled
+                   (lambda (cancelled-task)
+                     (remove-project-search-task! search cancelled-task)
+                     (cancel-project-search! host search))))
+            (set-pending-project-search-tasks! search (list task))
+            (set-message! host "searching project…")))
+        (lambda (key . arguments)
+          (fail-project-search! host search (format #f "~S: ~S" key arguments))
+          (apply throw key arguments))))))
 
 (define (search-prompt forward?)
   (read-from-minibuffer (if forward? "search: " "search backward: ")

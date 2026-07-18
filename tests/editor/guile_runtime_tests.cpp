@@ -803,10 +803,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string message;
     ProjectId indexed_project;
     bool project_index_requested = false;
-    ProjectId searched_project;
-    WindowId searched_window;
-    std::string search_query;
-    bool project_search_started = false;
     BufferId saved_buffer;
     bool buffer_saved = false;
     bool buffer_save_completed = false;
@@ -814,6 +810,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::optional<ScriptAsyncRequest> pending_async_request;
     ScriptAsyncCallbacks pending_async_callbacks;
     std::vector<ScriptAsyncRequest> async_requests;
+    std::vector<std::uint64_t> cancelled_async_tasks;
     std::uint64_t next_async_task = 1;
     std::optional<GuileBufferCreation> created_buffer;
     bool buffer_saving = false;
@@ -888,14 +885,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
              project_index_requested = true;
-             return {};
-         },
-         .start_project_search = [&](ProjectId target_project, WindowId target_window,
-                                     std::string query) -> std::expected<void, std::string> {
-             searched_project = target_project;
-             searched_window = target_window;
-             search_query = std::move(query);
-             project_search_started = true;
              return {};
          },
          .begin_buffer_save =
@@ -1087,7 +1076,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              pending_async_callbacks = std::move(callbacks);
              return next_async_task++;
          },
-         .cancel_async_task = [](std::uint64_t) { return true; },
+         .cancel_async_task =
+             [&](std::uint64_t task) {
+                 cancelled_async_tasks.push_back(task);
+                 return true;
+             },
          .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
@@ -1609,14 +1602,55 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                   CommandInvocation{.arguments = {std::string()}, .prefix = {}});
     REQUIRE_FALSE(empty_search.has_value());
     CHECK(empty_search.error().message == "project search query is empty");
+    const std::size_t async_before_project_search = async_requests.size();
     const CommandResult search_accepted = runtime.commands().invoke(
         search_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("needle")}, .prefix = {}});
     REQUIRE(search_accepted.has_value());
-    REQUIRE(project_search_started);
-    CHECK(searched_project == project);
-    CHECK(searched_window == window);
-    CHECK(search_query == "needle");
+    REQUIRE(async_requests.size() == async_before_project_search + 1);
+    const auto* search_process =
+        std::get_if<ScriptProcessRequest>(&async_requests[async_before_project_search]);
+    REQUIRE(search_process != nullptr);
+    CHECK(search_process->file == "rg");
+    CHECK(search_process->working_directory == "/tmp/sample");
+    CHECK(search_process->arguments ==
+          std::vector<std::string>{"--line-number", "--column", "--no-heading", "--color", "never",
+                                   "--smart-case", "--null", "--", "needle", "."});
+    CHECK(guile.project_search_running());
+
+    const std::uint64_t search_process_task = next_async_task - 1;
+    const std::string search_output = std::string("src/main.cpp\0", 13) + "1:1:needle\n";
+    pending_async_callbacks.completed(search_process_task,
+                                      ScriptProcessResult{.exit_status = 0,
+                                                          .term_signal = 0,
+                                                          .standard_output = search_output,
+                                                          .standard_error = {}});
+    REQUIRE(async_requests.size() == async_before_project_search + 2);
+    const auto* search_parse = std::get_if<ScriptRgResultParseRequest>(&async_requests.back());
+    REQUIRE(search_parse != nullptr);
+    CHECK(search_parse->project_root == "/tmp/sample");
+    CHECK(search_parse->output == search_output);
+
+    const std::uint64_t search_parse_task = next_async_task - 1;
+    const CommandResult replacement_search = runtime.commands().invoke(
+        search_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("replacement")}, .prefix = {}});
+    REQUIRE(replacement_search.has_value());
+    REQUIRE_FALSE(cancelled_async_tasks.empty());
+    CHECK(cancelled_async_tasks.back() == search_parse_task);
+    const auto* replacement_process = std::get_if<ScriptProcessRequest>(&async_requests.back());
+    REQUIRE(replacement_process != nullptr);
+    CHECK(replacement_process->arguments[8] == "replacement");
+    CHECK(guile.project_search_running());
+
+    const std::uint64_t replacement_process_task = next_async_task - 1;
+    pending_async_callbacks.completed(replacement_process_task,
+                                      ScriptProcessResult{.exit_status = 2,
+                                                          .term_signal = 0,
+                                                          .standard_output = {},
+                                                          .standard_error = "rg failed\n"});
+    CHECK_FALSE(guile.project_search_running());
+    CHECK(message == "project search failed: rg failed");
 
     runtime.views().set_caret(view, TextOffset{0});
     CommandLoop command_loop(runtime);

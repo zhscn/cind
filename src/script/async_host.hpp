@@ -1,6 +1,7 @@
 #pragma once
 
 #include "async/runtime.hpp"
+#include "editor/buffer.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "project/project_files.hpp"
 
@@ -22,6 +23,7 @@ enum class ScriptAsyncTaskKind : std::uint8_t {
     DirectoryList,
     ClangFormatStyle,
     ProjectDiscovery,
+    RgResultParse,
     Process,
 };
 
@@ -48,15 +50,21 @@ struct ScriptProjectDiscoveryRequest {
     std::vector<ProjectDiscoveryProvider> providers;
 };
 
+struct ScriptRgResultParseRequest {
+    std::string project_root;
+    std::string output;
+};
+
 struct ScriptProcessRequest {
     std::string file;
     std::vector<std::string> arguments;
     std::string working_directory;
 };
 
-using ScriptAsyncRequest = std::variant<ScriptFileReadRequest, ScriptFileWriteRequest,
-                                        ScriptDirectoryListRequest, ScriptClangFormatStyleRequest,
-                                        ScriptProjectDiscoveryRequest, ScriptProcessRequest>;
+using ScriptAsyncRequest =
+    std::variant<ScriptFileReadRequest, ScriptFileWriteRequest, ScriptDirectoryListRequest,
+                 ScriptClangFormatStyleRequest, ScriptProjectDiscoveryRequest,
+                 ScriptRgResultParseRequest, ScriptProcessRequest>;
 
 struct ScriptFileReadResult {
     std::string path;
@@ -91,6 +99,11 @@ struct ScriptProjectDiscoveryResult {
     std::optional<ProjectDiscovery> discovery;
 };
 
+struct ScriptRgResultParseResult {
+    std::string text;
+    std::vector<BufferLocation> locations;
+};
+
 struct ScriptProcessResult {
     std::int64_t exit_status = 0;
     int term_signal = 0;
@@ -100,7 +113,8 @@ struct ScriptProcessResult {
 
 using ScriptAsyncResult =
     std::variant<ScriptFileReadResult, ScriptFileWriteResult, ScriptDirectoryListResult,
-                 ScriptClangFormatStyleResult, ScriptProjectDiscoveryResult, ScriptProcessResult>;
+                 ScriptClangFormatStyleResult, ScriptProjectDiscoveryResult,
+                 ScriptRgResultParseResult, ScriptProcessResult>;
 
 struct ScriptAsyncCallbacks {
     std::function<void(std::uint64_t, ScriptAsyncResult)> completed;

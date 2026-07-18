@@ -1,5 +1,7 @@
 #include "script/async_host.hpp"
 
+#include "project/search_results.hpp"
+
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 
@@ -388,6 +390,66 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                                              });
                              }});
                     return {.kind = ScriptAsyncTaskKind::ProjectDiscovery, .native = native};
+                } else if constexpr (std::is_same_v<Request, ScriptRgResultParseRequest>) {
+                    if (operation.project_root.empty()) {
+                        throw std::invalid_argument("rg-result-parse project root is empty");
+                    }
+                    std::string project_root = std::move(operation.project_root);
+                    std::string output = std::move(operation.output);
+                    // Throwing reports worker failures through AsyncRuntime::failed.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    AsyncWork work = [project_root = std::move(project_root),
+                                      output = std::move(output), weak_state, id,
+                                      completed = callbacks.completed](
+                                         const std::stop_token& cancellation) mutable {
+                        if (cancellation.stop_requested()) {
+                            throw AsyncTaskCancelled{};
+                        }
+                        std::expected<LocationListDocument, std::string> parsed =
+                            parse_rg_search_results(
+                                {.project_root = project_root, .output = output});
+                        if (!parsed) {
+                            throw std::runtime_error(parsed.error());
+                        }
+                        if (cancellation.stop_requested()) {
+                            throw AsyncTaskCancelled{};
+                        }
+                        ScriptAsyncResult result = ScriptRgResultParseResult{
+                            .text = std::move(parsed->text),
+                            .locations = std::move(parsed->locations),
+                        };
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
+                    const AsyncTaskId native = state_->runtime->submit(
+                        {.work = std::move(work),
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
+                    return {.kind = ScriptAsyncTaskKind::RgResultParse, .native = native};
                 } else {
                     if (operation.file.empty()) {
                         throw std::invalid_argument("process executable is empty");

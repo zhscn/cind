@@ -136,6 +136,9 @@ The native module exports:
 (buffer-substring host buffer-id start end)
 (buffer-name host buffer-id)
 (buffer-text host buffer-id)
+(buffer-byte-size host buffer-id)
+(buffer-locations host buffer-id)
+(set-buffer-locations! host buffer-id locations)
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)
 (soft-kill-range host view-id)
@@ -152,7 +155,6 @@ The native module exports:
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (set-message! host message)
 (ensure-project-index! host project-id)
-(start-project-search! host project-id window-id query)
 (normalize-resource-path host path)
 (set-buffer-resource! host buffer-id path)
 (rename-buffer! host buffer-id name)
@@ -196,6 +198,7 @@ The native module exports:
 (async-directory-list path [maximum-entries])
 (async-clang-format-style path)
 (async-project-discovery path provider-definitions)
+(async-rg-result-parse project-root output)
 (async-process executable arguments [working-directory])
 (start-async-task! host request completed
                    #:key (failed #f) (cancelled #f))
@@ -212,7 +215,9 @@ Clang-format discovery produces
 `#(project-discovery path root-or-#f provider-or-#f marker-or-#f)` from the immutable provider
 definitions supplied with the request. Processes produce
 `#(process exit-status termination-signal standard-output standard-error)`. A nonzero process exit
-status remains a completed result; Scheme policy interprets tool-specific statuses.
+status remains a completed result; Scheme policy interprets tool-specific statuses. Ripgrep result
+parsing produces `#(rg-result-parse text locations)`, where every location is
+`#(source-start source-end resource zero-based-line zero-based-byte-column)`.
 
 `failed` receives the task ID and native error string. Without a failure procedure, the error is
 retained as the runtime's latest scripting diagnostic. `cancelled` receives the task ID after the
@@ -409,6 +414,11 @@ the document, resets vertical-motion state and requests caret reveal. `set-messa
 application message. Mutating capabilities execute synchronously on the owning editor thread and
 raise a Scheme condition when the ID or requested transition is invalid.
 
+`buffer-locations` exposes the semantic location vector attached to a generated buffer.
+`set-buffer-locations!` validates ordered source ranges against the current document and atomically
+replaces that vector. Location-list navigation remains a native presentation mechanism; Scheme
+chooses when a generated buffer becomes the current navigation source.
+
 `display-generated-buffer!` creates or replaces a named read-only generated buffer, assigns
 `special-mode`, resets its cached View to the beginning, and displays it through the same Window and
 View lifecycle as any other buffer. Help and evaluation results are frontend-independent editor
@@ -533,9 +543,12 @@ project attachment, window presentation, startup-placeholder cleanup and user fe
 opens update the pending target and position. The C++ `GuileRuntime::open_resource` entry point
 invokes the same Scheme policy for application startup and native callers.
 
-`start-project-search!` runs the native project search pipeline and directs its result buffer to the
-given window. It initiates work and returns after the operation has been accepted; completion,
-cancellation and failure are applied later on the editor thread.
+The bundled project-search policy starts `rg` with an explicit argument vector, interprets its exit
+status, schedules typed result parsing, creates the read-only location-list buffer, installs its
+semantic locations, attaches the project, selects a live target window and reports feedback.
+Pending search records are scoped to the host and starting another search cancels the preceding
+process or parser task. Native code provides process execution, parsing, validated registries and
+presentation mechanisms without encoding this command policy.
 
 ## Scripted commands
 
@@ -602,8 +615,8 @@ commands, structural expression/list movement, and kill/yank behavior. Each inst
 owns a bounded kill ring in its Scheme closure. Copy and kill commands synchronize the newest entry
 with the platform clipboard and also write the invocation's named register when present. A yank
 with a named register reads that register; an unnamed yank reads the newest kill and imports the
-clipboard when the ring is empty. File and project commands compose native storage, indexing and
-search capabilities without owning asynchronous state.
+clipboard when the ring is empty. File and project commands retain host-scoped asynchronous policy
+records while composing native storage, indexing, process and parsing mechanisms.
 
 The `(cind core)` module owns the default Emacs-style editor and application keymaps. It defines the
 named maps and populates them after built-in commands exist. The `C-x` family is a named prefix map,

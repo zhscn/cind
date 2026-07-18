@@ -1419,10 +1419,12 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.interaction().state()->request.prompt == "Project search: ");
         application.insert_text("int");
         send_keys(application, "RET");
+        CHECK(application.project_search_running());
         while (application.has_background_work()) {
             REQUIRE(wake.wait());
             (void)application.poll_background_work();
         }
+        CHECK_FALSE(application.project_search_running());
         CHECK(application.session().buffer().kind() == BufferKind::Process);
         CHECK(application.session().buffer().read_only());
         CHECK(application.session().snapshot().content().to_string().find("src/other.cpp") !=

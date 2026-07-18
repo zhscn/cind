@@ -102,8 +102,6 @@ struct GuileHostServices {
         position_buffer_view;
     std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
-    std::function<std::expected<void, std::string>(ProjectId, WindowId, std::string)>
-        start_project_search;
     std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
     std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
     std::function<void(BufferId)> abort_buffer_save;
@@ -208,6 +206,7 @@ public:
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,
                   std::optional<std::uint32_t> column = std::nullopt);
+    bool project_search_running() const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

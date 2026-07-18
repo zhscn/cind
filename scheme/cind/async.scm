@@ -6,6 +6,7 @@
             async-directory-list
             async-clang-format-style
             async-project-discovery
+            async-rg-result-parse
             async-process
             start-async-task!
             cancel-async-task!
@@ -42,6 +43,13 @@
   (unless (vector? providers)
     (error "project discovery providers must be a vector" providers))
   (vector 'project-discovery path providers))
+
+(define (async-rg-result-parse project-root output)
+  (unless (string? project-root)
+    (error "rg result project root must be a string" project-root))
+  (unless (string? output)
+    (error "rg result output must be a string" output))
+  (vector 'rg-result-parse project-root output))
 
 (define* (async-process file arguments #:optional (working-directory ""))
   (unless (string? file)

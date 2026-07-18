@@ -46,10 +46,11 @@ the new location list current without coupling the navigation commands to the se
 
 ## Search producer
 
-Project search invokes ripgrep with a NUL separator between each path and its line record, keeping
-filenames containing `:` unambiguous. Process completion submits parsing to the async worker pool.
-The parser produces display text and `BufferLocation` records as one immutable result; the editor
-thread installs both when it creates the location-list buffer.
+Scheme project-search policy invokes ripgrep with a NUL separator between each path and its line
+record, keeping filenames containing `:` unambiguous. Process completion submits a typed parsing
+request to the async worker pool. The native parser produces display text and `BufferLocation`
+records as one immutable result; its Scheme callback creates the location-list buffer and installs
+both on the editor thread.
 
 Ripgrep exit status zero represents matches and status one represents an empty list. Tool failures
 remain echo-area diagnostics and do not create a result buffer.

@@ -2974,6 +2974,56 @@ SCM buffer_locations(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+SCM set_buffer_locations(SCM host_object, SCM buffer_value, SCM locations_value) {
+    HostLease& host = require_host(host_object, "set-buffer-locations!");
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-locations!", 2);
+    if (!scm_is_vector(locations_value)) {
+        scm_wrong_type_arg_msg("set-buffer-locations!", 3, locations_value, "location vector");
+    }
+    try {
+        const std::size_t count = scm_c_vector_length(locations_value);
+        std::vector<BufferLocation> locations;
+        locations.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            const SCM location = scm_c_vector_ref(locations_value, index);
+            if (!scm_is_vector(location) || scm_c_vector_length(location) != 5 ||
+                scm_is_unsigned_integer(scm_c_vector_ref(location, 0), 0,
+                                        std::numeric_limits<std::uint32_t>::max()) == 0 ||
+                scm_is_unsigned_integer(scm_c_vector_ref(location, 1), 0,
+                                        std::numeric_limits<std::uint32_t>::max()) == 0 ||
+                !scm_is_string(scm_c_vector_ref(location, 2)) ||
+                scm_is_unsigned_integer(scm_c_vector_ref(location, 3), 0,
+                                        std::numeric_limits<std::uint32_t>::max()) == 0 ||
+                scm_is_unsigned_integer(scm_c_vector_ref(location, 4), 0,
+                                        std::numeric_limits<std::uint32_t>::max()) == 0) {
+                scm_wrong_type_arg_msg("set-buffer-locations!", 3, location,
+                                       "#(source-start source-end resource line column)");
+            }
+            const TextRange source{
+                TextOffset{scm_to_uint32(scm_c_vector_ref(location, 0))},
+                TextOffset{scm_to_uint32(scm_c_vector_ref(location, 1))},
+            };
+            if (source.end < source.start) {
+                scm_misc_error("set-buffer-locations!", "location source range is reversed",
+                               SCM_EOL);
+            }
+            locations.push_back(
+                {.source_range = source,
+                 .resource = scheme_string(scm_c_vector_ref(location, 2)),
+                 .target = {.line = scm_to_uint32(scm_c_vector_ref(location, 3)),
+                            .byte_column = scm_to_uint32(scm_c_vector_ref(location, 4))}});
+        }
+        host.runtime->buffers().set_locations(buffer, std::move(locations));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-buffer-locations!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-buffer-locations!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-read-only?");
@@ -3392,36 +3442,6 @@ SCM ensure_project_index(SCM host_object, SCM project_value) {
         raise_host_error("ensure-project-index!", exception.what());
     } catch (...) {
         scm_misc_error("ensure-project-index!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
-SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, SCM query_value) {
-    if (!scm_is_string(query_value)) {
-        scm_wrong_type_arg_msg("start-project-search!", 4, query_value, "string");
-    }
-    HostLease& host = require_host(host_object, "start-project-search!");
-    const ProjectId project =
-        entity_id_from_scheme<ProjectTag>(project_value, "start-project-search!", 2);
-    const WindowId window =
-        entity_id_from_scheme<WindowTag>(window_value, "start-project-search!", 3);
-    if (!host.services.start_project_search) {
-        scm_misc_error("start-project-search!", "project-search capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        const std::expected<void, std::string> started =
-            host.services.start_project_search(project, window, scheme_string(query_value));
-        if (!started) {
-            raise_host_error("start-project-search!", started.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("start-project-search!", exception.what());
-    } catch (...) {
-        scm_misc_error("start-project-search!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4400,6 +4420,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
     (void)scm_c_define_gsubr("buffer-locations", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_locations));
+    (void)scm_c_define_gsubr("set-buffer-locations!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_locations));
     (void)scm_c_define_gsubr("buffer-read-only?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_read_only_p));
     (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
@@ -4449,8 +4471,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(ensure_project_index));
-    (void)scm_c_define_gsubr("start-project-search!", 4, 0, 0,
-                             reinterpret_cast<scm_t_subr>(start_project_search));
     (void)scm_c_define_gsubr("normalize-resource-path", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(normalize_resource));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
@@ -4520,24 +4540,25 @@ void initialize_host_module(void*) {
         "open-buffer-summaries", "owned-user-modules", "project-root", "project-files",
         "path-relative", "path-filename", "active-key-bindings", "buffer-id-by-name", "buffer-name",
         "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
-        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
-        "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",
-        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
-        "page-rows", "interaction-status", "submit-interaction!", "move-interaction-candidate!",
-        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
-        "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
-        "set-message!", "ensure-project-index!", "start-project-search!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
-        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
-        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "set-buffer-locations!", "buffer-read-only?", "path-parent", "directory-path?",
+        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
+        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
+        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
+        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "submit-interaction!", "move-interaction-candidate!", "move-interaction-history!",
+        "cancel-interaction!", "cancel-pending-input!", "view-position", "location-navigation",
+        "set-location-navigation!", "position-buffer-view!", "set-message!",
+        "ensure-project-index!", "normalize-resource-path", "set-buffer-resource!",
+        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
+        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
+        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "startup-placeholder", "set-startup-placeholder!", "focus-window!", "request-redraw!",
         nullptr);
@@ -4577,6 +4598,7 @@ struct GuileCall {
         InstallModes,
         InstallResourcePolicies,
         OpenResource,
+        ProjectSearchRunning,
         StopAres,
         InvokeCommand,
         InvokeProvider,
@@ -5006,6 +5028,11 @@ SCM call_body(void* data) {
                                      scm_from_utf8_string(call.path.c_str()),
                                      call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
                                      call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::ProjectSearchRunning:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "project-search-running?"), call.host);
+            call.enabled = scheme_true(call.result);
             break;
         case GuileCall::Operation::StopAres:
             call.result = scm_call_1(scm_c_public_ref("cind ares", "stop-host-ares!"), call.host);
@@ -5803,6 +5830,18 @@ public:
         return {};
     }
 
+    bool project_search_running() const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ProjectSearchRunning;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return false;
+        }
+        return call.enabled;
+    }
+
     std::expected<void, std::string> load_extension(const std::string& input_path) {
         require_owner_thread();
         std::error_code error;
@@ -5985,6 +6024,10 @@ std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, st
                                                              std::optional<std::uint32_t> line,
                                                              std::optional<std::uint32_t> column) {
     return impl_->open_resource(window, path, line, column);
+}
+
+bool GuileRuntime::project_search_running() const {
+    return impl_->project_search_running();
 }
 
 std::expected<void, std::string> GuileRuntime::load_extension(const std::string& path) {

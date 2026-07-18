@@ -169,6 +169,31 @@ TEST_CASE("script async host discovers language style and project metadata") {
     CHECK(discovery.marker == ".git");
 }
 
+TEST_CASE("script async host parses ripgrep output into location data") {
+    AsyncRuntime runtime;
+    AsyncScriptHost host(runtime);
+    ScriptRgResultParseResult parse_result;
+    bool completed = false;
+    const std::string output = std::string("./src/main.cpp\0", 15) + "12:7:needle: value\n";
+
+    const auto parse =
+        host.start(ScriptRgResultParseRequest{.project_root = "/work/project", .output = output},
+                   {.completed =
+                        [&](std::uint64_t, ScriptAsyncResult result) {
+                            parse_result = std::get<ScriptRgResultParseResult>(std::move(result));
+                            completed = true;
+                        },
+                    .cancelled = {},
+                    .failed = {}});
+
+    REQUIRE(parse.has_value());
+    drain_until(runtime, [&] { return completed; });
+    CHECK(parse_result.text == "src/main.cpp:12:7: needle: value\n");
+    REQUIRE(parse_result.locations.size() == 1);
+    CHECK(parse_result.locations[0].resource == "/work/project/src/main.cpp");
+    CHECK(parse_result.locations[0].target == LinePosition{.line = 11, .byte_column = 6});
+}
+
 TEST_CASE("script async host unifies process completion and cancellation") {
     AsyncRuntime runtime;
     AsyncScriptHost host(runtime);

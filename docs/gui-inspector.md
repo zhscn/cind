@@ -141,6 +141,8 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.projects` | project roots、discovery provider/marker、索引 revision、文件数、刷新状态和错误 |
 | `editor.location` | caret 所在 location-list 项的 source range 和目标文件位置 |
 | `editor.location_navigation` | 当前 location-list buffer、选中项和结果总数；跳到源码后仍保留 |
+| `editor.background_work` | 原生异步运行时是否仍有待处理工作 |
+| `editor.project_search_running` | 当前 Guile host 是否持有进行中的 project-search 策略记录 |
 | `editor.focus` | active document window、当前输入目标以及 document/minibuffer focus stack |
 | `scene` | 完整 cell scene |
 | `scene.cursor` | scene cursor 的 cell 坐标、可见性和 beam/block/underline shape |
