@@ -3516,7 +3516,11 @@ SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
         scm_misc_error("type-text!", "typed-text capability is unavailable", SCM_EOL);
     }
     try {
-        host.services.type_text(view, scheme_string(text_value));
+        const std::expected<void, std::string> typed =
+            host.services.type_text(view, scheme_string(text_value));
+        if (!typed) {
+            raise_host_error("type-text!", typed.error());
+        }
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("type-text!", exception.what());

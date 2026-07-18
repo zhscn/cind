@@ -105,7 +105,7 @@ struct GuileHostServices {
     std::function<GuileDeleteOutcome(ViewId, bool, bool)> delete_grapheme;
     std::function<void(ViewId)> newline;
     std::function<std::optional<std::string>(ViewId)> indent;
-    std::function<void(ViewId, std::string_view)> type_text;
+    std::function<std::expected<void, std::string>(ViewId, std::string_view)> type_text;
     std::function<int()> page_rows;
     std::function<GuileInteractionStatus()> interaction_status;
     std::function<std::optional<std::string>()> interaction_provider;

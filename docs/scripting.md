@@ -447,6 +447,11 @@ newline, deletion and rendering semantics until a Scheme language profile suppli
 syntax, indentation and structural-editing facets. Commands consult those facets instead of
 implicitly applying the C++ analyzer to a language-less mode.
 
+The default self-insert and deletion commands query `structural-editing` before selecting
+`type-text!` or structural `delete-grapheme!`; otherwise they compose `insert-text!` and raw
+grapheme deletion. The structural native mechanisms reject a View whose active language profile
+does not provide that facet.
+
 `define-project-provider!` registers a named ordered set of single-component project markers.
 `project-provider-definitions` returns an immutable Scheme value suitable for
 `async-project-discovery`. Native worker code searches that supplied snapshot and returns the

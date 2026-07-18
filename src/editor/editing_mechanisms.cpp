@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace cind {
@@ -97,6 +98,9 @@ std::optional<FormatRole> EditingMechanisms::indent(ViewId view) {
 
 void EditingMechanisms::type_text(ViewId view, std::string_view text) {
     EditSession& active = session_(view);
+    if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
+        throw std::logic_error("structural typing requires a structural-editing language facet");
+    }
     const RevisionId revision = active.snapshot().revision();
     active.type_text(text);
     if (active.snapshot().revision() != revision) {
@@ -107,7 +111,7 @@ void EditingMechanisms::type_text(ViewId view, std::string_view text) {
 DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool forward) {
     EditSession& active = session_(view);
     if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
-        return raw_delete(view, forward);
+        throw std::logic_error("structural deletion requires a structural-editing language facet");
     }
     const DocumentSnapshot snapshot = active.snapshot();
     const Text& text = snapshot.content();

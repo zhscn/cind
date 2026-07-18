@@ -90,10 +90,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                const std::optional<FormatRole> role = editing_mechanisms_.indent(view);
                return role ? std::optional(std::string(format_role_name(*role))) : std::nullopt;
            },
-           .type_text =
-               [this](ViewId view, std::string_view text) {
-                   editing_mechanisms_.type_text(view, text);
-               },
+           .type_text = [this](ViewId view,
+                               std::string_view text) -> std::expected<void, std::string> {
+               if (!session_for(view).has_language_facet(LanguageFacet::StructuralEditing)) {
+                   return std::unexpected("structural typing is unavailable for the current mode");
+               }
+               editing_mechanisms_.type_text(view, text);
+               return {};
+           },
            .page_rows = [this] { return command_page_rows_; },
            .interaction_status =
                [this] {
