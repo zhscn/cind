@@ -2,6 +2,7 @@
 
 #include "editor/buffer.hpp"
 #include "editor/ids.hpp"
+#include "formatting/cpp_indent_style.hpp"
 
 #include <optional>
 #include <string>
@@ -24,6 +25,8 @@ struct StartupBufferPlan {
 
 struct StartupPlan {
     StartupBufferPlan buffer;
+    CppIndentStyle style;
+    std::string style_origin;
     std::optional<std::string> resource_to_open;
     bool startup_placeholder = false;
 };

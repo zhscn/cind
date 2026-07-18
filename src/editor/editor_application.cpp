@@ -530,7 +530,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                  .kind = startup->buffer.kind,
                                  .resource_uri = std::move(startup->buffer.resource),
                                  .read_only = startup->buffer.read_only},
-                      spec.style, std::move(spec.style_origin), startup->buffer.major_mode);
+                      startup->style, std::move(startup->style_origin), startup->buffer.major_mode);
     const ViewId initial_view = create_view({}, initial);
     active_window_ = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = active_window_;

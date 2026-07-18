@@ -41,8 +41,6 @@ struct EditorApplicationSpec {
     // An omitted value asks the application to load path through its async
     // runtime. An engaged empty string represents a preloaded empty file.
     std::optional<std::string> initial_text;
-    CppIndentStyle style;
-    std::string style_origin;
     std::uint32_t initial_line = 0;
     EditorPlatformServices platform_services;
     std::optional<std::string> init_file;

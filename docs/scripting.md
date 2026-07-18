@@ -677,13 +677,17 @@ with `configure-startup-policy!`. The procedure receives
 ```scheme
 #(startup-plan
   #(startup-buffer name contents kind resource-or-#f read-only? mode)
+  cpp-indent-style-or-#f
+  style-origin
   resource-to-open-or-#f
   startup-placeholder?)
 ```
 
-`contents` is `initial-text` or `empty`. C++ validates the complete plan against the Mode registry,
-creates the Buffer, View and Window, and supplies initial text only when requested by the plan. A
-deferred resource is passed to the shared Scheme `open-resource!` policy. The lifecycle module
+`contents` is `initial-text` or `empty`. A false style selects the native C-family mechanism's
+baseline style; `style-origin` is the user-facing provenance shown by presentation policy. C++
+validates the complete plan against the Mode registry, creates the Buffer, View and Window, and
+supplies initial text only when requested by the plan. A deferred resource is passed to the shared
+Scheme `open-resource!` policy. The lifecycle module
 retains the placeholder Buffer identity in per-host Scheme state so successful asynchronous open
 policy can release it. `configure-fallback-buffer-policy!` replaces the procedure used when a
 command needs a Buffer after releasing the last open Buffer.

@@ -39,26 +39,29 @@
 (define (startup-buffer name contents kind resource read-only? mode)
   (vector 'startup-buffer name contents kind resource read-only? mode))
 
+(define (startup-plan buffer style style-origin resource placeholder?)
+  (vector 'startup-plan buffer style style-origin resource placeholder?))
+
 (define (default-startup-plan host facts)
   (let ((path (vector-ref facts 1))
         (has-initial-text? (vector-ref facts 2)))
     (cond
      ((zero? (string-length path))
-      (vector 'startup-plan
-              (startup-buffer "*scratch*"
-                              (if has-initial-text? 'initial-text 'empty)
-                              'scratch #f #f 'fundamental-mode)
-              #f #f))
+      (startup-plan
+       (startup-buffer "*scratch*"
+                       (if has-initial-text? 'initial-text 'empty)
+                       'scratch #f #f 'fundamental-mode)
+       #f "plain text" #f #f))
      (has-initial-text?
-      (let ((resource (normalize-resource-path host path)))
-        (vector 'startup-plan
-                (startup-buffer (path-filename host resource) 'initial-text 'file resource #f
-                                (or (resource-mode host resource) 'fundamental-mode))
-                #f #f)))
+      (let* ((resource (normalize-resource-path host path))
+             (mode (or (resource-mode host resource) 'fundamental-mode)))
+        (startup-plan
+         (startup-buffer (path-filename host resource) 'initial-text 'file resource #f mode)
+         #f (if (eq? mode 'cind.cpp) "llvm (fallback)" "plain text") #f #f)))
      (else
-      (vector 'startup-plan
-              (startup-buffer "*scratch*" 'empty 'scratch #f #f 'fundamental-mode)
-              (normalize-resource-path host path) #t)))))
+      (startup-plan
+       (startup-buffer "*scratch*" 'empty 'scratch #f #f 'fundamental-mode)
+       #f "plain text" (normalize-resource-path host path) #t)))))
 
 (define (default-session-plan host facts)
   (vector 'session-plan

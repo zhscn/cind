@@ -1178,7 +1178,7 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    std::string font_family, ScreenshotGeometry geometry,
                    std::string_view key_notation) {
     HeadlessWakeup wakeup;
-    EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
+    EditorModel editor(path, std::nullopt, initial_line,
                        {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wakeup] {
                             wakeup.notify();
                         }});
@@ -1287,8 +1287,8 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
                 event.type = background_event;
                 (void)SDL_PushEvent(&event);
             }};
-    EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
-                       std::move(platform_services), discover_user_init_file());
+    EditorModel editor(path, std::nullopt, initial_line, std::move(platform_services),
+                       discover_user_init_file());
     SkiaPresenter presenter(std::move(font_family), font_size, editor.presentation_theme(),
                             editor.presentation_styles(), editor.presentation_metrics(), smoothing);
     std::unique_ptr<InspectionHub> inspection;

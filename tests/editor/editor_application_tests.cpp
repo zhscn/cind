@@ -76,8 +76,6 @@ EditorApplication make_application(std::string path, std::string initial,
                                    EditorPlatformServices platform_services = {}) {
     return EditorApplication({.path = std::move(path),
                               .initial_text = std::move(initial),
-                              .style = {},
-                              .style_origin = "test",
                               .initial_line = 0,
                               .platform_services = std::move(platform_services),
                               .init_file = std::nullopt});
@@ -396,8 +394,6 @@ TEST_CASE("user initialization overrides file mode policy before the first buffe
 )");
     EditorApplication application({.path = "sample.notes",
                                    .initial_text = "notes\n",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -421,8 +417,6 @@ TEST_CASE("user initialization owns root keymap policy") {
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -469,8 +463,6 @@ TEST_CASE("user initialization owns modeline content policy") {
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -493,8 +485,6 @@ TEST_CASE("user initialization owns editor chrome policy") {
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -539,8 +529,6 @@ TEST_CASE("user initialization owns frontend presentation policy") {
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -599,8 +587,6 @@ TEST_CASE("frontend acquires presentation policy as one coherent profile") {
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -615,12 +601,10 @@ TEST_CASE("user initialization owns startup buffer policy before native bootstra
  (lambda (host facts)
    (vector 'startup-plan
            (vector 'startup-buffer "*Welcome*" 'empty 'generated #f #t 'special-mode)
-           #f #f)))
+           #f "custom startup" #f #f)))
 )");
     EditorApplication application({.path = "ignored.cpp",
                                    .initial_text = "ignored contents",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -633,6 +617,7 @@ TEST_CASE("user initialization owns startup buffer policy before native bootstra
     const ModeId mode = buffer.modes().major().value_or(ModeId{});
     REQUIRE(mode);
     CHECK(application.runtime().modes().definition(mode).name == "special-mode");
+    CHECK(application.style_origin() == "custom startup");
     CHECK_FALSE(application.has_background_work());
 }
 
@@ -646,8 +631,6 @@ TEST_CASE("user initialization owns the last-buffer fallback policy") {
 )");
     EditorApplication application({.path = {},
                                    .initial_text = "source",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -667,8 +650,6 @@ TEST_CASE("user initialization owns close request command selection") {
 )");
     EditorApplication application({.path = {},
                                    .initial_text = "source",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -690,8 +671,6 @@ TEST_CASE("user initialization owns semantic pointer and scroll behavior") {
 )");
     EditorApplication application({.path = {},
                                    .initial_text = "zero\none\n",
-                                   .style = {},
-                                   .style_origin = "test",
                                    .initial_line = 0,
                                    .platform_services = {},
                                    .init_file = init.path().string()});
@@ -1545,8 +1524,6 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
     EditorApplication application({
         .path = path.string(),
         .initial_text = std::nullopt,
-        .style = {},
-        .style_origin = "fallback",
         .initial_line = 2,
         .platform_services = {.write_clipboard = {},
                               .read_clipboard = {},
@@ -1590,8 +1567,6 @@ TEST_CASE("scripted open policy round-trips discovered C++ style into the buffer
     EditorApplication application({
         .path = source.string(),
         .initial_text = std::nullopt,
-        .style = {},
-        .style_origin = "fallback",
         .initial_line = 0,
         .platform_services = {.write_clipboard = {},
                               .read_clipboard = {},
@@ -1618,8 +1593,6 @@ TEST_CASE("asynchronous file open snapshots mode policy and skips unrelated styl
     EditorApplication application({
         .path = source.path().string(),
         .initial_text = std::nullopt,
-        .style = {},
-        .style_origin = "fallback",
         .initial_line = 0,
         .platform_services = {.write_clipboard = {},
                               .read_clipboard = {},
@@ -1662,8 +1635,6 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         EditorApplication application({
             .path = (root / "src" / "main.cpp").string(),
             .initial_text = std::nullopt,
-            .style = {},
-            .style_origin = "fallback",
             .initial_line = 0,
             .platform_services = {.write_clipboard = {},
                                   .read_clipboard = {},

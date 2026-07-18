@@ -117,7 +117,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     for (int line = 0; line < 30; ++line) {
         source += "line\n";
     }
-    EditorModel model("sample.cc", source, CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", source, 1);
     compose_frame(model, 8, 80);
     const TextOffset caret = model.inspect().caret;
 
@@ -168,7 +168,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
 }
 
 TEST_CASE("fractional wheel scrolling preserves trackpad precision") {
-    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", 1);
     compose_frame(model, 4, 80);
     const TextOffset caret = model.inspect().caret;
 
@@ -188,8 +188,7 @@ TEST_CASE("fractional wheel scrolling preserves trackpad precision") {
 }
 
 TEST_CASE("discrete wheel scrolling uses scripted step policy") {
-    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\nfive\n", CppIndentStyle{}, "test",
-                      1);
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\nfive\n", 1);
     compose_frame(model, 4, 80);
 
     model.scroll_steps(1.0F);
@@ -200,7 +199,7 @@ TEST_CASE("discrete wheel scrolling uses scripted step policy") {
 }
 
 TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy") {
-    EditorModel model("sample.cc", "abc", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "abc", 1);
     ui::Scene scene = compose_frame(model, 8, 80);
     CHECK(scene.cursor_shape == CursorShape::Beam);
 
@@ -236,7 +235,7 @@ TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy")
 }
 
 TEST_CASE("meow keypad feedback is exposed through the shared scene and inspector model") {
-    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "text", 1);
     CHECK(model.handle_key(KeyStroke::character_key(U'c', KeyModifier::Control), 8));
     CHECK(model.handle_key(KeyStroke::character_key(U'm'), 8));
     CHECK(model.handle_key(KeyStroke::character_key(U'x'), 8));
@@ -260,7 +259,7 @@ TEST_CASE("meow keypad feedback is exposed through the shared scene and inspecto
 
 TEST_CASE("meow expansion hints share editor state Scene and inspector projections") {
     EditorModel model("sample.cc", "one two three four five six seven eight nine ten eleven twelve",
-                      CppIndentStyle{}, "test", 1);
+                      1);
     CHECK(model.handle_key(KeyStroke::character_key(U'c', KeyModifier::Control), 8));
     CHECK(model.handle_key(KeyStroke::character_key(U'm'), 8));
     CHECK(model.handle_key(KeyStroke::character_key(U'w'), 8));
@@ -287,7 +286,7 @@ TEST_CASE("meow expansion hints share editor state Scene and inspector projectio
 }
 
 TEST_CASE("caret reveal moves a fractional row to the top edge") {
-    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\n", 1);
     compose_frame(model, 6, 80, 3.5F);
 
     for (int line = 0; line < 3; ++line) {
@@ -305,7 +304,7 @@ TEST_CASE("caret reveal moves a fractional row to the top edge") {
 }
 
 TEST_CASE("scene composition does not mutate retained view state") {
-    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", 1);
     for (int line = 0; line < 3; ++line) {
         CHECK(model.handle_key(KeyStroke::named(KeyCode::Down), 2));
     }
@@ -324,7 +323,7 @@ TEST_CASE("scene composition does not mutate retained view state") {
 }
 
 TEST_CASE("cursor movement and deletion operate on extended grapheme clusters") {
-    EditorModel model("sample.cc", "e\u0301x", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "e\u0301x", 1);
 
     CHECK(model.handle_key(KeyStroke::named(KeyCode::Right), 10));
     CHECK(model.inspect().caret.value == 3);
@@ -335,7 +334,7 @@ TEST_CASE("cursor movement and deletion operate on extended grapheme clusters") 
 }
 
 TEST_CASE("vertical movement preserves the shared preferred display column") {
-    EditorModel model("sample.cc", "abcd\nx\nabcd", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "abcd\nx\nabcd", 1);
 
     for (int index = 0; index < 3; ++index) {
         CHECK(model.handle_key(KeyStroke::named(KeyCode::Right), 10));
@@ -347,7 +346,7 @@ TEST_CASE("vertical movement preserves the shared preferred display column") {
 }
 
 TEST_CASE("search uses the shared non-blocking interaction state") {
-    EditorModel model("sample.cc", "one two one", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "one two one", 1);
 
     CHECK(model.handle_key(KeyStroke::character_key(U's', KeyModifier::Control), 10));
     EditorStateSnapshot state = model.inspect();
@@ -385,7 +384,7 @@ TEST_CASE("search uses the shared non-blocking interaction state") {
 }
 
 TEST_CASE("prefix help and picker candidates compose a semantic popup") {
-    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "text", 1);
 
     CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
     ui::Scene scene = compose_frame(model, 16, 100);
@@ -420,7 +419,7 @@ TEST_CASE("prefix help and picker candidates compose a semantic popup") {
 }
 
 TEST_CASE("picker input keeps one stable minibuffer region with no matches") {
-    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "text", 1);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
     const ui::Scene initial = compose_frame(model, 20, 100);
@@ -450,7 +449,7 @@ TEST_CASE("picker input keeps one stable minibuffer region with no matches") {
 }
 
 TEST_CASE("semantic pointer targets edit document positions without viewport reconstruction") {
-    EditorModel model("sample.cc", "zero\none\ntwo\n", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "zero\none\ntwo\n", 1);
     model.click(ui::HitTarget{.kind = ui::HitTargetKind::DocumentText,
                               .view_id = "editor/document",
                               .pane_id = {},
@@ -481,7 +480,7 @@ TEST_CASE("semantic pointer targets edit document positions without viewport rec
 }
 
 TEST_CASE("window splits compose pane-owned regions with active theme state") {
-    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\n", 1);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 8));
     REQUIRE(model.handle_key(KeyStroke::character_key(U'3'), 8));
@@ -540,7 +539,7 @@ TEST_CASE("window splits compose pane-owned regions with active theme state") {
 }
 
 TEST_CASE("command palette retains a global selection and stable list viewport") {
-    EditorModel model("sample.cc", "text", CppIndentStyle{}, "test", 1);
+    EditorModel model("sample.cc", "text", 1);
 
     REQUIRE(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Alt), 10));
     ui::Scene scene = compose_frame(model, 20, 100);
@@ -582,7 +581,7 @@ TEST_CASE("background save captures one revision without blocking newer edits") 
     std::filesystem::remove(path, ignored);
 
     {
-        EditorModel model(path.string(), "old", CppIndentStyle{}, "test", 1);
+        EditorModel model(path.string(), "old", 1);
         model.insert_text("x");
         CHECK(model.handle_key(KeyStroke::character_key(U'x', KeyModifier::Control), 10));
         CHECK(model.handle_key(KeyStroke::character_key(U's', KeyModifier::Control), 10));

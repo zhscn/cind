@@ -1,7 +1,6 @@
 #pragma once
 
 #include "editor/editor_application.hpp"
-#include "formatting/cpp_indent_style.hpp"
 #include "gui/editor_state.hpp"
 #include "ui/editor_scene.hpp"
 #include "ui/line_signs.hpp"
@@ -18,8 +17,7 @@ namespace cind::gui {
 
 class EditorModel {
 public:
-    EditorModel(std::string path, std::optional<std::string> initial, CppIndentStyle style,
-                std::string style_origin, std::uint32_t initial_line,
+    EditorModel(std::string path, std::optional<std::string> initial, std::uint32_t initial_line,
                 EditorPlatformServices platform_services = {},
                 std::optional<std::string> init_file = std::nullopt);
 

@@ -809,6 +809,8 @@ TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
     CHECK(scratch->buffer.kind == BufferKind::Scratch);
     CHECK(scratch->buffer.major_mode == fundamental);
     CHECK_FALSE(scratch->buffer.use_initial_text);
+    CHECK(scratch->style == CppIndentStyle{});
+    CHECK(scratch->style_origin == "plain text");
     CHECK_FALSE(scratch->resource_to_open.has_value());
     CHECK_FALSE(scratch->startup_placeholder);
 
@@ -822,6 +824,8 @@ TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
     CHECK(preloaded->buffer.resource == normalized);
     CHECK(preloaded->buffer.major_mode == cpp);
     CHECK(preloaded->buffer.use_initial_text);
+    CHECK(preloaded->style == CppIndentStyle{});
+    CHECK(preloaded->style_origin == "llvm (fallback)");
     CHECK_FALSE(preloaded->resource_to_open.has_value());
     CHECK_FALSE(preloaded->startup_placeholder);
 
@@ -831,6 +835,8 @@ TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
     CHECK(deferred->buffer.name == "*scratch*");
     CHECK(deferred->buffer.kind == BufferKind::Scratch);
     CHECK(deferred->buffer.major_mode == fundamental);
+    CHECK(deferred->style == CppIndentStyle{});
+    CHECK(deferred->style_origin == "plain text");
     CHECK(deferred->resource_to_open == normalized);
     CHECK(deferred->startup_placeholder);
 

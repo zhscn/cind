@@ -152,13 +152,10 @@ std::optional<KeyStroke> normalize_key(const Key& key) {
 
 class Editor {
 public:
-    Editor(const std::string& path, std::optional<std::string> initial, CppIndentStyle style,
-           std::string style_origin, std::uint32_t initial_line)
+    Editor(const std::string& path, std::optional<std::string> initial, std::uint32_t initial_line)
         : term_(), wakeup_(),
           application_({.path = path,
                         .initial_text = std::move(initial),
-                        .style = style,
-                        .style_origin = std::move(style_origin),
                         .initial_line = initial_line,
                         .platform_services = {.write_clipboard = [this](std::string_view text)
                                                   -> std::expected<void, std::string> {
@@ -463,7 +460,7 @@ private:
 
 int run_editor(const std::string& path, std::uint32_t initial_line) {
     try {
-        Editor editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line);
+        Editor editor(path, std::nullopt, initial_line);
         return editor.run();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "indent-core: %s\n", e.what());

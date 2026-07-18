@@ -5409,18 +5409,22 @@ StartupBufferPlan startup_buffer_plan_from_scheme(HostLease& host, SCM buffer_va
 
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
-    if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 6 ||
         !symbol_is(scm_c_vector_ref(value, 0), "startup-plan") ||
-        !scheme_boolean(scm_c_vector_ref(value, 3))) {
-        scm_wrong_type_arg_msg(
-            caller, 0, value,
-            "#(startup-plan startup-buffer resource-to-open-or-#f startup-placeholder?)");
+        !scm_is_string(scm_c_vector_ref(value, 3)) || !scheme_boolean(scm_c_vector_ref(value, 5))) {
+        scm_wrong_type_arg_msg(caller, 0, value,
+                               "#(startup-plan startup-buffer cpp-indent-style-or-#f style-origin "
+                               "resource-to-open-or-#f startup-placeholder?)");
     }
     StartupPlan plan;
     plan.buffer = startup_buffer_plan_from_scheme(host, scm_c_vector_ref(value, 1),
                                                   facts.has_initial_text, caller);
+    const SCM style = scm_c_vector_ref(value, 2);
+    plan.style =
+        scheme_false(style) ? CppIndentStyle{} : cpp_indent_style_from_scheme(style, caller, 0);
+    plan.style_origin = scheme_string(scm_c_vector_ref(value, 3));
 
-    const SCM resource_to_open = scm_c_vector_ref(value, 2);
+    const SCM resource_to_open = scm_c_vector_ref(value, 4);
     if (!scheme_false(resource_to_open)) {
         if (!scm_is_string(resource_to_open)) {
             scm_wrong_type_arg_msg(caller, 0, resource_to_open, "string or #f");
@@ -5430,7 +5434,7 @@ StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFa
             scm_misc_error(caller, "startup resource to open must not be empty", SCM_EOL);
         }
     }
-    plan.startup_placeholder = scheme_true(scm_c_vector_ref(value, 3));
+    plan.startup_placeholder = scheme_true(scm_c_vector_ref(value, 5));
     if (plan.startup_placeholder && !plan.resource_to_open) {
         scm_misc_error(caller, "startup placeholder requires a deferred resource", SCM_EOL);
     }
