@@ -14,7 +14,7 @@ namespace {
 constexpr std::size_t maximum_collection_size = 100'000;
 
 void write_layout(std::ostream& output, const WorkbenchLayoutSessionState& node) {
-    if (node.leaf()) {
+    if (node.window) {
         const WorkbenchWindowSessionState& window = *node.window;
         output << "leaf " << window.resource.has_value() << ' '
                << std::quoted(window.resource.value_or(std::string{})) << ' ' << window.caret << ' '
