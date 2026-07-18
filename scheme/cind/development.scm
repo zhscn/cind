@@ -121,7 +121,7 @@
                 (if (string-null? error-output)
                     ""
                     (string-append "Error output:\n" error-output "\n")))
-               'special-mode "scheme evaluation"))
+               'special-mode "scheme evaluation" 'tools))
           (command-error message))
         (let* ((values (vector-ref result 1))
                (output (vector-ref result 2))
@@ -136,7 +136,7 @@
               (display-generated-buffer!
                host (context-window context) evaluation-buffer-name
                (result-text source-name values output error-output)
-               'special-mode "scheme evaluation"))
+               'special-mode "scheme evaluation" 'tools))
           (command-completed)))))
 
 (define (evaluate! host context source source-name always-buffer?)

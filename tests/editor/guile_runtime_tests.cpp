@@ -576,6 +576,61 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK_FALSE(snapshot.last_error.has_value());
 }
 
+TEST_CASE("Guile display policy resolves deterministic slots and can be replaced") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    REQUIRE(guile.install_display_policy().has_value());
+    const WindowId active{0, 1};
+    const WindowId adjacent{1, 1};
+    GuileDisplayFacts facts{.intent = "jump",
+                            .origin = active,
+                            .active = active,
+                            .windows = {{.window = active,
+                                         .role = std::nullopt,
+                                         .pinned = true,
+                                         .created_by_policy = false},
+                                        {.window = adjacent,
+                                         .role = std::nullopt,
+                                         .pinned = false,
+                                         .created_by_policy = false}},
+                            .slots = {}};
+    std::expected<GuileDisplayPlan, std::string> plan = guile.display_plan(facts);
+    REQUIRE(plan.has_value());
+    CHECK(plan->action == GuileDisplayPlan::Action::Reuse);
+    CHECK(plan->target == adjacent);
+
+    facts.intent = "tools";
+    plan = guile.display_plan(facts);
+    REQUIRE(plan.has_value());
+    CHECK(plan->action == GuileDisplayPlan::Action::Split);
+    CHECK(plan->target == active);
+    CHECK(plan->axis == WindowSplitAxis::Rows);
+    CHECK(plan->ratio == doctest::Approx(0.72F));
+    CHECK(plan->role == std::optional<std::string>{"tools"});
+
+    facts.slots = {{.role = "tools", .window = adjacent}};
+    plan = guile.display_plan(facts);
+    REQUIRE(plan.has_value());
+    CHECK(plan->action == GuileDisplayPlan::Action::Reuse);
+    CHECK(plan->target == adjacent);
+
+    const std::expected<GuileEvaluationResult, std::string> configured =
+        guile.evaluate({.source = R"((use-modules (cind command))
+(configure-display-policy!
+ host
+ (lambda (host facts)
+   (vector 'display-reuse (vector-ref facts 2))))
+)",
+                        .source_name = "display-policy-test.scm"});
+    REQUIRE(configured.has_value());
+    CHECK_FALSE(configured->error.has_value());
+    facts.intent = "doc";
+    plan = guile.display_plan(facts);
+    REQUIRE(plan.has_value());
+    CHECK(plan->action == GuileDisplayPlan::Action::Reuse);
+    CHECK(plan->target == active);
+}
+
 TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
     EditorRuntime runtime;
     const CommandId save = define_command(runtime, "file.save");
@@ -965,21 +1020,21 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string interaction_provider;
     GuileRuntime guile(
         runtime,
-        {.display_buffer = [&](WindowId target_window,
-                               BufferId target_buffer) -> std::expected<void, std::string> {
+        {.display_buffer = [&](WindowId target_window, BufferId target_buffer,
+                               std::string_view) -> std::expected<WindowId, std::string> {
              displayed = std::pair{target_window, target_buffer};
              buffer_displayed = true;
-             return {};
+             return target_window;
          },
-         .display_generated_buffer =
-             [&](WindowId target_window, std::string name, std::string text, ModeId mode,
-                 std::string style_origin) -> std::expected<void, std::string> {
+         .display_generated_buffer = [&](WindowId target_window, std::string name, std::string text,
+                                         ModeId mode, std::string style_origin,
+                                         std::string_view) -> std::expected<WindowId, std::string> {
              displayed_help_window = target_window;
              help_name = std::move(name);
              help_text = std::move(text);
              help_mode = mode;
              help_style_origin = std::move(style_origin);
-             return {};
+             return target_window;
          },
          .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
                                    std::uint32_t column) -> std::expected<void, std::string> {

@@ -36,7 +36,7 @@
 
 (define (display-help! host context text)
   (display-generated-buffer! host (context-window context) help-buffer-name text
-                             'special-mode "help"))
+                             'special-mode "help" 'doc))
 
 (define (vector->strings values)
   (let loop ((index 0) (result '()))

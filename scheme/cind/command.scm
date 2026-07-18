@@ -23,6 +23,8 @@
             active-keymap-layers
             configure-modeline-policy!
             resolve-modeline-content
+            configure-display-policy!
+            resolve-display-plan
             configure-chrome-policy!
             resolve-chrome-content
             configure-theme-policy!
@@ -259,6 +261,20 @@
   (keymap-policy-names (resolve-keymap-policy host context) #t))
 
 (define modeline-policies (make-weak-key-hash-table))
+
+(define display-policies (make-weak-key-hash-table))
+
+(define (configure-display-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "display policy must be a procedure" procedure))
+  (hashq-set! display-policies host procedure)
+  procedure)
+
+(define (resolve-display-plan host facts)
+  (let ((procedure (hashq-ref display-policies host)))
+    (unless procedure
+      (error "display policy is not configured"))
+    (procedure host facts)))
 
 (define (configure-modeline-policy! host procedure)
   (unless (procedure? procedure)

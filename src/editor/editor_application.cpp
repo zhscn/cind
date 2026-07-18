@@ -28,27 +28,87 @@ TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     return caret < line_end ? TextRange{caret, line_end} : TextRange{caret, caret};
 }
 
+GuileDisplayPlan reuse_display_plan(WindowId window) {
+    return {.action = GuileDisplayPlan::Action::Reuse,
+            .target = window,
+            .axis = WindowSplitAxis::Columns,
+            .ratio = 0.5F,
+            .role = std::nullopt};
+}
+
+GuileDisplayPlan split_display_plan(WindowId window, WindowSplitAxis axis, float ratio,
+                                    std::optional<std::string> role = std::nullopt) {
+    return {.action = GuileDisplayPlan::Action::Split,
+            .target = window,
+            .axis = axis,
+            .ratio = ratio,
+            .role = std::move(role)};
+}
+
+GuileDisplayPlan built_in_display_plan(const GuileDisplayFacts& facts) {
+    const auto window = [&](WindowId id) -> const GuileDisplayWindow* {
+        const auto found = std::ranges::find(facts.windows, id, &GuileDisplayWindow::window);
+        return found == facts.windows.end() ? nullptr : &*found;
+    };
+    const auto pinned = [&](WindowId id) {
+        const GuileDisplayWindow* summary = window(id);
+        return summary != nullptr && summary->pinned;
+    };
+    const auto slot = [&]() -> std::optional<WindowId> {
+        const auto found = std::ranges::find(facts.slots, facts.intent, &GuileDisplaySlot::role);
+        return found != facts.slots.end() && !pinned(found->window) ? std::optional(found->window)
+                                                                    : std::nullopt;
+    };
+    const auto adjacent = [&]() -> std::optional<WindowId> {
+        const auto found =
+            std::ranges::find(facts.windows, facts.active, &GuileDisplayWindow::window);
+        if (found == facts.windows.end() || facts.windows.size() < 2) {
+            return std::nullopt;
+        }
+        const std::size_t index =
+            static_cast<std::size_t>(std::distance(facts.windows.begin(), found));
+        return facts.windows[(index + 1) % facts.windows.size()].window;
+    };
+
+    if (const std::optional<WindowId> target = slot()) {
+        return reuse_display_plan(*target);
+    }
+    if (facts.intent == "explicit") {
+        return reuse_display_plan(facts.origin);
+    }
+    if (facts.intent == "tools" || facts.intent == "doc") {
+        return split_display_plan(facts.active, WindowSplitAxis::Rows, 0.72F, facts.intent);
+    }
+    if (facts.intent == "pop") {
+        return split_display_plan(facts.active, WindowSplitAxis::Columns, 0.5F);
+    }
+    const GuileDisplayWindow* active = window(facts.active);
+    const bool jump_from_tool =
+        active != nullptr && active->role && (*active->role == "tools" || *active->role == "doc");
+    if (facts.intent == "jump" && (pinned(facts.active) || jump_from_tool)) {
+        if (const std::optional<WindowId> target = adjacent(); target && !pinned(*target)) {
+            return reuse_display_plan(*target);
+        }
+        return split_display_plan(facts.active, WindowSplitAxis::Columns, 0.5F, "jump");
+    }
+    return !pinned(facts.active) ? reuse_display_plan(facts.active)
+                                 : split_display_plan(facts.origin, WindowSplitAxis::Columns, 0.5F);
+}
+
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
     : guile_(
           runtime_,
-          {.display_buffer = [this](WindowId window,
-                                    BufferId buffer) -> std::expected<void, std::string> {
-               try {
-                   if (!show_buffer(window, buffer)) {
-                       return std::unexpected("buffer cannot be displayed");
-                   }
-                   return {};
-               } catch (const std::exception& exception) {
-                   return std::unexpected(exception.what());
-               }
-           },
+          {.display_buffer =
+               [this](WindowId origin, BufferId buffer, std::string_view intent) {
+                   return display_buffer(buffer, intent, origin);
+               },
            .display_generated_buffer =
                [this](WindowId window, std::string name, std::string text, ModeId mode,
-                      std::string style_origin) {
+                      std::string style_origin, std::string_view intent) {
                    return display_generated_buffer(window, std::move(name), std::move(text), mode,
-                                                   std::move(style_origin));
+                                                   std::move(style_origin), intent);
                },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
@@ -576,6 +636,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     register_interaction_providers();
     register_keymaps();
     register_presentation_policies();
+    if (std::expected<void, std::string> installed = guile_.install_display_policy(); !installed) {
+        throw std::runtime_error(std::format("Guile display policy failed: {}", installed.error()));
+    }
     if (spec.init_file) {
         if (std::expected<void, std::string> loaded = guile_.load_extension(*spec.init_file);
             !loaded) {
@@ -951,6 +1014,81 @@ void EditorApplication::reset_preferred_column() {
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
     return guile_.open_resource(window_id(), input);
+}
+
+std::expected<WindowId, std::string>
+EditorApplication::display_buffer(BufferId buffer, std::string_view intent, WindowId origin) {
+    if (intent.empty()) {
+        return std::unexpected("display intent must not be empty");
+    }
+    if (runtime_.buffers().try_get(buffer) == nullptr) {
+        return std::unexpected("unknown display buffer");
+    }
+    Workbench& workbench = active_workbench();
+    if (!workbench.layout().contains(origin)) {
+        origin = workbench.active_window();
+    }
+    GuileDisplayFacts facts{.intent = std::string(intent),
+                            .origin = origin,
+                            .active = workbench.active_window(),
+                            .windows = {},
+                            .slots = {}};
+    for (const WindowId window : workbench.layout().leaves()) {
+        const Window& candidate = runtime_.windows().get(window);
+        facts.windows.push_back({.window = window,
+                                 .role = candidate.role(),
+                                 .pinned = candidate.pinned(),
+                                 .created_by_policy = candidate.created_by_policy()});
+    }
+    for (const auto& [role, window] : workbench.slots()) {
+        facts.slots.push_back({.role = role, .window = window});
+    }
+    std::ranges::sort(facts.slots, {}, &GuileDisplaySlot::role);
+
+    std::expected<GuileDisplayPlan, std::string> resolved = guile_.display_plan(facts);
+    if (!resolved) {
+        message_ =
+            std::format("display policy failed: {}; using built-in policy", resolved.error());
+        resolved = built_in_display_plan(facts);
+    }
+    const GuileDisplayPlan& plan = *resolved;
+    if (!workbench.layout().contains(plan.target)) {
+        return std::unexpected("display policy selected a window outside the active workbench");
+    }
+    if (plan.action == GuileDisplayPlan::Action::Reuse) {
+        if (runtime_.windows().get(plan.target).pinned() && intent != "explicit") {
+            return std::unexpected("display policy selected a pinned window");
+        }
+        if (!show_buffer(plan.target, buffer) || !focus_window(plan.target)) {
+            return std::unexpected("display policy target cannot show the buffer");
+        }
+        return plan.target;
+    }
+
+    const ViewId view = create_view({}, buffer);
+    const WindowId window = runtime_.windows().create(view);
+    view_state_for(view).window = window;
+    if (!workbench.layout().split({.target = plan.target,
+                                   .new_window = window,
+                                   .axis = plan.axis,
+                                   .ratio = plan.ratio})) {
+        destroy_window(window);
+        return std::unexpected("display policy split cannot be applied");
+    }
+    runtime_.windows().get(window).set_created_by_policy(true);
+    if (plan.role) {
+        if (std::expected<void, std::string> assigned = set_window_role(window, plan.role);
+            !assigned) {
+            (void)workbench.layout().erase(window);
+            destroy_window(window);
+            return std::unexpected(assigned.error());
+        }
+    }
+    workbench.visit_buffer(buffer);
+    if (!focus_window(window)) {
+        return std::unexpected("display policy window cannot receive focus");
+    }
+    return window;
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
@@ -1687,9 +1825,10 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     return true;
 }
 
-std::expected<void, std::string>
-EditorApplication::display_generated_buffer(WindowId window, std::string name, std::string text,
-                                            ModeId mode, std::string style_origin) {
+std::expected<WindowId, std::string>
+EditorApplication::display_generated_buffer(WindowId origin, std::string name, std::string text,
+                                            ModeId mode, std::string style_origin,
+                                            std::string_view intent) {
     try {
         (void)runtime_.modes().definition(mode);
         BufferId buffer;
@@ -1721,10 +1860,12 @@ EditorApplication::display_generated_buffer(WindowId window, std::string name, s
                                               .read_only = true},
                                    CppIndentStyle{}, std::move(style_origin), mode);
         }
-        if (!show_buffer(window, buffer)) {
-            return std::unexpected("generated buffer cannot be displayed");
+        const std::expected<WindowId, std::string> displayed =
+            display_buffer(buffer, intent, origin);
+        if (!displayed) {
+            return std::unexpected(displayed.error());
         }
-        ViewState* view = find_view(window, buffer);
+        ViewState* view = find_view(*displayed, buffer);
         if (view == nullptr) {
             return std::unexpected("generated buffer view was not created");
         }
@@ -1732,7 +1873,7 @@ EditorApplication::display_generated_buffer(WindowId window, std::string name, s
         runtime_.views().set_caret(view->view, TextOffset{});
         runtime_.views().get(view->view).viewport() = {};
         editing_mechanisms_.reset_preferred_column(view->view);
-        return {};
+        return *displayed;
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
     }

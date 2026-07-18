@@ -3506,20 +3506,21 @@ SCM path_as_directory(SCM host_object, SCM path_value) {
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
-SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
+SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value, SCM intent_value) {
     HostLease& host = require_host(host_object, "display-buffer!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "display-buffer!", 2);
     const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "display-buffer!", 3);
+    const std::string intent = scheme_name(intent_value, "display-buffer!", 4);
     if (!host.services.display_buffer) {
         scm_misc_error("display-buffer!", "display-buffer capability is unavailable", SCM_EOL);
     }
     try {
-        const std::expected<void, std::string> displayed =
-            host.services.display_buffer(window, buffer);
+        const std::expected<WindowId, std::string> displayed =
+            host.services.display_buffer(window, buffer, intent);
         if (!displayed) {
             raise_host_error("display-buffer!", displayed.error());
         }
-        return SCM_UNSPECIFIED;
+        return entity_id(displayed->slot, displayed->generation);
     } catch (const std::exception& exception) {
         raise_host_error("display-buffer!", exception.what());
     } catch (...) {
@@ -3529,7 +3530,7 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
 }
 
 SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value,
-                             SCM mode_value, SCM style_origin_value) {
+                             SCM mode_value, SCM style_origin_value, SCM intent_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("display-generated-buffer!", 3, name_value, "string");
     }
@@ -3542,19 +3543,21 @@ SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, 
     HostLease& host = require_host(host_object, "display-generated-buffer!");
     const WindowId window =
         entity_id_from_scheme<WindowTag>(window_value, "display-generated-buffer!", 2);
+    const std::string intent = scheme_name(intent_value, "display-generated-buffer!", 7);
     if (!host.services.display_generated_buffer) {
         scm_misc_error("display-generated-buffer!", "generated-buffer capability is unavailable",
                        SCM_EOL);
     }
     try {
         const ModeId mode = require_mode(host, mode_value, "display-generated-buffer!", 5);
-        const std::expected<void, std::string> displayed = host.services.display_generated_buffer(
-            window, scheme_string(name_value), scheme_string_with_nuls(text_value), mode,
-            scheme_string(style_origin_value));
+        const std::expected<WindowId, std::string> displayed =
+            host.services.display_generated_buffer(window, scheme_string(name_value),
+                                                   scheme_string_with_nuls(text_value), mode,
+                                                   scheme_string(style_origin_value), intent);
         if (!displayed) {
             raise_host_error("display-generated-buffer!", displayed.error());
         }
-        return SCM_UNSPECIFIED;
+        return entity_id(displayed->slot, displayed->generation);
     } catch (const std::exception& exception) {
         raise_host_error("display-generated-buffer!", exception.what());
     } catch (...) {
@@ -5141,9 +5144,9 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(directory_path_p));
     (void)scm_c_define_gsubr("path-as-directory", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(path_as_directory));
-    (void)scm_c_define_gsubr("display-buffer!", 3, 0, 0,
+    (void)scm_c_define_gsubr("display-buffer!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer));
-    (void)scm_c_define_gsubr("display-generated-buffer!", 6, 0, 0,
+    (void)scm_c_define_gsubr("display-generated-buffer!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_generated_buffer));
     (void)scm_c_define_gsubr("evaluate-scheme!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(evaluate_scheme));
@@ -5964,6 +5967,73 @@ SessionPlan session_plan_from_scheme(HostLease& host, SCM value, const SessionFa
                                                       facts.has_initial_text, caller)};
 }
 
+SCM display_facts_value(const GuileDisplayFacts& facts) {
+    SCM windows = scm_c_make_vector(facts.windows.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < facts.windows.size(); ++index) {
+        const GuileDisplayWindow& source = facts.windows[index];
+        SCM window = scm_c_make_vector(5, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(window, 0, name_symbol("display-window"));
+        scm_c_vector_set_x(window, 1, entity_id(source.window.slot, source.window.generation));
+        scm_c_vector_set_x(window, 2, source.role ? name_symbol(*source.role) : SCM_BOOL_F);
+        scm_c_vector_set_x(window, 3, scm_from_bool(source.pinned));
+        scm_c_vector_set_x(window, 4, scm_from_bool(source.created_by_policy));
+        scm_c_vector_set_x(windows, index, window);
+    }
+    SCM slots = scm_c_make_vector(facts.slots.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < facts.slots.size(); ++index) {
+        const GuileDisplaySlot& source = facts.slots[index];
+        SCM slot = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(slot, 0, name_symbol("display-slot"));
+        scm_c_vector_set_x(slot, 1, name_symbol(source.role));
+        scm_c_vector_set_x(slot, 2, entity_id(source.window.slot, source.window.generation));
+        scm_c_vector_set_x(slots, index, slot);
+    }
+    SCM result = scm_c_make_vector(6, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, name_symbol("display-facts"));
+    scm_c_vector_set_x(result, 1, name_symbol(facts.intent));
+    scm_c_vector_set_x(result, 2, entity_id(facts.origin.slot, facts.origin.generation));
+    scm_c_vector_set_x(result, 3, entity_id(facts.active.slot, facts.active.generation));
+    scm_c_vector_set_x(result, 4, windows);
+    scm_c_vector_set_x(result, 5, slots);
+    return result;
+}
+
+GuileDisplayPlan display_plan_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) < 2) {
+        scm_wrong_type_arg_msg(caller, 0, value, "display plan vector");
+    }
+    GuileDisplayPlan plan;
+    if (symbol_is(scm_c_vector_ref(value, 0), "display-reuse") && scm_c_vector_length(value) == 2) {
+        plan.action = GuileDisplayPlan::Action::Reuse;
+        plan.target = entity_id_from_scheme<WindowTag>(scm_c_vector_ref(value, 1), caller, 0);
+        return plan;
+    }
+    if (!symbol_is(scm_c_vector_ref(value, 0), "display-split") ||
+        scm_c_vector_length(value) != 5 || scm_is_real(scm_c_vector_ref(value, 3)) == 0) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value, "#(display-reuse window) or #(display-split window axis ratio role)");
+    }
+    plan.action = GuileDisplayPlan::Action::Split;
+    plan.target = entity_id_from_scheme<WindowTag>(scm_c_vector_ref(value, 1), caller, 0);
+    const SCM axis = scm_c_vector_ref(value, 2);
+    if (symbol_is(axis, "rows")) {
+        plan.axis = WindowSplitAxis::Rows;
+    } else if (symbol_is(axis, "columns")) {
+        plan.axis = WindowSplitAxis::Columns;
+    } else {
+        scm_wrong_type_arg_msg(caller, 0, axis, "'rows or 'columns");
+    }
+    plan.ratio = static_cast<float>(scm_to_double(scm_c_vector_ref(value, 3)));
+    if (!std::isfinite(plan.ratio) || plan.ratio <= 0.0F || plan.ratio >= 1.0F) {
+        scm_misc_error(caller, "display split ratio must be between zero and one", SCM_EOL);
+    }
+    const SCM role = scm_c_vector_ref(value, 4);
+    if (!scheme_false(role)) {
+        plan.role = scheme_name(role, caller, 0);
+    }
+    return plan;
+}
+
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
@@ -5979,6 +6049,7 @@ struct GuileCall {
         InstallBufferLifecyclePolicies,
         InstallPointerPolicies,
         InstallPresentationPolicies,
+        InstallDisplayPolicy,
         ResolveStartupPlan,
         ResolveSessionPlan,
         SetStartupPlaceholder,
@@ -5991,6 +6062,7 @@ struct GuileCall {
         ChromeContent,
         ModelineContent,
         PresentationProfile,
+        DisplayPlan,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -6020,6 +6092,7 @@ struct GuileCall {
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
+    const GuileDisplayFacts* display_facts = nullptr;
     std::exception_ptr cpp_failure;
     ScrollInput scroll_input;
     std::string path;
@@ -6043,6 +6116,7 @@ struct GuileCall {
     std::optional<std::uint32_t> column;
     KeyStroke key;
     PresentationProfile presentation_profile;
+    GuileDisplayPlan display_plan;
     Operation operation = Operation::Load;
     bool pending_key_sequence = false;
     bool force = false;
@@ -6450,6 +6524,11 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind core", "install-presentation-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallDisplayPolicy:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "install-display-policy!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::ResolveStartupPlan:
             call.result = scm_call_2(scm_c_public_ref("cind lifecycle", "resolve-startup-plan"),
                                      call.host, startup_facts_value(*call.startup_facts));
@@ -6534,6 +6613,11 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind command", "resolve-presentation-profile"), call.host);
             call.presentation_profile =
                 presentation_profile_from_scheme(call.result, "resolve-presentation-profile");
+            break;
+        case GuileCall::Operation::DisplayPlan:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-display-plan"),
+                                     call.host, display_facts_value(*call.display_facts));
+            call.display_plan = display_plan_from_scheme(call.result, "resolve-display-plan");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -7272,6 +7356,23 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> install_display_policy() {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallDisplayPolicy;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != 1) {
+            state_->last_error = "Guile display policy returned an inconsistent policy count";
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     std::expected<std::size_t, std::string> install_input_states() {
         require_owner_thread();
         lease_->input_states_installed = 0;
@@ -7560,6 +7661,21 @@ public:
         return call.presentation_profile;
     }
 
+    std::expected<GuileDisplayPlan, std::string>
+    display_plan(const GuileDisplayFacts& facts) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::DisplayPlan;
+        call.host = host_;
+        call.display_facts = &facts;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return call.display_plan;
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -7766,6 +7882,10 @@ std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
     return impl_->install_presentation_policies();
 }
 
+std::expected<void, std::string> GuileRuntime::install_display_policy() {
+    return impl_->install_display_policy();
+}
+
 std::expected<StartupPlan, std::string>
 GuileRuntime::startup_plan(const StartupFacts& facts) const {
     return impl_->startup_plan(facts);
@@ -7829,6 +7949,11 @@ GuileRuntime::modeline_content(const CommandContext& context, const ModelineFact
 
 std::expected<PresentationProfile, std::string> GuileRuntime::presentation_profile() const {
     return impl_->presentation_profile();
+}
+
+std::expected<GuileDisplayPlan, std::string>
+GuileRuntime::display_plan(const GuileDisplayFacts& facts) const {
+    return impl_->display_plan(facts);
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

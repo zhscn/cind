@@ -134,6 +134,8 @@ public:
     void reset_preferred_column();
 
     std::expected<void, std::string> open_file(std::string_view path);
+    std::expected<WindowId, std::string> display_buffer(BufferId buffer, std::string_view intent,
+                                                        WindowId origin);
     bool switch_buffer(BufferId buffer);
     bool focus_window(WindowId window);
     bool split_window(WindowSplitAxis axis);
@@ -261,9 +263,10 @@ private:
     bool show_buffer(WindowId window, BufferId buffer);
     Workbench& active_workbench() { return workbenches_.active(); }
     const Workbench& active_workbench() const { return workbenches_.active(); }
-    std::expected<void, std::string> display_generated_buffer(WindowId window, std::string name,
-                                                              std::string text, ModeId mode,
-                                                              std::string style_origin);
+    std::expected<WindowId, std::string> display_generated_buffer(WindowId origin, std::string name,
+                                                                  std::string text, ModeId mode,
+                                                                  std::string style_origin,
+                                                                  std::string_view intent);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
     void scroll_view_lines(ViewId view, double lines);

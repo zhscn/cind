@@ -27,6 +27,7 @@
             install-buffer-lifecycle-policies!
             install-pointer-policies!
             install-presentation-policies!
+            install-display-policy!
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!
@@ -122,6 +123,77 @@
              (set-caret-reveal! host #f)
              #t)))))
   2)
+
+(define (display-fact-window facts window)
+  (let ((windows (vector-ref facts 4)))
+    (let loop ((index 0))
+      (and (< index (vector-length windows))
+           (let ((candidate (vector-ref windows index)))
+             (if (equal? (vector-ref candidate 1) window)
+                 candidate
+                 (loop (+ index 1))))))))
+
+(define (display-fact-slot facts role)
+  (let ((slots (vector-ref facts 5)))
+    (let loop ((index 0))
+      (and (< index (vector-length slots))
+           (let ((slot (vector-ref slots index)))
+             (if (eq? (vector-ref slot 1) role)
+                 (vector-ref slot 2)
+                 (loop (+ index 1))))))))
+
+(define (display-window-pinned? facts window)
+  (let ((summary (display-fact-window facts window)))
+    (and summary (vector-ref summary 3))))
+
+(define (display-window-role facts window)
+  (let ((summary (display-fact-window facts window)))
+    (and summary (vector-ref summary 2))))
+
+(define (display-adjacent-window facts window)
+  (let* ((windows (vector-ref facts 4))
+         (count (vector-length windows)))
+    (let loop ((index 0))
+      (cond ((= index count) #f)
+            ((equal? (vector-ref (vector-ref windows index) 1) window)
+             (and (> count 1)
+                  (vector-ref (vector-ref windows (modulo (+ index 1) count)) 1)))
+            (else (loop (+ index 1)))))))
+
+(define (display-reuse window)
+  (vector 'display-reuse window))
+
+(define (display-split window axis ratio role)
+  (vector 'display-split window axis ratio role))
+
+(define (default-display-policy host facts)
+  (let* ((intent (vector-ref facts 1))
+         (origin (vector-ref facts 2))
+         (active (vector-ref facts 3))
+         (slot (display-fact-slot facts intent)))
+    (cond ((and slot (not (display-window-pinned? facts slot)))
+           (display-reuse slot))
+          ((eq? intent 'explicit)
+           (display-reuse origin))
+          ((memq intent '(tools doc))
+           (display-split active 'rows 0.72 intent))
+          ((eq? intent 'pop)
+           (display-split active 'columns 0.5 #f))
+          ((and (eq? intent 'jump)
+                (or (display-window-pinned? facts active)
+                    (memq (display-window-role facts active) '(tools doc))))
+           (let ((adjacent (display-adjacent-window facts active)))
+             (if (and adjacent (not (display-window-pinned? facts adjacent)))
+                 (display-reuse adjacent)
+                 (display-split active 'columns 0.5 'jump))))
+          ((not (display-window-pinned? facts active))
+           (display-reuse active))
+          (else
+           (display-split origin 'columns 0.5 #f)))))
+
+(define (install-display-policy! host)
+  (configure-display-policy! host default-display-policy)
+  1)
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -561,11 +633,12 @@
     (file-open-interaction (path-as-directory host directory))))
 
 (define-record-type <pending-open>
-  (make-pending-open resource window line column mode contents style style-origin
+  (make-pending-open resource window intent line column mode contents style style-origin
                      discovery file-ready? style-ready? project-ready? tasks)
   pending-open?
   (resource pending-open-resource)
   (window pending-open-window set-pending-open-window!)
+  (intent pending-open-intent set-pending-open-intent!)
   (line pending-open-line set-pending-open-line!)
   (column pending-open-column set-pending-open-column!)
   (mode pending-open-mode)
@@ -633,11 +706,11 @@
   (let ((window (if (window-open? host (pending-open-window open))
                     (pending-open-window open)
                     (active-window-id host))))
-    (display-buffer! host window buffer)
-    (when (pending-open-line open)
-      (move-caret-to-line! host (window-view-id host window)
+    (let ((target (display-buffer! host window buffer (pending-open-intent open))))
+      (when (pending-open-line open)
+        (move-caret-to-line! host (window-view-id host target)
                            (pending-open-line open)
-                           (or (pending-open-column open) 0)))))
+                            (or (pending-open-column open) 0))))))
 
 (define (project-from-discovery! host discovery)
   (and discovery
@@ -749,7 +822,7 @@
                           (vector-ref result 4))))
        (set-pending-open-project-ready! open #t)))))
 
-(define (open-resource! host window path line column)
+(define (open-resource-with-intent! host window path line column intent)
   (unless (string? path)
     (error "resource path must be a string" path))
   (unless (or (not line) (and (integer? line) (>= line 0)))
@@ -759,12 +832,13 @@
   (let* ((resource (normalize-resource-path host path))
          (buffer (buffer-id-by-resource host resource)))
     (cond (buffer
-           (let ((open (make-pending-open resource window line column #f "" #f ""
+           (let ((open (make-pending-open resource window intent line column #f "" #f ""
                                           #f #t #t #t '())))
              (display-open-buffer! host open buffer)))
           ((find-pending-open host resource)
            => (lambda (open)
                 (set-pending-open-window! open window)
+                (set-pending-open-intent! open intent)
                 (set-pending-open-line! open line)
                 (set-pending-open-column! open column)
                 (set-message! host (string-append "opening " resource "…"))))
@@ -773,7 +847,7 @@
                   (providers (project-provider-definitions host))
                   (style-ready? (not (cpp-style-mode? host mode)))
                   (open (make-pending-open
-                         resource window line column mode "" #f
+                         resource window intent line column mode "" #f
                          (if style-ready? "plain text" "llvm (fallback)")
                          #f #f style-ready? (= (vector-length providers) 0) '())))
              (set-host-pending-opens! host (cons open (host-pending-opens host)))
@@ -783,6 +857,9 @@
                  (fail-open! host open (format #f "~S: ~S" key arguments))
                  (apply throw key arguments)))
              (set-message! host (string-append "opening " resource "…")))))))
+
+(define (open-resource! host window path line column)
+  (open-resource-with-intent! host window path line column 'edit))
 
 (define (file-open-accept host context invocation)
   (let ((path (last-string-argument invocation)))
@@ -872,7 +949,7 @@
         (let ((buffer (buffer-id-by-name host name)))
           (if buffer
               (begin
-                (display-buffer! host (context-window context) buffer)
+                (display-buffer! host (context-window context) buffer 'explicit)
                 (command-completed))
               (command-error (string-append "unknown buffer '" name "'")))))))
 
@@ -892,7 +969,8 @@
               (command-error "current buffer is not open")
               (begin
                 (display-buffer! host (context-window context)
-                                 (vector-ref buffers (modulo (+ current delta) count)))
+                                 (vector-ref buffers (modulo (+ current delta) count))
+                                 'explicit)
                 (command-completed)))))))
 
 (define (buffer-switch-widen host context invocation)
@@ -1259,7 +1337,7 @@
             (set-buffer-project! host buffer
                                  (and (= (vector-length projects) 1)
                                       (vector-ref projects 0))))
-          (display-buffer! host (project-search-target-window host search) buffer)
+          (display-buffer! host (project-search-target-window host search) buffer 'tools)
           (clear-project-search! host search)
           (set-message! host (string-append "project search finished: " query))))
       (lambda (key . arguments)
@@ -1658,10 +1736,11 @@
           (position-buffer-view! host (context-window context) list
                                  (vector-ref location 0))
           (location-message host index (vector-length locations))
-          (open-resource! host (context-window context)
-                          (vector-ref location 2)
-                          (vector-ref location 3)
-                          (vector-ref location 4))
+          (open-resource-with-intent! host (context-window context)
+                                      (vector-ref location 2)
+                                      (vector-ref location 3)
+                                      (vector-ref location 4)
+                                      'jump)
           (command-completed/preserve)))))
 
 (define (location-at-point locations caret)

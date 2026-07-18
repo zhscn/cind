@@ -101,6 +101,36 @@ struct GuileWorkbenchSummary {
     bool active = false;
 };
 
+struct GuileDisplayWindow {
+    WindowId window;
+    std::optional<std::string> role;
+    bool pinned = false;
+    bool created_by_policy = false;
+};
+
+struct GuileDisplaySlot {
+    std::string role;
+    WindowId window;
+};
+
+struct GuileDisplayFacts {
+    std::string intent;
+    WindowId origin;
+    WindowId active;
+    std::vector<GuileDisplayWindow> windows;
+    std::vector<GuileDisplaySlot> slots;
+};
+
+struct GuileDisplayPlan {
+    enum class Action : std::uint8_t { Reuse, Split };
+
+    Action action = Action::Reuse;
+    WindowId target;
+    WindowSplitAxis axis = WindowSplitAxis::Columns;
+    float ratio = 0.5F;
+    std::optional<std::string> role;
+};
+
 enum class GuileDeleteOutcome : std::uint8_t {
     Unchanged,
     Deleted,
@@ -109,9 +139,10 @@ enum class GuileDeleteOutcome : std::uint8_t {
 };
 
 struct GuileHostServices {
-    std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
-    std::function<std::expected<void, std::string>(WindowId, std::string, std::string, ModeId,
-                                                   std::string)>
+    std::function<std::expected<WindowId, std::string>(WindowId, BufferId, std::string_view)>
+        display_buffer;
+    std::function<std::expected<WindowId, std::string>(WindowId, std::string, std::string, ModeId,
+                                                       std::string, std::string_view)>
         display_generated_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
@@ -262,6 +293,7 @@ public:
     std::expected<void, std::string> install_buffer_lifecycle_policies();
     std::expected<void, std::string> install_pointer_policies();
     std::expected<void, std::string> install_presentation_policies();
+    std::expected<void, std::string> install_display_policy();
     std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const;
     std::expected<SessionPlan, std::string> session_plan(const SessionFacts& facts) const;
     std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer);
@@ -287,6 +319,7 @@ public:
     std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
                                                                  const ModelineFacts& facts) const;
     std::expected<PresentationProfile, std::string> presentation_profile() const;
+    std::expected<GuileDisplayPlan, std::string> display_plan(const GuileDisplayFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

@@ -1749,10 +1749,11 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.session().caret() == second.source_range.start);
         REQUIRE(application.split_window(WindowSplitAxis::Columns));
         const std::vector<OpenWindowSnapshot> windows = application.open_windows();
-        const auto secondary = std::ranges::find_if(
-            windows, [](const OpenWindowSnapshot& window) { return !window.active; });
-        REQUIRE(secondary != windows.end());
-        application.session(secondary->window).set_caret(first.source_range.start);
+        const auto tools_window =
+            std::ranges::find_if(windows, [](const OpenWindowSnapshot& window) {
+                return window.role == std::optional<std::string>{"tools"};
+            });
+        REQUIRE(tools_window != windows.end());
         const std::string result_text = application.session().snapshot().content().to_string();
         application.insert_text("ignored");
         CHECK(application.session().snapshot().content().to_string() == result_text);
@@ -1766,8 +1767,8 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
               second.target);
         CHECK(application.location_navigation().selected_index == 1);
-        CHECK(application.buffer_id(secondary->window) == result_buffer);
-        CHECK(application.session(secondary->window).caret() == first.source_range.start);
+        CHECK(application.buffer_id(tools_window->window) == result_buffer);
+        CHECK(application.session(tools_window->window).caret() == second.source_range.start);
 
         send_keys(application, "M-g n");
         while (application.has_background_work()) {
@@ -1787,8 +1788,8 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         send_keys(application, "C-x `");
         CHECK(application.location_navigation().selected_index == 2);
 
-        CommandContext kill_results(application.runtime(), secondary->window, result_buffer,
-                                    application.view_id(secondary->window));
+        CommandContext kill_results(application.runtime(), tools_window->window, result_buffer,
+                                    application.view_id(tools_window->window));
         const CommandId force_kill_results =
             application.runtime().commands().find("buffer.force-kill").value_or(CommandId{});
         REQUIRE(force_kill_results);
@@ -2009,6 +2010,41 @@ TEST_CASE("window roles pinning and policy provenance stay frontend independent"
     send_keys(application, "C-x w d");
     CHECK(application.runtime().windows().try_get(second) == nullptr);
     CHECK_FALSE(application.workbench_slot(application.workbench_id(), "doc").has_value());
+}
+
+TEST_CASE("display intents reuse named slots and route jumps around pinned windows") {
+    EditorApplication application = make_application("sample.cc", "one\n");
+    const WindowId edit_window = application.window_id();
+    const BufferId edit_buffer = application.buffer_id();
+
+    send_keys(application, "C-h b");
+    REQUIRE(application.open_windows().size() == 2);
+    const WindowId doc_window = application.window_id();
+    const BufferId help_buffer = application.buffer_id();
+    CHECK(doc_window != edit_window);
+    CHECK(application.runtime().windows().get(doc_window).role() ==
+          std::optional<std::string>{"doc"});
+    CHECK(application.runtime().windows().get(doc_window).created_by_policy());
+    CHECK(application.buffer_id(edit_window) == edit_buffer);
+
+    send_keys(application, "C-h b");
+    CHECK(application.open_windows().size() == 2);
+    CHECK(application.window_id() == doc_window);
+    send_keys(application, "C-x w d");
+    CHECK(application.open_windows().size() == 1);
+    CHECK(application.window_id() == edit_window);
+
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WindowId jump_window = application.window_layout().leaves().back();
+    REQUIRE(application.set_window_role(jump_window, "jump").has_value());
+    REQUIRE(application.set_window_pinned(edit_window, true).has_value());
+    const std::expected<WindowId, std::string> target =
+        application.display_buffer(help_buffer, "jump", edit_window);
+    REQUIRE(target.has_value());
+    CHECK(*target == jump_window);
+    CHECK(application.window_id() == jump_window);
+    CHECK(application.buffer_id(edit_window) == edit_buffer);
+    CHECK(application.buffer_id(jump_window) == help_buffer);
 }
 
 TEST_CASE("workbench commands manage named editing surfaces") {
