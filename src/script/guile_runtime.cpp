@@ -811,51 +811,92 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
     return SCM_BOOL_F;
 }
 
-SCM base_keymap_layers(SCM host_object, SCM context_value) {
-    try {
-        HostLease& host = require_host(host_object, "base-keymap-layers");
-        if (!host.services.base_keymap_layers) {
-            scm_misc_error("base-keymap-layers", "base keymap layer service is unavailable",
-                           SCM_EOL);
-        }
-        const CommandContext context =
-            command_context_from_scheme(host, context_value, "base-keymap-layers");
-        const std::vector<KeymapId> layers = host.services.base_keymap_layers(context.window_id());
-        SCM result = scm_c_make_vector(layers.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < layers.size(); ++index) {
-            scm_c_vector_set_x(result, index,
-                               name_symbol(host.runtime->keymaps().definition(layers[index]).name));
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("base-keymap-layers", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("base-keymap-layers", "unknown C++ host failure", SCM_EOL);
+SCM keymap_names_value(const EditorRuntime& runtime, std::span<const KeymapId> keymaps) {
+    SCM result = scm_c_make_vector(keymaps.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < keymaps.size(); ++index) {
+        scm_c_vector_set_x(result, index,
+                           name_symbol(runtime.keymaps().definition(keymaps[index]).name));
     }
-    return SCM_BOOL_F;
+    return result;
 }
 
-SCM active_keymap_layers(SCM host_object, SCM context_value) {
+SCM named_keymap_source_value(const EditorRuntime& runtime, const char* tag, std::string_view name,
+                              std::span<const KeymapId> keymaps) {
+    SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_utf8_symbol(tag));
+    scm_c_vector_set_x(result, 1, name_symbol(name));
+    scm_c_vector_set_x(result, 2, keymap_names_value(runtime, keymaps));
+    return result;
+}
+
+SCM buffer_kind_symbol(BufferKind kind) {
+    switch (kind) {
+    case BufferKind::File:
+        return scm_from_utf8_symbol("file");
+    case BufferKind::Scratch:
+        return scm_from_utf8_symbol("scratch");
+    case BufferKind::Generated:
+        return scm_from_utf8_symbol("generated");
+    case BufferKind::Process:
+        return scm_from_utf8_symbol("process");
+    case BufferKind::Minibuffer:
+        return scm_from_utf8_symbol("minibuffer");
+    }
+    throw std::logic_error("unknown buffer kind");
+}
+
+SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
     try {
-        HostLease& host = require_host(host_object, "active-keymap-layers");
-        if (!host.services.active_keymap_layers) {
-            scm_misc_error("active-keymap-layers", "active keymap layer service is unavailable",
-                           SCM_EOL);
-        }
+        HostLease& host = require_host(host_object, "keymap-context-snapshot");
         const CommandContext context =
-            command_context_from_scheme(host, context_value, "active-keymap-layers");
-        const std::vector<KeymapId> layers =
-            host.services.active_keymap_layers(context.window_id());
-        SCM result = scm_c_make_vector(layers.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < layers.size(); ++index) {
-            scm_c_vector_set_x(result, index,
-                               name_symbol(host.runtime->keymaps().definition(layers[index]).name));
+            command_context_from_scheme(host, context_value, "keymap-context-snapshot");
+        const EditorRuntime& runtime = *host.runtime;
+        const Window& window = runtime.windows().get(context.window_id());
+        const View& view = runtime.views().get(context.view_id());
+        const Buffer& buffer = runtime.buffers().get(context.buffer_id());
+
+        const std::vector<InputStateId>& state_stack = view.input_states().stack();
+        SCM states = scm_c_make_vector(state_stack.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < state_stack.size(); ++index) {
+            const InputStateRegistry::Definition& state =
+                runtime.input_states().definition(state_stack[index]);
+            scm_c_vector_set_x(
+                states, index,
+                named_keymap_source_value(runtime, "input-state", state.name, state.keymaps));
         }
+
+        const std::vector<ModeId>& minor_modes = buffer.modes().minors();
+        SCM minors = scm_c_make_vector(minor_modes.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < minor_modes.size(); ++index) {
+            const ModeRegistry::Definition& mode = runtime.modes().definition(minor_modes[index]);
+            const std::vector<KeymapId> keymaps =
+                runtime.modes().effective_keymaps(minor_modes[index]);
+            scm_c_vector_set_x(
+                minors, index,
+                named_keymap_source_value(runtime, "minor-mode", mode.name, keymaps));
+        }
+
+        SCM major = SCM_BOOL_F;
+        if (const std::optional<ModeId> major_mode = buffer.modes().major()) {
+            const ModeRegistry::Definition& mode = runtime.modes().definition(*major_mode);
+            const std::vector<KeymapId> keymaps = runtime.modes().effective_keymaps(*major_mode);
+            major = named_keymap_source_value(runtime, "major-mode", mode.name, keymaps);
+        }
+
+        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
+        scm_c_vector_set_x(result, 1, buffer_kind_symbol(buffer.kind()));
+        scm_c_vector_set_x(result, 2, states);
+        scm_c_vector_set_x(result, 3, keymap_names_value(runtime, window.keymaps()));
+        scm_c_vector_set_x(result, 4, keymap_names_value(runtime, view.keymaps()));
+        scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
+        scm_c_vector_set_x(result, 6, minors);
+        scm_c_vector_set_x(result, 7, major);
         return result;
     } catch (const std::exception& exception) {
-        scm_misc_error("active-keymap-layers", exception.what(), SCM_EOL);
+        scm_misc_error("keymap-context-snapshot", exception.what(), SCM_EOL);
     } catch (...) {
-        scm_misc_error("active-keymap-layers", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("keymap-context-snapshot", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -4364,10 +4405,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(keymap_bindings));
     (void)scm_c_define_gsubr("resolve-key-sequence", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(resolve_key_sequence));
-    (void)scm_c_define_gsubr("base-keymap-layers", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(base_keymap_layers));
-    (void)scm_c_define_gsubr("active-keymap-layers", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(active_keymap_layers));
+    (void)scm_c_define_gsubr("keymap-context-snapshot", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(keymap_context_snapshot));
     (void)scm_c_define_gsubr("key-sequence-completions", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(key_sequence_completions));
     (void)scm_c_define_gsubr("set-input-feedback!", 4, 0, 0,
@@ -4603,13 +4642,13 @@ void initialize_host_module(void*) {
     scm_c_export(
         "define-command!", "set-command-documentation!", "define-interaction-provider!",
         "define-keymap!", "bind-key!", "bind-key-if-command!", "bind-remap!", "keymap-bindings",
-        "resolve-key-sequence", "base-keymap-layers", "active-keymap-layers",
-        "key-sequence-completions", "set-input-feedback!", "clear-input-feedback!",
-        "%define-input-state!", "set-input-state-lifecycle!", "set-input-state-position-hints!",
-        "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
-        "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
-        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
-        "define-motion!", "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
+        "resolve-key-sequence", "keymap-context-snapshot", "key-sequence-completions",
+        "set-input-feedback!", "clear-input-feedback!", "%define-input-state!",
+        "set-input-state-lifecycle!", "set-input-state-position-hints!", "define-input-strategy!",
+        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
+        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
+        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
+        "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
         "define-project-provider!", "mode-properties", "set-buffer-major-mode!",
         "set-buffer-minor-mode!", "buffer-mode-policy", "buffer-mode-summary",
         "observe-mode-policy-changes!", "enabled-command-names", "command-properties",
@@ -4662,6 +4701,39 @@ void initialize_guile() {
     (void)scm_c_define_module("cind host", initialize_host_module, nullptr);
 }
 
+GuileKeymapPolicy keymap_policy_from_scheme(HostLease& host, SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 3 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "keymap-policy") ||
+        !scm_is_vector(scm_c_vector_ref(value, 1)) || !scm_is_vector(scm_c_vector_ref(value, 2))) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(keymap-policy layers overrides)");
+    }
+    const SCM layer_values = scm_c_vector_ref(value, 1);
+    const SCM override_values = scm_c_vector_ref(value, 2);
+    GuileKeymapPolicy policy;
+    policy.layers.reserve(scm_c_vector_length(layer_values));
+    for (std::size_t index = 0; index < scm_c_vector_length(layer_values); ++index) {
+        const SCM layer = scm_c_vector_ref(layer_values, index);
+        if (!scm_is_vector(layer) || scm_c_vector_length(layer) != 3 ||
+            !symbol_is(scm_c_vector_ref(layer, 0), "keymap-layer") ||
+            !scm_is_string(scm_c_vector_ref(layer, 2))) {
+            scm_wrong_type_arg_msg(caller, 0, layer, "#(keymap-layer keymap scope)");
+        }
+        std::string scope = scheme_string(scm_c_vector_ref(layer, 2));
+        if (scope.empty()) {
+            scm_misc_error(caller, "keymap layer scope must not be empty", SCM_EOL);
+        }
+        policy.layers.push_back(
+            {.keymap = require_keymap(host, scm_c_vector_ref(layer, 1), caller, 0),
+             .scope = std::move(scope)});
+    }
+    policy.overrides.reserve(scm_c_vector_length(override_values));
+    for (std::size_t index = 0; index < scm_c_vector_length(override_values); ++index) {
+        policy.overrides.push_back(
+            require_keymap(host, scm_c_vector_ref(override_values, index), caller, 0));
+    }
+    return policy;
+}
+
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
@@ -4675,6 +4747,8 @@ struct GuileCall {
         InstallModes,
         InstallResourcePolicies,
         OpenResource,
+        ResolveKeymapPolicy,
+        ResolveBaseKeymapPolicy,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -4712,6 +4786,7 @@ struct GuileCall {
     std::optional<CommandResult> command_result;
     std::vector<InteractionCandidate> provider_candidates;
     std::vector<PositionHint> position_hints;
+    GuileKeymapPolicy keymap_policy;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -5107,6 +5182,20 @@ SCM call_body(void* data) {
                                      scm_from_utf8_string(call.path.c_str()),
                                      call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
                                      call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::ResolveKeymapPolicy:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
+                                     call.host, command_context_value(*call.context));
+            call.keymap_policy =
+                keymap_policy_from_scheme(require_host(call.host, "resolve-keymap-policy"),
+                                          call.result, "resolve-keymap-policy");
+            break;
+        case GuileCall::Operation::ResolveBaseKeymapPolicy:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-base-keymap-policy"),
+                                     call.host, command_context_value(*call.context));
+            call.keymap_policy =
+                keymap_policy_from_scheme(require_host(call.host, "resolve-base-keymap-policy"),
+                                          call.result, "resolve-base-keymap-policy");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -5926,6 +6015,21 @@ public:
         return call.enabled;
     }
 
+    std::expected<GuileKeymapPolicy, std::string> keymap_policy(const CommandContext& context,
+                                                                bool base) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = base ? GuileCall::Operation::ResolveBaseKeymapPolicy
+                              : GuileCall::Operation::ResolveKeymapPolicy;
+        call.host = host_;
+        call.context = &context;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return std::move(call.keymap_policy);
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -6123,6 +6227,16 @@ std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, st
 
 bool GuileRuntime::project_search_running() const {
     return impl_->project_search_running();
+}
+
+std::expected<GuileKeymapPolicy, std::string>
+GuileRuntime::keymap_policy(const CommandContext& context) const {
+    return impl_->keymap_policy(context, false);
+}
+
+std::expected<GuileKeymapPolicy, std::string>
+GuileRuntime::base_keymap_policy(const CommandContext& context) const {
+    return impl_->keymap_policy(context, true);
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

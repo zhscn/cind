@@ -409,6 +409,41 @@ TEST_CASE("user initialization overrides file mode policy before the first buffe
     CHECK(application.scripting().scripted_file_mode_rules == 3);
 }
 
+TEST_CASE("user initialization owns root keymap policy") {
+    TemporaryFile init(std::format("cind-keymap-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((define-keymap! host 'user.editor #f)
+(define-keymap! host 'user.application #f)
+(define-keymap! host 'user.override #f)
+(configure-keymap-policy! host
+                          #:editor '(user.editor)
+                          #:application '(user.application)
+                          #:overrides '(user.override))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "text",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    const KeymapRegistry& keymaps = application.runtime().keymaps();
+    const std::optional<KeymapId> editor = keymaps.find("user.editor");
+    const std::optional<KeymapId> global = keymaps.find("user.application");
+    const std::optional<KeymapId> override = keymaps.find("user.override");
+    REQUIRE(editor);
+    REQUIRE(global);
+    REQUIRE(override);
+
+    const std::span<const KeymapLayer> layers = application.active_keymap_layers();
+    REQUIRE(layers.size() >= 2);
+    CHECK(layers[layers.size() - 2].keymap == *editor);
+    CHECK(layers[layers.size() - 2].scope == "editor");
+    CHECK(layers.back().keymap == *global);
+    CHECK(layers.back().scope == "global");
+    REQUIRE(application.command_loop().override_keymaps().size() == 1);
+    CHECK(application.command_loop().override_keymaps().front() == *override);
+}
+
 TEST_CASE("per-view input states precede window layers and may handle keys") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();
@@ -1904,7 +1939,9 @@ TEST_CASE("active window assembles explicit window view buffer mode and global k
     const Layer buffer = define_layer("test.buffer", 3);
     const Layer view = define_layer("test.view", 4);
     const Layer window = define_layer("test.window", 5);
-    runtime.keymaps().bind(application.default_keymap(), "C-z", global.command);
+    const std::optional<KeymapId> default_keymap = runtime.keymaps().find("editor.default");
+    REQUIRE(default_keymap);
+    runtime.keymaps().bind(*default_keymap, "C-z", global.command);
     const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
     REQUIRE(major);
     runtime.modes().add_keymap(major, mode.keymap);

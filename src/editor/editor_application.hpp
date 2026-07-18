@@ -106,8 +106,6 @@ public:
     InteractionController& interaction() { return interaction_; }
     const InteractionController& interaction() const { return interaction_; }
     GuileRuntimeSnapshot scripting() const { return guile_.snapshot(); }
-    KeymapId default_keymap() const { return keymap_; }
-
     void refresh_default_keymap();
 
     bool handle_key(KeyStroke key, int page_rows);
@@ -131,7 +129,7 @@ public:
     std::span<const KeymapLayer> active_keymap_layers() const {
         return command_loop_.keymap_layers();
     }
-    std::vector<KeymapLayer> base_keymap_layers(WindowId window) const;
+    std::vector<KeymapLayer> base_keymap_layers(WindowId window);
     std::string_view input_focus() const {
         return interaction_.active() ? std::string_view("minibuffer") : std::string_view("window");
     }
@@ -238,7 +236,6 @@ private:
     void register_interaction_providers();
     void register_keymaps();
     void sync_keymaps();
-    std::vector<KeymapLayer> window_keymap_layers() const;
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
     void refresh_interaction_after_edit(RevisionId before);
@@ -263,8 +260,6 @@ private:
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
     CommandLoop command_loop_;
-    KeymapId keymap_;
-    KeymapId application_keymap_;
     ModeId fundamental_mode_;
     ModeId special_mode_;
     ModeId location_list_mode_;

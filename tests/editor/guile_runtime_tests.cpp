@@ -971,8 +971,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return std::vector<GuileKeyBindingSummary>{
                      {.keys = "C-x C-s", .command = "file.save"}};
              },
-         .active_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
-         .base_keymap_layers = [](WindowId) { return std::vector<KeymapId>{}; },
          .set_selection =
              [&](ViewId target, ViewSelection selection) {
                  runtime.views().set_selection(target, std::move(selection));

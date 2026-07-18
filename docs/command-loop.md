@@ -73,13 +73,19 @@ replacement is not remapped recursively. This keeps minor-mode command substitut
 key placement and makes the complete layered resolver a side-effect-free query shared by dispatch
 and scripting.
 
-The focused target supplies an ordered keymap stack from most specific to least specific. Each View
-may own a stack of registered input states. The bottom element is its durable state and elements
-above it are transient states. Transient state keymaps are inserted from stack top to bottom ahead
-of the durable state's maps, followed by Window, View, Buffer, enabled minor modes in reverse
-activation order, major mode, `editor.default`, and `application.global`. Duplicate map identities
-are kept only at their highest-priority occurrence. Views displaying the same Buffer have
-independent state stacks.
+The focused target supplies raw keymap sources to `(cind command)`, which assembles an ordered stack
+from most specific to least specific. Each View may own a stack of registered input states. The
+bottom element is its durable state and elements above it are transient states. The default policy
+inserts transient state keymaps from stack top to bottom ahead of the durable state's maps, followed
+by Window, View, Buffer, enabled minor modes in reverse activation order, major mode,
+`editor.default`, and `application.global`. Duplicate map identities are kept only at their
+highest-priority occurrence. Views displaying the same Buffer have independent state stacks.
+
+An application can replace its editor, application, and always-active override roots with
+`configure-keymap-policy!`. C++ exposes the focused Buffer kind and the named keymaps attached to
+each source, validates the assembled result, and passes keymap IDs and diagnostic scopes to
+`CommandLoop`. Root selection and layer precedence are Scheme policy; trie lookup, remapping,
+pending sequences, and command execution remain native mechanisms.
 
 Major and minor modes form explicit same-kind parent hierarchies. A child mode inherits settings,
 interaction properties, semantic-to-definition thing bindings, and the nearest ancestor keymap.
@@ -200,11 +206,12 @@ capture state, and deletion consumes the resulting ranges through the shared ato
 
 ## Command loop and prefix help
 
-One `CommandLoop` follows the application's active input focus. It owns the ordered scoped keymap
-stack, always-active override maps, a pending multi-key sequence, its highest-precedence matching
-keymap, and a pending command prefix containing an optional count, register, and named typed
-extras. Dispatch returns a structured status: not handled, keymap prefix, command-prefix update,
-executed, awaiting input, disabled, cancelled, or error.
+One `CommandLoop` follows the application's active input focus. It consumes the ordered scoped
+keymap stack and always-active override maps produced by Scheme policy, and owns a pending multi-key
+sequence, its highest-precedence matching keymap, and a pending command prefix containing an
+optional count, register, and named typed extras. Dispatch returns a structured status: not
+handled, keymap prefix, command-prefix update, executed, awaiting input, disabled, cancelled, or
+error.
 
 A prefix command returns a complete replacement prefix value. Keymap layer refreshes retain that
 value, and command dispatch chains inherit it. The next ordinary terminal command receives the

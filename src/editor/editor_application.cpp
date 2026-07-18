@@ -285,30 +285,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
-           .active_keymap_layers =
-               [this](WindowId window) {
-                   std::vector<KeymapId> result;
-                   if (window == active_window_) {
-                       result.insert(result.end(), command_loop_.override_keymaps().begin(),
-                                     command_loop_.override_keymaps().end());
-                       for (const KeymapLayer& layer : command_loop_.keymap_layers()) {
-                           result.push_back(layer.keymap);
-                       }
-                       return result;
-                   }
-                   for (const KeymapLayer& layer : base_keymap_layers(window)) {
-                       result.push_back(layer.keymap);
-                   }
-                   return result;
-               },
-           .base_keymap_layers =
-               [this](WindowId window) {
-                   std::vector<KeymapId> result;
-                   for (const KeymapLayer& layer : base_keymap_layers(window)) {
-                       result.push_back(layer.keymap);
-                   }
-                   return result;
-               },
            .set_selection =
                [this](ViewId view, ViewSelection selection) {
                    session_for(view).set_selection(std::move(selection));
@@ -1426,98 +1402,51 @@ void EditorApplication::register_interaction_providers() {
 
 void EditorApplication::register_keymaps() {
     refresh_default_keymap();
-    const std::optional<KeymapId> editor_keymap = runtime_.keymaps().find("editor.default");
-    const std::optional<KeymapId> application_keymap =
-        runtime_.keymaps().find("application.global");
-    const std::optional<KeymapId> system_keymap = runtime_.keymaps().find("editor.system");
-    if (!editor_keymap || !application_keymap || !system_keymap) {
-        throw std::logic_error("Guile keymap policy did not define its root keymaps");
-    }
-    keymap_ = *editor_keymap;
-    application_keymap_ = *application_keymap;
-    command_loop_.set_override_keymaps({*system_keymap});
 }
 
-std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_id) const {
-    std::vector<KeymapLayer> layers;
-    const auto append = [&](std::span<const KeymapId> maps, std::string_view scope) {
-        for (const KeymapId map : maps) {
-            if (std::ranges::any_of(
-                    layers, [map](const KeymapLayer& layer) { return layer.keymap == map; })) {
-                continue;
-            }
-            layers.push_back({.keymap = map, .scope = std::string(scope)});
-        }
-    };
-
+std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_id) {
     const Window& window = runtime_.windows().get(window_id);
     const View& view = runtime_.views().get(window.view_id());
-    const Buffer& buffer = runtime_.buffers().get(view.buffer_id());
-    append(window.keymaps(), "window");
-    append(view.keymaps(), buffer.kind() == BufferKind::Minibuffer ? "minibuffer" : "view");
-    append(buffer.keymaps(), "buffer");
-    for (auto mode = buffer.modes().minors().rbegin(); mode != buffer.modes().minors().rend();
-         ++mode) {
-        const ModeRegistry::Definition& definition = runtime_.modes().definition(*mode);
-        append(runtime_.modes().effective_keymaps(*mode),
-               std::format("minor-mode:{}", definition.name));
+    CommandContext context(runtime_, window_id, view.buffer_id(), view.id());
+    const std::expected<GuileKeymapPolicy, std::string> policy = guile_.base_keymap_policy(context);
+    if (!policy) {
+        throw std::runtime_error(std::format("Guile keymap policy failed: {}", policy.error()));
     }
-    if (buffer.modes().major()) {
-        const ModeRegistry::Definition& definition =
-            runtime_.modes().definition(*buffer.modes().major());
-        append(runtime_.modes().effective_keymaps(*buffer.modes().major()),
-               std::format("major-mode:{}", definition.name));
-    }
-    if (buffer.kind() != BufferKind::Minibuffer) {
-        append(std::span(&keymap_, 1), "editor");
-    }
-    append(std::span(&application_keymap_, 1), "global");
-    return layers;
-}
-
-std::vector<KeymapLayer> EditorApplication::window_keymap_layers() const {
     std::vector<KeymapLayer> layers;
-    const auto append = [&](std::span<const KeymapLayer> candidates) {
-        for (const KeymapLayer& candidate : candidates) {
-            if (std::ranges::none_of(layers, [&](const KeymapLayer& layer) {
-                    return layer.keymap == candidate.keymap;
-                })) {
-                layers.push_back(candidate);
-            }
-        }
-    };
-    const WindowId focused_window =
-        interaction_.active() ? interaction_.state()->window : active_window_;
-    const View& view = runtime_.views().get(view_id(focused_window));
-    const std::vector<InputStateId>& input_states = view.input_states().stack();
-    for (auto state = input_states.rbegin(); state != input_states.rend(); ++state) {
-        const InputStateRegistry::Definition& definition =
-            runtime_.input_states().definition(*state);
-        for (const KeymapId keymap : definition.keymaps) {
-            const KeymapLayer layer{
-                .keymap = keymap,
-                .scope = std::format("input-state:{}{}", definition.name,
-                                     state + 1 == input_states.rend() ? "" : ":transient")};
-            append(std::span(&layer, 1));
-        }
+    layers.reserve(policy->layers.size());
+    for (const GuileKeymapLayer& layer : policy->layers) {
+        layers.push_back({.keymap = layer.keymap, .scope = layer.scope});
     }
-    const std::vector<KeymapLayer> base = base_keymap_layers(focused_window);
-    append(base);
     return layers;
 }
 
 void EditorApplication::sync_keymaps() {
-    std::vector<KeymapLayer> layers = window_keymap_layers();
+    CommandContext context = command_context();
+    const std::expected<GuileKeymapPolicy, std::string> policy = guile_.keymap_policy(context);
+    if (!policy) {
+        message_ = std::format("keymap policy failed: {}", policy.error());
+        return;
+    }
+    std::vector<KeymapLayer> layers;
+    layers.reserve(policy->layers.size());
+    for (const GuileKeymapLayer& layer : policy->layers) {
+        layers.push_back({.keymap = layer.keymap, .scope = layer.scope});
+    }
     const std::span<const KeymapLayer> active = command_loop_.keymap_layers();
-    const bool changed =
+    const bool layers_changed =
         layers.size() != active.size() ||
         !std::ranges::equal(layers, active, [](const KeymapLayer& left, const KeymapLayer& right) {
             return left.keymap == right.keymap && left.scope == right.scope;
         });
-    if (!changed) {
-        return;
+    const std::span<const KeymapId> active_overrides = command_loop_.override_keymaps();
+    const bool overrides_changed = policy->overrides.size() != active_overrides.size() ||
+                                   !std::ranges::equal(policy->overrides, active_overrides);
+    if (layers_changed) {
+        command_loop_.set_keymap_layers(std::move(layers));
     }
-    command_loop_.set_keymap_layers(std::move(layers));
+    if (overrides_changed) {
+        command_loop_.set_override_keymaps(policy->overrides);
+    }
 }
 
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {

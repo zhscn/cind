@@ -78,8 +78,7 @@ The native module exports:
 (bind-remap! host keymap-name command-name replacement-name)
 (keymap-bindings host keymap-name)
 (resolve-key-sequence host keymap-names key-sequence)
-(base-keymap-layers host context)
-(active-keymap-layers host context)
+(keymap-context-snapshot host context)
 (key-sequence-completions host keymap-names key-sequence)
 (set-input-feedback! host view-id sequence hints)
 (clear-input-feedback! host view-id)
@@ -259,14 +258,35 @@ keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
 
-`base-keymap-layers` returns the named Window, View, Buffer, minor-mode, major-mode, editor, and
-application maps for the Window in a command context. Input-state maps and the system override map
-are excluded. `key-sequence-completions` performs the corresponding side-effect-free layered query;
-an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors, merges duplicate
-keys by layer precedence, and applies the same one-pass remap as resolution. These operations let a
-transient translator inspect the command surface beneath itself without depending on an implicit
-focused application. `active-keymap-layers` includes transient InputState maps and system overrides
-and is the source for literal key self-description.
+`keymap-context-snapshot` returns the focused Buffer kind and the named keymaps attached to the
+InputState stack, Window, View, Buffer, active minor modes, and major mode. It exposes attachment and
+activation facts without assigning precedence or selecting global roots.
+
+`(cind command)` owns the corresponding policy interface:
+
+```scheme
+(configure-keymap-policy! host
+  #:editor editor-root-names
+  #:application application-root-names
+  #:overrides override-root-names)
+(resolve-base-keymap-policy host context)
+(resolve-keymap-policy host context)
+(base-keymap-layers host context)
+(active-keymap-layers host context)
+```
+
+The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
+application maps. The active policy prepends the InputState stack and supplies the configured
+always-active override maps. Minibuffer contexts omit editor roots. Policy results carry keymap
+names and diagnostic scopes; the native boundary validates every name and converts it to a
+`KeymapId` before updating the command loop. `base-keymap-layers` and `active-keymap-layers` expose
+name-only projections for scripted translators and self-description.
+
+`key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
+keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,
+merges duplicate keys by layer precedence, and applies the same one-pass remap as resolution. These
+operations let a transient translator inspect the command surface beneath itself without depending
+on an implicit focused application.
 
 `(cind input)` exposes the state-definition interface:
 

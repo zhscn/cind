@@ -28,6 +28,20 @@ struct GuileKeyBindingSummary {
     std::string command;
 };
 
+struct GuileKeymapLayer {
+    KeymapId keymap;
+    std::string scope;
+
+    friend bool operator==(const GuileKeymapLayer&, const GuileKeymapLayer&) = default;
+};
+
+struct GuileKeymapPolicy {
+    std::vector<GuileKeymapLayer> layers;
+    std::vector<KeymapId> overrides;
+
+    friend bool operator==(const GuileKeymapPolicy&, const GuileKeymapPolicy&) = default;
+};
+
 struct GuileTextRange {
     std::uint32_t start = 0;
     std::uint32_t end = 0;
@@ -123,8 +137,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
-    std::function<std::vector<KeymapId>(WindowId)> active_keymap_layers;
-    std::function<std::vector<KeymapId>(WindowId)> base_keymap_layers;
     std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;
     std::function<std::expected<ViewSelection, std::string>(ViewId, ViewSelection,
@@ -211,6 +223,10 @@ public:
                   std::optional<std::uint32_t> column = std::nullopt);
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
+    std::expected<GuileKeymapPolicy, std::string>
+    keymap_policy(const CommandContext& context) const;
+    std::expected<GuileKeymapPolicy, std::string>
+    base_keymap_policy(const CommandContext& context) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;
