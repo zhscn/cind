@@ -1299,18 +1299,23 @@
 
 (define (interaction-move-candidate host delta)
   (lambda (context invocation)
-    (move-interaction-candidate! host delta)
+    (move-minibuffer-candidate! host delta)
     (command-completed/preserve)))
 
 (define (interaction-move-history host delta)
   (lambda (context invocation)
-    (move-interaction-history! host delta)
+    (move-minibuffer-history! host context delta)
     (command-completed/preserve)))
 
 (define (interaction-submit host context invocation)
   (let* ((submission (submit-interaction! host))
          (arguments (vector-ref submission 1))
-         (target (vector-ref submission 2)))
+         (target (vector-ref submission 2))
+         (history (vector-ref submission 3))
+         (value (and (> (vector-length arguments) 0)
+                     (vector-ref arguments (- (vector-length arguments) 1)))))
+    (when (and history (string? value))
+      (record-minibuffer-history! host history value))
     (apply command-dispatch-to
            (vector-ref submission 0)
            (vector-ref target 0)
@@ -2017,6 +2022,7 @@
    (toy-modal-command-definitions host)))
 
 (define (install-core-commands! host)
+  (configure-minibuffer-history-policy! host (make-bounded-history-policy 100))
   (let ((commands (core-commands host)))
     (for-each (lambda (definition)
                 (define-command! host

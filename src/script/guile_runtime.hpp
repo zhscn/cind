@@ -55,6 +55,16 @@ struct GuileInteractionStatus {
     bool active = false;
     bool picker = false;
     bool has_history = false;
+    std::optional<std::string> history;
+    std::optional<std::size_t> selected;
+    std::size_t candidate_count = 0;
+    std::optional<std::size_t> history_index;
+    std::string history_draft;
+};
+
+struct GuileInteractionSubmission {
+    CommandDispatch dispatch;
+    std::string history;
 };
 
 struct GuileViewPosition {
@@ -111,9 +121,12 @@ struct GuileHostServices {
     std::function<std::optional<std::string>()> interaction_provider;
     std::function<std::optional<ProjectId>()> interaction_origin_project;
     std::function<void()> refresh_interaction;
-    std::function<std::expected<CommandDispatch, std::string>()> submit_interaction;
-    std::function<bool(int)> move_interaction_candidate;
-    std::function<bool(int)> move_interaction_history;
+    std::function<std::expected<GuileInteractionSubmission, std::string>()> submit_interaction;
+    std::function<std::vector<std::string>(std::string_view)> interaction_history;
+    std::function<void(std::string, std::vector<std::string>)> set_interaction_history;
+    std::function<bool(std::size_t)> select_interaction_candidate;
+    std::function<bool(std::optional<std::size_t>, std::string, std::string)>
+        set_interaction_history_position;
     std::function<bool()> cancel_interaction;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;

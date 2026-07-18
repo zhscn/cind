@@ -105,7 +105,17 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return GuileInteractionStatus{
                        .active = state != nullptr,
                        .picker = state != nullptr && state->request.kind == InteractionKind::Picker,
-                       .has_history = state != nullptr && !state->request.history.empty()};
+                       .has_history = state != nullptr && !state->request.history.empty(),
+                       .history = state != nullptr && !state->request.history.empty()
+                                      ? std::optional(state->request.history)
+                                      : std::nullopt,
+                       .selected = state != nullptr && !state->candidates.empty()
+                                       ? std::optional(state->selected)
+                                       : std::nullopt,
+                       .candidate_count =
+                           state != nullptr ? state->candidates.size() : std::size_t{0},
+                       .history_index = state != nullptr ? state->history_index : std::nullopt,
+                       .history_draft = state != nullptr ? state->history_draft : std::string{}};
                },
            .interaction_provider = [this]() -> std::optional<std::string> {
                const InteractionState* state = interaction_.state();
@@ -120,21 +130,31 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return buffer != nullptr ? buffer->project_id() : std::nullopt;
            },
            .refresh_interaction = [this] { interaction_.refresh_candidates(); },
-           .submit_interaction = [this]() -> std::expected<CommandDispatch, std::string> {
+           .submit_interaction =
+               [this]() -> std::expected<GuileInteractionSubmission, std::string> {
                std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
                if (!submission) {
                    return std::unexpected(std::move(submission.error()));
                }
                interaction_session_.reset();
-               return CommandDispatch{.command = submission->accept_command,
-                                      .invocation = std::move(submission->invocation),
-                                      .target = submission->target};
+               return GuileInteractionSubmission{
+                   .dispatch = {.command = submission->accept_command,
+                                .invocation = std::move(submission->invocation),
+                                .target = submission->target},
+                   .history = std::move(submission->history)};
            },
-           .move_interaction_candidate =
-               [this](int delta) { return interaction_.move_selection(delta); },
-           .move_interaction_history =
-               [this](int delta) {
-                   return delta < 0 ? interaction_.previous_history() : interaction_.next_history();
+           .interaction_history =
+               [this](std::string_view name) { return interaction_.history(name); },
+           .set_interaction_history =
+               [this](std::string name, std::vector<std::string> entries) {
+                   interaction_.set_history(std::move(name), std::move(entries));
+               },
+           .select_interaction_candidate =
+               [this](std::size_t index) { return interaction_.select(index); },
+           .set_interaction_history_position =
+               [this](std::optional<std::size_t> index, std::string draft,
+                      const std::string& input) {
+                   return interaction_.set_history_navigation(index, std::move(draft), input);
                },
            .cancel_interaction =
                [this] {

@@ -2,10 +2,100 @@
   #:use-module (ice-9 optargs)
   #:use-module (srfi srfi-13)
   #:use-module (cind command)
+  #:use-module (cind host)
   #:export (read-from-minibuffer
             completing-read
             rank-completion-candidates
-            rank-provider-result))
+            rank-provider-result
+            make-bounded-history-policy
+            configure-minibuffer-history-policy!
+            record-minibuffer-history!
+            move-minibuffer-candidate!
+            move-minibuffer-history!))
+
+(define history-policies (make-weak-key-hash-table))
+
+(define (make-bounded-history-policy maximum)
+  (unless (and (integer? maximum) (>= maximum 0))
+    (error "history maximum must be a non-negative integer" maximum))
+  (lambda (entries value)
+    (unless (vector? entries)
+      (error "history entries must be a vector" entries))
+    (unless (string? value)
+      (error "history value must be a string" value))
+    (let* ((count (vector-length entries))
+           (duplicate? (and (> count 0)
+                            (string=? (vector-ref entries (- count 1)) value)))
+           (values (if duplicate?
+                       (vector->list entries)
+                       (append (vector->list entries) (list value))))
+           (overflow (max 0 (- (length values) maximum))))
+      (list->vector (list-tail values overflow)))))
+
+(define (configure-minibuffer-history-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "minibuffer history policy must be a procedure" procedure))
+  (hashq-set! history-policies host procedure)
+  procedure)
+
+(define (string-vector? value)
+  (and (vector? value)
+       (let loop ((index 0))
+         (or (= index (vector-length value))
+             (and (string? (vector-ref value index))
+                  (loop (+ index 1)))))))
+
+(define (record-minibuffer-history! host name value)
+  (unless (or (not name) (string? name))
+    (error "minibuffer history name must be #f or a string" name))
+  (unless (string? value)
+    (error "minibuffer history value must be a string" value))
+  (when (and name
+             (> (string-length name) 0)
+             (> (string-length value) 0))
+    (let ((policy (hashq-ref history-policies host)))
+      (unless policy
+        (error "minibuffer history policy is not configured"))
+      (let ((entries (policy (interaction-history host name) value)))
+        (unless (string-vector? entries)
+          (error "minibuffer history policy must return a string vector" entries))
+        (set-interaction-history! host name entries)))))
+
+(define (move-minibuffer-candidate! host delta)
+  (let* ((status (interaction-status host))
+         (selected (vector-ref status 4))
+         (count (vector-ref status 5)))
+    (and selected
+         (> count 0)
+         (not (zero? delta))
+         (select-interaction-candidate!
+          host (modulo (+ selected delta) count)))))
+
+(define (move-minibuffer-history! host context delta)
+  (let* ((status (interaction-status host))
+         (name (vector-ref status 3))
+         (index (vector-ref status 6))
+         (stored-draft (vector-ref status 7))
+         (entries (and name (interaction-history host name)))
+         (count (if entries (vector-length entries) 0))
+         (current (buffer-text host (context-buffer context))))
+    (cond
+     ((or (not name) (zero? delta)) #f)
+     ((< delta 0)
+      (let ((target (if index
+                        (and (> index 0) (- index 1))
+                        (and (> count 0) (- count 1))))
+            (draft (if index stored-draft current)))
+        (and target
+             (set-interaction-history-position!
+              host target draft (vector-ref entries target)))))
+     ((not index) #f)
+     ((< (+ index 1) count)
+      (let ((target (+ index 1)))
+        (set-interaction-history-position!
+         host target stored-draft (vector-ref entries target))))
+     (else
+      (set-interaction-history-position! host #f stored-draft stored-draft)))))
 
 (define (candidate-filter-text candidate)
   (let ((filter-text (vector-ref candidate 3)))

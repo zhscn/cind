@@ -4167,10 +4167,18 @@ SCM interaction_status(SCM host_object) {
         const GuileInteractionStatus status = host.services.interaction_status
                                                   ? host.services.interaction_status()
                                                   : GuileInteractionStatus{};
-        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
         scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
         scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
+        scm_c_vector_set_x(
+            result, 3, status.history ? scm_from_utf8_string(status.history->c_str()) : SCM_BOOL_F);
+        scm_c_vector_set_x(result, 4,
+                           status.selected ? scm_from_size_t(*status.selected) : SCM_BOOL_F);
+        scm_c_vector_set_x(result, 5, scm_from_size_t(status.candidate_count));
+        scm_c_vector_set_x(
+            result, 6, status.history_index ? scm_from_size_t(*status.history_index) : SCM_BOOL_F);
+        scm_c_vector_set_x(result, 7, scm_from_utf8_string(status.history_draft.c_str()));
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("interaction-status", exception.what());
@@ -4234,19 +4242,21 @@ SCM submit_interaction(SCM host_object) {
                        SCM_EOL);
     }
     try {
-        std::expected<CommandDispatch, std::string> submitted = host.services.submit_interaction();
+        std::expected<GuileInteractionSubmission, std::string> submitted =
+            host.services.submit_interaction();
         if (!submitted) {
             raise_host_error("submit-interaction!", submitted.error());
         }
-        if (!submitted->target) {
+        CommandDispatch& dispatch = submitted->dispatch;
+        if (!dispatch.target) {
             scm_misc_error("submit-interaction!", "interaction submission has no target", SCM_EOL);
         }
-        SCM arguments = scm_c_make_vector(submitted->invocation.arguments.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < submitted->invocation.arguments.size(); ++index) {
+        SCM arguments = scm_c_make_vector(dispatch.invocation.arguments.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < dispatch.invocation.arguments.size(); ++index) {
             scm_c_vector_set_x(arguments, index,
-                               setting_value(submitted->invocation.arguments[index]));
+                               setting_value(dispatch.invocation.arguments[index]));
         }
-        const CommandTarget& target = *submitted->target;
+        const CommandTarget& target = *dispatch.target;
         SCM target_value = scm_c_make_vector(3, SCM_UNSPECIFIED);
         scm_c_vector_set_x(target_value, 0,
                            entity_id(target.window.slot, target.window.generation));
@@ -4254,11 +4264,15 @@ SCM submit_interaction(SCM host_object) {
                            entity_id(target.buffer.slot, target.buffer.generation));
         scm_c_vector_set_x(target_value, 2, entity_id(target.view.slot, target.view.generation));
 
-        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
-        const std::string& name = host.runtime->commands().definition(submitted->command).name;
+        SCM result = scm_c_make_vector(4, SCM_UNSPECIFIED);
+        const std::string& name = host.runtime->commands().definition(dispatch.command).name;
         scm_c_vector_set_x(result, 0, scm_from_utf8_string(name.c_str()));
         scm_c_vector_set_x(result, 1, arguments);
         scm_c_vector_set_x(result, 2, target_value);
+        scm_c_vector_set_x(result, 3,
+                           submitted->history.empty()
+                               ? SCM_BOOL_F
+                               : scm_from_utf8_string(submitted->history.c_str()));
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("submit-interaction!", exception.what());
@@ -4268,34 +4282,95 @@ SCM submit_interaction(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM move_interaction_candidate(SCM host_object, SCM delta_value) {
-    HostLease& host = require_host(host_object, "move-interaction-candidate!");
-    if (!host.services.move_interaction_candidate) {
-        scm_misc_error("move-interaction-candidate!",
-                       "interaction candidate capability is unavailable", SCM_EOL);
+SCM interaction_history(SCM host_object, SCM name_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("interaction-history", 2, name_value, "string");
+    }
+    HostLease& host = require_host(host_object, "interaction-history");
+    if (!host.services.interaction_history) {
+        scm_misc_error("interaction-history", "interaction history capability is unavailable",
+                       SCM_EOL);
     }
     try {
-        return scm_from_bool(host.services.move_interaction_candidate(scm_to_int(delta_value)));
+        return string_vector_value(host.services.interaction_history(scheme_string(name_value)));
     } catch (const std::exception& exception) {
-        raise_host_error("move-interaction-candidate!", exception.what());
+        raise_host_error("interaction-history", exception.what());
     } catch (...) {
-        scm_misc_error("move-interaction-candidate!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("interaction-history", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
 
-SCM move_interaction_history(SCM host_object, SCM delta_value) {
-    HostLease& host = require_host(host_object, "move-interaction-history!");
-    if (!host.services.move_interaction_history) {
-        scm_misc_error("move-interaction-history!", "interaction history capability is unavailable",
-                       SCM_EOL);
+SCM set_interaction_history(SCM host_object, SCM name_value, SCM entries_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("set-interaction-history!", 2, name_value, "string");
+    }
+    HostLease& host = require_host(host_object, "set-interaction-history!");
+    if (!host.services.set_interaction_history) {
+        scm_misc_error("set-interaction-history!",
+                       "interaction history mutation capability is unavailable", SCM_EOL);
     }
     try {
-        return scm_from_bool(host.services.move_interaction_history(scm_to_int(delta_value)));
+        host.services.set_interaction_history(
+            scheme_string(name_value),
+            string_sequence_from_scheme(entries_value, "set-interaction-history!", 3));
+        return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("move-interaction-history!", exception.what());
+        raise_host_error("set-interaction-history!", exception.what());
     } catch (...) {
-        scm_misc_error("move-interaction-history!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("set-interaction-history!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM select_interaction_candidate(SCM host_object, SCM index_value) {
+    if (scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("select-interaction-candidate!", 2, index_value,
+                               "non-negative integer");
+    }
+    HostLease& host = require_host(host_object, "select-interaction-candidate!");
+    if (!host.services.select_interaction_candidate) {
+        scm_misc_error("select-interaction-candidate!",
+                       "interaction candidate capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_bool(
+            host.services.select_interaction_candidate(scm_to_size_t(index_value)));
+    } catch (const std::exception& exception) {
+        raise_host_error("select-interaction-candidate!", exception.what());
+    } catch (...) {
+        scm_misc_error("select-interaction-candidate!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM set_interaction_history_position(SCM host_object, SCM index_value, SCM draft_value,
+                                     SCM input_value) {
+    if (!scheme_false(index_value) &&
+        scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("set-interaction-history-position!", 2, index_value,
+                               "#f or a non-negative integer");
+    }
+    if (!scm_is_string(draft_value)) {
+        scm_wrong_type_arg_msg("set-interaction-history-position!", 3, draft_value, "string");
+    }
+    if (!scm_is_string(input_value)) {
+        scm_wrong_type_arg_msg("set-interaction-history-position!", 4, input_value, "string");
+    }
+    HostLease& host = require_host(host_object, "set-interaction-history-position!");
+    if (!host.services.set_interaction_history_position) {
+        scm_misc_error("set-interaction-history-position!",
+                       "interaction history navigation capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::optional<std::size_t> index =
+            scheme_false(index_value) ? std::nullopt : std::optional(scm_to_size_t(index_value));
+        return scm_from_bool(host.services.set_interaction_history_position(
+            index, scheme_string(draft_value), scheme_string(input_value)));
+    } catch (const std::exception& exception) {
+        raise_host_error("set-interaction-history-position!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-interaction-history-position!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -4624,10 +4699,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(refresh_interaction));
     (void)scm_c_define_gsubr("submit-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(submit_interaction));
-    (void)scm_c_define_gsubr("move-interaction-candidate!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(move_interaction_candidate));
-    (void)scm_c_define_gsubr("move-interaction-history!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(move_interaction_history));
+    (void)scm_c_define_gsubr("interaction-history", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_history));
+    (void)scm_c_define_gsubr("set-interaction-history!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_interaction_history));
+    (void)scm_c_define_gsubr("select-interaction-candidate!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(select_interaction_candidate));
+    (void)scm_c_define_gsubr("set-interaction-history-position!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_interaction_history_position));
     (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
     (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
@@ -4720,8 +4799,9 @@ void initialize_host_module(void*) {
         "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!",
         "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
         "page-rows", "interaction-status", "interaction-provider", "interaction-origin-project",
-        "refresh-interaction!", "submit-interaction!", "move-interaction-candidate!",
-        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
+        "refresh-interaction!", "submit-interaction!", "interaction-history",
+        "set-interaction-history!", "select-interaction-candidate!",
+        "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "set-message!", "project-index-state", "request-project-index!", "normalize-resource-path",
         "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",

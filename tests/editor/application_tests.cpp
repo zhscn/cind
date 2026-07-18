@@ -1321,7 +1321,7 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     CHECK_FALSE(interaction.active());
 }
 
-TEST_CASE("interaction history preserves the current draft while navigating") {
+TEST_CASE("interaction history exposes storage and navigation mechanisms") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "history-origin",
                                                       .initial_text = {},
@@ -1351,29 +1351,22 @@ TEST_CASE("interaction history preserves the current draft while navigating") {
                                   .arguments = {}};
     };
 
-    REQUIRE(interaction.start(request("first"), context).has_value());
-    REQUIRE(interaction.submit().has_value());
-    REQUIRE(interaction.start(request("second"), context).has_value());
-    REQUIRE(interaction.submit().has_value());
+    interaction.set_history("commands", {"first", "second"});
     REQUIRE(interaction.start(request("draft"), context).has_value());
 
-    CHECK(interaction.previous_history());
+    CHECK(interaction.set_history_navigation(1, "draft", "second"));
     CHECK(interaction.input_text() == "second");
     CHECK(interaction.input_caret() == TextOffset{6});
-    CHECK(interaction.previous_history());
+    REQUIRE(interaction.state() != nullptr);
+    CHECK(interaction.state()->history_index == 1);
+    CHECK(interaction.state()->history_draft == "draft");
+    CHECK(interaction.set_history_navigation(0, "draft", "first"));
     CHECK(interaction.input_text() == "first");
-    CHECK_FALSE(interaction.previous_history());
-    CHECK(interaction.next_history());
-    CHECK(interaction.input_text() == "second");
-    CHECK(interaction.next_history());
+    CHECK_FALSE(interaction.set_history_navigation(2, "draft", "invalid"));
+    CHECK(interaction.set_history_navigation(std::nullopt, "draft", "draft"));
     CHECK(interaction.input_text() == "draft");
-    CHECK_FALSE(interaction.next_history());
-
-    CHECK(interaction.previous_history());
-    insert_interaction_text(runtime, interaction, "!");
-    interaction.refresh_candidates();
-    CHECK_FALSE(interaction.next_history());
-    CHECK(interaction.input_text() == "second!");
+    CHECK_FALSE(interaction.state()->history_index.has_value());
+    CHECK(interaction.history("commands") == std::vector<std::string>{"first", "second"});
 }
 
 TEST_CASE("async interaction providers discard cancelled generations") {

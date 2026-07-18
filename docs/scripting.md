@@ -26,7 +26,8 @@ object. Scheme code does not resolve an implicit current application.
 
 The bundled Scheme tree is copied into the build directory as a runtime resource. `(cind command)`
 defines the public command value API; `(cind async)` defines cancellable native task composition;
-`(cind minibuffer)` defines high-level text and completion interaction constructors;
+`(cind minibuffer)` defines high-level text and completion interaction constructors, completion
+ranking, candidate navigation, and named history policy;
 `(cind lifecycle)` owns configurable startup and fallback-buffer policy and per-application startup
 placeholder state;
 `(cind pointer)` owns semantic pointer-target behavior;
@@ -159,9 +160,15 @@ The native module exports:
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (scroll-view-lines! host view-id fractional-lines)
 (set-caret-reveal! host reveal?)
+(interaction-status host)
 (interaction-provider host)
 (interaction-origin-project host)
 (refresh-interaction! host)
+(submit-interaction! host)
+(interaction-history host history-name)
+(set-interaction-history! host history-name entries)
+(select-interaction-candidate! host zero-based-index)
+(set-interaction-history-position! host index-or-#f draft input)
 (set-message! host message)
 (project-index-state host project-id)
 (request-project-index! host project-id)
@@ -729,6 +736,16 @@ invocation. Prompts, provider names, history names, and accept commands are expl
 request is independent of dynamically scoped editor state. `interaction` remains the lower-level
 tag constructor used by `(cind minibuffer)` and by code implementing another interaction policy.
 
+`configure-minibuffer-history-policy!` installs a per-application procedure that receives the
+current string vector and a submitted value and returns the replacement string vector.
+`make-bounded-history-policy` constructs the default adjacent-deduplicating policy; the core policy
+uses a capacity of 100. `(cind minibuffer)` implements previous/next history traversal, draft
+restoration, and wrapping candidate movement from the `interaction-status` snapshot. Native code
+stores named string vectors, applies absolute candidate indices, replaces minibuffer input, and
+tracks the navigation position for inspection. The status vector is
+`#(active? picker? has-history? history-or-#f selected-or-#f candidate-count
+history-index-or-#f history-draft)`.
+
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and
 movement, window layout and application quit policy, project file selection and project search with
@@ -814,8 +831,9 @@ transform; native code performs only the cancellable enumeration. `(cind minibuf
 `rank-completion-candidates`, whose default policy performs case-folded multi-term substring
 matching and stable score ordering, and `rank-provider-result`, which applies the same policy to
 immediate results or an asynchronous result transform. The bundled provider registrations compose
-that policy explicitly. `InteractionController` preserves provider order and owns only selection,
-generation-safe completion, cancellation, history, and minibuffer object lifetimes.
+that policy explicitly. `InteractionController` preserves provider order and owns only absolute
+selection state, generation-safe completion, cancellation, named history storage, and minibuffer
+object lifetimes.
 
 ## Editor self-description
 

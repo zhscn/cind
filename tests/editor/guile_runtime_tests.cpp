@@ -262,6 +262,21 @@ TEST_CASE("Guile evaluation keeps an application-local module and reports stream
     CHECK(failed->error.value_or("").find("evaluation failed") != std::string::npos);
 }
 
+TEST_CASE("Guile minibuffer history policy deduplicates and bounds entries") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> result =
+        guile.evaluate({.source = R"((use-modules (cind minibuffer))
+(let ((policy (make-bounded-history-policy 2)))
+  (list (policy #("one" "two") "two")
+        (policy #("one" "two") "three"))))",
+                        .source_name = "minibuffer-history-test.scm"});
+    REQUIRE(result.has_value());
+    CHECK_FALSE(result->error.has_value());
+    CHECK(result->values == std::vector<std::string>{"(#(\"one\" \"two\") #(\"two\" \"three\"))"});
+}
+
 TEST_CASE("Guile language profile declarations replace configuration atomically") {
     EditorRuntime runtime;
     GuileRuntime guile(runtime);
@@ -931,8 +946,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .interaction_origin_project = {},
          .refresh_interaction = {},
          .submit_interaction = {},
-         .move_interaction_candidate = {},
-         .move_interaction_history = {},
+         .interaction_history = {},
+         .set_interaction_history = {},
+         .select_interaction_candidate = {},
+         .set_interaction_history_position = {},
          .cancel_interaction = {},
          .cancel_pending_input = {},
          .view_position = {},

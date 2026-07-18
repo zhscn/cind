@@ -132,21 +132,6 @@ RevisionId InteractionController::input_revision() const {
     return state_ ? runtime_->buffers().get(state_->buffer).snapshot().revision() : 0;
 }
 
-bool InteractionController::move_selection(int delta) {
-    if (!state_ || state_->candidates.empty() || delta == 0) {
-        return false;
-    }
-    const std::size_t count = state_->candidates.size();
-    const std::int64_t current = static_cast<std::int64_t>(state_->selected);
-    const std::int64_t size = static_cast<std::int64_t>(count);
-    std::int64_t next = (current + static_cast<std::int64_t>(delta)) % size;
-    if (next < 0) {
-        next += size;
-    }
-    state_->selected = static_cast<std::size_t>(next);
-    return true;
-}
-
 bool InteractionController::select(std::size_t index) {
     if (!state_ || index >= state_->candidates.size()) {
         return false;
@@ -155,45 +140,19 @@ bool InteractionController::select(std::size_t index) {
     return true;
 }
 
-bool InteractionController::previous_history() {
+bool InteractionController::set_history_navigation(std::optional<std::size_t> index,
+                                                   std::string draft, std::string_view input) {
     InteractionState* active = state();
     if (active == nullptr || active->request.history.empty()) {
         return false;
     }
-    const std::vector<std::string>& entries = history(active->request.history);
-    if (entries.empty()) {
+    if (index && *index >= history(active->request.history).size()) {
         return false;
     }
-    if (!active->history_index) {
-        active->history_draft = input_text();
-        active->history_index = entries.size() - 1;
-    } else if (*active->history_index > 0) {
-        --*active->history_index;
-    } else {
-        return false;
-    }
-    replace_input(entries[*active->history_index]);
+    active->history_index = index;
+    active->history_draft = std::move(draft);
+    replace_input(input);
     active->history_navigation_revision = input_revision();
-    refresh();
-    return true;
-}
-
-bool InteractionController::next_history() {
-    InteractionState* active = state();
-    if (active == nullptr || !active->history_index || active->request.history.empty()) {
-        return false;
-    }
-    const std::vector<std::string>& entries = history(active->request.history);
-    if (*active->history_index + 1 < entries.size()) {
-        ++*active->history_index;
-        replace_input(entries[*active->history_index]);
-    } else {
-        std::string draft = std::move(active->history_draft);
-        active->history_index.reset();
-        replace_input(draft);
-    }
-    active->history_navigation_revision = input_revision();
-    refresh();
     return true;
 }
 
@@ -235,18 +194,9 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
         .accept_command = active->request.accept_command,
         .invocation = {.arguments = std::move(active->request.arguments), .prefix = {}},
         .target = active->origin,
+        .history = active->request.history,
     };
     submission.invocation.arguments.emplace_back(value);
-    if (!active->request.history.empty() && !value.empty()) {
-        std::vector<std::string>& entries = histories_[active->request.history];
-        if (entries.empty() || entries.back() != value) {
-            entries.push_back(value);
-            constexpr std::size_t maximum_history = 100;
-            if (entries.size() > maximum_history) {
-                entries.erase(entries.begin());
-            }
-        }
-    }
     cancel_pending();
     const WindowId window = active->window;
     const ViewId view = active->view;
@@ -285,6 +235,13 @@ const std::vector<std::string>& InteractionController::history(std::string_view 
     static const std::vector<std::string> empty;
     const auto found = histories_.find(std::string(name));
     return found == histories_.end() ? empty : found->second;
+}
+
+void InteractionController::set_history(std::string name, std::vector<std::string> entries) {
+    if (name.empty()) {
+        throw std::invalid_argument("interaction history name must not be empty");
+    }
+    histories_.insert_or_assign(std::move(name), std::move(entries));
 }
 
 void InteractionController::refresh(bool input_edited) {

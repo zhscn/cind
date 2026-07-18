@@ -79,6 +79,7 @@ struct InteractionSubmission {
     CommandId accept_command;
     CommandInvocation invocation;
     CommandTarget target;
+    std::string history;
 };
 
 // Owns a transient minibuffer Buffer/View/Window while an interaction is
@@ -103,15 +104,15 @@ public:
     std::string input_text() const;
     TextOffset input_caret() const;
     RevisionId input_revision() const;
-    bool move_selection(int delta);
     bool select(std::size_t index);
-    bool previous_history();
-    bool next_history();
+    bool set_history_navigation(std::optional<std::size_t> index, std::string draft,
+                                std::string_view input);
     void refresh_candidates();
     std::expected<InteractionSubmission, std::string> submit();
     bool cancel() noexcept;
 
     const std::vector<std::string>& history(std::string_view name) const;
+    void set_history(std::string name, std::vector<std::string> entries);
 
 private:
     void refresh(bool input_edited = false);
