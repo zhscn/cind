@@ -279,10 +279,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            },
            .open_windows =
                [this] {
-                   return std::vector<WindowId>(window_layout_.leaves().begin(),
-                                                window_layout_.leaves().end());
+                   return std::vector<WindowId>(window_layout().leaves().begin(),
+                                                window_layout().leaves().end());
                },
-           .active_window = [this] { return active_window_; },
+           .active_window = [this] { return window_id(); },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -534,11 +534,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                  .read_only = startup->buffer.read_only},
                       startup->style, std::move(startup->style_origin), startup->buffer.major_mode);
     const ViewId initial_view = create_view({}, initial);
-    active_window_ = runtime_.windows().create(initial_view);
-    view_state_for(initial_view).window = active_window_;
-    window_layout_ = WindowLayout(active_window_);
+    const WindowId initial_window = runtime_.windows().create(initial_view);
+    view_state_for(initial_view).window = initial_window;
+    const WorkbenchId initial_workbench =
+        workbenches_.create(WorkbenchSpec{.name = {}, .root_window = initial_window, .scope = {}});
+    workbenches_.get(initial_workbench).visit_buffer(initial);
     if (spec.initial_line > 0 && !startup->resource_to_open) {
-        apply_position(active_window_, {.line = spec.initial_line - 1, .byte_column = 0});
+        apply_position(initial_window, {.line = spec.initial_line - 1, .byte_column = 0});
     }
 
     sync_keymaps();
@@ -550,7 +552,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     }
     if (startup->resource_to_open) {
         if (std::expected<void, std::string> opened = guile_.open_resource(
-                active_window_, *startup->resource_to_open,
+                initial_window, *startup->resource_to_open,
                 spec.initial_line > 0 ? std::optional(spec.initial_line - 1) : std::nullopt,
                 spec.initial_line > 0 ? std::optional<std::uint32_t>(0) : std::nullopt);
             !opened) {
@@ -574,7 +576,7 @@ BufferId EditorApplication::buffer_id(WindowId window) const {
 }
 
 ViewId EditorApplication::view_id() const {
-    return runtime_.windows().get(active_window_).view_id();
+    return runtime_.windows().get(window_id()).view_id();
 }
 
 ViewId EditorApplication::view_id(WindowId window) const {
@@ -598,7 +600,7 @@ const EditSession& EditorApplication::session(WindowId window) const {
 }
 
 const TokenBuffer& EditorApplication::syntax_tokens() const {
-    return syntax_tokens(active_window_);
+    return syntax_tokens(window_id());
 }
 
 const TokenBuffer& EditorApplication::syntax_tokens(WindowId window) const {
@@ -761,7 +763,7 @@ ModelineContent EditorApplication::modeline(WindowId window_id) {
         .line_count = text.line_count(),
         .revision = snapshot.revision(),
         .style_origin = style_origin(window_id),
-        .last_key = window_id == active_window_ ? last_key_ : std::string(),
+        .last_key = window_id == this->window_id() ? last_key_ : std::string(),
         .input_state = state.indicator,
     };
     std::expected<ModelineContent, std::string> content = guile_.modeline_content(context, facts);
@@ -802,7 +804,7 @@ const InputStateRegistry::Definition& EditorApplication::input_state() const {
         }
         return runtime_.input_states().definition(*state);
     }
-    return input_state(active_window_);
+    return input_state(window_id());
 }
 
 const InputStateRegistry::Definition& EditorApplication::input_state(WindowId window) const {
@@ -872,32 +874,35 @@ void EditorApplication::reset_preferred_column() {
 }
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
-    return guile_.open_resource(active_window_, input);
+    return guile_.open_resource(window_id(), input);
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
-    return show_buffer(active_window_, buffer);
+    return show_buffer(window_id(), buffer);
 }
 
 bool EditorApplication::focus_window(WindowId window) {
-    if (!window_layout_.contains(window) || runtime_.windows().try_get(window) == nullptr) {
+    Workbench& workbench = active_workbench();
+    if (!workbench.layout().contains(window) || runtime_.windows().try_get(window) == nullptr) {
         return false;
     }
-    if (window != active_window_) {
+    if (window != workbench.active_window()) {
         command_loop_.cancel_pending();
     }
-    active_window_ = window;
+    workbench.set_active_window(window);
+    workbench.visit_buffer(buffer_id(window));
     reveal_caret_ = true;
     sync_keymaps();
     return true;
 }
 
 bool EditorApplication::split_window(WindowSplitAxis axis) {
-    return split_window(active_window_, axis);
+    return split_window(window_id(), axis);
 }
 
 bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
-    if (!window_layout_.contains(target) || runtime_.windows().try_get(target) == nullptr) {
+    Workbench& workbench = active_workbench();
+    if (!workbench.layout().contains(target) || runtime_.windows().try_get(target) == nullptr) {
         return false;
     }
     EditSession& source = session(target);
@@ -910,7 +915,7 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
     }
     const WindowId window = runtime_.windows().create(view);
     view_state_for(view).window = window;
-    if (!window_layout_.split({.target = target, .new_window = window, .axis = axis})) {
+    if (!workbench.layout().split({.target = target, .new_window = window, .axis = axis})) {
         destroy_window(window);
         return false;
     }
@@ -919,16 +924,17 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
 }
 
 bool EditorApplication::delete_window() {
-    return delete_window(active_window_);
+    return delete_window(window_id());
 }
 
 bool EditorApplication::delete_window(WindowId target) {
-    const std::optional<WindowId> replacement = window_layout_.next(target);
-    if (!replacement || *replacement == target || !window_layout_.erase(target)) {
+    Workbench& workbench = active_workbench();
+    const std::optional<WindowId> replacement = workbench.layout().next(target);
+    if (!replacement || *replacement == target || !workbench.layout().erase(target)) {
         return false;
     }
-    if (active_window_ == target) {
-        active_window_ = *replacement;
+    if (workbench.active_window() == target) {
+        workbench.set_active_window(*replacement);
     }
     destroy_window(target);
     reveal_caret_ = true;
@@ -937,28 +943,180 @@ bool EditorApplication::delete_window(WindowId target) {
 }
 
 bool EditorApplication::delete_other_windows() {
-    return delete_other_windows(active_window_);
+    return delete_other_windows(window_id());
 }
 
 bool EditorApplication::delete_other_windows(WindowId retained) {
-    if (!window_layout_.contains(retained) || runtime_.windows().try_get(retained) == nullptr) {
+    Workbench& workbench = active_workbench();
+    if (!workbench.layout().contains(retained) || runtime_.windows().try_get(retained) == nullptr) {
         return false;
     }
-    if (window_layout_.leaves().size() <= 1) {
+    if (workbench.layout().leaves().size() <= 1) {
         return true;
     }
-    const std::vector<WindowId> windows(window_layout_.leaves().begin(),
-                                        window_layout_.leaves().end());
-    (void)window_layout_.retain(retained);
+    const std::vector<WindowId> windows(workbench.layout().leaves().begin(),
+                                        workbench.layout().leaves().end());
+    (void)workbench.layout().retain(retained);
     for (const WindowId window : windows) {
         if (window != retained) {
             destroy_window(window);
         }
     }
-    active_window_ = retained;
+    workbench.set_active_window(retained);
     reveal_caret_ = true;
     sync_keymaps();
     return true;
+}
+
+WorkbenchId EditorApplication::create_workbench(std::string name,
+                                                std::optional<ProjectId> project) {
+    if (name.empty()) {
+        throw std::invalid_argument("workbench name must not be empty");
+    }
+    if (workbenches_.find_by_name(name)) {
+        throw std::invalid_argument(std::format("workbench '{}' already exists", name));
+    }
+    if (project) {
+        (void)runtime_.projects().get(*project);
+    }
+
+    EditSession& source = session();
+    const ViewportState source_viewport = source.view().viewport();
+    const std::optional<ViewSelection> source_selection = source.active_selection();
+    const BufferId buffer = buffer_id();
+    const ViewId view = create_view({}, buffer, source.caret());
+    runtime_.views().get(view).viewport() = source_viewport;
+    if (source_selection) {
+        runtime_.views().set_selection(view, *source_selection);
+    }
+    const WindowId window = runtime_.windows().create(view);
+    view_state_for(view).window = window;
+
+    WorkbenchId workbench;
+    try {
+        std::vector<ProjectId> scope;
+        if (project) {
+            scope.push_back(*project);
+        }
+        workbench = workbenches_.create(WorkbenchSpec{
+            .name = std::move(name), .root_window = window, .scope = std::move(scope)});
+        workbenches_.get(workbench).visit_buffer(buffer);
+    } catch (...) {
+        destroy_window(window);
+        throw;
+    }
+    if (!switch_workbench(workbench)) {
+        (void)workbenches_.erase(workbench);
+        destroy_window(window);
+        throw std::logic_error("created workbench cannot be activated");
+    }
+    return workbench;
+}
+
+bool EditorApplication::switch_workbench(WorkbenchId workbench) {
+    if (workbenches_.try_get(workbench) == nullptr) {
+        return false;
+    }
+    if (workbench != workbenches_.active_id()) {
+        command_loop_.cancel_pending();
+    }
+    if (!workbenches_.activate(workbench)) {
+        return false;
+    }
+    Workbench& selected = workbenches_.active();
+    selected.visit_buffer(buffer_id(selected.active_window()));
+    reveal_caret_ = true;
+    sync_keymaps();
+    return true;
+}
+
+bool EditorApplication::close_workbench(WorkbenchId workbench) {
+    Workbench* closing = workbenches_.try_get(workbench);
+    if (closing == nullptr || workbenches_.size() <= 1) {
+        return false;
+    }
+    const std::vector<WindowId> windows(closing->layout().leaves().begin(),
+                                        closing->layout().leaves().end());
+    const bool was_active = workbench == workbenches_.active_id();
+    if (was_active) {
+        const std::optional<WorkbenchId> replacement = workbenches_.next(workbench);
+        if (!replacement || *replacement == workbench || !workbenches_.activate(*replacement)) {
+            return false;
+        }
+    }
+    if (!workbenches_.erase(workbench)) {
+        return false;
+    }
+    for (const WindowId window : windows) {
+        destroy_window(window);
+    }
+    if (was_active) {
+        Workbench& selected = workbenches_.active();
+        selected.visit_buffer(buffer_id(selected.active_window()));
+        command_loop_.cancel_pending();
+        reveal_caret_ = true;
+        sync_keymaps();
+    }
+    return true;
+}
+
+bool EditorApplication::adopt_project(WorkbenchId workbench, ProjectId project) {
+    (void)runtime_.projects().get(project);
+    Workbench* target = workbenches_.try_get(workbench);
+    return target != nullptr && target->adopt_project(project);
+}
+
+bool EditorApplication::expel_buffer(WorkbenchId workbench, BufferId buffer) {
+    (void)runtime_.buffers().get(buffer);
+    Workbench* target = workbenches_.try_get(workbench);
+    return target != nullptr && target->expel_buffer(buffer);
+}
+
+std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench,
+                                                           bool widen) const {
+    const Workbench& target = workbenches_.get(workbench);
+    std::vector<BufferId> result;
+    result.reserve(buffers_.size());
+    const auto append = [&](BufferId buffer) {
+        if (runtime_.buffers().try_get(buffer) != nullptr &&
+            std::ranges::find(result, buffer) == result.end()) {
+            result.push_back(buffer);
+        }
+    };
+    if (widen) {
+        for (const std::unique_ptr<BufferState>& state : buffers_) {
+            append(state->buffer);
+        }
+        return result;
+    }
+    for (const BufferId buffer : target.mru()) {
+        append(buffer);
+    }
+    for (const std::unique_ptr<BufferState>& state : buffers_) {
+        const Buffer& buffer = runtime_.buffers().get(state->buffer);
+        if (buffer.project_id() && target.contains_project(*buffer.project_id())) {
+            append(state->buffer);
+        }
+    }
+    return result;
+}
+
+std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
+    std::vector<WorkbenchSnapshot> result;
+    result.reserve(workbenches_.size());
+    for (const WorkbenchId id : workbenches_.all()) {
+        const Workbench& workbench = workbenches_.get(id);
+        result.push_back(
+            {.workbench = id,
+             .name = workbench.name(),
+             .scope = std::vector<ProjectId>(workbench.scope().begin(), workbench.scope().end()),
+             .mru = std::vector<BufferId>(workbench.mru().begin(), workbench.mru().end()),
+             .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
+                                              workbench.layout().leaves().end()),
+             .active_window = workbench.active_window(),
+             .active = id == workbenches_.active_id()});
+    }
+    return result;
 }
 
 std::expected<void, std::string> EditorApplication::release_buffer(BufferId buffer,
@@ -1016,6 +1174,7 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
     if (!runtime_.buffers().erase(buffer)) {
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
+    workbenches_.forget_buffer(buffer);
     reveal_caret_ = true;
     sync_keymaps();
     return {};
@@ -1027,7 +1186,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
     for (const std::unique_ptr<BufferState>& entry : buffers_) {
         const BufferState& state = *entry;
         const Buffer& buffer = runtime_.buffers().get(state.buffer);
-        const ViewState* view = find_view(active_window_, state.buffer);
+        const ViewState* view = find_view(window_id(), state.buffer);
         const std::optional<ModeId> major = buffer.modes().major();
         const EffectiveModePolicy mode_policy = runtime_.modes().effective_policy(buffer.modes());
         result.push_back(
@@ -1058,13 +1217,13 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
 
 std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
     std::vector<OpenWindowSnapshot> result;
-    result.reserve(window_layout_.leaves().size());
-    for (const WindowId window : window_layout_.leaves()) {
+    result.reserve(window_layout().leaves().size());
+    for (const WindowId window : window_layout().leaves()) {
         const ViewId view = runtime_.windows().get(window).view_id();
         result.push_back({.window = window,
                           .view = view,
                           .buffer = runtime_.views().get(view).buffer_id(),
-                          .active = window == active_window_});
+                          .active = window == window_id()});
     }
     return result;
 }
@@ -1387,8 +1546,11 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
         view = &view_state_for(created);
     }
     runtime_.windows().set_view(window, view->view);
+    if (const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window)) {
+        workbenches_.get(*owner).visit_buffer(buffer);
+    }
     reveal_caret_ = true;
-    if (window == active_window_) {
+    if (window == window_id()) {
         sync_keymaps();
     }
     return true;
@@ -1633,7 +1795,7 @@ CommandContext EditorApplication::command_context() {
         return CommandContext(runtime_, interaction->window, interaction->buffer,
                               interaction->view);
     }
-    return CommandContext(runtime_, active_window_, buffer_id(), view_id());
+    return CommandContext(runtime_, window_id(), buffer_id(), view_id());
 }
 
 void EditorApplication::refresh_interaction_after_edit(RevisionId before) {

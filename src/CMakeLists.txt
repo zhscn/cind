@@ -82,6 +82,7 @@ add_library(cind_application STATIC
   editor/runtime.cpp
   editor/settings.cpp
   editor/view.cpp
+  editor/workbench.cpp
   editor/window.cpp
 )
 target_link_libraries(cind_application PUBLIC cind_async cind_document PRIVATE PkgConfig::Utf8Proc)

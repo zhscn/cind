@@ -1928,6 +1928,52 @@ TEST_CASE("window commands maintain a split tree and independent view state") {
     CHECK(application.open_windows().front().active);
 }
 
+TEST_CASE("workbench switching preserves inactive window and view state") {
+    EditorApplication application = make_application("sample.cc", "one\ntwo\nthree\n");
+    const WorkbenchId first_workbench = application.workbench_id();
+    const WindowId first_window = application.window_id();
+    application.session().set_caret(TextOffset{4});
+    application.session().view().viewport().top_line = 1;
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    const WindowId first_other_window = application.window_layout().leaves().back();
+    REQUIRE(application.focus_window(first_other_window));
+    application.session().set_caret(TextOffset{8});
+
+    const WorkbenchId second_workbench = application.create_workbench("notes");
+    CHECK(application.workbench_id() == second_workbench);
+    CHECK(application.window_layout().leaves().size() == 1);
+    const WindowId second_window = application.window_id();
+    CHECK(second_window != first_window);
+    CHECK(second_window != first_other_window);
+    CHECK(application.session().caret() == TextOffset{8});
+    application.session().set_caret(TextOffset{0});
+    application.session().view().viewport().top_line = 0;
+
+    send_keys(application, "C-h b");
+    CHECK(application.session().buffer().name() == "*Help*");
+    const std::vector<BufferId> second_buffers = application.workbench_buffers(second_workbench);
+    REQUIRE(second_buffers.size() == 2);
+    CHECK(second_buffers.front() == application.buffer_id());
+
+    REQUIRE(application.switch_workbench(first_workbench));
+    CHECK(application.window_id() == first_other_window);
+    CHECK(application.window_layout().leaves().size() == 2);
+    CHECK(application.session().caret() == TextOffset{8});
+    CHECK(application.runtime().windows().try_get(second_window) != nullptr);
+    CHECK(application.workbench_buffers(first_workbench).size() == 1);
+
+    REQUIRE(application.switch_workbench(second_workbench));
+    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.session().caret() == TextOffset{0});
+    REQUIRE(application.close_workbench(second_workbench));
+    CHECK(application.workbench_id() == first_workbench);
+    CHECK(application.runtime().windows().try_get(second_window) == nullptr);
+    CHECK(application.runtime().windows().try_get(first_window) != nullptr);
+    CHECK(application.runtime().windows().try_get(first_other_window) != nullptr);
+    CHECK(application.workbench_snapshots().size() == 1);
+    CHECK_FALSE(application.close_workbench(first_workbench));
+}
+
 TEST_CASE("view release runs state lifecycle while its editor session is available") {
     EditorApplication application = make_application("sample.cc", "one two\n");
     REQUIRE(application.split_window(WindowSplitAxis::Columns));

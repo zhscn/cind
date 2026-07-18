@@ -5,6 +5,7 @@
 #include "editor/interaction.hpp"
 #include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
+#include "editor/workbench.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -70,6 +71,50 @@ InputStateId define_test_input_state(EditorRuntime& runtime, std::string name) {
 }
 
 } // namespace
+
+TEST_CASE("workbench registry preserves layouts scopes and recency independently") {
+    WorkbenchRegistry registry;
+    const WindowId first_window{0, 1};
+    const WindowId second_window{1, 1};
+    const WindowId third_window{2, 1};
+    const ProjectId backend{0, 1};
+    const ProjectId frontend{1, 1};
+    const BufferId source{0, 1};
+    const BufferId visitor{1, 1};
+
+    const WorkbenchId first = registry.create(
+        {.name = "shop", .root_window = first_window, .scope = {backend, frontend, backend}});
+    CHECK(registry.active_id() == first);
+    CHECK(registry.get(first).scope().size() == 2);
+    registry.get(first).visit_buffer(source);
+    registry.get(first).visit_buffer(visitor);
+    registry.get(first).visit_buffer(source);
+    REQUIRE(registry.get(first).mru().size() == 2);
+    CHECK(registry.get(first).mru()[0] == source);
+    CHECK(registry.get(first).mru()[1] == visitor);
+
+    const WorkbenchId second =
+        registry.create({.name = "notes", .root_window = second_window, .scope = {}});
+    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = third_window, .scope = {}}),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(registry.create({.name = "other", .root_window = second_window, .scope = {}}),
+                    std::invalid_argument);
+    CHECK(registry.active_id() == first);
+    REQUIRE(registry.find_by_window(second_window).has_value());
+    CHECK(*registry.find_by_window(second_window) == second);
+    REQUIRE(registry.next(first).has_value());
+    CHECK(*registry.next(first) == second);
+    CHECK(registry.activate(second));
+    CHECK(registry.active().layout().contains(second_window));
+
+    registry.forget_buffer(visitor);
+    CHECK_FALSE(registry.get(first).contains_buffer(visitor));
+    registry.forget_project(backend);
+    CHECK_FALSE(registry.get(first).contains_project(backend));
+    CHECK(registry.erase(first));
+    CHECK(registry.try_get(first) == nullptr);
+    CHECK_THROWS_AS(registry.erase(second), std::logic_error);
+}
 
 TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
     EditorRuntime runtime;

@@ -21,11 +21,13 @@ template <typename Tag> struct EntityId {
 struct BufferTag;
 struct ProjectTag;
 struct ViewTag;
+struct WorkbenchTag;
 struct WindowTag;
 
 using BufferId = EntityId<BufferTag>;
 using ProjectId = EntityId<ProjectTag>;
 using ViewId = EntityId<ViewTag>;
+using WorkbenchId = EntityId<WorkbenchTag>;
 using WindowId = EntityId<WindowTag>;
 
 struct KeymapId {

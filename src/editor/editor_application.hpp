@@ -8,6 +8,7 @@
 #include "editor/interaction.hpp"
 #include "editor/pointer.hpp"
 #include "editor/project_service.hpp"
+#include "editor/workbench.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -68,6 +69,16 @@ struct OpenWindowSnapshot {
     bool active = false;
 };
 
+struct WorkbenchSnapshot {
+    WorkbenchId workbench;
+    std::string name;
+    std::vector<ProjectId> scope;
+    std::vector<BufferId> mru;
+    std::vector<WindowId> windows;
+    WindowId active_window;
+    bool active = false;
+};
+
 struct LocationNavigationSnapshot {
     std::optional<BufferId> buffer;
     std::optional<std::size_t> selected_index;
@@ -92,14 +103,15 @@ public:
     BufferId buffer_id(WindowId window) const;
     ViewId view_id() const;
     ViewId view_id(WindowId window) const;
-    WindowId window_id() const { return active_window_; }
+    WindowId window_id() const { return workbenches_.active().active_window(); }
+    WorkbenchId workbench_id() const { return workbenches_.active_id(); }
     EditSession& session();
     const EditSession& session() const;
     EditSession& session(WindowId window);
     const EditSession& session(WindowId window) const;
     const TokenBuffer& syntax_tokens() const;
     const TokenBuffer& syntax_tokens(WindowId window) const;
-    const WindowLayout& window_layout() const { return window_layout_; }
+    const WindowLayout& window_layout() const { return workbenches_.active().layout(); }
     CommandLoop& command_loop() { return command_loop_; }
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionController& interaction() { return interaction_; }
@@ -124,6 +136,13 @@ public:
     bool split_window(WindowSplitAxis axis);
     bool delete_window();
     bool delete_other_windows();
+    WorkbenchId create_workbench(std::string name, std::optional<ProjectId> project = std::nullopt);
+    bool switch_workbench(WorkbenchId workbench);
+    bool close_workbench(WorkbenchId workbench);
+    bool adopt_project(WorkbenchId workbench, ProjectId project);
+    bool expel_buffer(WorkbenchId workbench, BufferId buffer);
+    std::vector<BufferId> workbench_buffers(WorkbenchId workbench, bool widen = false) const;
+    std::vector<WorkbenchSnapshot> workbench_snapshots() const;
     std::expected<void, std::string> release_buffer(BufferId buffer, BufferId replacement);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
@@ -232,6 +251,8 @@ private:
                            std::optional<ModeId> major_mode, TextOffset caret = {});
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     bool show_buffer(WindowId window, BufferId buffer);
+    Workbench& active_workbench() { return workbenches_.active(); }
+    const Workbench& active_workbench() const { return workbenches_.active(); }
     std::expected<void, std::string> display_generated_buffer(WindowId window, std::string name,
                                                               std::string text, ModeId mode,
                                                               std::string style_origin);
@@ -269,8 +290,7 @@ private:
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
     std::optional<LocationNavigationState> location_navigation_;
-    WindowId active_window_;
-    WindowLayout window_layout_;
+    WorkbenchRegistry workbenches_;
     InteractionController interaction_;
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
