@@ -654,7 +654,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
-    const CommandId native_search_accept = define_command(runtime, "search.accept");
 
     std::pair<WindowId, BufferId> displayed;
     bool buffer_displayed = false;
@@ -728,6 +727,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          },
          .undo = {},
          .redo = {},
+         .set_view_caret = {},
          .move_caret_lines = {},
          .move_caret_line_boundary = {},
          .delete_grapheme = {},
@@ -928,7 +928,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 175);
+    CHECK(*installed == 178);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1052,7 +1052,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(search_prompt->input_state == "emacs");
     CHECK(search_prompt->prompt == "search: ");
     CHECK(search_prompt->history == "search");
-    CHECK(search_prompt->accept_command == native_search_accept);
+    CHECK(search_prompt->accept_command == require_command(runtime, "search.accept"));
     REQUIRE(search_prompt->arguments.size() == 1);
     CHECK(std::get<bool>(search_prompt->arguments.front()));
 
@@ -1065,6 +1065,30 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(backward_search_prompt->prompt == "search backward: ");
     REQUIRE(backward_search_prompt->arguments.size() == 1);
     CHECK_FALSE(std::get<bool>(backward_search_prompt->arguments.front()));
+
+    const CommandId search_accept = require_command(runtime, "search.accept");
+    const CommandResult buffer_search_result = runtime.commands().invoke(
+        search_accept, context,
+        CommandInvocation{.arguments = {true, std::string("bc")}, .prefix = {}});
+    REQUIRE(buffer_search_result.has_value());
+    CHECK(runtime.views().caret(view) == TextOffset{1});
+    CHECK(message.empty());
+    CHECK(redraw_requested);
+    CHECK(runtime.commands().definition(search_accept).source == "scheme:(cind core)");
+
+    message.clear();
+    const CommandId search_next = require_command(runtime, "search.next");
+    REQUIRE(runtime.commands().invoke(search_next, context).has_value());
+    CHECK(runtime.views().caret(view) == TextOffset{1});
+    CHECK(message == "search wrapped");
+    CHECK(runtime.commands().definition(search_next).source == "scheme:(cind core)");
+
+    message.clear();
+    const CommandId search_previous = require_command(runtime, "search.previous");
+    REQUIRE(runtime.commands().invoke(search_previous, context).has_value());
+    CHECK(runtime.views().caret(view) == TextOffset{1});
+    CHECK(message == "search wrapped");
+    CHECK(runtime.commands().definition(search_previous).source == "scheme:(cind core)");
 
     const CommandResult missing = runtime.commands().invoke(request->accept_command, context);
     REQUIRE_FALSE(missing.has_value());
@@ -1384,7 +1408,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 175);
+    CHECK(snapshot.scripted_commands == 178);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

@@ -92,6 +92,11 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                },
            .undo = [this](ViewId view) { return editing_mechanisms_.undo(view); },
            .redo = [this](ViewId view) { return editing_mechanisms_.redo(view); },
+           .set_view_caret =
+               [this](ViewId view, std::uint32_t offset) {
+                   session_for(view).set_caret(TextOffset{offset});
+                   reveal_caret_ = true;
+               },
            .move_caret_lines =
                [this](ViewId view, std::int64_t delta) {
                    editing_mechanisms_.move_lines(view, delta);
@@ -394,12 +399,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
       editing_mechanisms_(
           [this](ViewId view) -> EditSession& { return session_for(view); },
           {.edited = [this] { after_edit(); }, .caret_moved = [this] { reveal_caret_ = true; }}),
-      search_commands_(
-          runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
-          [this](std::string message) {
-              message_ = std::move(message);
-              reveal_caret_ = true;
-          }),
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)), script_async_(async_runtime_) {
     interaction_.attach_async_runtime(async_runtime_);

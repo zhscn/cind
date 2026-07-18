@@ -46,6 +46,7 @@ struct GuileHostServices {
         move_caret_to_line;
     std::function<bool(ViewId)> undo;
     std::function<bool(ViewId)> redo;
+    std::function<void(ViewId, std::uint32_t)> set_view_caret;
     std::function<void(ViewId, std::int64_t)> move_caret_lines;
     std::function<void(ViewId, bool)> move_caret_line_boundary;
     std::function<GuileDeleteOutcome(ViewId, bool, bool)> delete_grapheme;

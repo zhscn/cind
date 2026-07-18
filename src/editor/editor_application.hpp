@@ -8,7 +8,6 @@
 #include "editor/interaction.hpp"
 #include "editor/location_list_mode.hpp"
 #include "editor/project_service.hpp"
-#include "editor/search_commands.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -103,8 +102,6 @@ public:
     const TokenBuffer& syntax_tokens() const;
     const TokenBuffer& syntax_tokens(WindowId window) const;
     const WindowLayout& window_layout() const { return window_layout_; }
-    SearchCommands& search_commands() { return search_commands_; }
-    const SearchCommands& search_commands() const { return search_commands_; }
     CommandLoop& command_loop() { return command_loop_; }
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionController& interaction() { return interaction_; }
@@ -308,7 +305,6 @@ private:
     InteractionController interaction_;
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
-    SearchCommands search_commands_;
     CommandLoop command_loop_;
     KeymapId keymap_;
     KeymapId application_keymap_;

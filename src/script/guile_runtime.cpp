@@ -2543,7 +2543,11 @@ SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
         HostLease& host = require_host(host_object, "set-view-caret!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-view-caret!", 2);
         const TextOffset offset = text_offset_from_scheme(offset_value, "set-view-caret!", 3);
-        host.runtime->views().set_caret(view, offset);
+        if (host.services.set_view_caret) {
+            host.services.set_view_caret(view, offset.value);
+        } else {
+            host.runtime->views().set_caret(view, offset);
+        }
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("set-view-caret!", exception.what());
@@ -2769,6 +2773,22 @@ SCM buffer_text(SCM host_object, SCM buffer_value) {
         raise_host_error("buffer-text", exception.what());
     } catch (...) {
         scm_misc_error("buffer-text", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-byte-size");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-byte-size", 2);
+        return scm_from_uint32(
+            host.runtime->buffers().get(buffer).snapshot().content().size_bytes());
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-byte-size", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-byte-size", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -3641,6 +3661,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_resource));
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
+    (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_byte_size));
     (void)scm_c_define_gsubr("buffer-read-only?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_read_only_p));
     (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
@@ -3704,12 +3726,12 @@ void initialize_host_module(void*) {
         "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
         "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "active-key-bindings",
-        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-read-only?",
-        "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
-        "view-selection", "set-selection!", "clear-selection!", "push-selection-history!",
-        "pop-selection-history!", "clear-selection-history!", "selection-history-depth",
-        "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
-        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-byte-size",
+        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!",
+        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
+        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
+        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
         "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
         "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
         "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",

@@ -207,7 +207,6 @@ add_library(cind_editor STATIC
   editor/editor_application.cpp
   editor/noun_evaluator.cpp
   editor/project_service.cpp
-  editor/search_commands.cpp
 )
 target_link_libraries(cind_editor
   PUBLIC cind_async cind_indent cind_application cind_guile cind_project_io

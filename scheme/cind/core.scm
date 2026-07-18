@@ -293,6 +293,70 @@
                         #:history "search"
                         #:arguments (list forward?)))
 
+(define (search-match host buffer query caret forward?)
+  (let* ((size (buffer-byte-size host buffer))
+         (start (if forward?
+                    (min (+ caret 1) size)
+                    (and (> caret 0) (- caret 1))))
+         (first (and start
+                     (find-buffer-text host buffer query start
+                                       (if forward? 'forward 'backward)))))
+    (if first
+        (vector first #f)
+        (let ((wrapped (find-buffer-text host buffer query
+                                         (if forward? 0 size)
+                                         (if forward? 'forward 'backward))))
+          (vector wrapped (and wrapped #t))))))
+
+(define (make-search-commands host)
+  (let ((query ""))
+    (define (move context forward?)
+      (if (= (string-length query) 0)
+          (begin
+            (set-message! host "search query is empty")
+            (command-completed/preserve))
+          (let* ((view (context-view context))
+                 (result (search-match host (context-buffer context) query
+                                       (view-caret host view) forward?))
+                 (match (vector-ref result 0))
+                 (wrapped? (vector-ref result 1)))
+            (if (not match)
+                (begin
+                  (set-message! host (string-append "\"" query "\" not found"))
+                  (command-completed/preserve))
+                (begin
+                  (reset-preferred-column! host view)
+                  (set-view-caret! host view (vector-ref match 0))
+                  (set-message! host (if wrapped? "search wrapped" ""))
+                  (request-redraw! host)
+                  (command-completed/preserve))))))
+
+    (define (accept context invocation)
+      (let ((arguments (invocation-arguments invocation)))
+        (if (or (< (vector-length arguments) 2)
+                (not (boolean? (vector-ref arguments 0)))
+                (not (string? (vector-ref arguments
+                                          (- (vector-length arguments) 1)))))
+            (command-error "search accepts a direction and query")
+            (let ((input (vector-ref arguments (- (vector-length arguments) 1))))
+              (unless (= (string-length input) 0)
+                (set! query input))
+              (move context (vector-ref arguments 0))))))
+
+    (list (list "search.prompt"
+                (lambda (context invocation) (search-prompt #t))
+                #f)
+          (list "search.backward-prompt"
+                (lambda (context invocation) (search-prompt #f))
+                #f)
+          (list "search.accept" accept #f)
+          (list "search.next"
+                (lambda (context invocation) (move context #t))
+                #f)
+          (list "search.previous"
+                (lambda (context invocation) (move context #f))
+                #f))))
+
 (define (query-replace-count-message count)
   (string-append "replaced " (number->string count) " occurrence"
                  (if (= count 1) "" "s")))
@@ -907,12 +971,6 @@
                 (project-search-accept host context invocation))
               #f)
         (list "project.search" project-search context-has-project?)
-        (list "search.prompt"
-              (lambda (context invocation) (search-prompt #t))
-              #f)
-        (list "search.backward-prompt"
-              (lambda (context invocation) (search-prompt #f))
-              #f)
         (list "search.replace" query-replace #f)
         (list "search.replace.from.accept" query-replace-from-accept #f)
         (list "search.replace.to.accept"
@@ -924,6 +982,7 @@
                 (help-keys-accept host context invocation))
               #f)
         (list "help.keys" help-keys #f))
+   (make-search-commands host)
    (introspection-command-definitions host)
    (development-command-definitions host)
    (ares-command-definitions host)
