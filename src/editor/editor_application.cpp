@@ -23,10 +23,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-CommandResult completed() {
-    return CommandCompleted{};
-}
-
 std::expected<std::string, std::string> normalized_path(std::string_view input) {
     if (input.empty()) {
         return std::unexpected("file path is empty");
@@ -129,6 +125,51 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    editing_mechanisms_.type_text(view, text);
                },
            .page_rows = [this] { return command_page_rows_; },
+           .interaction_status =
+               [this] {
+                   const InteractionState* state = interaction_.state();
+                   return GuileInteractionStatus{
+                       .active = state != nullptr,
+                       .picker = state != nullptr && state->request.kind == InteractionKind::Picker,
+                       .has_history = state != nullptr && !state->request.history.empty()};
+               },
+           .submit_interaction = [this]() -> std::expected<CommandDispatch, std::string> {
+               std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
+               if (!submission) {
+                   return std::unexpected(std::move(submission.error()));
+               }
+               interaction_session_.reset();
+               return CommandDispatch{.command = submission->accept_command,
+                                      .invocation = std::move(submission->invocation),
+                                      .target = submission->target};
+           },
+           .move_interaction_candidate =
+               [this](int delta) { return interaction_.move_selection(delta); },
+           .move_interaction_history =
+               [this](int delta) {
+                   return delta < 0 ? interaction_.previous_history() : interaction_.next_history();
+               },
+           .cancel_interaction =
+               [this] {
+                   interaction_session_.reset();
+                   return interaction_.cancel();
+               },
+           .cancel_pending_input = [this] { command_loop_.cancel_pending(); },
+           .view_position =
+               [this](ViewId view) {
+                   const EditSession& active = session_for(view);
+                   const DocumentSnapshot snapshot = active.snapshot();
+                   const Text& text = snapshot.content();
+                   const TextOffset caret = active.caret();
+                   const LinePosition position = text.position(caret);
+                   return GuileViewPosition{
+                       .line = position.line,
+                       .line_count = text.line_count(),
+                       .display_column = static_cast<std::uint32_t>(
+                           ui::display_column(text, caret, active.style().tab_width)),
+                       .byte = caret.value,
+                       .byte_count = text.size_bytes()};
+               },
            .set_message = [this](std::string message) { message_ = std::move(message); },
            .ensure_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
                try {
@@ -1848,15 +1889,6 @@ ModeId EditorApplication::mode_for_resource(std::string_view resource) const {
 }
 
 void EditorApplication::register_commands() {
-    auto define = [this](std::string name, auto execute) {
-        return runtime_.commands().define(
-            std::move(name), [execute = std::move(execute)](
-                                 CommandContext&, const CommandInvocation& invocation) mutable {
-                execute(invocation);
-                return completed();
-            });
-    };
-
     const auto location_list_active = [this](const CommandContext& context) {
         return context.buffer().modes().major() == location_list_mode_;
     };
@@ -1895,86 +1927,6 @@ void EditorApplication::register_commands() {
                                                                .previous = location_previous})
                               .mode;
 
-    define("keyboard.quit", [this](const CommandInvocation&) {
-        if (const InteractionState* state = interaction_.state()) {
-            runtime_.views().reset_input_states(state->view);
-        } else {
-            runtime_.views().reset_input_states(view_id());
-        }
-        command_loop_.cancel_pending();
-        interaction_session_.reset();
-        if (interaction_.cancel()) {
-            message_ = "cancelled";
-            return;
-        }
-        session().clear_selection();
-        message_ = "cancelled";
-    });
-    const auto interaction_enabled = [this](const CommandContext&) {
-        return interaction_.active();
-    };
-    runtime_.commands().define(
-        "interaction.submit",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
-            if (!submission) {
-                return std::unexpected(CommandError{std::move(submission.error())});
-            }
-            interaction_session_.reset();
-            return CommandDispatch{.command = submission->accept_command,
-                                   .invocation = std::move(submission->invocation),
-                                   .target = submission->target};
-        },
-        interaction_enabled);
-    runtime_.commands().define(
-        "interaction.next-candidate",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_selection(1);
-            return CommandCompleted{};
-        },
-        [this](const CommandContext&) {
-            const InteractionState* state = interaction_.state();
-            return state != nullptr && state->request.kind == InteractionKind::Picker;
-        });
-    runtime_.commands().define(
-        "interaction.previous-candidate",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.move_selection(-1);
-            return CommandCompleted{};
-        },
-        [this](const CommandContext&) {
-            const InteractionState* state = interaction_.state();
-            return state != nullptr && state->request.kind == InteractionKind::Picker;
-        });
-    runtime_.commands().define(
-        "interaction.previous-history",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.previous_history();
-            return CommandCompleted{};
-        },
-        [this](const CommandContext&) {
-            const InteractionState* state = interaction_.state();
-            return state != nullptr && !state->request.history.empty();
-        });
-    runtime_.commands().define(
-        "interaction.next-history",
-        [this](CommandContext&, const CommandInvocation&) -> CommandResult {
-            (void)interaction_.next_history();
-            return CommandCompleted{};
-        },
-        [this](const CommandContext&) {
-            const InteractionState* state = interaction_.state();
-            return state != nullptr && !state->request.history.empty();
-        });
-    define("editor.position", [this](const CommandInvocation&) {
-        const DocumentSnapshot snapshot = session().snapshot();
-        const Text& text = snapshot.content();
-        const LinePosition position = text.position(session().caret());
-        message_ = std::format(
-            "line {}/{}, column {}, byte {}/{}", position.line + 1, text.line_count(),
-            ui::display_column(text, session().caret(), session().style().tab_width) + 1,
-            session().caret().value, text.size_bytes());
-    });
     std::expected<std::size_t, std::string> installed = guile_.install_core_commands();
     if (!installed) {
         throw std::runtime_error(std::format("Guile command policy failed: {}", installed.error()));

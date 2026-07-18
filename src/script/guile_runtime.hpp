@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/command.hpp"
 #include "editor/ids.hpp"
 #include "editor/selection.hpp"
 #include "editor/window.hpp"
@@ -31,6 +32,20 @@ struct GuileTextRange {
     std::uint32_t end = 0;
 };
 
+struct GuileInteractionStatus {
+    bool active = false;
+    bool picker = false;
+    bool has_history = false;
+};
+
+struct GuileViewPosition {
+    std::uint32_t line = 0;
+    std::uint32_t line_count = 0;
+    std::uint32_t display_column = 0;
+    std::uint32_t byte = 0;
+    std::uint32_t byte_count = 0;
+};
+
 enum class GuileDeleteOutcome : std::uint8_t {
     Unchanged,
     Deleted,
@@ -54,6 +69,13 @@ struct GuileHostServices {
     std::function<std::optional<std::string>(ViewId)> indent;
     std::function<void(ViewId, std::string_view)> type_text;
     std::function<int()> page_rows;
+    std::function<GuileInteractionStatus()> interaction_status;
+    std::function<std::expected<CommandDispatch, std::string>()> submit_interaction;
+    std::function<bool(int)> move_interaction_candidate;
+    std::function<bool(int)> move_interaction_history;
+    std::function<bool()> cancel_interaction;
+    std::function<void()> cancel_pending_input;
+    std::function<GuileViewPosition(ViewId)> view_position;
     std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
     std::function<std::expected<void, std::string>(WindowId, std::string)> open_file;

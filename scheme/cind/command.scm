@@ -6,6 +6,7 @@
             command-prefix
             command-error
             command-dispatch
+            command-dispatch-to
             interaction
             interaction-candidate
             context-window
@@ -55,6 +56,10 @@
 
 (define (command-dispatch name . arguments)
   (vector 'dispatch name (list->vector arguments)))
+
+(define (command-dispatch-to name window buffer view . arguments)
+  (vector 'dispatch-target name (list->vector arguments)
+          (vector window buffer view)))
 
 (define (interaction kind keymap input-state prompt initial-input history provider
                      allow-custom-input? accept-command . arguments)

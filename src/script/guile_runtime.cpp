@@ -101,6 +101,7 @@ struct HostLease {
 
 std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& host,
                                                                   GuileEvaluationRequest request);
+SCM setting_value(const SettingValue& value);
 
 SCM host_type = SCM_UNDEFINED;
 std::once_flag guile_once;
@@ -3522,6 +3523,156 @@ SCM request_redraw(SCM host_object) {
     return SCM_UNSPECIFIED;
 }
 
+SCM interaction_status(SCM host_object) {
+    HostLease& host = require_host(host_object, "interaction-status");
+    try {
+        const GuileInteractionStatus status = host.services.interaction_status
+                                                  ? host.services.interaction_status()
+                                                  : GuileInteractionStatus{};
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
+        scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
+        scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("interaction-status", exception.what());
+    } catch (...) {
+        scm_misc_error("interaction-status", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM submit_interaction(SCM host_object) {
+    HostLease& host = require_host(host_object, "submit-interaction!");
+    if (!host.services.submit_interaction) {
+        scm_misc_error("submit-interaction!", "interaction submission capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        std::expected<CommandDispatch, std::string> submitted = host.services.submit_interaction();
+        if (!submitted) {
+            raise_host_error("submit-interaction!", submitted.error());
+        }
+        if (!submitted->target) {
+            scm_misc_error("submit-interaction!", "interaction submission has no target", SCM_EOL);
+        }
+        SCM arguments = scm_c_make_vector(submitted->invocation.arguments.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < submitted->invocation.arguments.size(); ++index) {
+            scm_c_vector_set_x(arguments, index,
+                               setting_value(submitted->invocation.arguments[index]));
+        }
+        const CommandTarget& target = *submitted->target;
+        SCM target_value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(target_value, 0,
+                           entity_id(target.window.slot, target.window.generation));
+        scm_c_vector_set_x(target_value, 1,
+                           entity_id(target.buffer.slot, target.buffer.generation));
+        scm_c_vector_set_x(target_value, 2, entity_id(target.view.slot, target.view.generation));
+
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        const std::string& name = host.runtime->commands().definition(submitted->command).name;
+        scm_c_vector_set_x(result, 0, scm_from_utf8_string(name.c_str()));
+        scm_c_vector_set_x(result, 1, arguments);
+        scm_c_vector_set_x(result, 2, target_value);
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("submit-interaction!", exception.what());
+    } catch (...) {
+        scm_misc_error("submit-interaction!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM move_interaction_candidate(SCM host_object, SCM delta_value) {
+    HostLease& host = require_host(host_object, "move-interaction-candidate!");
+    if (!host.services.move_interaction_candidate) {
+        scm_misc_error("move-interaction-candidate!",
+                       "interaction candidate capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.move_interaction_candidate(scm_to_int(delta_value)));
+    } catch (const std::exception& exception) {
+        raise_host_error("move-interaction-candidate!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-interaction-candidate!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM move_interaction_history(SCM host_object, SCM delta_value) {
+    HostLease& host = require_host(host_object, "move-interaction-history!");
+    if (!host.services.move_interaction_history) {
+        scm_misc_error("move-interaction-history!", "interaction history capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.move_interaction_history(scm_to_int(delta_value)));
+    } catch (const std::exception& exception) {
+        raise_host_error("move-interaction-history!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-interaction-history!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM cancel_interaction(SCM host_object) {
+    HostLease& host = require_host(host_object, "cancel-interaction!");
+    if (!host.services.cancel_interaction) {
+        scm_misc_error("cancel-interaction!", "interaction cancellation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.cancel_interaction());
+    } catch (const std::exception& exception) {
+        raise_host_error("cancel-interaction!", exception.what());
+    } catch (...) {
+        scm_misc_error("cancel-interaction!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM cancel_pending_input(SCM host_object) {
+    HostLease& host = require_host(host_object, "cancel-pending-input!");
+    if (!host.services.cancel_pending_input) {
+        scm_misc_error("cancel-pending-input!", "command input capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.cancel_pending_input();
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("cancel-pending-input!", exception.what());
+    } catch (...) {
+        scm_misc_error("cancel-pending-input!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM view_position(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "view-position");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-position", 2);
+    if (!host.services.view_position) {
+        scm_misc_error("view-position", "view position capability is unavailable", SCM_EOL);
+    }
+    try {
+        const GuileViewPosition position = host.services.view_position(view);
+        SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_uint32(position.line));
+        scm_c_vector_set_x(result, 1, scm_from_uint32(position.line_count));
+        scm_c_vector_set_x(result, 2, scm_from_uint32(position.display_column));
+        scm_c_vector_set_x(result, 3, scm_from_uint32(position.byte));
+        scm_c_vector_set_x(result, 4, scm_from_uint32(position.byte_count));
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("view-position", exception.what());
+    } catch (...) {
+        scm_misc_error("view-position", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 void initialize_host_module(void*) {
     host_type = scm_make_foreign_object_type(scm_from_utf8_symbol("cind-editor-host"),
                                              scm_list_1(scm_from_utf8_symbol("implementation")),
@@ -3690,6 +3841,19 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("indent!", 2, 0, 0, reinterpret_cast<scm_t_subr>(indent_edit));
     (void)scm_c_define_gsubr("type-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(type_text));
     (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
+    (void)scm_c_define_gsubr("interaction-status", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_status));
+    (void)scm_c_define_gsubr("submit-interaction!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(submit_interaction));
+    (void)scm_c_define_gsubr("move-interaction-candidate!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_interaction_candidate));
+    (void)scm_c_define_gsubr("move-interaction-history!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_interaction_history));
+    (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(cancel_interaction));
+    (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(cancel_pending_input));
+    (void)scm_c_define_gsubr("view-position", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_position));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(ensure_project_index));
@@ -3736,10 +3900,12 @@ void initialize_host_module(void*) {
         "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
         "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",
         "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
-        "page-rows", "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
-        "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
-        "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
-        "request-redraw!", nullptr);
+        "page-rows", "interaction-status", "submit-interaction!", "move-interaction-candidate!",
+        "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
+        "view-position", "set-message!", "ensure-project-index!", "open-file!",
+        "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
+        "kill-buffer!", "request-quit!", "split-window!", "delete-window!", "delete-other-windows!",
+        "select-other-window!", "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -4035,8 +4201,9 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
         }
         return std::unexpected(CommandError{scheme_string(scm_c_vector_ref(value, 1))});
     }
-    if (symbol_is(tag, "dispatch")) {
-        if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
+    if (symbol_is(tag, "dispatch") || symbol_is(tag, "dispatch-target")) {
+        const bool targeted = symbol_is(tag, "dispatch-target");
+        if (size != (targeted ? 4U : 3U) || !scm_is_string(scm_c_vector_ref(value, 1)) ||
             !scm_is_vector(scm_c_vector_ref(value, 2))) {
             return std::unexpected(CommandError{"Guile dispatch result is malformed"});
         }
@@ -4047,8 +4214,27 @@ CommandResult command_result_from_scheme(SCM value, const CommandContext& contex
         if (!command) {
             return std::unexpected(CommandError{std::format("unknown command '{}'", name)});
         }
+        std::optional<CommandTarget> target;
+        if (targeted) {
+            const SCM target_value = scm_c_vector_ref(value, 3);
+            if (!scm_is_vector(target_value) || scm_c_vector_length(target_value) != 3) {
+                return std::unexpected(CommandError{"Guile dispatch target is malformed"});
+            }
+            try {
+                target = CommandTarget{
+                    .window = entity_id_from_scheme<WindowTag>(scm_c_vector_ref(target_value, 0),
+                                                               "command-dispatch-to", 3),
+                    .buffer = entity_id_from_scheme<BufferTag>(scm_c_vector_ref(target_value, 1),
+                                                               "command-dispatch-to", 3),
+                    .view = entity_id_from_scheme<ViewTag>(scm_c_vector_ref(target_value, 2),
+                                                           "command-dispatch-to", 3)};
+            } catch (const std::exception& exception) {
+                return std::unexpected(CommandError{exception.what()});
+            }
+        }
         return CommandDispatch{.command = *command,
-                               .invocation = {.arguments = std::move(arguments), .prefix = {}}};
+                               .invocation = {.arguments = std::move(arguments), .prefix = {}},
+                               .target = target};
     }
     if (symbol_is(tag, "interaction")) {
         if (size != 11 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 1))) ||

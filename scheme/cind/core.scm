@@ -510,6 +510,56 @@
 (define (context-has-project? context)
   (and (context-project context) #t))
 
+(define (interaction-active? host context)
+  (vector-ref (interaction-status host) 0))
+
+(define (interaction-picker-active? host context)
+  (vector-ref (interaction-status host) 1))
+
+(define (interaction-history-active? host context)
+  (vector-ref (interaction-status host) 2))
+
+(define (keyboard-quit host context invocation)
+  (reset-input-states! host (context-view context))
+  (cancel-pending-input! host)
+  (unless (cancel-interaction! host)
+    (clear-selection! host (context-view context)))
+  (set-message! host "cancelled")
+  (command-completed/preserve))
+
+(define (interaction-move-candidate host delta)
+  (lambda (context invocation)
+    (move-interaction-candidate! host delta)
+    (command-completed/preserve)))
+
+(define (interaction-move-history host delta)
+  (lambda (context invocation)
+    (move-interaction-history! host delta)
+    (command-completed/preserve)))
+
+(define (interaction-submit host context invocation)
+  (let* ((submission (submit-interaction! host))
+         (arguments (vector-ref submission 1))
+         (target (vector-ref submission 2)))
+    (apply command-dispatch-to
+           (vector-ref submission 0)
+           (vector-ref target 0)
+           (vector-ref target 1)
+           (vector-ref target 2)
+           (vector->list arguments))))
+
+(define (editor-position host context invocation)
+  (let ((position (view-position host (context-view context))))
+    (set-message!
+     host
+     (string-append
+      "line " (number->string (+ (vector-ref position 0) 1))
+      "/" (number->string (vector-ref position 1))
+      ", column " (number->string (+ (vector-ref position 2) 1))
+      ", byte " (number->string (vector-ref position 3))
+      "/" (number->string (vector-ref position 4))))
+    (command-completed/preserve)))
+
 (define kill-ring-limit 60)
 
 (define (take-at-most values count)
@@ -859,6 +909,30 @@
          (list "edit.indent"
                (lambda (context invocation)
                  (indent-command host context invocation))
+               #f)
+         (list "keyboard.quit"
+               (lambda (context invocation)
+                 (keyboard-quit host context invocation))
+               #f)
+         (list "interaction.submit"
+               (lambda (context invocation)
+                 (interaction-submit host context invocation))
+               (lambda (context) (interaction-active? host context)))
+         (list "interaction.next-candidate"
+               (interaction-move-candidate host 1)
+               (lambda (context) (interaction-picker-active? host context)))
+         (list "interaction.previous-candidate"
+               (interaction-move-candidate host -1)
+               (lambda (context) (interaction-picker-active? host context)))
+         (list "interaction.previous-history"
+               (interaction-move-history host -1)
+               (lambda (context) (interaction-history-active? host context)))
+         (list "interaction.next-history"
+               (interaction-move-history host 1)
+               (lambda (context) (interaction-history-active? host context)))
+         (list "editor.position"
+               (lambda (context invocation)
+                 (editor-position host context invocation))
                #f)
          (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)

@@ -228,6 +228,27 @@ TEST_CASE("basic editing policy is owned by Guile") {
     CHECK(application.input_state().text_command == std::optional<std::string>{"edit.self-insert"});
 }
 
+TEST_CASE("interaction and position command policy is owned by Guile") {
+    EditorApplication application = make_application("sample.cc", "abc\n");
+    constexpr std::array<std::string_view, 7> commands{"keyboard.quit",
+                                                       "interaction.submit",
+                                                       "interaction.next-candidate",
+                                                       "interaction.previous-candidate",
+                                                       "interaction.previous-history",
+                                                       "interaction.next-history",
+                                                       "editor.position"};
+    for (const std::string_view name : commands) {
+        const CommandRegistry::Definition& definition = application.runtime().commands().definition(
+            require_command(application.runtime(), name));
+        CHECK(definition.source == "scheme:(cind core)");
+    }
+
+    application.session().set_caret(TextOffset{2});
+    send_keys(application, "C-x =");
+    CHECK(application.last_command() == "editor.position");
+    CHECK(application.message() == "line 1/2, column 3, byte 2/4");
+}
+
 TEST_CASE("query replace composes minibuffer and single-key input policy") {
     EditorApplication application = make_application("sample.cc", "é two é");
 
