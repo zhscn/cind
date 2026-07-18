@@ -203,7 +203,7 @@ target_link_libraries(cind_guile
 add_library(cind_editor STATIC
   cli/session.cpp
   cli/style_loader.cpp
-  editor/basic_commands.cpp
+  editor/editing_mechanisms.cpp
   editor/editor_application.cpp
   editor/noun_evaluator.cpp
   editor/project_service.cpp

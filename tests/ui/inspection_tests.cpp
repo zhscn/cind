@@ -62,6 +62,8 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .input_cursor_shape = "beam",
         .input_state_indicator = "",
         .text_input_policy = "accept",
+        .text_input_command = "edit.self-insert",
+        .text_input_command_available = true,
         .selection_after_edit = "collapse",
         .input_state_handler = true,
         .input_state_on_enter = true,
@@ -486,6 +488,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(input_state.payload ==
           "{\"strategy\":\"emacs\",\"name\":\"emacs\",\"cursor_shape\":\"beam\","
           "\"indicator\":\"\",\"text_input\":\"accept\","
+          "\"text_command\":\"edit.self-insert\",\"text_command_available\":true,"
           "\"selection_after_edit\":\"collapse\",\"handler\":true,\"on_enter\":true,"
           "\"on_exit\":false,\"position_hints_provider\":true}");
 

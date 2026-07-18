@@ -134,7 +134,7 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
               "cind toy-modal", "cind meow", "cind vim", "cind helix", "cind structural",
               "cind minibuffer", "cind development", "cind ares", "cind introspect", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 158);
+    CHECK(state.scripting.scripted_commands == 175);
     CHECK(state.scripting.provider_revision == 1);
     CHECK(state.scripting.scripted_providers == 6);
     CHECK(state.scripting.binding_revision == 1);
@@ -147,6 +147,8 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.scripted_file_mode_rules == 2);
     CHECK(state.scripting.scripted_project_providers == 3);
     CHECK(state.text_input_policy == "accept");
+    CHECK(state.text_input_command == "edit.self-insert");
+    CHECK(state.text_input_command_available);
     CHECK(state.input_state == "emacs");
     CHECK(state.input_strategy == "emacs");
     CHECK(state.input_cursor_shape == "beam");

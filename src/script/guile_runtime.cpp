@@ -854,17 +854,18 @@ SCM clear_input_feedback(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The low-level Guile ABI fixes seven adjacent SCM arguments. The `(cind
+// The low-level Guile ABI fixes eight adjacent SCM arguments. The `(cind
 // input)` wrapper supplies the public keyword interface and state-local
 // optional capabilities.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM text_input_value,
-                       SCM cursor_value, SCM indicator_value, SCM handler_value) {
+                       SCM text_command_value, SCM cursor_value, SCM indicator_value,
+                       SCM handler_value) {
     if (!scm_is_string(indicator_value)) {
-        scm_wrong_type_arg_msg("%define-input-state!", 6, indicator_value, "string");
+        scm_wrong_type_arg_msg("%define-input-state!", 7, indicator_value, "string");
     }
     if (!scheme_false(handler_value) && !scheme_true(scm_procedure_p(handler_value))) {
-        scm_wrong_type_arg_msg("%define-input-state!", 7, handler_value, "procedure or #f");
+        scm_wrong_type_arg_msg("%define-input-state!", 8, handler_value, "procedure or #f");
     }
     try {
         HostLease& host = require_host(host_object, "%define-input-state!");
@@ -880,6 +881,16 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             scm_wrong_type_arg_msg("%define-input-state!", 4, text_input_value,
                                    "'accept or 'ignore");
         }
+        std::optional<std::string> text_command;
+        if (scm_is_string(text_command_value)) {
+            text_command = scheme_string(text_command_value);
+            if (text_command->empty()) {
+                scm_misc_error("%define-input-state!", "text command must not be empty", SCM_EOL);
+            }
+        } else if (!scheme_false(text_command_value)) {
+            scm_wrong_type_arg_msg("%define-input-state!", 5, text_command_value,
+                                   "command name string or #f");
+        }
         CursorShape cursor;
         if (symbol_is(cursor_value, "beam")) {
             cursor = CursorShape::Beam;
@@ -888,7 +899,7 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
         } else if (symbol_is(cursor_value, "underline")) {
             cursor = CursorShape::Underline;
         } else {
-            scm_wrong_type_arg_msg("%define-input-state!", 5, cursor_value,
+            scm_wrong_type_arg_msg("%define-input-state!", 6, cursor_value,
                                    "'beam, 'block, or 'underline");
         }
 
@@ -918,6 +929,7 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             InputStateRegistry::Definition definition{.name = name,
                                                       .keymaps = keymaps,
                                                       .text_input = text_input,
+                                                      .text_command = std::move(text_command),
                                                       .cursor = cursor,
                                                       .indicator = scheme_string(indicator_value),
                                                       .handler = std::move(handler),
@@ -2761,6 +2773,21 @@ SCM buffer_text(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-read-only?");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-read-only?", 2);
+        return scm_from_bool(host.runtime->buffers().get(buffer).read_only());
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-read-only?", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-read-only?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -2948,6 +2975,195 @@ SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM colu
         scm_misc_error("move-caret-to-line!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM undo_edit(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "undo!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "undo!", 2);
+    if (!host.services.undo) {
+        scm_misc_error("undo!", "undo capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.undo(view));
+    } catch (const std::exception& exception) {
+        raise_host_error("undo!", exception.what());
+    } catch (...) {
+        scm_misc_error("undo!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM redo_edit(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "redo!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "redo!", 2);
+    if (!host.services.redo) {
+        scm_misc_error("redo!", "redo capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.redo(view));
+    } catch (const std::exception& exception) {
+        raise_host_error("redo!", exception.what());
+    } catch (...) {
+        scm_misc_error("redo!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM move_caret_lines(SCM host_object, SCM view_value, SCM delta_value) {
+    HostLease& host = require_host(host_object, "move-caret-lines!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-lines!", 2);
+    if (scm_is_signed_integer(delta_value, std::numeric_limits<std::int64_t>::min(),
+                              std::numeric_limits<std::int64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("move-caret-lines!", 3, delta_value, "signed 64-bit integer");
+    }
+    if (!host.services.move_caret_lines) {
+        scm_misc_error("move-caret-lines!", "vertical caret capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.move_caret_lines(view, scm_to_int64(delta_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("move-caret-lines!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-caret-lines!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM move_caret_line_boundary(SCM host_object, SCM view_value, SCM boundary_value) {
+    HostLease& host = require_host(host_object, "move-caret-line-boundary!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "move-caret-line-boundary!", 2);
+    bool end = false;
+    if (symbol_is(boundary_value, "end")) {
+        end = true;
+    } else if (!symbol_is(boundary_value, "start")) {
+        scm_wrong_type_arg_msg("move-caret-line-boundary!", 3, boundary_value, "'start or 'end");
+    }
+    if (!host.services.move_caret_line_boundary) {
+        scm_misc_error("move-caret-line-boundary!", "line-boundary capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        host.services.move_caret_line_boundary(view, end);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("move-caret-line-boundary!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-caret-line-boundary!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM delete_grapheme(SCM host_object, SCM view_value, SCM direction_value, SCM mode_value) {
+    HostLease& host = require_host(host_object, "delete-grapheme!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "delete-grapheme!", 2);
+    const bool forward = symbol_is(direction_value, "forward");
+    if (!forward && !symbol_is(direction_value, "backward")) {
+        scm_wrong_type_arg_msg("delete-grapheme!", 3, direction_value, "'forward or 'backward");
+    }
+    const bool structural = symbol_is(mode_value, "structural");
+    if (!structural && !symbol_is(mode_value, "raw")) {
+        scm_wrong_type_arg_msg("delete-grapheme!", 4, mode_value, "'structural or 'raw");
+    }
+    if (!host.services.delete_grapheme) {
+        scm_misc_error("delete-grapheme!", "grapheme deletion capability is unavailable", SCM_EOL);
+    }
+    try {
+        switch (host.services.delete_grapheme(view, forward, structural)) {
+        case GuileDeleteOutcome::Unchanged:
+            return name_symbol("unchanged");
+        case GuileDeleteOutcome::Deleted:
+            return name_symbol("deleted");
+        case GuileDeleteOutcome::MovedOverPair:
+            return name_symbol("moved-over-pair");
+        case GuileDeleteOutcome::MovedOverLiteral:
+            return name_symbol("moved-over-literal");
+        }
+    } catch (const std::exception& exception) {
+        raise_host_error("delete-grapheme!", exception.what());
+    } catch (...) {
+        scm_misc_error("delete-grapheme!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM newline_edit(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "newline!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "newline!", 2);
+    if (!host.services.newline) {
+        scm_misc_error("newline!", "newline capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.newline(view);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("newline!", exception.what());
+    } catch (...) {
+        scm_misc_error("newline!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM indent_edit(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "indent!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "indent!", 2);
+    if (!host.services.indent) {
+        scm_misc_error("indent!", "indentation capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::optional<std::string> role = host.services.indent(view);
+        return role ? scm_from_utf8_string(role->c_str()) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("indent!", exception.what());
+    } catch (...) {
+        scm_misc_error("indent!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
+    if (!scm_is_string(text_value)) {
+        scm_wrong_type_arg_msg("type-text!", 3, text_value, "string");
+    }
+    HostLease& host = require_host(host_object, "type-text!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "type-text!", 2);
+    if (!host.services.type_text) {
+        scm_misc_error("type-text!", "typed-text capability is unavailable", SCM_EOL);
+    }
+    try {
+        host.services.type_text(view, scheme_string(text_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("type-text!", exception.what());
+    } catch (...) {
+        scm_misc_error("type-text!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM page_rows(SCM host_object) {
+    HostLease& host = require_host(host_object, "page-rows");
+    if (!host.services.page_rows) {
+        scm_misc_error("page-rows", "page geometry capability is unavailable", SCM_EOL);
+    }
+    try {
+        return scm_from_int(std::max(1, host.services.page_rows()));
+    } catch (const std::exception& exception) {
+        raise_host_error("page-rows", exception.what());
+    } catch (...) {
+        scm_misc_error("page-rows", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -3317,7 +3533,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_input_feedback));
     (void)scm_c_define_gsubr("clear-input-feedback!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(clear_input_feedback));
-    (void)scm_c_define_gsubr("%define-input-state!", 7, 0, 0,
+    (void)scm_c_define_gsubr("%define-input-state!", 8, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_input_state));
     (void)scm_c_define_gsubr("set-input-state-lifecycle!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_input_state_lifecycle));
@@ -3425,6 +3641,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_resource));
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
+    (void)scm_c_define_gsubr("buffer-read-only?", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_read_only_p));
     (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
     (void)scm_c_define_gsubr("directory-path?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(directory_path_p));
@@ -3438,6 +3656,18 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(evaluate_scheme));
     (void)scm_c_define_gsubr("move-caret-to-line!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_caret_to_line));
+    (void)scm_c_define_gsubr("undo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(undo_edit));
+    (void)scm_c_define_gsubr("redo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(redo_edit));
+    (void)scm_c_define_gsubr("move-caret-lines!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_caret_lines));
+    (void)scm_c_define_gsubr("move-caret-line-boundary!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_caret_line_boundary));
+    (void)scm_c_define_gsubr("delete-grapheme!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(delete_grapheme));
+    (void)scm_c_define_gsubr("newline!", 2, 0, 0, reinterpret_cast<scm_t_subr>(newline_edit));
+    (void)scm_c_define_gsubr("indent!", 2, 0, 0, reinterpret_cast<scm_t_subr>(indent_edit));
+    (void)scm_c_define_gsubr("type-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(type_text));
+    (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(ensure_project_index));
@@ -3474,15 +3704,17 @@ void initialize_host_module(void*) {
         "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
         "command-properties", "open-buffer-summaries", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "active-key-bindings",
-        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
-        "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
+        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text", "buffer-read-only?",
+        "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
+        "view-selection", "set-selection!", "clear-selection!", "push-selection-history!",
+        "pop-selection-history!", "clear-selection-history!", "selection-history-depth",
+        "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
+        "evaluate-scheme!", "move-caret-to-line!", "undo!", "redo!", "move-caret-lines!",
+        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
+        "page-rows", "set-message!", "ensure-project-index!", "open-file!", "start-project-search!",
         "set-buffer-resource!", "save-buffer!", "open-buffer-ids", "kill-buffer!", "request-quit!",
         "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
         "request-redraw!", nullptr);

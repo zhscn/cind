@@ -588,6 +588,10 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_json_string(output, editor.input_state_indicator);
     output += ",\"text_input_policy\":";
     append_json_string(output, editor.text_input_policy);
+    output += ",\"text_input_command\":";
+    append_json_string(output, editor.text_input_command);
+    output += ",\"text_input_command_available\":";
+    append_bool(output, editor.text_input_command_available);
     output += ",\"selection_after_edit\":";
     append_json_string(output, editor.selection_after_edit);
     output += ",\"input_state_handler\":";
@@ -1330,6 +1334,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
     if (frame.editor.input_focus != expected_focus) {
         violations.emplace_back("editor input focus does not match interaction state");
     }
+    if (frame.editor.text_input_policy == "accept" && !frame.editor.text_input_command_available) {
+        violations.emplace_back("accepting input state has no available text command");
+    }
     const std::string_view expected_cursor_shape = frame.editor.input_cursor_shape;
     if (cursor_shape_name(frame.scene.cursor_shape) != expected_cursor_shape) {
         violations.emplace_back("scene cursor shape does not match active input policy");
@@ -2052,6 +2059,10 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_json_string(output, frame.editor.input_state_indicator);
         output += ",\"text_input\":";
         append_json_string(output, frame.editor.text_input_policy);
+        output += ",\"text_command\":";
+        append_json_string(output, frame.editor.text_input_command);
+        output += ",\"text_command_available\":";
+        append_bool(output, frame.editor.text_input_command_available);
         output += ",\"selection_after_edit\":";
         append_json_string(output, frame.editor.selection_after_edit);
         output += ",\"handler\":";
@@ -2510,6 +2521,9 @@ std::string inspection_tree_text(const FrameInspection& frame) {
            << " cursor=" << printable(frame.editor.input_cursor_shape) << " indicator=\""
            << printable(frame.editor.input_state_indicator) << '"'
            << " text-input=" << printable(frame.editor.text_input_policy)
+           << " text-command=" << printable(frame.editor.text_input_command)
+           << " text-command-available="
+           << (frame.editor.text_input_command_available ? "true" : "false")
            << " selection-after-edit=" << printable(frame.editor.selection_after_edit)
            << " handler=" << (frame.editor.input_state_handler ? "true" : "false")
            << " on-enter=" << (frame.editor.input_state_on_enter ? "true" : "false")

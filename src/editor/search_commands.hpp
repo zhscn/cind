@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/basic_commands.hpp"
+#include "editor/editing_mechanisms.hpp"
 
 #include <functional>
 #include <string>

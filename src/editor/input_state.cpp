@@ -11,6 +11,9 @@ void InputStateRegistry::validate(const Definition& definition) const {
     if (definition.name.empty()) {
         throw std::invalid_argument("input state name must not be empty");
     }
+    if (definition.text_command && definition.text_command->empty()) {
+        throw std::invalid_argument("input state text command must not be empty");
+    }
     for (const KeymapId keymap : definition.keymaps) {
         (void)keymaps_->definition(keymap);
     }

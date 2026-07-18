@@ -90,6 +90,40 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
                    return move_caret_to_line(view, line, display_column);
                },
+           .undo = [this](ViewId view) { return editing_mechanisms_.undo(view); },
+           .redo = [this](ViewId view) { return editing_mechanisms_.redo(view); },
+           .move_caret_lines =
+               [this](ViewId view, std::int64_t delta) {
+                   editing_mechanisms_.move_lines(view, delta);
+               },
+           .move_caret_line_boundary =
+               [this](ViewId view, bool end) { editing_mechanisms_.move_line_boundary(view, end); },
+           .delete_grapheme =
+               [this](ViewId view, bool forward, bool structural) {
+                   switch (editing_mechanisms_.delete_grapheme(
+                       view, forward,
+                       structural ? DeleteGraphemeMode::Structural : DeleteGraphemeMode::Raw)) {
+                   case DeleteGraphemeOutcome::Unchanged:
+                       return GuileDeleteOutcome::Unchanged;
+                   case DeleteGraphemeOutcome::Deleted:
+                       return GuileDeleteOutcome::Deleted;
+                   case DeleteGraphemeOutcome::MovedOverPair:
+                       return GuileDeleteOutcome::MovedOverPair;
+                   case DeleteGraphemeOutcome::MovedOverLiteral:
+                       return GuileDeleteOutcome::MovedOverLiteral;
+                   }
+                   throw std::logic_error("unknown delete-grapheme outcome");
+               },
+           .newline = [this](ViewId view) { editing_mechanisms_.newline(view); },
+           .indent = [this](ViewId view) -> std::optional<std::string> {
+               const std::optional<FormatRole> role = editing_mechanisms_.indent(view);
+               return role ? std::optional(std::string(format_role_name(*role))) : std::nullopt;
+           },
+           .type_text =
+               [this](ViewId view, std::string_view text) {
+                   editing_mechanisms_.type_text(view, text);
+               },
+           .page_rows = [this] { return command_page_rows_; },
            .set_message = [this](std::string message) { message_ = std::move(message); },
            .ensure_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
                try {
@@ -357,12 +391,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .cancel_async_task = [this](std::uint64_t task) { return script_async_.cancel(task); },
            .async_tasks = [this] { return script_async_.tasks(); }}),
       interaction_(runtime_, runtime_.interaction_providers()),
-      basic_commands_(
-          runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
-          {.page_rows = [this] { return command_page_rows_; },
-           .show_message = [this](std::string message) { message_ = std::move(message); },
-           .edited = [this] { after_edit(); },
-           .caret_moved = [this] { reveal_caret_ = true; }}),
+      editing_mechanisms_(
+          [this](ViewId view) -> EditSession& { return session_for(view); },
+          {.edited = [this] { after_edit(); }, .caret_moved = [this] { reveal_caret_ = true; }}),
       search_commands_(
           runtime_, [this](ViewId view) -> EditSession& { return session_for(view); },
           [this](std::string message) {
@@ -587,9 +618,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
 }
 
 TextInputPolicy EditorApplication::text_input_policy() const {
-    if (interaction_.active()) {
-        return TextInputPolicy::Accept;
-    }
     return input_state().text_input;
 }
 
@@ -618,62 +646,36 @@ void EditorApplication::insert_text(std::string_view text) {
     if (text.empty()) {
         return;
     }
-    if (text_input_policy() == TextInputPolicy::Ignore) {
+    const InputStateRegistry::Definition& state = input_state();
+    if (state.text_input == TextInputPolicy::Ignore) {
         return;
     }
-    const CommandPrefix prefix = command_loop_.pending_prefix();
-    if (!prefix.empty()) {
+    if (!state.text_command) {
         command_loop_.cancel_pending();
+        message_ = std::format("input state '{}' has no text command", state.name);
+        last_key_ = "text";
+        return;
     }
-    EditSession& target = interaction_session_ ? *interaction_session_ : session();
+    const std::optional<CommandId> command = runtime_.commands().find(*state.text_command);
+    if (!command) {
+        command_loop_.cancel_pending();
+        message_ = std::format("unknown input text command '{}'", *state.text_command);
+        last_key_ = "text";
+        return;
+    }
     const RevisionId interaction_revision = interaction_.input_revision();
-    if (target.buffer().read_only()) {
-        message_ = "buffer is read-only";
-        return;
-    }
-    const std::int64_t repeat_count = prefix.count.value_or(1);
-    if (repeat_count < 0) {
-        message_ = "negative repeat count is invalid for text input";
-        last_key_ = "text";
-        return;
-    }
-    if (repeat_count == 0) {
-        message_.clear();
-        last_key_ = "text";
-        return;
-    }
-    std::string repeated;
-    std::string_view committed = text;
-    if (repeat_count > 1) {
-        const auto count = static_cast<std::uint64_t>(repeat_count);
-        if (count > repeated.max_size() / text.size()) {
-            message_ = "repeated text exceeds the document size limit";
-            last_key_ = "text";
-            return;
-        }
-        repeated.reserve(static_cast<std::size_t>(count) * text.size());
-        for (std::uint64_t index = 0; index < count; ++index) {
-            repeated.append(text);
-        }
-        committed = repeated;
-    }
-    if (text.size() == 1 && static_cast<unsigned char>(text.front()) >= 0x20U) {
-        target.type_text(committed);
-    } else {
-        target.insert_text(committed);
-    }
-    basic_commands_.reset_preferred_column(target.view_id());
+    CommandContext context = command_context();
+    CommandInvocation invocation{.arguments = {std::string(text)},
+                                 .prefix = command_loop_.pending_prefix()};
+    (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
     last_key_ = "text";
-    after_edit();
-    if (runtime_.selection_edit_policy(target.view_id()) == SelectionEditPolicy::Collapse) {
-        target.clear_selection();
-    }
     refresh_interaction_after_edit(interaction_revision);
+    sync_keymaps();
 }
 
 void EditorApplication::reset_preferred_column() {
-    basic_commands_.reset_preferred_column(interaction_.active() ? interaction_.state()->view
-                                                                 : view_id());
+    editing_mechanisms_.reset_preferred_column(interaction_.active() ? interaction_.state()->view
+                                                                     : view_id());
 }
 
 std::expected<void, std::string> EditorApplication::open_file(std::string_view input) {
@@ -1626,7 +1628,7 @@ EditorApplication::display_generated_buffer(WindowId window, std::string name, s
         runtime_.views().clear_selection(view->view);
         runtime_.views().set_caret(view->view, TextOffset{});
         runtime_.views().get(view->view).viewport() = {};
-        basic_commands_.reset_preferred_column(view->view);
+        editing_mechanisms_.reset_preferred_column(view->view);
         return {};
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
@@ -1646,7 +1648,7 @@ EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
              .column = static_cast<int>(std::min<std::uint32_t>(
                  display_column, static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
             target.style().tab_width));
-        basic_commands_.reset_preferred_column(view);
+        editing_mechanisms_.reset_preferred_column(view);
         reveal_caret_ = true;
         return {};
     } catch (const std::exception& exception) {
@@ -1665,7 +1667,7 @@ void EditorApplication::apply_position(WindowId window, LinePosition position) {
     position.byte_column =
         std::min(position.byte_column, text.line_content_range(position.line).length());
     target.set_caret(text.offset(position));
-    basic_commands_.reset_preferred_column(target.view_id());
+    editing_mechanisms_.reset_preferred_column(target.view_id());
     reveal_caret_ = true;
 }
 
@@ -1703,7 +1705,7 @@ CommandResult EditorApplication::visit_location_at(BufferId list, std::size_t in
     } else {
         runtime_.views().set_caret(list_view->view, location.source_range.start);
     }
-    basic_commands_.reset_preferred_column(list_view->view);
+    editing_mechanisms_.reset_preferred_column(list_view->view);
     message_ = std::format("location {}/{}", index + 1, buffer->locations().size());
     std::expected<void, std::string> opened =
         open_file(location.resource, target_window, location.target);
@@ -1738,7 +1740,7 @@ CommandResult EditorApplication::move_location(CommandContext& context, int dire
             CommandError{direction > 0 ? "end of location list" : "beginning of location list"});
     }
     runtime_.views().set_caret(context.view_id(), locations[*selected].source_range.start);
-    basic_commands_.reset_preferred_column(context.view_id());
+    editing_mechanisms_.reset_preferred_column(context.view_id());
     reveal_caret_ = true;
     message_ = std::format("location {}/{}", *selected + 1, locations.size());
     return CommandCompleted{};

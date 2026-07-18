@@ -9,13 +9,15 @@
                               #:key
                               (keymaps (vector))
                               (text-input 'accept)
+                              (text-command "edit.self-insert")
                               (cursor 'beam)
                               (indicator "")
                               (handler #f)
                               (on-enter #f)
                               (on-exit #f)
                               (position-hints #f))
-  (let ((state (%define-input-state! host name keymaps text-input cursor indicator handler)))
+  (let ((state (%define-input-state! host name keymaps text-input text-command
+                                     cursor indicator handler)))
     (set-input-state-lifecycle! host name on-enter on-exit)
     (set-input-state-position-hints! host name position-hints)
     state))

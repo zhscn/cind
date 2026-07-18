@@ -480,6 +480,7 @@ TEST_CASE("bundled Guile policy defines the default input state") {
     const InputStateRegistry::Definition& definition = runtime.input_states().definition(emacs);
     CHECK(definition.keymaps.empty());
     CHECK(definition.text_input == TextInputPolicy::Accept);
+    CHECK(definition.text_command == std::optional<std::string>{"edit.self-insert"});
     CHECK(definition.cursor == CursorShape::Beam);
     CHECK_FALSE(definition.handler);
     const InputStateId universal =
@@ -725,6 +726,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              caret_moved = true;
              return {};
          },
+         .undo = {},
+         .redo = {},
+         .move_caret_lines = {},
+         .move_caret_line_boundary = {},
+         .delete_grapheme = {},
+         .newline = {},
+         .indent = {},
+         .type_text = {},
+         .page_rows = {},
          .set_message = [&](std::string value) { message = std::move(value); },
          .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
@@ -918,7 +928,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 158);
+    CHECK(*installed == 175);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 6);
@@ -1374,7 +1384,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 158);
+    CHECK(snapshot.scripted_commands == 175);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 6);
     CHECK_FALSE(snapshot.last_error.has_value());

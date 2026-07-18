@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -200,6 +201,33 @@ TEST_CASE("query replace is a shared scripted command") {
               .source == "scheme:(cind core)");
 }
 
+TEST_CASE("basic editing policy is owned by Guile") {
+    EditorApplication application = make_application("sample.cc", "text");
+    constexpr std::array<std::string_view, 17> commands{"edit.self-insert",
+                                                        "edit.undo",
+                                                        "edit.redo",
+                                                        "cursor.line-start",
+                                                        "cursor.line-end",
+                                                        "cursor.next-line",
+                                                        "cursor.previous-line",
+                                                        "cursor.page-down",
+                                                        "cursor.page-up",
+                                                        "cursor.forward-character",
+                                                        "cursor.backward-character",
+                                                        "edit.delete-backward",
+                                                        "edit.delete-forward",
+                                                        "edit.delete-backward-raw",
+                                                        "edit.delete-forward-raw",
+                                                        "edit.newline",
+                                                        "edit.indent"};
+    for (const std::string_view name : commands) {
+        const CommandRegistry::Definition& definition = application.runtime().commands().definition(
+            require_command(application.runtime(), name));
+        CHECK(definition.source == "scheme:(cind core)");
+    }
+    CHECK(application.input_state().text_command == std::optional<std::string>{"edit.self-insert"});
+}
+
 TEST_CASE("query replace composes minibuffer and single-key input policy") {
     EditorApplication application = make_application("sample.cc", "é two é");
 
@@ -331,6 +359,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     const InputStateId base = runtime.input_states().define(
         {.name = "test-base",
          .keymaps = {base_map},
+         .text_command = std::string("edit.self-insert"),
          .indicator = "B",
          .handler = {},
          .position_hints = [&](CommandContext& context) -> PositionHintProviderResult {
@@ -344,6 +373,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
         {.name = "test-transient",
          .keymaps = {transient_map},
          .text_input = TextInputPolicy::Ignore,
+         .text_command = std::nullopt,
          .cursor = CursorShape::Block,
          .indicator = "T",
          .handler = [handled_command, &handler_window](CommandContext& context,
@@ -452,6 +482,7 @@ TEST_CASE("text input follows the focused input state policy") {
         runtime.input_states().define({.name = "test-normal",
                                        .keymaps = {keymap},
                                        .text_input = TextInputPolicy::Ignore,
+                                       .text_command = std::nullopt,
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {},
@@ -476,6 +507,43 @@ TEST_CASE("text input follows the focused input state policy") {
     CHECK_FALSE(application.handle_key(KeyStroke::character_key(U'z'), 10));
     application.insert_text("z");
     CHECK(application.interaction().input_text() == "z");
+    CHECK(application.session().snapshot().content().to_string() == "text");
+}
+
+TEST_CASE("input states select the command that interprets text") {
+    EditorApplication application = make_application("sample.cc", "text");
+    EditorRuntime& runtime = application.runtime();
+    CommandInvocation received;
+    const CommandId command = runtime.commands().define(
+        "test.text-policy",
+        [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
+            received = invocation;
+            return CommandCompleted{.value = std::nullopt, .selection = CommandSelectionPreserve{}};
+        });
+    (void)command;
+    const InputStateId state =
+        runtime.input_states().define({.name = "test-text-policy",
+                                       .keymaps = {},
+                                       .text_input = TextInputPolicy::Accept,
+                                       .text_command = std::string("test.text-policy"),
+                                       .cursor = CursorShape::Beam,
+                                       .indicator = "T",
+                                       .handler = {},
+                                       .position_hints = {},
+                                       .on_enter = {},
+                                       .on_exit = {}});
+    runtime.views().set_base_input_state(application.view_id(), state);
+    application.command_loop().set_pending_prefix(
+        {.count = 3, .register_name = std::string("a"), .extra = {}});
+
+    application.insert_text("é");
+
+    REQUIRE(received.arguments.size() == 1);
+    CHECK(std::get<std::string>(received.arguments.front()) == "é");
+    CHECK(received.prefix.count == 3);
+    CHECK(received.prefix.register_name == std::optional<std::string>{"a"});
+    CHECK(application.last_command() == "test.text-policy");
+    CHECK(application.command_loop().pending_prefix().empty());
     CHECK(application.session().snapshot().content().to_string() == "text");
 }
 

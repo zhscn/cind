@@ -2,8 +2,8 @@
 
 #include "async/runtime.hpp"
 #include "cli/session.hpp"
-#include "editor/basic_commands.hpp"
 #include "editor/command_loop.hpp"
+#include "editor/editing_mechanisms.hpp"
 #include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
 #include "editor/location_list_mode.hpp"
@@ -307,7 +307,7 @@ private:
     WindowLayout window_layout_;
     InteractionController interaction_;
     std::unique_ptr<EditSession> interaction_session_;
-    BasicEditorCommands basic_commands_;
+    EditingMechanisms editing_mechanisms_;
     SearchCommands search_commands_;
     CommandLoop command_loop_;
     KeymapId keymap_;

@@ -93,6 +93,7 @@ public:
         std::string name;
         std::vector<KeymapId> keymaps;
         TextInputPolicy text_input = TextInputPolicy::Accept;
+        std::optional<std::string> text_command;
         CursorShape cursor = CursorShape::Beam;
         std::string indicator;
         InputStateHandler handler;

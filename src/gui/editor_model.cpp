@@ -620,6 +620,10 @@ EditorStateSnapshot EditorModel::inspect() {
             .input_state_indicator = input_state.indicator,
             .text_input_policy =
                 application_.text_input_policy() == TextInputPolicy::Accept ? "accept" : "ignore",
+            .text_input_command = input_state.text_command.value_or(std::string()),
+            .text_input_command_available =
+                input_state.text_command &&
+                application_.runtime().commands().find(*input_state.text_command).has_value(),
             .selection_after_edit = std::string(selection_edit_policy_name(
                 application_.runtime().selection_edit_policy(focused_input_view.id()))),
             .input_state_handler = static_cast<bool>(input_state.handler),

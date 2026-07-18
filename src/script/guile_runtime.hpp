@@ -31,12 +31,28 @@ struct GuileTextRange {
     std::uint32_t end = 0;
 };
 
+enum class GuileDeleteOutcome : std::uint8_t {
+    Unchanged,
+    Deleted,
+    MovedOverPair,
+    MovedOverLiteral,
+};
+
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
     std::function<std::expected<void, std::string>(WindowId, std::string, std::string)>
         display_generated_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
+    std::function<bool(ViewId)> undo;
+    std::function<bool(ViewId)> redo;
+    std::function<void(ViewId, std::int64_t)> move_caret_lines;
+    std::function<void(ViewId, bool)> move_caret_line_boundary;
+    std::function<GuileDeleteOutcome(ViewId, bool, bool)> delete_grapheme;
+    std::function<void(ViewId)> newline;
+    std::function<std::optional<std::string>(ViewId)> indent;
+    std::function<void(ViewId, std::string_view)> type_text;
+    std::function<int()> page_rows;
     std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
     std::function<std::expected<void, std::string>(WindowId, std::string)> open_file;

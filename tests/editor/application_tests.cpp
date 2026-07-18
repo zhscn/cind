@@ -60,6 +60,7 @@ InputStateId define_test_input_state(EditorRuntime& runtime, std::string name) {
     return runtime.input_states().define({.name = std::move(name),
                                           .keymaps = {},
                                           .text_input = TextInputPolicy::Accept,
+                                          .text_command = std::string("edit.self-insert"),
                                           .cursor = CursorShape::Beam,
                                           .indicator = {},
                                           .handler = {},
@@ -307,6 +308,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
         return runtime.input_states().define({.name = std::move(name),
                                               .keymaps = {},
                                               .text_input = TextInputPolicy::Ignore,
+                                              .text_command = std::nullopt,
                                               .cursor = CursorShape::Block,
                                               .indicator = {},
                                               .handler = {},
@@ -415,6 +417,7 @@ TEST_CASE("semantic mode policy changes preserve the view input state stack") {
         return runtime.input_states().define({.name = std::move(name),
                                               .keymaps = {},
                                               .text_input = TextInputPolicy::Ignore,
+                                              .text_command = std::nullopt,
                                               .cursor = CursorShape::Block,
                                               .indicator = {},
                                               .handler = {},
@@ -744,15 +747,17 @@ TEST_CASE("commands receive explicit runtime buffer and view context") {
 
 TEST_CASE("command completion owns selection results and strategy edit defaults") {
     EditorRuntime runtime;
-    const InputStateId state = runtime.input_states().define({.name = "selection-state",
-                                                              .keymaps = {},
-                                                              .text_input = TextInputPolicy::Accept,
-                                                              .cursor = CursorShape::Beam,
-                                                              .indicator = {},
-                                                              .handler = {},
-                                                              .position_hints = {},
-                                                              .on_enter = {},
-                                                              .on_exit = {}});
+    const InputStateId state =
+        runtime.input_states().define({.name = "selection-state",
+                                       .keymaps = {},
+                                       .text_input = TextInputPolicy::Accept,
+                                       .text_command = std::string("edit.self-insert"),
+                                       .cursor = CursorShape::Beam,
+                                       .indicator = {},
+                                       .handler = {},
+                                       .position_hints = {},
+                                       .on_enter = {},
+                                       .on_exit = {}});
     const InputStrategyId collapse =
         runtime.input_strategies().define({.name = "selection-collapse",
                                            .editing = state,
@@ -1143,19 +1148,22 @@ TEST_CASE("input states are registered globally and stacked per view") {
             lifecycle.push_back("exit:" + name);
         };
     };
-    const InputStateId emacs = runtime.input_states().define({.name = "emacs",
-                                                              .keymaps = {},
-                                                              .text_input = TextInputPolicy::Accept,
-                                                              .cursor = CursorShape::Beam,
-                                                              .indicator = "E",
-                                                              .handler = {},
-                                                              .position_hints = {},
-                                                              .on_enter = entered("emacs"),
-                                                              .on_exit = exited("emacs")});
+    const InputStateId emacs =
+        runtime.input_states().define({.name = "emacs",
+                                       .keymaps = {},
+                                       .text_input = TextInputPolicy::Accept,
+                                       .text_command = std::string("edit.self-insert"),
+                                       .cursor = CursorShape::Beam,
+                                       .indicator = "E",
+                                       .handler = {},
+                                       .position_hints = {},
+                                       .on_enter = entered("emacs"),
+                                       .on_exit = exited("emacs")});
     const InputStateId normal =
         runtime.input_states().define({.name = "normal",
                                        .keymaps = {normal_map},
                                        .text_input = TextInputPolicy::Ignore,
+                                       .text_command = std::nullopt,
                                        .cursor = CursorShape::Block,
                                        .indicator = "N",
                                        .handler = {},
@@ -1166,6 +1174,7 @@ TEST_CASE("input states are registered globally and stacked per view") {
         runtime.input_states().define({.name = "transient",
                                        .keymaps = {transient_map},
                                        .text_input = TextInputPolicy::Ignore,
+                                       .text_command = std::nullopt,
                                        .cursor = CursorShape::Underline,
                                        .indicator = "K",
                                        .handler = {},

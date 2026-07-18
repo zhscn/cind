@@ -217,6 +217,8 @@ struct EditorStateSnapshot {
     std::string input_cursor_shape;
     std::string input_state_indicator;
     std::string text_input_policy;
+    std::string text_input_command;
+    bool text_input_command_available = false;
     std::string selection_after_edit;
     bool input_state_handler = false;
     bool input_state_on_enter = false;
