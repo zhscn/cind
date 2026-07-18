@@ -247,7 +247,7 @@ public:
                                                     const PointerEvent& event,
                                                     bool pending_key_sequence) const;
     std::expected<bool, std::string> handle_scroll(const CommandContext& context,
-                                                   double lines) const;
+                                                   ScrollInput input) const;
     std::expected<void, std::string>
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,

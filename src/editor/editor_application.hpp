@@ -111,7 +111,7 @@ public:
 
     bool handle_key(KeyStroke key, int page_rows);
     bool handle_pointer(const PointerEvent& event);
-    bool handle_scroll(double lines);
+    bool handle_scroll(ScrollInput input);
     bool request_close(bool force = false);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     const InputStateRegistry::Definition& input_state() const;

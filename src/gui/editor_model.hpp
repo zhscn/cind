@@ -32,7 +32,9 @@ public:
     void insert_text(std::string_view text);
     void set_preedit(std::string_view text);
     void click(const ui::HitTarget& target);
-    void scroll_lines(float delta);
+    void scroll(ScrollInput input);
+    void scroll_lines(float delta) { scroll({.amount = delta, .unit = ScrollUnit::Lines}); }
+    void scroll_steps(float delta) { scroll({.amount = delta, .unit = ScrollUnit::Steps}); }
     bool has_background_work() const { return application_.has_background_work(); }
     bool poll_background_work() { return application_.poll_background_work(); }
     bool should_quit() const { return application_.should_quit(); }

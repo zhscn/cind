@@ -26,4 +26,14 @@ struct PointerEvent {
     std::optional<std::size_t> popup_item;
 };
 
+enum class ScrollUnit : std::uint8_t {
+    Lines,
+    Steps,
+};
+
+struct ScrollInput {
+    double amount = 0.0;
+    ScrollUnit unit = ScrollUnit::Lines;
+};
+
 } // namespace cind

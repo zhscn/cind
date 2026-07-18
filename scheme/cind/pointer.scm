@@ -25,8 +25,8 @@
   (hashq-set! scroll-policies host procedure)
   procedure)
 
-(define (handle-scroll! host context lines)
+(define (handle-scroll! host context input)
   (let ((procedure (hashq-ref scroll-policies host)))
     (unless procedure
       (error "scroll policy is not configured"))
-    (procedure host context lines)))
+    (procedure host context input)))

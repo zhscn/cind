@@ -92,17 +92,25 @@
                                      (if (eq? kind 'document-gutter) 0 (or column 0)))
                 #t))))))
 
+(define (scroll-input-lines input)
+  (let ((amount (vector-ref input 1)))
+    (case (vector-ref input 2)
+      ((lines) amount)
+      ((steps) (* amount 3.0))
+      (else (error "unknown scroll unit" (vector-ref input 2))))))
+
 (define (install-pointer-policies! host)
   (configure-pointer-policy! host default-pointer-policy)
   (configure-scroll-policy!
    host
-   (lambda (host context lines)
-     (if (zero? lines)
-         #f
-         (begin
-           (scroll-view-lines! host (context-view context) lines)
-           (set-caret-reveal! host #f)
-           #t))))
+   (lambda (host context input)
+     (let ((lines (scroll-input-lines input)))
+       (if (zero? lines)
+           #f
+           (begin
+             (scroll-view-lines! host (context-view context) lines)
+             (set-caret-reveal! host #f)
+             #t)))))
   2)
 
 (define (last-string-argument invocation)

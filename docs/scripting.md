@@ -648,11 +648,17 @@ the target Window, and composes `window-view-id` with `move-caret-to-line!`. Gut
 display column zero. The host operations own validated Window/View lookup and caret mutation; the
 policy owns when and how a semantic target invokes them.
 
-`configure-scroll-policy!` receives normalized fractional line deltas after the platform frontend
-has interpreted its native wheel or trackpad units. The default policy composes
+`configure-scroll-policy!` receives a normalized input fact:
+
+```scheme
+#(scroll-input amount lines-or-steps)
+```
+
+Platform frontends preserve precise trackpad movement as fractional `lines` and identify discrete
+wheel movement as `steps`. The default policy maps each step to three lines and composes
 `scroll-view-lines!` with `set-caret-reveal!`: the first operation clamps and updates only the
-target Viewport, while the second controls whether layout follows and paints the caret. This keeps
-platform delta normalization in SDL/macOS adapters and editor scroll behavior in Scheme.
+target Viewport, while the second controls whether layout follows and paints the caret. Frontends
+own native event interpretation; Scheme owns editor scroll speed and behavior.
 
 Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
 `columns`; split, delete, retain and focus operations return `#f` on success or an invariant error

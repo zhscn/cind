@@ -606,7 +606,7 @@ TEST_CASE("user initialization owns semantic pointer and scroll behavior") {
                                             .display_column = 2,
                                             .popup_item = std::nullopt}));
     CHECK(application.session().caret() == TextOffset{});
-    CHECK_FALSE(application.handle_scroll(1.5));
+    CHECK_FALSE(application.handle_scroll({.amount = 1.5, .unit = ScrollUnit::Lines}));
     CHECK(application.session().view().viewport().top_line == 0);
     CHECK(application.session().view().viewport().top_line_offset == doctest::Approx(0.0F));
     CHECK(application.reveal_caret());

@@ -187,6 +187,18 @@ TEST_CASE("fractional wheel scrolling preserves trackpad precision") {
     CHECK_FALSE(scene.cursor_visible);
 }
 
+TEST_CASE("discrete wheel scrolling uses scripted step policy") {
+    EditorModel model("sample.cc", "zero\none\ntwo\nthree\nfour\nfive\n", CppIndentStyle{}, "test",
+                      1);
+    compose_frame(model, 4, 80);
+
+    model.scroll_steps(1.0F);
+
+    const EditorStateSnapshot state = model.inspect();
+    CHECK(state.viewport.top_line == 3);
+    CHECK(state.viewport.top_line_offset == doctest::Approx(0.0F));
+}
+
 TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy") {
     EditorModel model("sample.cc", "abc", CppIndentStyle{}, "test", 1);
     ui::Scene scene = compose_frame(model, 8, 80);

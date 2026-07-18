@@ -39,12 +39,6 @@ namespace cind::gui {
 
 namespace {
 
-#if defined(__APPLE__)
-constexpr float wheel_lines_per_step = 1.0F;
-#else
-constexpr float wheel_lines_per_step = 3.0F;
-#endif
-
 double elapsed_microseconds(std::chrono::steady_clock::time_point started,
                             std::chrono::steady_clock::time_point finished) {
     return std::chrono::duration<double, std::micro>(finished - started).count();
@@ -373,14 +367,21 @@ private:
 #if defined(__APPLE__)
         if (event.type == mac_scroll_event_) {
             const float lines = pending_mac_scroll_lines_;
+            const float steps = pending_mac_scroll_steps_;
             pending_mac_scroll_lines_ = 0.0F;
+            pending_mac_scroll_steps_ = 0.0F;
             mac_scroll_event_queued_ = false;
             last_mac_scroll_lines_ = lines;
+            last_mac_scroll_steps_ = steps;
             if (lines != 0.0F) {
                 editor_.scroll_lines(lines);
                 direct_scroll_pending_ = true;
             }
-            return {true, lines != 0.0F};
+            if (steps != 0.0F) {
+                editor_.scroll_steps(steps);
+                direct_scroll_pending_ = true;
+            }
+            return {true, lines != 0.0F || steps != 0.0F};
         }
 #endif
         switch (event.type) {
@@ -429,13 +430,11 @@ private:
             if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
                 amount = -amount;
             }
-#if defined(__APPLE__)
-            const float lines = amount * wheel_lines_per_step;
-#else
-            const float lines = -amount * wheel_lines_per_step;
+#if !defined(__APPLE__)
+            amount = -amount;
 #endif
-            if (lines != 0.0F) {
-                editor_.scroll_lines(lines);
+            if (amount != 0.0F) {
+                editor_.scroll_steps(amount);
 #if defined(__APPLE__)
                 direct_scroll_pending_ = true;
 #endif
@@ -492,7 +491,7 @@ private:
     std::string event_detail(const SDL_Event& event) const {
 #if defined(__APPLE__)
         if (event.type == mac_scroll_event_) {
-            return std::format("lines={}", last_mac_scroll_lines_);
+            return std::format("lines={} steps={}", last_mac_scroll_lines_, last_mac_scroll_steps_);
         }
 #endif
         switch (event.type) {
@@ -1102,9 +1101,11 @@ private:
 
 #if defined(__APPLE__)
     void queue_mac_scroll(MacScrollDelta delta) {
-        const float lines = delta.precise ? delta.y / static_cast<float>(presenter_.cell_height())
-                                          : delta.y * wheel_lines_per_step;
-        pending_mac_scroll_lines_ += lines;
+        if (delta.precise) {
+            pending_mac_scroll_lines_ += delta.y / static_cast<float>(presenter_.cell_height());
+        } else {
+            pending_mac_scroll_steps_ += delta.y;
+        }
         if (mac_scroll_event_queued_) {
             return;
         }
@@ -1112,6 +1113,7 @@ private:
         event.type = mac_scroll_event_;
         if (!SDL_PushEvent(&event)) {
             pending_mac_scroll_lines_ = 0.0F;
+            pending_mac_scroll_steps_ = 0.0F;
             return;
         }
         mac_scroll_event_queued_ = true;
@@ -1127,7 +1129,9 @@ private:
     Uint32 mac_scroll_event_ = 0;
     void* mac_scroll_monitor_ = nullptr;
     float pending_mac_scroll_lines_ = 0.0F;
+    float pending_mac_scroll_steps_ = 0.0F;
     float last_mac_scroll_lines_ = 0.0F;
+    float last_mac_scroll_steps_ = 0.0F;
     bool mac_scroll_event_queued_ = false;
 #endif
     std::unique_ptr<SDL_Window, WindowDeleter> window_;

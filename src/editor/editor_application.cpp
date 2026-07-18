@@ -811,8 +811,8 @@ bool EditorApplication::handle_pointer(const PointerEvent& event) {
     return handled.value_or(false);
 }
 
-bool EditorApplication::handle_scroll(double lines) {
-    const std::expected<bool, std::string> handled = guile_.handle_scroll(command_context(), lines);
+bool EditorApplication::handle_scroll(ScrollInput input) {
+    const std::expected<bool, std::string> handled = guile_.handle_scroll(command_context(), input);
     return handled.value_or(false);
 }
 

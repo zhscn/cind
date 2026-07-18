@@ -5120,6 +5120,15 @@ SCM pointer_event_value(const PointerEvent& event, bool pending_key_sequence) {
     return value;
 }
 
+SCM scroll_input_value(ScrollInput input) {
+    SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("scroll-input"));
+    scm_c_vector_set_x(value, 1, scm_from_double(input.amount));
+    scm_c_vector_set_x(value, 2,
+                       scm_from_utf8_symbol(input.unit == ScrollUnit::Lines ? "lines" : "steps"));
+    return value;
+}
+
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
@@ -5261,7 +5270,7 @@ struct GuileCall {
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
     bool pending_key_sequence = false;
-    double scroll_lines = 0.0;
+    ScrollInput scroll_input;
     bool force = false;
     bool enabled = false;
     std::exception_ptr cpp_failure;
@@ -5699,7 +5708,7 @@ SCM call_body(void* data) {
         case GuileCall::Operation::HandleScroll:
             call.result = scm_call_3(scm_c_public_ref("cind pointer", "handle-scroll!"), call.host,
                                      command_context_value(*call.context),
-                                     scm_from_double(call.scroll_lines));
+                                     scroll_input_value(call.scroll_input));
             if (!scheme_boolean(call.result)) {
                 scm_wrong_type_arg_msg("handle-scroll!", 0, call.result, "boolean");
             }
@@ -6643,16 +6652,16 @@ public:
     }
 
     std::expected<bool, std::string> handle_scroll(const CommandContext& context,
-                                                   double lines) const {
+                                                   ScrollInput input) const {
         require_owner_thread();
-        if (!std::isfinite(lines)) {
+        if (!std::isfinite(input.amount)) {
             return std::unexpected("scroll delta must be finite");
         }
         GuileCall call;
         call.operation = GuileCall::Operation::HandleScroll;
         call.host = host_;
         call.context = &context;
-        call.scroll_lines = lines;
+        call.scroll_input = input;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(result.error());
@@ -6965,8 +6974,8 @@ std::expected<bool, std::string> GuileRuntime::handle_pointer(const CommandConte
 }
 
 std::expected<bool, std::string> GuileRuntime::handle_scroll(const CommandContext& context,
-                                                             double lines) const {
-    return impl_->handle_scroll(context, lines);
+                                                             ScrollInput input) const {
+    return impl_->handle_scroll(context, input);
 }
 
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,

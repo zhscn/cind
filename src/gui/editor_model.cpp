@@ -283,8 +283,8 @@ void EditorModel::click(const ui::HitTarget& target) {
     (void)application_.handle_pointer(event);
 }
 
-void EditorModel::scroll_lines(float delta) {
-    (void)application_.handle_scroll(static_cast<double>(delta));
+void EditorModel::scroll(ScrollInput input) {
+    (void)application_.handle_scroll(input);
 }
 
 EditorRenderState EditorModel::render_state() {
