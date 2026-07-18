@@ -321,7 +321,10 @@ other observers.
 `define-language-profile!` composes named native providers by facet and supplies language-scoped
 setting defaults. Provider associations use the facets `lexing`, `syntax`, `indentation`,
 `structural-editing`, `highlighting`, `completion`, and `formatting`. A declaration is validated in
-full before it replaces an existing profile.
+full before it replaces an existing profile. Each provider names an executable native mechanism,
+not a capability flag. An editing session resolves the provider selected by its buffer's current
+profile and creates mechanism state lazily. Facets backed by the same mechanism share that state,
+including its incremental analysis cache.
 
 `(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
 `define-minor-mode!`. A major-mode definition accepts `#:parent`, `#:language`, `#:keymap`,

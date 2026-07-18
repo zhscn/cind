@@ -394,7 +394,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                const DocumentSnapshot snapshot = active.snapshot();
                const TextRange range =
                    active.has_language_facet(LanguageFacet::StructuralEditing)
-                       ? soft_kill_end(active.analysis().tree, snapshot.content(), active.caret())
+                       ? soft_kill_end(active.analysis(LanguageFacet::StructuralEditing).tree,
+                                       snapshot.content(), active.caret())
                        : plain_kill_line_range(snapshot.content(), active.caret());
                if (range.empty()) {
                    return std::nullopt;
@@ -424,7 +425,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                ViewSelection selected = source;
                for (SelectionRange& range : selected.ranges) {
                    const std::optional<ThingMatch> match = evaluate_thing(
-                       runtime_.things(), *thing, snapshot, active.analysis().tree, range.head);
+                       runtime_.things(), *thing, snapshot,
+                       active.analysis(LanguageFacet::StructuralEditing).tree, range.head);
                    if (!match) {
                        return std::optional<ViewSelection>{};
                    }
@@ -449,8 +451,12 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    !active.has_language_facet(LanguageFacet::StructuralEditing)) {
                    return std::unexpected("structural motion is unavailable for the current mode");
                }
-               return evaluate_motion(runtime_.motions(), *motion, active.snapshot(),
-                                      active.analysis().tree, source, count, extend);
+               const SyntaxTree* tree =
+                   active.has_language_facet(LanguageFacet::StructuralEditing)
+                       ? &active.analysis(LanguageFacet::StructuralEditing).tree
+                       : nullptr;
+               return evaluate_motion(runtime_.motions(), *motion, active.snapshot(), tree, source,
+                                      count, extend);
            },
            .expand_selection = [this](ViewId view, const ViewSelection& source)
                -> std::expected<std::optional<ViewSelection>, std::string> {
@@ -459,7 +465,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
                        return std::optional<ViewSelection>{};
                    }
-                   return evaluate_node_expansion(active.analysis().tree, source);
+                   return evaluate_node_expansion(
+                       active.analysis(LanguageFacet::StructuralEditing).tree, source);
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
                }
@@ -612,11 +619,10 @@ const TokenBuffer& EditorApplication::syntax_tokens() const {
 const TokenBuffer& EditorApplication::syntax_tokens(WindowId window) const {
     static const TokenBuffer plain_text;
     const Buffer& buffer = session(window).buffer();
-    const std::optional<ModeId> major = buffer.modes().major();
-    if (!major || !runtime_.modes().definition(*major).language) {
+    if (!runtime_.language_provider(buffer.id(), LanguageFacet::Highlighting)) {
         return plain_text;
     }
-    return session(window).analysis().tree.tokens();
+    return session(window).analysis(LanguageFacet::Highlighting).tree.tokens();
 }
 
 void EditorApplication::refresh_default_keymap() {

@@ -15,6 +15,8 @@
 
 namespace cind {
 
+class LanguageMechanism;
+
 struct LanguageProviderId {
     static constexpr std::uint32_t invalid = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t value = invalid;
@@ -44,11 +46,29 @@ enum class LanguageFacet : std::uint8_t {
     Count,
 };
 
+using LanguageFacetMask = std::uint32_t;
+
+constexpr LanguageFacetMask language_facet_bit(LanguageFacet facet) {
+    return LanguageFacetMask{1} << static_cast<std::uint32_t>(facet);
+}
+
+constexpr LanguageFacetMask operator|(LanguageFacet left, LanguageFacet right) {
+    return language_facet_bit(left) | language_facet_bit(right);
+}
+
+constexpr LanguageFacetMask operator|(LanguageFacetMask left, LanguageFacet right) {
+    return left | language_facet_bit(right);
+}
+
+constexpr LanguageFacetMask kAllLanguageFacets =
+    (LanguageFacetMask{1} << static_cast<std::uint32_t>(LanguageFacet::Count)) - 1;
+
 class LanguageRegistry {
 public:
     struct ProviderDefinition {
         std::string name;
         LanguageFacet facet;
+        std::shared_ptr<const LanguageMechanism> mechanism;
     };
 
     struct ProfileDefinition {
@@ -70,7 +90,8 @@ public:
     LanguageRegistry(const LanguageRegistry& other);
     LanguageRegistry& operator=(const LanguageRegistry& other);
 
-    LanguageProviderId define_provider(std::string name, LanguageFacet facet);
+    LanguageProviderId define_provider(std::string name, LanguageFacet facet,
+                                       std::shared_ptr<const LanguageMechanism> mechanism);
     LanguageProfileId define_profile(std::string name);
     void clear_profile(LanguageProfileId profile);
     void bind(LanguageProfileId profile, LanguageFacet facet, LanguageProviderId provider);

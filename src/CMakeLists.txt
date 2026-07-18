@@ -65,12 +65,12 @@ add_library(cind_application STATIC
   editor/buffer.cpp
   editor/command.cpp
   editor/command_loop.cpp
-  editor/cpp_mode.cpp
   editor/input_state.cpp
   editor/input_strategy.cpp
   editor/interaction.cpp
   editor/keymap.cpp
   editor/language.cpp
+  editor/language_mechanism.cpp
   editor/mode.cpp
   editor/noun.cpp
   editor/project.cpp
@@ -81,6 +81,12 @@ add_library(cind_application STATIC
   editor/window.cpp
 )
 target_link_libraries(cind_application PUBLIC cind_async cind_document PRIVATE PkgConfig::Utf8Proc)
+
+add_library(cind_c_family STATIC
+  editor/cpp_mode.cpp
+)
+target_include_directories(cind_c_family PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cind_c_family PUBLIC cind_application PRIVATE cind_indent)
 
 set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
 set(CIND_ARES_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/ares.scm")
@@ -195,7 +201,7 @@ target_compile_definitions(cind_guile PRIVATE
 )
 add_dependencies(cind_guile cind_scheme_resources cind_fibers_external)
 target_link_libraries(cind_guile
-  PUBLIC cind_application cind_script_async
+  PUBLIC cind_application cind_c_family cind_script_async
   PRIVATE Cind::Guile
 )
 
@@ -208,7 +214,7 @@ add_library(cind_editor STATIC
   editor/project_service.cpp
 )
 target_link_libraries(cind_editor
-  PUBLIC cind_async cind_indent cind_application cind_guile cind_project_io
+  PUBLIC cind_async cind_indent cind_application cind_c_family cind_guile cind_project_io
   PRIVATE cind_ui Threads::Threads
 )
 

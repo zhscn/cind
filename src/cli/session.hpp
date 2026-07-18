@@ -1,6 +1,7 @@
 #pragma once
 
 #include "commands/editor_commands.hpp"
+#include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
 
 #include <algorithm>
@@ -93,9 +94,9 @@ public:
     // Pure query: explain the indent of the caret's line.
     IndentDecision explain() const;
 
-    // Analysis of the current revision (cached; incrementally maintained
-    // across every command). Valid until the next mutation.
-    const Analysis& analysis() const { return analyzer_.analyze(snapshot()); }
+    // Analysis from the exact provider selected for `facet` by the Buffer's
+    // scripted language profile. Valid until the next mutation.
+    const Analysis& analysis(LanguageFacet facet = LanguageFacet::Syntax) const;
 
     std::string render_with_caret() const;
 
@@ -108,6 +109,14 @@ private:
     void record_caret(TextOffset before);
     Document& mutable_document();
     void clamp_caret();
+    LanguageMechanismSession& language_session(LanguageFacet facet) const;
+    void apply_language_change(const DocumentChange& change, const DocumentSnapshot& snapshot,
+                               const LanguageMechanismSession* already_advanced = nullptr);
+
+    struct MechanismState {
+        std::shared_ptr<const LanguageMechanism> mechanism;
+        std::unique_ptr<LanguageMechanismSession> session;
+    };
 
     std::unique_ptr<EditorRuntime> owned_runtime_;
     EditorRuntime* runtime_ = nullptr;
@@ -115,7 +124,7 @@ private:
     ViewId view_id_;
     std::shared_ptr<CppIndentStyle> style_;
     std::map<UndoNodeId, CaretPair> undo_carets_;
-    mutable Analyzer analyzer_; // memo of a pure function — const-safe
+    mutable std::vector<MechanismState> language_sessions_;
 };
 
 // Parses "key: value" into a style field; returns false on unknown key or

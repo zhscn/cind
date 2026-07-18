@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -97,6 +99,27 @@ CommandId require_command(const EditorRuntime& runtime, std::string_view name) {
     }
     return *command;
 }
+
+class RecordingStructuralSession final : public LanguageMechanismSession {
+public:
+    explicit RecordingStructuralSession(std::shared_ptr<int> calls) : calls_(std::move(calls)) {}
+
+    TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets,
+                               char character, const CppIndentStyle&) override {
+        ++*calls_;
+        EditTransaction transaction = document.begin_transaction();
+        const std::string replacement(
+            1, static_cast<char>(std::toupper(static_cast<unsigned char>(character))));
+        for (auto caret = carets.rbegin(); caret != carets.rend(); ++caret) {
+            transaction.insert(*caret, replacement);
+        }
+        CommitResult commit = transaction.commit();
+        return {.carets = {}, .decisions = {}, .change = std::move(commit.change)};
+    }
+
+private:
+    std::shared_ptr<int> calls_;
+};
 
 } // namespace
 
@@ -186,6 +209,27 @@ TEST_CASE("typed character input reindents every selection head in one transacti
     CHECK(application.session().undo());
     CHECK(application.session().snapshot().content() == before);
     CHECK_FALSE(application.session().undo());
+}
+
+TEST_CASE("scripted language profiles dispatch the selected executable mechanism") {
+    EditorApplication application = make_application("sample.cc", "");
+    EditorRuntime& runtime = application.runtime();
+    const auto calls = std::make_shared<int>(0);
+    const auto mechanism = std::make_shared<LanguageMechanism>(
+        language_facet_bit(LanguageFacet::StructuralEditing),
+        [calls] { return std::make_unique<RecordingStructuralSession>(calls); });
+    const LanguageProviderId provider = runtime.languages().define_provider(
+        "test.uppercase-input", LanguageFacet::StructuralEditing, mechanism);
+    const LanguageProfileId profile = runtime.languages().define_profile("test.uppercase");
+    runtime.languages().bind(profile, LanguageFacet::StructuralEditing, provider);
+    const ModeId mode = runtime.modes().define("test-uppercase-mode", ModeKind::Major, profile);
+    runtime.modes().set_interaction_class(mode, InteractionClass::Editing);
+    application.session().buffer().modes().set_major(runtime.modes(), mode);
+
+    application.insert_text("x");
+
+    CHECK(application.session().snapshot().content() == "X");
+    CHECK(*calls == 1);
 }
 
 TEST_CASE("query replace is a shared scripted command") {

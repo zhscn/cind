@@ -1,20 +1,74 @@
 #include "editor/cpp_mode.hpp"
 
+#include "commands/editor_commands.hpp"
+#include "editor/language_mechanism.hpp"
+
+#include <memory>
 #include <stdexcept>
 #include <string>
 
 namespace cind {
 
+namespace {
+
+class CFamilyMechanismSession final : public LanguageMechanismSession {
+public:
+    const Analysis& analysis(const DocumentSnapshot& snapshot) override {
+        return analyzer_.analyze(snapshot);
+    }
+
+    void apply(const DocumentChange& change, const DocumentSnapshot& snapshot) override {
+        analyzer_.apply(change, snapshot);
+    }
+
+    TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets,
+                               char character, const CppIndentStyle& style) override {
+        return cind::type_chars(document, carets, character, style, analyzer_);
+    }
+
+    EnterResult newline(Document& document, TextOffset caret,
+                        const CppIndentStyle& style) override {
+        return press_enter(document, caret, style, analyzer_);
+    }
+
+    IndentDecision indent_line(Document& document, std::uint32_t line,
+                               const CppIndentStyle& style) override {
+        return cind::indent_line(document, line, style, analyzer_);
+    }
+
+    IndentDecision explain_indent(const DocumentSnapshot& snapshot, std::uint32_t line,
+                                  const CppIndentStyle& style) override {
+        return compute_line_indent(snapshot, analyzer_.analyze(snapshot).tree, line, style);
+    }
+
+private:
+    Analyzer analyzer_;
+};
+
+std::shared_ptr<const LanguageMechanism> c_family_mechanism() {
+    static const std::shared_ptr<const LanguageMechanism> mechanism =
+        std::make_shared<const LanguageMechanism>(
+            LanguageFacet::Lexing | LanguageFacet::Syntax | LanguageFacet::Indentation |
+                LanguageFacet::StructuralEditing | LanguageFacet::Highlighting,
+            [] { return std::make_unique<CFamilyMechanismSession>(); });
+    return mechanism;
+}
+
+} // namespace
+
 CFamilyMechanismsRegistration ensure_c_family_mechanisms(EditorRuntime& runtime) {
+    const std::shared_ptr<const LanguageMechanism> mechanism = c_family_mechanism();
     const auto provider = [&](std::string name, LanguageFacet facet) {
         if (const std::optional<LanguageProviderId> existing =
                 runtime.languages().find_provider(name)) {
-            if (runtime.languages().provider(*existing).facet != facet) {
-                throw std::logic_error("C-family provider has the wrong facet");
+            const LanguageRegistry::ProviderDefinition& definition =
+                runtime.languages().provider(*existing);
+            if (definition.facet != facet || definition.mechanism != mechanism) {
+                throw std::logic_error("C-family provider has an incompatible mechanism");
             }
             return *existing;
         }
-        return runtime.languages().define_provider(std::move(name), facet);
+        return runtime.languages().define_provider(std::move(name), facet, mechanism);
     };
 
     const std::optional<SettingId> existing_dialect =

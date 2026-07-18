@@ -65,9 +65,9 @@ void EditingMechanisms::move_line_boundary(ViewId view, bool end) {
 DeleteGraphemeOutcome EditingMechanisms::delete_grapheme(ViewId view, bool forward,
                                                          DeleteGraphemeMode mode) {
     const RevisionId revision = session_(view).snapshot().revision();
-    const DeleteGraphemeOutcome outcome =
-        mode == DeleteGraphemeMode::Structural ? structural_delete(view, forward)
-                                               : raw_delete(view, forward);
+    const DeleteGraphemeOutcome outcome = mode == DeleteGraphemeMode::Structural
+                                              ? structural_delete(view, forward)
+                                              : raw_delete(view, forward);
     if (session_(view).snapshot().revision() != revision) {
         notify_edited();
     }
@@ -121,7 +121,7 @@ DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool for
     const auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
     if (is_open(character) || is_close(character)) {
         const std::optional<TextRange> pair =
-            matching_bracket_range(active.analysis().tree, target);
+            matching_bracket_range(active.analysis(LanguageFacet::StructuralEditing).tree, target);
         if (!pair) {
             return raw_delete(view, forward);
         }
@@ -134,7 +134,7 @@ DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool for
         return DeleteGraphemeOutcome::MovedOverPair;
     }
     if (character == '"' || character == '\'') {
-        const TokenBuffer& tokens = active.analysis().tree.tokens();
+        const TokenBuffer& tokens = active.analysis(LanguageFacet::StructuralEditing).tree.tokens();
         std::size_t lo = 0;
         std::size_t hi = tokens.size();
         while (lo < hi) {

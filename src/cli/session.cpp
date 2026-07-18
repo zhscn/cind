@@ -96,6 +96,39 @@ Document& EditSession::mutable_document() {
     return target.document_;
 }
 
+LanguageMechanismSession& EditSession::language_session(LanguageFacet facet) const {
+    const std::optional<LanguageProviderId> provider =
+        runtime_->language_provider(buffer_id_, facet);
+    if (!provider) {
+        throw std::logic_error("language facet has no provider");
+    }
+    const std::shared_ptr<const LanguageMechanism>& mechanism =
+        runtime_->languages().provider(*provider).mechanism;
+    const auto existing =
+        std::ranges::find_if(language_sessions_, [&](const MechanismState& state) {
+            return state.mechanism == mechanism;
+        });
+    if (existing != language_sessions_.end()) {
+        return *existing->session;
+    }
+    language_sessions_.push_back({.mechanism = mechanism, .session = mechanism->open_session()});
+    return *language_sessions_.back().session;
+}
+
+void EditSession::apply_language_change(const DocumentChange& change,
+                                        const DocumentSnapshot& snapshot,
+                                        const LanguageMechanismSession* already_advanced) {
+    for (MechanismState& state : language_sessions_) {
+        if (state.session.get() != already_advanced) {
+            state.session->apply(change, snapshot);
+        }
+    }
+}
+
+const Analysis& EditSession::analysis(LanguageFacet facet) const {
+    return language_session(facet).analysis(snapshot());
+}
+
 void EditSession::set_caret(TextOffset caret) {
     if (caret.value > snapshot().size_bytes()) {
         throw std::out_of_range("EditSession: caret out of range");
@@ -123,7 +156,9 @@ void EditSession::type_text(std::string_view text) {
         for (const SelectionRange& range : selection.ranges) {
             carets.push_back(range.head);
         }
-        (void)type_chars(mutable_document(), carets, ch, *style_, analyzer_);
+        LanguageMechanismSession& mechanism = language_session(LanguageFacet::StructuralEditing);
+        TypeCharsResult result = mechanism.type_chars(mutable_document(), carets, ch, *style_);
+        apply_language_change(result.change, snapshot(), &mechanism);
         record_caret(before);
     }
 }
@@ -179,7 +214,7 @@ void EditSession::insert_text(std::span<const std::string> replacements) {
         }
     }
     CommitResult commit = tx.commit();
-    analyzer_.apply(commit.change, commit.snapshot);
+    apply_language_change(commit.change, commit.snapshot);
     record_caret(before);
 }
 
@@ -189,7 +224,7 @@ EnterResult EditSession::enter() {
         EditTransaction transaction = mutable_document().begin_transaction();
         transaction.insert(before, "\n");
         CommitResult commit = transaction.commit();
-        analyzer_.apply(commit.change, commit.snapshot);
+        apply_language_change(commit.change, commit.snapshot);
         set_caret(TextOffset{before.value + 1});
         record_caret(before);
         return {.handler = "PlainNewline",
@@ -197,7 +232,9 @@ EnterResult EditSession::enter() {
                 .caret = caret(),
                 .change = std::move(commit.change)};
     }
-    EnterResult result = press_enter(mutable_document(), before, *style_, analyzer_);
+    LanguageMechanismSession& mechanism = language_session(LanguageFacet::Indentation);
+    EnterResult result = mechanism.newline(mutable_document(), before, *style_);
+    apply_language_change(result.change, snapshot(), &mechanism);
     set_caret(result.caret);
     record_caret(before);
     return result;
@@ -211,7 +248,7 @@ void EditSession::erase(TextRange range) {
     EditTransaction tx = mutable_document().begin_transaction();
     tx.erase(range);
     CommitResult commit = tx.commit();
-    analyzer_.apply(commit.change, commit.snapshot);
+    apply_language_change(commit.change, commit.snapshot);
     set_caret(range.start);
     record_caret(before);
 }
@@ -283,7 +320,7 @@ ViewSelection EditSession::replace_selection(ViewSelection selection,
         }
     }
     CommitResult commit = transaction.commit();
-    analyzer_.apply(commit.change, commit.snapshot);
+    apply_language_change(commit.change, commit.snapshot);
     set_caret(result.ranges[result.primary].head);
     record_caret(before);
     return result;
@@ -323,7 +360,8 @@ IndentDecision EditSession::indent() {
     const TextOffset before = caret_before;
     Document& document = mutable_document();
     const RevisionId revision_before = document.revision();
-    IndentDecision decision = indent_line(document, line, *style_, analyzer_);
+    IndentDecision decision =
+        language_session(LanguageFacet::Indentation).indent_line(document, line, *style_);
     if (document.revision() != revision_before) {
         const auto new_len = static_cast<std::uint32_t>(decision.indentation_text.size());
         if (caret_before.value >= line_start.value + old_len) {
@@ -349,7 +387,7 @@ bool EditSession::undo() {
     if (!change) {
         return false;
     }
-    analyzer_.apply(*change, target.snapshot());
+    apply_language_change(*change, target.snapshot());
     if (auto it = undo_carets_.find(leaving); it != undo_carets_.end()) {
         set_caret(it->second.before);
     }
@@ -363,7 +401,7 @@ bool EditSession::redo() {
     if (!change) {
         return false;
     }
-    analyzer_.apply(*change, target.snapshot());
+    apply_language_change(*change, target.snapshot());
     if (auto it = undo_carets_.find(target.document_.undo_position()); it != undo_carets_.end()) {
         set_caret(it->second.after);
     }
@@ -382,8 +420,8 @@ IndentDecision EditSession::explain() const {
         return unavailable_indent_decision();
     }
     DocumentSnapshot snap = snapshot();
-    return compute_line_indent(snap, analysis().tree, snap.content().position(caret()).line,
-                               *style_);
+    return language_session(LanguageFacet::Indentation)
+        .explain_indent(snap, snap.content().position(caret()).line, *style_);
 }
 
 std::string EditSession::render_with_caret() const {

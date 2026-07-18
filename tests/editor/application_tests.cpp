@@ -4,6 +4,7 @@
 #include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/interaction.hpp"
+#include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <latch>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -213,18 +215,25 @@ TEST_CASE("runtime noun registries own validated named mechanisms") {
 
 TEST_CASE("major modes select composed language profiles instead of inheriting parsers") {
     EditorRuntime runtime;
+    const auto mechanism = std::make_shared<LanguageMechanism>(
+        LanguageFacet::Lexing | LanguageFacet::Syntax | LanguageFacet::Indentation |
+            LanguageFacet::StructuralEditing,
+        [] { return std::make_unique<LanguageMechanismSession>(); });
     const SettingId dialect = runtime.setting_definitions().define(
         "test.language.dialect", std::string("c++"),
         SettingScope::Language | SettingScope::Project | SettingScope::Buffer);
 
-    const LanguageProviderId lexer =
-        runtime.languages().define_provider("test.language.lexer", LanguageFacet::Lexing);
-    const LanguageProviderId syntax =
-        runtime.languages().define_provider("test.language.syntax", LanguageFacet::Syntax);
+    const LanguageProviderId lexer = runtime.languages().define_provider(
+        "test.language.lexer", LanguageFacet::Lexing, mechanism);
+    const LanguageProviderId syntax = runtime.languages().define_provider(
+        "test.language.syntax", LanguageFacet::Syntax, mechanism);
     const LanguageProviderId indentation = runtime.languages().define_provider(
-        "test.language.indentation", LanguageFacet::Indentation);
+        "test.language.indentation", LanguageFacet::Indentation, mechanism);
     const LanguageProviderId editing = runtime.languages().define_provider(
-        "test.language.structural-editing", LanguageFacet::StructuralEditing);
+        "test.language.structural-editing", LanguageFacet::StructuralEditing, mechanism);
+    CHECK_THROWS_AS(runtime.languages().define_provider("test.language.invalid",
+                                                        LanguageFacet::Formatting, mechanism),
+                    std::invalid_argument);
 
     const LanguageProfileId cpp = runtime.languages().define_profile("cpp");
     for (const auto [facet, provider] :
@@ -269,6 +278,10 @@ TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
     CHECK(profile.provider(LanguageFacet::Syntax).has_value());
     CHECK(profile.provider(LanguageFacet::Indentation).has_value());
     CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
+    const LanguageProviderId syntax = *profile.provider(LanguageFacet::Syntax);
+    const LanguageProviderId indentation = *profile.provider(LanguageFacet::Indentation);
+    CHECK(runtime.languages().provider(syntax).mechanism ==
+          runtime.languages().provider(indentation).mechanism);
     CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
     CHECK(runtime.modes().definition(cpp.mode).things ==
           std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},

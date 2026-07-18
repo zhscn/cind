@@ -1,5 +1,7 @@
 #include "editor/language.hpp"
 
+#include "editor/language_mechanism.hpp"
+
 #include <format>
 #include <stdexcept>
 #include <utility>
@@ -33,7 +35,9 @@ LanguageRegistry& LanguageRegistry::operator=(const LanguageRegistry& other) {
     return *this;
 }
 
-LanguageProviderId LanguageRegistry::define_provider(std::string name, LanguageFacet facet) {
+LanguageProviderId
+LanguageRegistry::define_provider(std::string name, LanguageFacet facet,
+                                  std::shared_ptr<const LanguageMechanism> mechanism) {
     if (sealed_) {
         throw std::logic_error("language registry is sealed");
     }
@@ -43,11 +47,14 @@ LanguageProviderId LanguageRegistry::define_provider(std::string name, LanguageF
     if (facet == LanguageFacet::Count) {
         throw std::invalid_argument("invalid language facet");
     }
+    if (!mechanism || !mechanism->supports(facet)) {
+        throw std::invalid_argument("language provider requires a mechanism for its facet");
+    }
     if (providers_by_name_.contains(name)) {
         throw std::invalid_argument(std::format("language provider '{}' is already defined", name));
     }
     const LanguageProviderId id{static_cast<std::uint32_t>(providers_.size())};
-    providers_.push_back(ProviderDefinition{std::move(name), facet});
+    providers_.push_back(ProviderDefinition{std::move(name), facet, std::move(mechanism)});
     providers_by_name_.emplace(providers_.back().name, id);
     return id;
 }

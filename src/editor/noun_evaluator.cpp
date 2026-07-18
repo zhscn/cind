@@ -329,7 +329,7 @@ TextOffset backward_word(const Text& text, TextOffset from, bool symbol_words = 
 }
 
 TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot,
-                     const SyntaxTree& tree, TextOffset from) {
+                     const SyntaxTree* tree, TextOffset from) {
     switch (mechanism) {
     case MotionMechanism::ForwardCharacter:
         return ui::next_grapheme(snapshot.content(), from);
@@ -346,15 +346,21 @@ TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot
     case MotionMechanism::BackwardSymbol:
         return backward_word(snapshot.content(), from, true);
     case MotionMechanism::ForwardExpression:
-        if (const std::optional<TextRange> range = sexp_forward(tree, from))
+        if (tree == nullptr)
+            return from;
+        if (const std::optional<TextRange> range = sexp_forward(*tree, from))
             return range->end;
         return from;
     case MotionMechanism::BackwardExpression:
-        if (const std::optional<TextRange> range = sexp_backward(tree, from))
+        if (tree == nullptr)
+            return from;
+        if (const std::optional<TextRange> range = sexp_backward(*tree, from))
             return range->start;
         return from;
     case MotionMechanism::UpList:
-        if (const std::optional<TextRange> range = enclosing_list(tree, from))
+        if (tree == nullptr)
+            return from;
+        if (const std::optional<TextRange> range = enclosing_list(*tree, from))
             return range->start;
         return from;
     }
@@ -370,7 +376,7 @@ std::optional<ThingMatch> evaluate_thing(const ThingRegistry& registry, ThingId 
 }
 
 ViewSelection evaluate_motion(const MotionRegistry& registry, MotionId motion,
-                              const DocumentSnapshot& snapshot, const SyntaxTree& tree,
+                              const DocumentSnapshot& snapshot, const SyntaxTree* tree,
                               const ViewSelection& selection, std::int64_t count, bool extend) {
     MotionMechanism mechanism = registry.definition(motion).mechanism;
     if (count < 0) {

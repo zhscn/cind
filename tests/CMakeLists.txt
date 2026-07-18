@@ -23,7 +23,7 @@ target_link_libraries(text_tests PRIVATE cind_document doctest::doctest)
 add_test(NAME text_tests COMMAND text_tests)
 
 add_executable(application_tests editor/application_tests.cpp)
-target_link_libraries(application_tests PRIVATE cind_application doctest::doctest)
+target_link_libraries(application_tests PRIVATE cind_application cind_c_family doctest::doctest)
 add_test(NAME application_tests COMMAND application_tests)
 
 add_executable(guile_runtime_tests editor/guile_runtime_tests.cpp)
