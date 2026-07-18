@@ -6,6 +6,7 @@
 #include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
 #include "editor/workbench.hpp"
+#include "editor/workbench_session.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -124,6 +125,79 @@ TEST_CASE("workbench registry preserves layouts scopes and recency independently
     CHECK(registry.erase(first));
     CHECK(registry.try_get(first) == nullptr);
     CHECK_THROWS_AS(registry.erase(second), std::logic_error);
+}
+
+TEST_CASE("workbench session codec preserves stable layout state and rejects corruption") {
+    WorkbenchLayoutSessionState layout{
+        .window = std::nullopt,
+        .axis = WindowSplitAxis::Rows,
+        .ratio = 0.72F,
+        .first = std::make_unique<WorkbenchLayoutSessionState>(WorkbenchLayoutSessionState{
+            .window = WorkbenchWindowSessionState{.resource = "/tmp/source.cc",
+                                                  .caret = 17,
+                                                  .role = std::nullopt,
+                                                  .pinned = true,
+                                                  .created_by_policy = false},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr}),
+        .second = std::make_unique<WorkbenchLayoutSessionState>(WorkbenchLayoutSessionState{
+            .window = WorkbenchWindowSessionState{.resource = "/tmp/results",
+                                                  .caret = 3,
+                                                  .role = "tools",
+                                                  .pinned = false,
+                                                  .created_by_policy = true},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr})};
+    WorkbenchSessionState state{.version = WorkbenchSessionState::current_version,
+                                .active_workbench = 1,
+                                .workbenches = {}};
+    state.workbenches.push_back(
+        {.name = {},
+         .scope_roots = {"/tmp/project"},
+         .mru_resources = {"/tmp/source.cc"},
+         .layout = WorkbenchLayoutSessionState{.window = WorkbenchWindowSessionState{},
+                                               .axis = WindowSplitAxis::Rows,
+                                               .ratio = 0.5F,
+                                               .first = nullptr,
+                                               .second = nullptr},
+         .active_leaf = 0});
+    state.workbenches.push_back({.name = "shop \"frontend\"",
+                                 .scope_roots = {"/tmp/backend", "/tmp/frontend"},
+                                 .mru_resources = {"/tmp/results", "/tmp/source.cc"},
+                                 .layout = std::move(layout),
+                                 .active_leaf = 1});
+
+    const std::string serialized = serialize_workbench_session(state);
+    const std::expected<WorkbenchSessionState, std::string> parsed =
+        parse_workbench_session(serialized);
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->active_workbench == 1);
+    REQUIRE(parsed->workbenches.size() == 2);
+    const WorkbenchSessionEntry& restored = parsed->workbenches[1];
+    CHECK(restored.name == "shop \"frontend\"");
+    CHECK(restored.scope_roots == std::vector<std::string>{"/tmp/backend", "/tmp/frontend"});
+    CHECK(restored.mru_resources == std::vector<std::string>{"/tmp/results", "/tmp/source.cc"});
+    CHECK(restored.active_leaf == 1);
+    CHECK_FALSE(restored.layout.leaf());
+    CHECK(restored.layout.axis == WindowSplitAxis::Rows);
+    CHECK(restored.layout.ratio == doctest::Approx(0.72F));
+    REQUIRE(restored.layout.first->window.has_value());
+    CHECK(restored.layout.first->window->resource == std::optional<std::string>{"/tmp/source.cc"});
+    CHECK(restored.layout.first->window->caret == 17);
+    CHECK(restored.layout.first->window->pinned);
+    REQUIRE(restored.layout.second->window.has_value());
+    CHECK(restored.layout.second->window->role == std::optional<std::string>{"tools"});
+    CHECK(restored.layout.second->window->created_by_policy);
+
+    CHECK_FALSE(parse_workbench_session("cind-workbench-session 2 0 1").has_value());
+    CHECK_FALSE(parse_workbench_session(
+                    "cind-workbench-session 1 0 1\nworkbench \"x\" 0 0 0\nbranch rows 2\n")
+                    .has_value());
+    CHECK_FALSE(parse_workbench_session(serialized + "trailing").has_value());
 }
 
 TEST_CASE("settings are declared, typed, scoped, and explicitly resolved") {
