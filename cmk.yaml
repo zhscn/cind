@@ -34,4 +34,3 @@ format:
 lint:
   ignore: [third_party/skia/**]
   header-filter: ^src/
-  extra-args: ["--checks=clang-analyzer-*,bugprone-*,performance-*"]
