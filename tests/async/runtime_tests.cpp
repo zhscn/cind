@@ -198,6 +198,34 @@ TEST_CASE("directory watches deliver filesystem changes on the owning thread") {
     fs::remove_all(directory);
 }
 
+TEST_CASE("runtime shutdown closes active directory watches") {
+    namespace fs = std::filesystem;
+    const fs::path directory =
+        fs::temp_directory_path() /
+        std::format("cind-watch-shutdown-{}",
+                    std::chrono::steady_clock::now().time_since_epoch().count());
+    fs::create_directory(directory);
+
+    for (int iteration = 0; iteration < 8; ++iteration) {
+        WakeSignal wake;
+        bool started = false;
+        {
+            AsyncRuntime runtime([&wake] { wake.notify(); });
+            (void)runtime.watch_directory({
+                .path = directory.string(),
+                .started = [&] { started = true; },
+                .changed = [](const AsyncWatchEvent&) {},
+                .failed = {},
+            });
+            REQUIRE(wake.wait());
+            (void)runtime.drain();
+            REQUIRE(started);
+        }
+    }
+
+    fs::remove_all(directory);
+}
+
 TEST_CASE("process service captures output and exit status on the owning thread") {
     WakeSignal wake;
     AsyncRuntime runtime([&wake] { wake.notify(); });

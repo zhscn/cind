@@ -142,10 +142,19 @@ struct AsyncRuntime::Impl {
             (void)uv_loop_close(&loop);
             throw uv_error(async_status, "cannot initialize libuv async handle");
         }
+        shutdown_async.data = this;
+        const int shutdown_status = uv_async_init(&loop, &shutdown_async, on_shutdown);
+        if (shutdown_status < 0) {
+            uv_close(reinterpret_cast<uv_handle_t*>(&submit_async), nullptr);
+            (void)uv_run(&loop, UV_RUN_DEFAULT);
+            (void)uv_loop_close(&loop);
+            throw uv_error(shutdown_status, "cannot initialize libuv shutdown handle");
+        }
         try {
             loop_thread = std::thread([this] { run_loop(); });
         } catch (...) {
             uv_close(reinterpret_cast<uv_handle_t*>(&submit_async), nullptr);
+            uv_close(reinterpret_cast<uv_handle_t*>(&shutdown_async), nullptr);
             (void)uv_run(&loop, UV_RUN_DEFAULT);
             (void)uv_loop_close(&loop);
             throw;
@@ -154,7 +163,7 @@ struct AsyncRuntime::Impl {
 
     ~Impl() {
         shutting_down.store(true, std::memory_order_release);
-        if (uv_async_send(&submit_async) < 0) {
+        if (uv_async_send(&shutdown_async) < 0) {
             std::terminate();
         }
         if (loop_thread.joinable()) {
@@ -368,6 +377,10 @@ struct AsyncRuntime::Impl {
     }
 
     static void on_async(uv_async_t* handle) { static_cast<Impl*>(handle->data)->drain_commands(); }
+
+    static void on_shutdown(uv_async_t* handle) {
+        static_cast<Impl*>(handle->data)->begin_shutdown();
+    }
 
     void drain_commands() {
         while (true) {
@@ -906,6 +919,10 @@ struct AsyncRuntime::Impl {
     }
 
     void begin_shutdown() {
+        if (shutdown_started) {
+            return;
+        }
+        shutdown_started = true;
         std::vector<std::shared_ptr<Task>> pending;
         {
             std::scoped_lock lock(tasks_mutex);
@@ -954,9 +971,14 @@ struct AsyncRuntime::Impl {
     }
 
     void close_async_if_idle() {
-        if (shutting_down.load(std::memory_order_acquire) && active_requests == 0 &&
-            !uv_is_closing(reinterpret_cast<uv_handle_t*>(&submit_async))) {
+        if (!shutting_down.load(std::memory_order_acquire) || active_requests != 0) {
+            return;
+        }
+        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&submit_async))) {
             uv_close(reinterpret_cast<uv_handle_t*>(&submit_async), nullptr);
+        }
+        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&shutdown_async))) {
+            uv_close(reinterpret_cast<uv_handle_t*>(&shutdown_async), nullptr);
         }
     }
 
@@ -1047,8 +1069,10 @@ struct AsyncRuntime::Impl {
     Wakeup wakeup;
     uv_loop_t loop{};
     uv_async_t submit_async{};
+    uv_async_t shutdown_async{};
     std::thread loop_thread;
     std::atomic_bool shutting_down = false;
+    bool shutdown_started = false;
     std::atomic_uint64_t next_id = 1;
     std::atomic_size_t outstanding = 0;
     std::size_t active_requests = 0;
