@@ -225,6 +225,8 @@ public:
     std::expected<void, std::string> install_presentation_policies();
     std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const;
     std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer);
+    std::expected<CommandId, std::string> close_command(const CommandContext& context,
+                                                        bool force) const;
     std::expected<bool, std::string> handle_pointer(const CommandContext& context,
                                                     const PointerEvent& event,
                                                     bool pending_key_sequence) const;

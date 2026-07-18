@@ -584,6 +584,13 @@ retains the placeholder Buffer identity in per-host Scheme state so successful a
 policy can release it. `configure-fallback-buffer-policy!` replaces the procedure used when a
 command needs a Buffer after releasing the last open Buffer.
 
+`configure-close-policy!` maps a normalized close request and its `force?` flag to a registered
+command name. GUI window-close and terminal EOF paths submit the same request through
+`EditorApplication`; C++ validates the selected command against the registry and executes it
+through the normal command loop. The default policy selects `application.quit` for an ordinary
+request and `application.force-quit` for a forced request, so confirmation and modified-buffer
+behavior remain ordinary Scheme command policy.
+
 `(cind pointer)` dispatches normalized semantic hits through a per-host procedure configured with
 `configure-pointer-policy!`. The procedure receives the active command context and:
 

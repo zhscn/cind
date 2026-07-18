@@ -4977,6 +4977,7 @@ struct GuileCall {
         InstallPresentationPolicies,
         ResolveStartupPlan,
         SetStartupPlaceholder,
+        ResolveCloseCommand,
         HandlePointer,
         HandleScroll,
         OpenResource,
@@ -5012,6 +5013,7 @@ struct GuileCall {
     WindowId window;
     BufferId buffer;
     ProjectId project;
+    CommandId command;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
     const CommandContext* context = nullptr;
@@ -5031,6 +5033,7 @@ struct GuileCall {
     const ModelineFacts* modeline_facts = nullptr;
     bool pending_key_sequence = false;
     double scroll_lines = 0.0;
+    bool force = false;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -5446,6 +5449,13 @@ SCM call_body(void* data) {
             call.result = scm_call_2(
                 scm_c_public_ref("cind lifecycle", "set-startup-placeholder!"), call.host,
                 call.enabled ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::ResolveCloseCommand:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind lifecycle", "resolve-close-command"), call.host,
+                           command_context_value(*call.context), scm_from_bool(call.force));
+            call.command = require_command(require_host(call.host, "resolve-close-command"),
+                                           call.result, "resolve-close-command", 0);
             break;
         case GuileCall::Operation::HandlePointer:
             call.result =
@@ -6313,7 +6323,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 2) {
+        if (call.count != 3) {
             state_->last_error =
                 "Guile buffer lifecycle policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
@@ -6369,6 +6379,22 @@ public:
         }
         state_->last_error.reset();
         return {};
+    }
+
+    std::expected<CommandId, std::string> close_command(const CommandContext& context,
+                                                        bool force) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ResolveCloseCommand;
+        call.host = host_;
+        call.context = &context;
+        call.force = force;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return call.command;
     }
 
     std::expected<bool, std::string> handle_pointer(const CommandContext& context,
@@ -6696,6 +6722,11 @@ GuileRuntime::startup_plan(const StartupFacts& facts) const {
 std::expected<void, std::string>
 GuileRuntime::set_startup_placeholder(std::optional<BufferId> buffer) {
     return impl_->set_startup_placeholder(buffer);
+}
+
+std::expected<CommandId, std::string> GuileRuntime::close_command(const CommandContext& context,
+                                                                  bool force) const {
+    return impl_->close_command(context, force);
 }
 
 std::expected<bool, std::string> GuileRuntime::handle_pointer(const CommandContext& context,

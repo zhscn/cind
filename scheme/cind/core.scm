@@ -67,7 +67,11 @@
 (define (install-buffer-lifecycle-policies! host)
   (configure-startup-policy! host default-startup-plan)
   (configure-fallback-buffer-policy! host default-fallback-buffer)
-  2)
+  (configure-close-policy!
+   host
+   (lambda (host context force?)
+     (if force? 'application.force-quit 'application.quit)))
+  3)
 
 (define (default-pointer-policy host context event)
   (let ((kind (vector-ref event 1))

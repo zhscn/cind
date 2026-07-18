@@ -715,9 +715,13 @@ bool EditorApplication::execute_command(std::string_view name,
         sync_keymaps();
         return false;
     }
+    return execute_command(*command, invocation);
+}
+
+bool EditorApplication::execute_command(CommandId command, const CommandInvocation& invocation) {
     const RevisionId interaction_revision = interaction_.input_revision();
     CommandContext context = command_context();
-    const bool consumed = handle_loop_result(command_loop_.execute(*command, context, invocation));
+    const bool consumed = handle_loop_result(command_loop_.execute(command, context, invocation));
     refresh_interaction_after_edit(interaction_revision);
     sync_keymaps();
     return consumed;
@@ -757,6 +761,16 @@ bool EditorApplication::handle_pointer(const PointerEvent& event) {
 bool EditorApplication::handle_scroll(double lines) {
     const std::expected<bool, std::string> handled = guile_.handle_scroll(command_context(), lines);
     return handled.value_or(false);
+}
+
+bool EditorApplication::request_close(bool force) {
+    const std::expected<CommandId, std::string> command =
+        guile_.close_command(command_context(), force);
+    if (!command) {
+        message_ = std::format("close policy failed: {}", command.error());
+        return false;
+    }
+    return execute_command(*command, {});
 }
 
 void EditorApplication::insert_text(std::string_view text) {

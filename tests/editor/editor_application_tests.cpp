@@ -533,6 +533,26 @@ TEST_CASE("user initialization owns the last-buffer fallback policy") {
     CHECK(application.style_origin() == "custom fallback");
 }
 
+TEST_CASE("user initialization owns close request command selection") {
+    TemporaryFile init(std::format("cind-close-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-close-policy!
+ host
+ (lambda (host context force?) 'application.force-quit))
+)");
+    EditorApplication application({.path = {},
+                                   .initial_text = "source",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    application.insert_text(" changed");
+    REQUIRE(application.dirty());
+
+    REQUIRE(application.request_close(false));
+    CHECK(application.should_quit());
+}
+
 TEST_CASE("user initialization owns semantic pointer and scroll behavior") {
     TemporaryFile init(std::format("cind-pointer-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-pointer-policy!

@@ -112,6 +112,7 @@ public:
     bool handle_key(KeyStroke key, int page_rows);
     bool handle_pointer(const PointerEvent& event);
     bool handle_scroll(double lines);
+    bool request_close(bool force = false);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;
@@ -245,6 +246,7 @@ private:
     void sync_keymaps();
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
+    bool execute_command(CommandId command, const CommandInvocation& invocation);
     void refresh_interaction_after_edit(RevisionId before);
     CommandContext command_context();
     void after_edit();

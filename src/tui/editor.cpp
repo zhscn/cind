@@ -222,7 +222,7 @@ private:
                 }
             }
         } else if (key.kind == KeyKind::Eof) {
-            (void)application_.execute_command("application.force-quit");
+            (void)application_.request_close(true);
         } else if (const std::optional<KeyStroke> stroke = normalize_key(key)) {
             (void)application_.handle_key(*stroke, text_rows());
         }

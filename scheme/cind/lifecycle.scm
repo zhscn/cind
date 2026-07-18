@@ -3,12 +3,15 @@
             resolve-startup-plan
             configure-fallback-buffer-policy!
             create-fallback-buffer!
+            configure-close-policy!
+            resolve-close-command
             startup-placeholder
             set-startup-placeholder!))
 
 (define startup-policies (make-weak-key-hash-table))
 (define fallback-buffer-policies (make-weak-key-hash-table))
 (define startup-placeholders (make-weak-key-hash-table))
+(define close-policies (make-weak-key-hash-table))
 
 (define (configure-startup-policy! host procedure)
   (unless (procedure? procedure)
@@ -33,6 +36,18 @@
     (unless procedure
       (error "fallback buffer policy is not configured"))
     (procedure host)))
+
+(define (configure-close-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "close policy must be a procedure" procedure))
+  (hashq-set! close-policies host procedure)
+  procedure)
+
+(define (resolve-close-command host context force?)
+  (let ((procedure (hashq-ref close-policies host)))
+    (unless procedure
+      (error "close policy is not configured"))
+    (procedure host context force?)))
 
 (define (startup-placeholder host)
   (hashq-ref startup-placeholders host))
