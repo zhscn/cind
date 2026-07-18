@@ -259,8 +259,10 @@ public:
         if (!window_) {
             throw std::runtime_error(std::format("SDL window creation failed: {}", SDL_GetError()));
         }
-        SDL_SetWindowMinimumSize(window_.get(), presenter_.cell_width() * 40,
-                                 presenter_.cell_height() * 6);
+        const PresentationMetrics& metrics = presenter_.metrics();
+        SDL_SetWindowMinimumSize(
+            window_.get(), presenter_.cell_width() * static_cast<int>(metrics.minimum_columns),
+            presenter_.cell_height() * static_cast<int>(metrics.minimum_rows));
         renderer_.reset(SDL_CreateRenderer(window_.get(), nullptr));
         if (!renderer_) {
             throw std::runtime_error(
@@ -843,6 +845,7 @@ private:
         int window_height = 0;
         SDL_GetWindowSize(window_.get(), &window_width, &window_height);
         const SkiaTheme& theme = presenter_.theme();
+        const PresentationMetrics& metrics = presenter_.metrics();
         const auto snapshot_rect = [](const SkiaLogicalRect& rect) {
             return LogicalPixelRectSnapshot{
                 .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height};
@@ -1037,6 +1040,7 @@ private:
                       .sign_added = theme.sign_added,
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
+            .metrics = metrics,
             .pixel_hash = hash_pixels(),
             .animation = animation,
             .damage = std::move(render_damage),
@@ -1181,7 +1185,7 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
         (void)editor.poll_background_work();
     }
     SkiaPresenter presenter(std::move(font_family), geometry.font_size, editor.presentation_theme(),
-                            smoothing);
+                            editor.presentation_metrics(), smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
     const float cell_width = static_cast<float>(presenter.cell_width());
@@ -1284,7 +1288,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
     EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
                        std::move(platform_services), discover_user_init_file());
     SkiaPresenter presenter(std::move(font_family), font_size, editor.presentation_theme(),
-                            smoothing);
+                            editor.presentation_metrics(), smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {

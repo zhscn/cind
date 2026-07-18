@@ -36,4 +36,19 @@ struct PresentationMotion {
     friend bool operator==(const PresentationMotion&, const PresentationMotion&) = default;
 };
 
+struct PresentationMetrics {
+    float modeline_extra_height = 0.0F;
+    float echo_extra_height = 0.0F;
+    float footer_padding_x = 0.0F;
+    float segment_gap = 0.0F;
+    float chip_padding_x = 0.0F;
+    float minibuffer_padding_x = 0.0F;
+    float minibuffer_detail_gap = 0.0F;
+    float cursor_stroke = 0.0F;
+    std::uint32_t minimum_columns = 0;
+    std::uint32_t minimum_rows = 0;
+
+    friend bool operator==(const PresentationMetrics&, const PresentationMetrics&) = default;
+};
+
 } // namespace cind

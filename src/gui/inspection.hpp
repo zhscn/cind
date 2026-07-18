@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/editor_state.hpp"
+#include "presentation/theme.hpp"
 #include "ui/scene.hpp"
 
 #include <chrono>
@@ -204,6 +205,7 @@ struct RenderStateSnapshot {
     float font_size = 0.0F;
     FontMetricsSnapshot font_metrics;
     ThemeInspection theme;
+    PresentationMetrics metrics;
     std::uint64_t pixel_hash = 0;
     RenderAnimationSnapshot animation;
     RenderDamageSnapshot damage;
@@ -225,7 +227,7 @@ struct InputEventSnapshot {
 };
 
 struct FrameInspection {
-    static constexpr int schema_version = 46;
+    static constexpr int schema_version = 47;
 
     std::uint64_t frame_id = 0;
     std::uint64_t cause_event_sequence = 0;

@@ -518,6 +518,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             std::format("Guile motion policy failed: {}", presentation_motion.error()));
     }
     presentation_motion_ = *presentation_motion;
+    const std::expected<PresentationMetrics, std::string> presentation_metrics =
+        guile_.presentation_metrics();
+    if (!presentation_metrics) {
+        throw std::runtime_error(
+            std::format("Guile metrics policy failed: {}", presentation_metrics.error()));
+    }
+    presentation_metrics_ = *presentation_metrics;
 
     std::expected<StartupPlan, std::string> startup = guile_.startup_plan(
         {.requested_resource = spec.path, .has_initial_text = spec.initial_text.has_value()});

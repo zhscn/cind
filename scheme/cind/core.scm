@@ -233,6 +233,10 @@
 (define (default-presentation-motion host)
   (vector 'presentation-motion 70 32.0 0.001 0.01))
 
+(define (default-presentation-metrics host)
+  (vector 'presentation-metrics
+          12.0 8.0 12.0 8.0 10.0 16.0 14.0 2.0 40 6))
+
 (define (default-chrome-content host context facts)
   (let* ((kind (vector-ref facts 1))
          (prompt (vector-ref facts 2))
@@ -289,7 +293,8 @@
   (configure-chrome-policy! host default-chrome-content)
   (configure-theme-policy! host default-presentation-theme)
   (configure-motion-policy! host default-presentation-motion)
-  4)
+  (configure-metrics-policy! host default-presentation-metrics)
+  5)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

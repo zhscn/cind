@@ -1,5 +1,6 @@
 #pragma once
 
+#include "presentation/theme.hpp"
 #include "ui/scene.hpp"
 
 #include <optional>
@@ -36,11 +37,11 @@ struct ScenePixelRect {
     bool operator==(const ScenePixelRect&) const = default;
 };
 
-// Pixel heights the graphical editor chrome assigns to its bottom-anchored
-// regions (modeline: cell + 12, echo strip: cell + 8). Presenters and the
-// inspector share this policy so painting, hit-testing, and geometry checks
-// agree; terminal presenters pass no overrides instead.
-std::vector<SceneRegionHeight> editor_footer_heights(float cell_height);
+// Converts the configured GUI footer profile into concrete region heights.
+// Presenters and the inspector share the result so painting, hit-testing, and
+// geometry checks agree; terminal presenters retain the Scene's row geometry.
+std::vector<SceneRegionHeight> editor_footer_heights(float cell_height,
+                                                     const PresentationMetrics& metrics);
 
 // Maps scene rows into a viewport whose height may contain a fractional cell.
 // Grid-anchored regions use the Scene's fractional row offset and end at the

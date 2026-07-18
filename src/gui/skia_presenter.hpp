@@ -235,6 +235,7 @@ struct SkiaPreparedAnimationFrame {
 class SkiaPresenter {
 public:
     explicit SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme,
+                           PresentationMetrics metrics,
                            SkiaFontSmoothing smoothing = SkiaFontSmoothing::Smooth);
     ~SkiaPresenter();
 
@@ -248,6 +249,7 @@ public:
     const std::string& font_family() const;
     float font_size() const;
     const SkiaTheme& theme() const;
+    const PresentationMetrics& metrics() const;
     float status_bar_height() const;
     float echo_area_height() const;
     SkiaShapeCacheStats shape_cache_stats() const;

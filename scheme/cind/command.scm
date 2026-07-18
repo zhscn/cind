@@ -29,6 +29,8 @@
             resolve-presentation-theme
             configure-motion-policy!
             resolve-presentation-motion
+            configure-metrics-policy!
+            resolve-presentation-metrics
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -304,6 +306,20 @@
   (let ((procedure (hashq-ref motion-policies host)))
     (unless procedure
       (error "motion policy is not configured"))
+    (procedure host)))
+
+(define metrics-policies (make-weak-key-hash-table))
+
+(define (configure-metrics-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "metrics policy must be a procedure" procedure))
+  (hashq-set! metrics-policies host procedure)
+  procedure)
+
+(define (resolve-presentation-metrics host)
+  (let ((procedure (hashq-ref metrics-policies host)))
+    (unless procedure
+      (error "metrics policy is not configured"))
     (procedure host)))
 
 (define (invocation-arguments invocation)

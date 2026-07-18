@@ -293,6 +293,8 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-presentation-theme host)
 (configure-motion-policy! host procedure)
 (resolve-presentation-motion host)
+(configure-metrics-policy! host procedure)
+(resolve-presentation-metrics host)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -346,6 +348,19 @@ The GUI motion policy returns
 velocity-tolerance)`. The duration is a positive integer and the remaining values are positive
 finite reals. C++ owns interpolation, spring integration, caret constraints, and damage tracking;
 Scheme owns their user-facing timing and response parameters.
+
+The GUI metrics policy returns:
+
+```scheme
+#(presentation-metrics modeline-extra-height echo-extra-height footer-padding-x
+                       segment-gap chip-padding-x minibuffer-padding-x
+                       minibuffer-detail-gap cursor-stroke minimum-columns minimum-rows)
+```
+
+Pixel measurements are finite non-negative reals; visible padding and cursor thickness are
+positive. Minimum dimensions are positive integers. Scheme owns the chrome proportions and minimum
+window grid, while C++ derives font-relative rectangles, shaped-text positions, hit targets, damage,
+and inspector geometry from the profile. The terminal frontend continues to use cell geometry.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

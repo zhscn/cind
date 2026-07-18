@@ -47,6 +47,9 @@ public:
     const PresentationMotion& presentation_motion() const {
         return application_.presentation_motion();
     }
+    const PresentationMetrics& presentation_metrics() const {
+        return application_.presentation_metrics();
+    }
     EditorRenderState render_state();
     EditorStateSnapshot inspect();
 

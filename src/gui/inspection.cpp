@@ -1217,7 +1217,17 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.sign_modified);
     output += ",\"sign_deleted\":";
     append_color(output, render.theme.sign_deleted);
-    output += std::format("}},\"pixel_hash\":\"0x{:016X}\",\"animation\":", render.pixel_hash);
+    output +=
+        std::format("}},\"metrics\":{{\"modeline_extra_height\":{},\"echo_extra_height\":{},"
+                    "\"footer_padding_x\":{},\"segment_gap\":{},\"chip_padding_x\":{},"
+                    "\"minibuffer_padding_x\":{},\"minibuffer_detail_gap\":{},\"cursor_stroke\":{},"
+                    "\"minimum_columns\":{},\"minimum_rows\":{}}},\"pixel_hash\":\"0x{:016X}\","
+                    "\"animation\":",
+                    render.metrics.modeline_extra_height, render.metrics.echo_extra_height,
+                    render.metrics.footer_padding_x, render.metrics.segment_gap,
+                    render.metrics.chip_padding_x, render.metrics.minibuffer_padding_x,
+                    render.metrics.minibuffer_detail_gap, render.metrics.cursor_stroke,
+                    render.metrics.minimum_columns, render.metrics.minimum_rows, render.pixel_hash);
     append_render_animation(output, render.animation);
     output += ",\"damage\":";
     append_render_damage(output, render.damage);
@@ -1766,8 +1776,8 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 frame.scene,
                 {.cell_height = static_cast<float>(frame.render.cell_height),
                  .viewport_height = logical_height,
-                 .footer_heights =
-                     ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))},
+                 .footer_heights = ui::editor_footer_heights(
+                     static_cast<float>(frame.render.cell_height), frame.render.metrics)},
                 static_cast<float>(frame.render.cell_width));
             const ui::ScenePixelRect text_bounds = layout.region_rect(*text_area);
             const float top =
@@ -1871,10 +1881,11 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             const float logical_height =
                 static_cast<float>(frame.render.output_height) / frame.render.display_scale;
             const ui::SceneVerticalLayout layout(
-                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                              .viewport_height = logical_height,
-                              .footer_heights = ui::editor_footer_heights(
-                                  static_cast<float>(frame.render.cell_height))});
+                frame.scene,
+                {.cell_height = static_cast<float>(frame.render.cell_height),
+                 .viewport_height = logical_height,
+                 .footer_heights = ui::editor_footer_heights(
+                     static_cast<float>(frame.render.cell_height), frame.render.metrics)});
             const float expected_active_line_y =
                 layout.row_top(*frame.scene.active_text_row) + document_offset_y;
             if (!animation.active_line_y ||
@@ -1902,10 +1913,11 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             const float logical_height =
                 static_cast<float>(frame.render.output_height) / frame.render.display_scale;
             const ui::SceneVerticalLayout layout(
-                frame.scene, {.cell_height = static_cast<float>(frame.render.cell_height),
-                              .viewport_height = logical_height,
-                              .footer_heights = ui::editor_footer_heights(
-                                  static_cast<float>(frame.render.cell_height))});
+                frame.scene,
+                {.cell_height = static_cast<float>(frame.render.cell_height),
+                 .viewport_height = logical_height,
+                 .footer_heights = ui::editor_footer_heights(
+                     static_cast<float>(frame.render.cell_height), frame.render.metrics)});
             grid_bottom = layout.grid_clip_bottom();
         }
         for (const RenderScrollLayerSnapshot& layer : animation.layers) {
@@ -2241,7 +2253,8 @@ InspectionResponse pick_query(const FrameInspection& frame, std::string_view arg
         frame.scene,
         {.cell_height = static_cast<float>(frame.render.cell_height),
          .viewport_height = logical_height,
-         .footer_heights = ui::editor_footer_heights(static_cast<float>(frame.render.cell_height))},
+         .footer_heights = ui::editor_footer_heights(static_cast<float>(frame.render.cell_height),
+                                                     frame.render.metrics)},
         static_cast<float>(frame.render.cell_width));
     const ui::SceneVerticalLayout& vertical_layout = pixel_layout.vertical();
     int cell_row = vertical_layout.row_at(logical_y);

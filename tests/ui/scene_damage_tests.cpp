@@ -9,6 +9,10 @@ using namespace cind::ui;
 
 namespace {
 
+PresentationMetrics test_metrics() {
+    return {.modeline_extra_height = 12.0F, .echo_extra_height = 8.0F};
+}
+
 Scene text_scene(std::string text, int cursor_col = 1) {
     Scene scene;
     scene.rows = 2;
@@ -325,9 +329,10 @@ TEST_CASE("scene vertical layout keeps footer rows complete at the viewport bott
     CHECK(layout.row_at(34.0F) == 3);
 
     SUBCASE("footer height overrides stack from the viewport bottom") {
-        const SceneVerticalLayout chrome(scene, {.cell_height = 10.0F,
-                                                 .viewport_height = 60.0F,
-                                                 .footer_heights = editor_footer_heights(10.0F)});
+        const SceneVerticalLayout chrome(
+            scene, {.cell_height = 10.0F,
+                    .viewport_height = 60.0F,
+                    .footer_heights = editor_footer_heights(10.0F, test_metrics())});
         // Footer = modeline (10 + 12) + echo (10 + 8) = 40, so the grid ends
         // at 20 and the footer rows keep their overridden pixel heights.
         CHECK(chrome.grid_clip_bottom() == doctest::Approx(20.0F));
@@ -371,7 +376,7 @@ TEST_CASE("scene pixel layout reserves pane-local modelines above global chrome"
     const ScenePixelLayout layout(scene,
                                   {.cell_height = 10.0F,
                                    .viewport_height = 91.0F,
-                                   .footer_heights = editor_footer_heights(10.0F)},
+                                   .footer_heights = editor_footer_heights(10.0F, test_metrics())},
                                   8.0F);
     const ScenePixelRect top_body_bounds = layout.region_rect(scene.regions[0]);
     const ScenePixelRect top_status_bounds = layout.region_rect(scene.regions[1]);

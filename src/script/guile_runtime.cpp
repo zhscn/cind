@@ -5194,6 +5194,51 @@ PresentationMotion presentation_motion_from_scheme(SCM value, const char* caller
             .scroll_velocity_tolerance = values[2]};
 }
 
+PresentationMetrics presentation_metrics_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 11 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-metrics")) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value,
+            "#(presentation-metrics modeline-extra-height echo-extra-height footer-padding-x "
+            "segment-gap chip-padding-x minibuffer-padding-x minibuffer-detail-gap "
+            "cursor-stroke minimum-columns minimum-rows)");
+    }
+    float values[8]{};
+    for (std::size_t index = 0; index < 8; ++index) {
+        const SCM input = scm_c_vector_ref(value, index + 1);
+        if (!scheme_true(scm_real_p(input))) {
+            scm_wrong_type_arg_msg(caller, static_cast<int>(index + 1), input,
+                                   "finite real number");
+        }
+        const double converted = scm_to_double(input);
+        const bool zero_allowed = index < 2 || index == 3 || index == 6;
+        if (!std::isfinite(converted) || converted < 0.0 || (!zero_allowed && converted == 0.0) ||
+            converted > std::numeric_limits<float>::max()) {
+            scm_misc_error(caller, "presentation metric is outside its valid range", SCM_EOL);
+        }
+        values[index] = static_cast<float>(converted);
+    }
+    std::uint32_t dimensions[2]{};
+    for (std::size_t index = 0; index < 2; ++index) {
+        const SCM input = scm_c_vector_ref(value, index + 9);
+        if (scm_is_unsigned_integer(input, 1, std::numeric_limits<int>::max()) == 0) {
+            scm_wrong_type_arg_msg(caller, static_cast<int>(index + 9), input,
+                                   "positive integer representable by the frontend");
+        }
+        dimensions[index] = scm_to_uint32(input);
+    }
+    return {.modeline_extra_height = values[0],
+            .echo_extra_height = values[1],
+            .footer_padding_x = values[2],
+            .segment_gap = values[3],
+            .chip_padding_x = values[4],
+            .minibuffer_padding_x = values[5],
+            .minibuffer_detail_gap = values[6],
+            .cursor_stroke = values[7],
+            .minimum_columns = dimensions[0],
+            .minimum_rows = dimensions[1]};
+}
+
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
@@ -5289,6 +5334,7 @@ struct GuileCall {
         ModelineContent,
         PresentationTheme,
         PresentationMotion,
+        PresentationMetrics,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -5334,6 +5380,7 @@ struct GuileCall {
     ChromeContent chrome_content;
     PresentationTheme presentation_theme;
     PresentationMotion presentation_motion;
+    PresentationMetrics presentation_metrics;
     const StartupFacts* startup_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
@@ -5828,6 +5875,12 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind command", "resolve-presentation-motion"), call.host);
             call.presentation_motion =
                 presentation_motion_from_scheme(call.result, "resolve-presentation-motion");
+            break;
+        case GuileCall::Operation::PresentationMetrics:
+            call.result = scm_call_1(
+                scm_c_public_ref("cind command", "resolve-presentation-metrics"), call.host);
+            call.presentation_metrics =
+                presentation_metrics_from_scheme(call.result, "resolve-presentation-metrics");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -6557,7 +6610,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 4) {
+        if (call.count != 5) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6851,6 +6904,18 @@ public:
         return call.presentation_motion;
     }
 
+    std::expected<PresentationMetrics, std::string> presentation_metrics() const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::PresentationMetrics;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return call.presentation_metrics;
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -7119,6 +7184,10 @@ std::expected<PresentationTheme, std::string> GuileRuntime::presentation_theme()
 
 std::expected<PresentationMotion, std::string> GuileRuntime::presentation_motion() const {
     return impl_->presentation_motion();
+}
+
+std::expected<PresentationMetrics, std::string> GuileRuntime::presentation_metrics() const {
+    return impl_->presentation_metrics();
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

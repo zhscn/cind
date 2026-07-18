@@ -36,24 +36,11 @@ namespace cind::gui {
 
 namespace {
 
-// Footer chrome metrics in logical pixels over the cell grid; the footer row
-// heights themselves come from ui::editor_footer_heights.
-constexpr float footer_padding_x = 12.0F;
-constexpr float segment_gap = 8.0F;
-
-// Modeline chip: horizontal padding around the status letters.
-constexpr float chip_padding_x = 10.0F;
-
-// Bottom minibuffer band metrics.
-constexpr float minibuffer_padding_x = 16.0F;
-constexpr float minibuffer_detail_gap = 14.0F;
-
 SkColor color(std::uint32_t argb) {
     return static_cast<SkColor>(argb);
 }
 
-SkRect cursor_geometry(CursorShape shape, const SkRect& cell) {
-    constexpr float stroke = 2.0F;
+SkRect cursor_geometry(CursorShape shape, const SkRect& cell, float stroke) {
     const float width = std::max(stroke, cell.width());
     const float height = std::max(stroke, cell.height());
     switch (shape) {
@@ -107,8 +94,9 @@ SkColor pane_foreground(ui::StyleClass style, bool active, const SkiaTheme& them
     return active ? foreground(style, theme) : SkColorSetA(foreground(style, theme), 0xB0);
 }
 
-float footer_height_for(ui::RegionRole role, float cell_height) {
-    for (const ui::SceneRegionHeight& height : ui::editor_footer_heights(cell_height)) {
+float footer_height_for(ui::RegionRole role, float cell_height,
+                        const PresentationMetrics& metrics) {
+    for (const ui::SceneRegionHeight& height : ui::editor_footer_heights(cell_height, metrics)) {
         if (height.role == role) {
             return height.height;
         }
@@ -350,10 +338,9 @@ std::string popup_prompt(const ui::Region::PopupContent& popup) {
     return popup_label(popup.title) + ":";
 }
 
-float popup_text_left(const PopupLayout& layout, float natural_width) {
-    const float available_width = layout.header.width() - 2.0F * minibuffer_padding_x;
-    return layout.header.left() + minibuffer_padding_x +
-           std::min(0.0F, available_width - natural_width);
+float popup_text_left(const PopupLayout& layout, float natural_width, float padding) {
+    const float available_width = layout.header.width() - 2.0F * padding;
+    return layout.header.left() + padding + std::min(0.0F, available_width - natural_width);
 }
 
 SkRect positioned_shape_bounds(const PositionedText& text) {
@@ -587,9 +574,9 @@ SkiaViewPresentation interpolate_view_presentation(const SkiaViewPresentation& f
 
 struct SkiaPresenter::Impl {
     Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme,
-         SkiaFontSmoothing requested_smoothing)
+         PresentationMetrics requested_metrics, SkiaFontSmoothing requested_smoothing)
         : family(std::move(requested_family)), size(requested_size), theme(requested_theme),
-          smoothing(requested_smoothing) {
+          metrics(requested_metrics), smoothing(requested_smoothing) {
         manager = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
         if (!manager) {
             throw std::runtime_error("Skia Fontconfig manager is unavailable");
@@ -615,15 +602,16 @@ struct SkiaPresenter::Impl {
             throw std::runtime_error("Skia HarfBuzz shaper is unavailable");
         }
 
-        SkFontMetrics metrics{};
-        font.getMetrics(&metrics);
-        ascent = metrics.fAscent;
-        descent = metrics.fDescent;
-        leading = metrics.fLeading;
+        SkFontMetrics font_metrics{};
+        font.getMetrics(&font_metrics);
+        ascent = font_metrics.fAscent;
+        descent = font_metrics.fDescent;
+        leading = font_metrics.fLeading;
         const SkScalar advance = font.measureText("M", 1, SkTextEncoding::kUTF8, nullptr, nullptr);
         cell_width = std::max(1, static_cast<int>(std::ceil(advance)));
-        cell_height = std::max(
-            1, static_cast<int>(std::ceil(metrics.fDescent - metrics.fAscent + metrics.fLeading)));
+        cell_height =
+            std::max(1, static_cast<int>(std::ceil(font_metrics.fDescent - font_metrics.fAscent +
+                                                   font_metrics.fLeading)));
     }
 
     SkFont make_font(const sk_sp<SkTypeface>& face, float font_size) const {
@@ -656,7 +644,8 @@ struct SkiaPresenter::Impl {
     ui::SceneVerticalMetrics vertical_metrics(float viewport_height) const {
         return {.cell_height = static_cast<float>(cell_height),
                 .viewport_height = viewport_height,
-                .footer_heights = ui::editor_footer_heights(static_cast<float>(cell_height))};
+                .footer_heights =
+                    ui::editor_footer_heights(static_cast<float>(cell_height), metrics)};
     }
 
     ShapedText shape_text(std::string text, const SkFont& text_font) const {
@@ -833,7 +822,8 @@ struct SkiaPresenter::Impl {
             const float cursor_cell_width = std::max(layout.space_advance, next_x - cursor_x);
             layout.cursor = cursor_geometry(scene.cursor_shape,
                                             SkRect::MakeXYWH(cursor_x, line.top, cursor_cell_width,
-                                                             static_cast<float>(cell_height)));
+                                                             static_cast<float>(cell_height)),
+                                            metrics.cursor_stroke);
         }
         return layout;
     }
@@ -858,8 +848,9 @@ struct SkiaPresenter::Impl {
             ShapedText count = shape_text(count_text);
             const float count_advance = count.advance;
             const float natural_width = prompt.advance + space.advance + input.advance;
-            const float natural_left = layout.header.left() + minibuffer_padding_x;
-            const float text_left = popup_text_left(layout, natural_width);
+            const float natural_left = layout.header.left() + metrics.minibuffer_padding_x;
+            const float text_left =
+                popup_text_left(layout, natural_width, metrics.minibuffer_padding_x);
             layout.horizontal_scroll = text_left - natural_left;
             const float input_left = text_left + prompt.advance + space.advance;
             layout.header_text.push_back({.role = "prompt",
@@ -871,9 +862,9 @@ struct SkiaPresenter::Impl {
             layout.header_text.push_back(
                 {.role = "count",
                  .shaped = std::move(count),
-                 .origin =
-                     SkPoint::Make(layout.header.right() - minibuffer_padding_x - count_advance,
-                                   header_text_top)});
+                 .origin = SkPoint::Make(layout.header.right() - metrics.minibuffer_padding_x -
+                                             count_advance,
+                                         header_text_top)});
 
             layout.input_cursor =
                 std::min(popup.input_cursor.value_or(layout.input.size()), layout.input.size());
@@ -890,8 +881,8 @@ struct SkiaPresenter::Impl {
             layout.header_text.push_back(
                 {.role = "label",
                  .shaped = shape_text(popup_label(popup.title), strong_font),
-                 .origin =
-                     SkPoint::Make(layout.header.left() + minibuffer_padding_x, header_text_top)});
+                 .origin = SkPoint::Make(layout.header.left() + metrics.minibuffer_padding_x,
+                                         header_text_top)});
         }
 
         layout.items.reserve(layout.item_count);
@@ -911,14 +902,16 @@ struct SkiaPresenter::Impl {
                 .row = row,
                 .label = {.role = "item-label",
                           .shaped = shape_text(item.label),
-                          .origin = SkPoint::Make(row.left() + minibuffer_padding_x, text_top)},
+                          .origin =
+                              SkPoint::Make(row.left() + metrics.minibuffer_padding_x, text_top)},
                 .detail = std::nullopt,
             };
             if (!item.detail.empty()) {
                 // Details trail the label; in a full-width band a right-aligned
                 // detail would sit too far from the item to read as one row.
                 const float detail_x = item_layout.label.origin.x() +
-                                       item_layout.label.shaped.advance + minibuffer_detail_gap;
+                                       item_layout.label.shaped.advance +
+                                       metrics.minibuffer_detail_gap;
                 item_layout.detail = PositionedText{
                     .role = "item-detail",
                     .shaped = shape_text(item.detail),
@@ -945,7 +938,7 @@ struct SkiaPresenter::Impl {
         ShapedText shaped = shape_text(content.text);
         const float text_top =
             bounds.top() + (bounds.height() - static_cast<float>(cell_height)) * 0.5F;
-        const float natural_left = bounds.left() + footer_padding_x;
+        const float natural_left = bounds.left() + metrics.footer_padding_x;
         float horizontal_scroll = 0.0F;
         std::optional<std::size_t> cursor_byte;
         float cursor_advance = 0.0F;
@@ -955,7 +948,8 @@ struct SkiaPresenter::Impl {
         if (content.cursor_byte) {
             cursor_byte = std::min(*content.cursor_byte, content.text.size());
             cursor_advance = shape_text(content.text.substr(0, *cursor_byte)).advance;
-            const float cursor_right = std::max(natural_left, bounds.right() - footer_padding_x);
+            const float cursor_right =
+                std::max(natural_left, bounds.right() - metrics.footer_padding_x);
             horizontal_scroll = std::min(0.0F, cursor_right - natural_left - cursor_advance);
             unclamped_cursor_x = natural_left + horizontal_scroll + cursor_advance;
             const float maximum_cursor_x = std::max(natural_left, bounds.right() - 3.0F);
@@ -968,8 +962,8 @@ struct SkiaPresenter::Impl {
         std::optional<PositionedText> key;
         if (!content.cursor_byte && !content.key.empty()) {
             ShapedText shaped_key = shape_text(content.key);
-            const float key_x =
-                std::max(natural_left, bounds.right() - footer_padding_x - shaped_key.advance);
+            const float key_x = std::max(natural_left, bounds.right() - metrics.footer_padding_x -
+                                                           shaped_key.advance);
             key = PositionedText{.role = "echo-key",
                                  .shaped = std::move(shaped_key),
                                  .origin = SkPoint::Make(key_x, text_top)};
@@ -1308,7 +1302,7 @@ struct SkiaPresenter::Impl {
                 // Reserve the key's right-edge slot so a long message cannot
                 // run underneath it.
                 canvas.clipRect(SkRect::MakeLTRB(layout.bounds.left(), layout.bounds.top(),
-                                                 layout.key->origin.x() - segment_gap,
+                                                 layout.key->origin.x() - metrics.segment_gap,
                                                  layout.bounds.bottom()));
             }
             canvas.drawTextBlob(layout.text.shaped.blob, layout.text.origin.x(),
@@ -1435,24 +1429,25 @@ struct SkiaPresenter::Impl {
             const ShapedText chip_text =
                 shape_text(chip_segment->text, segment_font(*chip_segment));
             chip = SkRect::MakeXYWH(bounds.left(), bounds.top(),
-                                    chip_text.advance + 2.0F * chip_padding_x, bounds.height());
+                                    chip_text.advance + 2.0F * metrics.chip_padding_x,
+                                    bounds.height());
             SkPaint chip_fill;
             chip_fill.setAntiAlias(false);
             chip_fill.setColor(
                 color(region.active ? segment_color(chip_segment->tone) : theme.selection));
             canvas.drawRect(chip, chip_fill);
-            draw_text(chip_text, SkPoint::Make(chip.left() + chip_padding_x, text_top),
+            draw_text(chip_text, SkPoint::Make(chip.left() + metrics.chip_padding_x, text_top),
                       region.active ? theme.canvas : theme.faded);
         }
 
         // The right group is placed first so the left group can clip against
         // it on narrow viewports.
-        float right = bounds.right() - footer_padding_x;
+        float right = bounds.right() - metrics.footer_padding_x;
         const auto draw_right = [&](const ModelineSegment& segment) {
             const ShapedText shaped = shape_text(segment.text, segment_font(segment));
             right -= shaped.advance;
             draw_text(shaped, SkPoint::Make(right, text_top), segment_color(segment.tone));
-            right -= segment_gap;
+            right -= metrics.segment_gap;
         };
         for (auto segment = status.segments.rbegin(); segment != status.segments.rend();
              ++segment) {
@@ -1463,14 +1458,14 @@ struct SkiaPresenter::Impl {
 
         canvas.save();
         canvas.clipRect(SkRect::MakeLTRB(chip.right(), bounds.top(), right, bounds.bottom()));
-        float x = chip.right() + footer_padding_x;
+        float x = chip.right() + metrics.footer_padding_x;
         for (const ModelineSegment& segment : status.segments) {
             if (segment.group != ModelineGroup::Left || !visible(segment)) {
                 continue;
             }
             const ShapedText shaped = shape_text(segment.text, segment_font(segment));
             draw_text(shaped, SkPoint::Make(x, text_top), segment_color(segment.tone));
-            x += shaped.advance + segment_gap;
+            x += shaped.advance + metrics.segment_gap;
         }
         canvas.restore();
         canvas.restore();
@@ -1750,7 +1745,7 @@ struct SkiaPresenter::Impl {
                                    static_cast<float>(cell_height)) *
                                       0.5F;
                             if (region.role == ui::RegionRole::EchoArea) {
-                                x += footer_padding_x;
+                                x += metrics.footer_padding_x;
                             }
                         }
                         const SkRect cell_bounds = SkRect::MakeXYWH(
@@ -1914,7 +1909,7 @@ struct SkiaPresenter::Impl {
                     (vertical_layout.row_height(cursor_row) - static_cast<float>(cell_height)) *
                     0.5F;
                 if (cursor_in_echo) {
-                    cursor_x += footer_padding_x;
+                    cursor_x += metrics.footer_padding_x;
                 }
             } else if (!cursor_in_footer) {
                 cursor_y += grid_offset_y;
@@ -1932,7 +1927,8 @@ struct SkiaPresenter::Impl {
             const SkRect target_cursor =
                 cursor_geometry(scene.cursor_shape,
                                 SkRect::MakeXYWH(cursor_x, cursor_y, static_cast<float>(cell_width),
-                                                 static_cast<float>(cell_height)));
+                                                 static_cast<float>(cell_height)),
+                                metrics.cursor_stroke);
             cursor_x = target_cursor.left();
             cursor_y = target_cursor.top();
             SkScalar cursor_width = target_cursor.width();
@@ -2019,6 +2015,7 @@ struct SkiaPresenter::Impl {
     std::string resolved_family;
     float size;
     SkiaTheme theme;
+    PresentationMetrics metrics;
     sk_sp<SkFontMgr> manager;
     sk_sp<SkTypeface> typeface;
     SkFont font;
@@ -2052,8 +2049,8 @@ SkiaFontSmoothing parse_font_smoothing(std::string_view name) {
 }
 
 SkiaPresenter::SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme,
-                             SkiaFontSmoothing smoothing)
-    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme, smoothing)) {}
+                             PresentationMetrics metrics, SkiaFontSmoothing smoothing)
+    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme, metrics, smoothing)) {}
 
 SkiaPresenter::~SkiaPresenter() = default;
 SkiaPresenter::SkiaPresenter(SkiaPresenter&&) noexcept = default;
@@ -2088,12 +2085,18 @@ const SkiaTheme& SkiaPresenter::theme() const {
     return impl_->theme;
 }
 
+const PresentationMetrics& SkiaPresenter::metrics() const {
+    return impl_->metrics;
+}
+
 float SkiaPresenter::status_bar_height() const {
-    return footer_height_for(ui::RegionRole::StatusBar, static_cast<float>(impl_->cell_height));
+    return footer_height_for(ui::RegionRole::StatusBar, static_cast<float>(impl_->cell_height),
+                             impl_->metrics);
 }
 
 float SkiaPresenter::echo_area_height() const {
-    return footer_height_for(ui::RegionRole::EchoArea, static_cast<float>(impl_->cell_height));
+    return footer_height_for(ui::RegionRole::EchoArea, static_cast<float>(impl_->cell_height),
+                             impl_->metrics);
 }
 
 SkiaShapeCacheStats SkiaPresenter::shape_cache_stats() const {
@@ -2233,12 +2236,14 @@ SkiaViewPresentation SkiaPresenter::view_presentation(const SkiaFrameLayout& lay
         y += (vertical_layout.row_height(row) - static_cast<float>(impl_->cell_height)) * 0.5F;
         if (cursor_region != nullptr && cursor_region->role == ui::RegionRole::EchoArea &&
             cursor_region->vertical_anchor == ui::VerticalAnchor::Bottom) {
-            x += footer_padding_x;
+            x += impl_->metrics.footer_padding_x;
         }
     }
-    result.cursor_rect = logical_rect(cursor_geometry(
-        scene.cursor_shape, SkRect::MakeXYWH(x, y, static_cast<float>(impl_->cell_width),
-                                             static_cast<float>(impl_->cell_height))));
+    result.cursor_rect =
+        logical_rect(cursor_geometry(scene.cursor_shape,
+                                     SkRect::MakeXYWH(x, y, static_cast<float>(impl_->cell_width),
+                                                      static_cast<float>(impl_->cell_height)),
+                                     impl_->metrics.cursor_stroke));
     return result;
 }
 
@@ -2625,7 +2630,8 @@ std::vector<SkiaLogicalRect> SkiaPresenter::damage_rects(const SkiaFrameLayout& 
             const float left = std::clamp(static_cast<float>(cursor.column * impl_->cell_width),
                                           0.0F, frame_width);
             const float right =
-                std::min(frame_width, left + 2.0F + (footer_cursor ? footer_padding_x : 0.0F));
+                std::min(frame_width, left + impl_->metrics.cursor_stroke +
+                                          (footer_cursor ? impl_->metrics.footer_padding_x : 0.0F));
             if (right > left) {
                 append_damage(rectangles,
                               {.x = left, .y = top, .width = right - left, .height = bottom - top});

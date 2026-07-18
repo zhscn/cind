@@ -512,7 +512,7 @@ TEST_CASE("user initialization owns editor chrome policy") {
     CHECK(content.popup_input_cursor == 2);
 }
 
-TEST_CASE("user initialization owns frontend theme and motion policy") {
+TEST_CASE("user initialization owns frontend presentation policy") {
     TemporaryFile init(std::format("cind-theme-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-theme-policy!
  host
@@ -526,6 +526,11 @@ TEST_CASE("user initialization owns frontend theme and motion policy") {
  host
  (lambda (host)
    (vector 'presentation-motion 90 24.0 0.002 0.02)))
+(configure-metrics-policy!
+ host
+ (lambda (host)
+   (vector 'presentation-metrics
+           13.0 9.0 11.0 7.0 9.0 15.0 12.0 3.0 42 7)))
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
@@ -544,6 +549,17 @@ TEST_CASE("user initialization owns frontend theme and motion policy") {
     CHECK(motion.scroll_spring_frequency == doctest::Approx(24.0F));
     CHECK(motion.scroll_position_tolerance == doctest::Approx(0.002F));
     CHECK(motion.scroll_velocity_tolerance == doctest::Approx(0.02F));
+    const PresentationMetrics metrics = application.presentation_metrics();
+    CHECK(metrics.modeline_extra_height == doctest::Approx(13.0F));
+    CHECK(metrics.echo_extra_height == doctest::Approx(9.0F));
+    CHECK(metrics.footer_padding_x == doctest::Approx(11.0F));
+    CHECK(metrics.segment_gap == doctest::Approx(7.0F));
+    CHECK(metrics.chip_padding_x == doctest::Approx(9.0F));
+    CHECK(metrics.minibuffer_padding_x == doctest::Approx(15.0F));
+    CHECK(metrics.minibuffer_detail_gap == doctest::Approx(12.0F));
+    CHECK(metrics.cursor_stroke == doctest::Approx(3.0F));
+    CHECK(metrics.minimum_columns == 42);
+    CHECK(metrics.minimum_rows == 7);
 }
 
 TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {

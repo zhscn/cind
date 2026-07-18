@@ -6,9 +6,10 @@
 
 namespace cind::ui {
 
-std::vector<SceneRegionHeight> editor_footer_heights(float cell_height) {
-    return {{.role = RegionRole::StatusBar, .height = cell_height + 12.0F},
-            {.role = RegionRole::EchoArea, .height = cell_height + 8.0F}};
+std::vector<SceneRegionHeight> editor_footer_heights(float cell_height,
+                                                     const PresentationMetrics& metrics) {
+    return {{.role = RegionRole::StatusBar, .height = cell_height + metrics.modeline_extra_height},
+            {.role = RegionRole::EchoArea, .height = cell_height + metrics.echo_extra_height}};
 }
 
 SceneVerticalLayout::SceneVerticalLayout(const Scene& scene, const SceneVerticalMetrics& metrics)

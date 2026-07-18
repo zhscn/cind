@@ -161,6 +161,7 @@ public:
     ModelineContent modeline(WindowId window);
     const PresentationTheme& presentation_theme() const { return presentation_theme_; }
     const PresentationMotion& presentation_motion() const { return presentation_motion_; }
+    const PresentationMetrics& presentation_metrics() const { return presentation_metrics_; }
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }
 
@@ -274,6 +275,7 @@ private:
     std::string last_command_;
     PresentationTheme presentation_theme_;
     PresentationMotion presentation_motion_;
+    PresentationMetrics presentation_metrics_;
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_ = false;

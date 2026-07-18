@@ -324,6 +324,16 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .leading = 1.0F,
                          .baseline_from_row_top = 15.0F},
         .theme = {.canvas = 0xFF1E1E1E},
+        .metrics = {.modeline_extra_height = 12.0F,
+                    .echo_extra_height = 8.0F,
+                    .footer_padding_x = 12.0F,
+                    .segment_gap = 8.0F,
+                    .chip_padding_x = 10.0F,
+                    .minibuffer_padding_x = 16.0F,
+                    .minibuffer_detail_gap = 14.0F,
+                    .cursor_stroke = 2.0F,
+                    .minimum_columns = 40,
+                    .minimum_rows = 6},
         .pixel_hash = 42,
         .animation = std::move(animation),
         .damage = {.full_repaint = scroll_frame || document_cursor_animation,
@@ -403,7 +413,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":46") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":47") != std::string::npos);
+    CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
