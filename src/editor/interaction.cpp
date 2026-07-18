@@ -2,46 +2,12 @@
 
 #include "editor/runtime.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <format>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <utility>
 
 namespace cind {
-
-namespace {
-
-std::string lowercase(std::string_view value) {
-    std::string result(value);
-    std::ranges::transform(result, result.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return result;
-}
-
-std::vector<std::string> query_terms(std::string_view query) {
-    std::vector<std::string> terms;
-    std::size_t position = 0;
-    while (position < query.size()) {
-        while (position < query.size() &&
-               std::isspace(static_cast<unsigned char>(query[position]))) {
-            ++position;
-        }
-        const std::size_t start = position;
-        while (position < query.size() &&
-               !std::isspace(static_cast<unsigned char>(query[position]))) {
-            ++position;
-        }
-        if (start != position) {
-            terms.push_back(lowercase(query.substr(start, position - start)));
-        }
-    }
-    return terms;
-}
-
-} // namespace
 
 void InteractionProviderRegistry::define(std::string name, Complete complete) {
     if (sealed_) {
@@ -349,7 +315,7 @@ void InteractionController::refresh(bool input_edited) {
         InteractionProviderResult result =
             providers_->complete(state.request.provider, context, query);
         if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
-            state.candidates = rank(std::move(*candidates), query);
+            state.candidates = std::move(*candidates);
             state.selected = 0;
             return;
         }
@@ -366,13 +332,11 @@ void InteractionController::refresh(bool input_edited) {
                     // The provider boundary reports allocation and ranking failures through the
                     // interaction error channel below.
                     // NOLINTNEXTLINE(bugprone-exception-escape)
-                    [generation, query, controller = this,
+                    [generation, controller = this,
                      settled](std::vector<InteractionCandidate> candidates) {
                         *settled = true;
                         try {
-                            controller->apply_candidates(
-                                generation,
-                                InteractionController::rank(std::move(candidates), query));
+                            controller->apply_candidates(generation, std::move(candidates));
                         } catch (...) {
                             controller->apply_failure(generation, std::current_exception());
                         }
@@ -409,23 +373,16 @@ void InteractionController::refresh(bool input_edited) {
         }
         struct Job {
             std::uint64_t generation = 0;
-            std::string query;
             InteractionCandidateWork work;
             InteractionController* controller = nullptr;
         };
         auto job =
             std::make_shared<Job>(Job{.generation = generation,
-                                      .query = query,
                                       .work = std::move(std::get<InteractionCandidateWork>(result)),
                                       .controller = this});
         const AsyncTaskId task = async_runtime_->submit({
             .work = [job](const std::stop_token& cancellation) -> AsyncCompletion {
                 std::vector<InteractionCandidate> candidates = job->work(cancellation);
-                if (cancellation.stop_requested()) {
-                    throw AsyncTaskCancelled();
-                }
-                candidates =
-                    InteractionController::rank(std::move(candidates), job->query, &cancellation);
                 if (cancellation.stop_requested()) {
                     throw AsyncTaskCancelled();
                 }
@@ -497,48 +454,6 @@ void InteractionController::apply_failure(std::uint64_t generation,
     } catch (...) {
         state_->error = "interaction provider failed";
     }
-}
-
-std::vector<InteractionCandidate>
-InteractionController::rank(std::vector<InteractionCandidate> candidates, std::string_view query,
-                            const std::stop_token* cancellation) {
-    const std::vector<std::string> terms = query_terms(query);
-    struct RankedCandidate {
-        InteractionCandidate candidate;
-        std::size_t score = 0;
-    };
-    std::vector<RankedCandidate> ranked;
-    ranked.reserve(candidates.size());
-    for (InteractionCandidate& candidate : candidates) {
-        if (cancellation != nullptr && cancellation->stop_requested()) {
-            return {};
-        }
-        const std::string haystack =
-            lowercase(candidate.filter_text.empty() ? std::string_view(candidate.label)
-                                                    : std::string_view(candidate.filter_text));
-        std::size_t score = haystack.size();
-        bool matches = true;
-        for (const std::string& term : terms) {
-            const std::size_t position = haystack.find(term);
-            if (position == std::string::npos) {
-                matches = false;
-                break;
-            }
-            if (score <= std::numeric_limits<std::size_t>::max() - position) {
-                score += position;
-            }
-        }
-        if (matches) {
-            ranked.push_back({.candidate = std::move(candidate), .score = score});
-        }
-    }
-    std::ranges::stable_sort(ranked, {}, &RankedCandidate::score);
-    std::vector<InteractionCandidate> result;
-    result.reserve(ranked.size());
-    for (RankedCandidate& candidate : ranked) {
-        result.push_back(std::move(candidate.candidate));
-    }
-    return result;
 }
 
 } // namespace cind

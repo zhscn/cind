@@ -460,7 +460,8 @@ provider has precedence, while a marker in a closer ancestor always wins over a 
 
 `define-interaction-provider!` registers an editor-thread Scheme completion procedure. The
 procedure receives an immutable command context and query string and returns a vector of
-four-element candidate vectors containing value, label, detail and filter text. The runtime
+four-element candidate vectors containing value, label, detail and filter text in the order the
+picker should display them. The runtime
 protects the procedure from collection, validates the complete result and invalidates the callback
 with its application. Scheme conditions and malformed candidates become interaction errors and are
 retained in the scripting inspection snapshot.
@@ -809,9 +810,12 @@ of four-string `interaction-candidate` values accepted from an immediate provide
 `scheme-functions`, and `scheme-variables` providers. Scheme filters internal commands and formats
 semantic candidate fields from native snapshots. The `files` provider returns an
 `interaction-provider-task` containing a typed directory-list request and an editor-thread result
-transform; native code performs only the cancellable enumeration. Query ranking remains in
-`InteractionController`, so immediate and asynchronous providers share the same ordering,
-selection, cancellation, and viewport behavior.
+transform; native code performs only the cancellable enumeration. `(cind minibuffer)` exports
+`rank-completion-candidates`, whose default policy performs case-folded multi-term substring
+matching and stable score ordering, and `rank-provider-result`, which applies the same policy to
+immediate results or an asynchronous result transform. The bundled provider registrations compose
+that policy explicitly. `InteractionController` preserves provider order and owns only selection,
+generation-safe completion, cancellation, history, and minibuffer object lifetimes.
 
 ## Editor self-description
 

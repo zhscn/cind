@@ -120,9 +120,6 @@ private:
     void cancel_pending() noexcept;
     void apply_candidates(std::uint64_t generation, std::vector<InteractionCandidate> candidates);
     void apply_failure(std::uint64_t generation, const std::exception_ptr& failure);
-    static std::vector<InteractionCandidate> rank(std::vector<InteractionCandidate> candidates,
-                                                  std::string_view query,
-                                                  const std::stop_token* cancellation = nullptr);
 
     EditorRuntime* runtime_;
     InteractionProviderRegistry* providers_;

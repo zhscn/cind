@@ -2051,7 +2051,10 @@
 (define (install-core-providers! host)
   (let ((providers (core-providers host)))
     (for-each (lambda (provider)
-                (define-interaction-provider! host (car provider) (cdr provider)))
+                (define-interaction-provider!
+                 host (car provider)
+                 (lambda (context query)
+                   (rank-provider-result ((cdr provider) context query) query))))
               providers)
     (length providers)))
 

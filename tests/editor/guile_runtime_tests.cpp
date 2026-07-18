@@ -1174,12 +1174,20 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(std::ranges::none_of(command_candidates, [](const InteractionCandidate& candidate) {
         return candidate.value.ends_with(".accept") || candidate.value.starts_with("interaction.");
     }));
+    const std::vector<InteractionCandidate> filtered_commands =
+        complete_provider(runtime, "commands", context, "file sav");
+    REQUIRE_FALSE(filtered_commands.empty());
+    CHECK(filtered_commands.front().value == "file.save");
+    CHECK(std::ranges::all_of(filtered_commands, [](const InteractionCandidate& candidate) {
+        return candidate.value.find("file") != std::string::npos &&
+               candidate.value.find("sav") != std::string::npos;
+    }));
 
     const std::vector<InteractionCandidate> buffer_candidates =
         complete_provider(runtime, "buffers", context);
     REQUIRE(buffer_candidates.size() == 2);
-    CHECK(buffer_candidates[0].value == "sample");
-    CHECK(buffer_candidates[1].value == "other");
+    CHECK(buffer_candidates[0].value == "other");
+    CHECK(buffer_candidates[1].value == "sample");
 
     const std::vector<InteractionCandidate> binding_candidates =
         complete_provider(runtime, "key-bindings", context);
@@ -1624,9 +1632,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const std::vector<InteractionCandidate> project_candidates =
         complete_provider(runtime, "project-files", context);
     REQUIRE(project_candidates.size() == 2);
-    CHECK(project_candidates[0].value == "/tmp/sample/include/main.hpp");
-    CHECK(project_candidates[0].label == "include/main.hpp");
-    CHECK(project_candidates[0].detail == "include");
+    CHECK(project_candidates[0].value == "/tmp/sample/src/main.cpp");
+    CHECK(project_candidates[0].label == "src/main.cpp");
+    CHECK(project_candidates[0].detail == "src");
 
     const CommandId project_find_file = require_command(runtime, "project.find-file");
     CHECK(runtime.commands().enabled(project_find_file, context));

@@ -1472,7 +1472,11 @@ TEST_CASE("callback interaction providers support synchronous completion") {
                                           InteractionCandidateAsync::Failed,
                                           InteractionCandidateAsync::Cancelled)
                     -> std::expected<InteractionCandidateAsync::Cancel, std::string> {
-                    completed({{.value = query,
+                    completed({{.value = "provider-first",
+                                .label = "provider-first",
+                                .detail = "callback",
+                                .filter_text = "unrelated"},
+                               {.value = query,
                                 .label = query,
                                 .detail = "callback",
                                 .filter_text = query}});
@@ -1498,8 +1502,8 @@ TEST_CASE("callback interaction providers support synchronous completion") {
                 .has_value());
     REQUIRE(interaction.state() != nullptr);
     CHECK_FALSE(interaction.state()->loading);
-    REQUIRE(interaction.state()->candidates.size() == 1);
-    CHECK(interaction.state()->candidates.front().value == "value");
+    REQUIRE(interaction.state()->candidates.size() == 2);
+    CHECK(interaction.state()->candidates.front().value == "provider-first");
     CHECK(interaction.cancel());
     CHECK(cancellations == 0);
 }

@@ -1,8 +1,58 @@
 (define-module (cind minibuffer)
   #:use-module (ice-9 optargs)
+  #:use-module (srfi srfi-13)
   #:use-module (cind command)
   #:export (read-from-minibuffer
-            completing-read))
+            completing-read
+            rank-completion-candidates
+            rank-provider-result))
+
+(define (candidate-filter-text candidate)
+  (let ((filter-text (vector-ref candidate 3)))
+    (if (zero? (string-length filter-text))
+        (vector-ref candidate 1)
+        filter-text)))
+
+(define (candidate-score candidate terms)
+  (let ((haystack (string-downcase (candidate-filter-text candidate))))
+    (let loop ((remaining terms)
+               (score (string-length haystack)))
+      (if (null? remaining)
+          score
+          (let ((position (string-contains haystack (car remaining))))
+            (and position (loop (cdr remaining) (+ score position))))))))
+
+(define (rank-completion-candidates candidates query)
+  (unless (vector? candidates)
+    (error "completion candidates must be a vector" candidates))
+  (let ((terms (string-tokenize (string-downcase query))))
+    (let loop ((index 0)
+               (ranked '()))
+      (if (= index (vector-length candidates))
+          (list->vector
+           (map (lambda (entry) (vector-ref entry 2))
+                (sort ranked
+                      (lambda (left right)
+                        (or (< (vector-ref left 0) (vector-ref right 0))
+                            (and (= (vector-ref left 0) (vector-ref right 0))
+                                 (< (vector-ref left 1) (vector-ref right 1))))))))
+          (let* ((candidate (vector-ref candidates index))
+                 (score (candidate-score candidate terms)))
+            (loop (+ index 1)
+                  (if score
+                      (cons (vector score index candidate) ranked)
+                      ranked)))))))
+
+(define (rank-provider-result result query)
+  (if (and (vector? result)
+           (= (vector-length result) 3)
+           (eq? (vector-ref result 0) 'async-provider))
+      (interaction-provider-task
+       (vector-ref result 1)
+       (let ((transform (vector-ref result 2)))
+         (lambda (async-result)
+           (rank-completion-candidates (transform async-result) query))))
+      (rank-completion-candidates result query)))
 
 (define (require-string procedure field value)
   (unless (string? value)
