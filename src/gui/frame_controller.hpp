@@ -146,7 +146,8 @@ private:
 
 class GuiFrameController {
 public:
-    explicit GuiFrameController(SkiaPresenter& presenter) : presenter_(presenter) {}
+    GuiFrameController(SkiaPresenter& presenter, PresentationMotion motion)
+        : presenter_(presenter), motion_(motion) {}
 
     bool animations_active() const;
     PresentedFrame build(FrameRequest request);
@@ -177,8 +178,7 @@ private:
     void update_animation_targets(const std::shared_ptr<const ui::Scene>& scene,
                                   const SkiaViewPresentation& target_view, float scroll_top,
                                   const FrameIdentity& identity, bool animate_scroll,
-                                  bool geometry_changed,
-                                  FrameClock::time_point now);
+                                  bool geometry_changed, FrameClock::time_point now);
     AnimationPresentation animation_presentation(const SkiaViewPresentation& target_view,
                                                  float logical_height, bool constrain_to_cursor,
                                                  FrameClock::time_point now) const;
@@ -194,6 +194,7 @@ private:
                                   const SkiaPreparedAnimationFrame& animation);
 
     SkiaPresenter& presenter_;
+    PresentationMotion motion_;
     ui::SceneDamageTracker damage_tracker_;
     std::optional<ScrollAnimation> scroll_animation_;
     std::optional<ViewAnimation> view_animation_;

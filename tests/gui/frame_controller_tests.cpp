@@ -15,6 +15,7 @@
 
 using namespace cind::gui;
 using namespace cind::ui;
+using cind::PresentationMotion;
 
 int main(int argc, char** argv) {
     doctest::Context context(argc, argv);
@@ -43,6 +44,13 @@ SkiaTheme test_theme() {
             .sign_added = 0xFFA6E3A1,
             .sign_modified = 0xFFF9E2AF,
             .sign_deleted = 0xFFF38BA8};
+}
+
+PresentationMotion test_motion() {
+    return {.view_duration_ms = 70,
+            .scroll_spring_frequency = 32.0F,
+            .scroll_position_tolerance = 0.001F,
+            .scroll_velocity_tolerance = 0.01F};
 }
 
 Scene frame_scene(int cursor_row, int marker, bool popup_visible = false) {
@@ -117,7 +125,7 @@ FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top
 
 TEST_CASE("presented frame exposes the animated caret used for IME placement") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -139,7 +147,7 @@ TEST_CASE("presented frame exposes the animated caret used for IME placement") {
 
 TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -153,7 +161,7 @@ TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") 
 
 TEST_CASE("direct scroll input bypasses the spring animation") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -169,7 +177,7 @@ TEST_CASE("direct scroll input bypasses the spring animation") {
 
 TEST_CASE("animated document chrome follows the visual scroll transform") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -198,7 +206,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
     const FrameClock::time_point start{};
 
     SUBCASE("downward motion catches up at the bottom edge") {
-        GuiFrameController controller(presenter);
+        GuiFrameController controller(presenter, test_motion());
         PresentedFrame initial =
             controller.build(request_for(presenter, frame_scene(26, 0), 0.0F, start, true));
         controller.did_present(initial);
@@ -226,7 +234,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
     }
 
     SUBCASE("upward motion catches up at the top edge") {
-        GuiFrameController controller(presenter);
+        GuiFrameController controller(presenter, test_motion());
         PresentedFrame initial =
             controller.build(request_for(presenter, frame_scene(1, 1), 1.0F, start, true));
         controller.did_present(initial);
@@ -243,7 +251,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
     }
 
     SUBCASE("wheel motion retains the unconstrained spring") {
-        GuiFrameController controller(presenter);
+        GuiFrameController controller(presenter, test_motion());
         PresentedFrame initial =
             controller.build(request_for(presenter, frame_scene(26, 0), 0.0F, start, true));
         controller.did_present(initial);
@@ -262,7 +270,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
 
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -306,7 +314,7 @@ TEST_CASE("presented frame hit testing follows the visible scroll layer") {
 
 TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =
@@ -334,7 +342,7 @@ TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
 
 TEST_CASE("presented frame gives fixed overlays priority over animated document layers") {
     SkiaPresenter presenter("monospace", 16.0F, test_theme());
-    GuiFrameController controller(presenter);
+    GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
     PresentedFrame initial =

@@ -264,6 +264,7 @@ public:
     std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
                                                                  const ModelineFacts& facts) const;
     std::expected<PresentationTheme, std::string> presentation_theme() const;
+    std::expected<PresentationMotion, std::string> presentation_motion() const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

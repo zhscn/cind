@@ -5162,6 +5162,38 @@ PresentationTheme presentation_theme_from_scheme(SCM value, const char* caller) 
             .sign_deleted = colors[15]};
 }
 
+PresentationMotion presentation_motion_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 5 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-motion")) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value,
+            "#(presentation-motion duration-ms spring-frequency position-tolerance "
+            "velocity-tolerance)");
+    }
+    const SCM duration = scm_c_vector_ref(value, 1);
+    if (scm_is_unsigned_integer(duration, 1, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, 1, duration, "positive unsigned 32-bit milliseconds");
+    }
+    float values[3]{};
+    for (std::size_t index = 0; index < 3; ++index) {
+        const SCM input = scm_c_vector_ref(value, index + 2);
+        if (!scheme_true(scm_real_p(input))) {
+            scm_wrong_type_arg_msg(caller, static_cast<int>(index + 2), input,
+                                   "positive finite real number");
+        }
+        const double converted = scm_to_double(input);
+        if (!std::isfinite(converted) || converted <= 0.0 ||
+            converted > std::numeric_limits<float>::max()) {
+            scm_misc_error(caller, "motion parameter must be a positive finite float", SCM_EOL);
+        }
+        values[index] = static_cast<float>(converted);
+    }
+    return {.view_duration_ms = scm_to_uint32(duration),
+            .scroll_spring_frequency = values[0],
+            .scroll_position_tolerance = values[1],
+            .scroll_velocity_tolerance = values[2]};
+}
+
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
@@ -5256,6 +5288,7 @@ struct GuileCall {
         ChromeContent,
         ModelineContent,
         PresentationTheme,
+        PresentationMotion,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -5300,6 +5333,7 @@ struct GuileCall {
     ModelineContent modeline_content;
     ChromeContent chrome_content;
     PresentationTheme presentation_theme;
+    PresentationMotion presentation_motion;
     const StartupFacts* startup_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
@@ -5788,6 +5822,12 @@ SCM call_body(void* data) {
                                      call.host);
             call.presentation_theme =
                 presentation_theme_from_scheme(call.result, "resolve-presentation-theme");
+            break;
+        case GuileCall::Operation::PresentationMotion:
+            call.result = scm_call_1(
+                scm_c_public_ref("cind command", "resolve-presentation-motion"), call.host);
+            call.presentation_motion =
+                presentation_motion_from_scheme(call.result, "resolve-presentation-motion");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -6517,7 +6557,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 3) {
+        if (call.count != 4) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6799,6 +6839,18 @@ public:
         return call.presentation_theme;
     }
 
+    std::expected<PresentationMotion, std::string> presentation_motion() const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::PresentationMotion;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return call.presentation_motion;
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -7063,6 +7115,10 @@ GuileRuntime::modeline_content(const CommandContext& context, const ModelineFact
 
 std::expected<PresentationTheme, std::string> GuileRuntime::presentation_theme() const {
     return impl_->presentation_theme();
+}
+
+std::expected<PresentationMotion, std::string> GuileRuntime::presentation_motion() const {
+    return impl_->presentation_motion();
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

@@ -44,6 +44,9 @@ public:
     const PresentationTheme& presentation_theme() const {
         return application_.presentation_theme();
     }
+    const PresentationMotion& presentation_motion() const {
+        return application_.presentation_motion();
+    }
     EditorRenderState render_state();
     EditorStateSnapshot inspect();
 

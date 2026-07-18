@@ -160,6 +160,7 @@ public:
     ChromeContent chrome_content(std::string_view preedit = {});
     ModelineContent modeline(WindowId window);
     const PresentationTheme& presentation_theme() const { return presentation_theme_; }
+    const PresentationMotion& presentation_motion() const { return presentation_motion_; }
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }
 
@@ -272,6 +273,7 @@ private:
     std::string last_key_;
     std::string last_command_;
     PresentationTheme presentation_theme_;
+    PresentationMotion presentation_motion_;
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_ = false;

@@ -512,7 +512,7 @@ TEST_CASE("user initialization owns editor chrome policy") {
     CHECK(content.popup_input_cursor == 2);
 }
 
-TEST_CASE("user initialization owns the frontend semantic palette") {
+TEST_CASE("user initialization owns frontend theme and motion policy") {
     TemporaryFile init(std::format("cind-theme-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-theme-policy!
  host
@@ -522,6 +522,10 @@ TEST_CASE("user initialization owns the frontend semantic palette") {
            #xff000005 #xff000006 #xff000007 #xff000008
            #xff000009 #xff00000a #xff00000b #xff00000c
            #xff00000d #xff00000e #xff00000f #xff000010)))
+(configure-motion-policy!
+ host
+ (lambda (host)
+   (vector 'presentation-motion 90 24.0 0.002 0.02)))
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
@@ -535,6 +539,11 @@ TEST_CASE("user initialization owns the frontend semantic palette") {
     CHECK(theme.canvas == 0xFF000001);
     CHECK(theme.salient == 0xFF00000A);
     CHECK(theme.sign_deleted == 0xFF000010);
+    const PresentationMotion motion = application.presentation_motion();
+    CHECK(motion.view_duration_ms == 90);
+    CHECK(motion.scroll_spring_frequency == doctest::Approx(24.0F));
+    CHECK(motion.scroll_position_tolerance == doctest::Approx(0.002F));
+    CHECK(motion.scroll_velocity_tolerance == doctest::Approx(0.02F));
 }
 
 TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {

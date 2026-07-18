@@ -27,6 +27,8 @@
             resolve-chrome-content
             configure-theme-policy!
             resolve-presentation-theme
+            configure-motion-policy!
+            resolve-presentation-motion
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -288,6 +290,20 @@
   (let ((procedure (hashq-ref theme-policies host)))
     (unless procedure
       (error "theme policy is not configured"))
+    (procedure host)))
+
+(define motion-policies (make-weak-key-hash-table))
+
+(define (configure-motion-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "motion policy must be a procedure" procedure))
+  (hashq-set! motion-policies host procedure)
+  procedure)
+
+(define (resolve-presentation-motion host)
+  (let ((procedure (hashq-ref motion-policies host)))
+    (unless procedure
+      (error "motion policy is not configured"))
     (procedure host)))
 
 (define (invocation-arguments invocation)

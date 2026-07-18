@@ -27,4 +27,13 @@ struct PresentationTheme {
     friend bool operator==(const PresentationTheme&, const PresentationTheme&) = default;
 };
 
+struct PresentationMotion {
+    std::uint32_t view_duration_ms = 0;
+    float scroll_spring_frequency = 0.0F;
+    float scroll_position_tolerance = 0.0F;
+    float scroll_velocity_tolerance = 0.0F;
+
+    friend bool operator==(const PresentationMotion&, const PresentationMotion&) = default;
+};
+
 } // namespace cind

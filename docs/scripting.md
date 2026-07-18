@@ -291,6 +291,8 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-chrome-content host context facts)
 (configure-theme-policy! host procedure)
 (resolve-presentation-theme host)
+(configure-motion-policy! host procedure)
+(resolve-presentation-motion host)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -338,6 +340,12 @@ The theme policy returns a semantic ARGB palette shared by terminal and pixel pr
 
 Each color is an unsigned 32-bit straight-alpha ARGB value. Scheme owns the palette; Skia maps it
 to pixels and the terminal presenter maps the same semantic roles to true-color SGR sequences.
+
+The GUI motion policy returns
+`#(presentation-motion view-duration-ms scroll-spring-frequency position-tolerance
+velocity-tolerance)`. The duration is a positive integer and the remaining values are positive
+finite reals. C++ owns interpolation, spring integration, caret constraints, and damage tracking;
+Scheme owns their user-facing timing and response parameters.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

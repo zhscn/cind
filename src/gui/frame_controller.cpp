@@ -12,11 +12,6 @@ namespace cind::gui {
 
 namespace {
 
-constexpr std::chrono::milliseconds view_animation_duration{70};
-constexpr float scroll_spring_frequency = 32.0F;
-constexpr float scroll_position_tolerance = 0.001F;
-constexpr float scroll_velocity_tolerance = 0.01F;
-
 float animation_progress(FrameClock::time_point started, std::chrono::milliseconds duration,
                          FrameClock::time_point now) {
     const auto elapsed = std::chrono::duration<float>(now - started);
@@ -147,15 +142,16 @@ bool GuiFrameController::animations_active() const {
 SpringState GuiFrameController::scroll_state(const ScrollAnimation& animation,
                                              FrameClock::time_point now) const {
     const float elapsed = std::chrono::duration<float>(now - animation.sampled_at).count();
-    return advance_critical_spring(animation.motion, {.target = animation.target_scroll_top,
-                                                      .angular_frequency = scroll_spring_frequency,
-                                                      .elapsed_seconds = elapsed});
+    return advance_critical_spring(animation.motion,
+                                   {.target = animation.target_scroll_top,
+                                    .angular_frequency = motion_.scroll_spring_frequency,
+                                    .elapsed_seconds = elapsed});
 }
 
 SkiaViewPresentation GuiFrameController::animated_view(const ViewAnimation& animation,
                                                        FrameClock::time_point now) const {
-    const float progress =
-        ease_out_cubic(animation_progress(animation.started, view_animation_duration, now));
+    const float progress = ease_out_cubic(animation_progress(
+        animation.started, std::chrono::milliseconds{motion_.view_duration_ms}, now));
     return interpolate_view_presentation(animation.from, animation.target, progress);
 }
 
@@ -300,8 +296,8 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
         const SpringState state = scroll_state(*scroll_animation_, now);
         const bool at_rest =
             spring_at_rest(state, {.target = scroll_animation_->target_scroll_top,
-                                   .position_tolerance = scroll_position_tolerance,
-                                   .velocity_tolerance = scroll_velocity_tolerance});
+                                   .position_tolerance = motion_.scroll_position_tolerance,
+                                   .velocity_tolerance = motion_.scroll_velocity_tolerance});
         float visual_top = at_rest ? scroll_animation_->target_scroll_top : state.position;
         presentation.active = true;
         presentation.scroll_finished = at_rest;
@@ -362,10 +358,11 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
                 constrain_to_cursor &&
                 presentation.frame.view.cursor_owner == SkiaCursorOwner::Document &&
                 presentation.frame.view.cursor_rect.has_value();
-            presentation.state.scroll_progress = std::clamp(
-                1.0F - std::abs(state.position - scroll_animation_->target_scroll_top) /
-                           std::max(scroll_animation_->initial_distance, scroll_position_tolerance),
-                0.0F, 1.0F);
+            presentation.state.scroll_progress =
+                std::clamp(1.0F - std::abs(state.position - scroll_animation_->target_scroll_top) /
+                                      std::max(scroll_animation_->initial_distance,
+                                               motion_.scroll_position_tolerance),
+                           0.0F, 1.0F);
             presentation.state.scroll_velocity = state.velocity;
             presentation.state.visual_scroll_top = visual_top;
             presentation.state.target_scroll_top = scroll_animation_->target_scroll_top;
@@ -380,8 +377,8 @@ GuiFrameController::animation_presentation(const SkiaViewPresentation& target_vi
         }
     }
     if (view_animation_) {
-        const float linear_progress =
-            animation_progress(view_animation_->started, view_animation_duration, now);
+        const float linear_progress = animation_progress(
+            view_animation_->started, std::chrono::milliseconds{motion_.view_duration_ms}, now);
         presentation.frame.view = animated_view(*view_animation_, now);
         presentation.active = true;
         presentation.view_finished = linear_progress >= 1.0F;

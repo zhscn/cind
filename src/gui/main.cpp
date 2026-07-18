@@ -251,8 +251,9 @@ class SdlWindow {
 public:
     SdlWindow(EditorModel& editor, SkiaPresenter& presenter, InspectionHub* inspection,
               Uint32 background_event)
-        : editor_(editor), presenter_(presenter), frame_controller_(presenter),
-          inspection_(inspection), background_event_(background_event) {
+        : editor_(editor), presenter_(presenter),
+          frame_controller_(presenter, editor.presentation_motion()), inspection_(inspection),
+          background_event_(background_event) {
         constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
         window_.reset(SDL_CreateWindow("cind · Skia", 1100, 760, flags));
         if (!window_) {

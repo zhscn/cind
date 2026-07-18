@@ -230,6 +230,9 @@
           #xff6c7086 #xff89b4fa #xfffab387 #xfff9e2af
           #xfff5e0dc #xffa6e3a1 #xfff9e2af #xfff38ba8))
 
+(define (default-presentation-motion host)
+  (vector 'presentation-motion 70 32.0 0.001 0.01))
+
 (define (default-chrome-content host context facts)
   (let* ((kind (vector-ref facts 1))
          (prompt (vector-ref facts 2))
@@ -285,7 +288,8 @@
   (configure-modeline-policy! host modeline-content)
   (configure-chrome-policy! host default-chrome-content)
   (configure-theme-policy! host default-presentation-theme)
-  3)
+  (configure-motion-policy! host default-presentation-motion)
+  4)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

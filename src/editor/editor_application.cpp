@@ -511,6 +511,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             std::format("Guile theme policy failed: {}", presentation_theme.error()));
     }
     presentation_theme_ = *presentation_theme;
+    const std::expected<PresentationMotion, std::string> presentation_motion =
+        guile_.presentation_motion();
+    if (!presentation_motion) {
+        throw std::runtime_error(
+            std::format("Guile motion policy failed: {}", presentation_motion.error()));
+    }
+    presentation_motion_ = *presentation_motion;
 
     std::expected<StartupPlan, std::string> startup = guile_.startup_plan(
         {.requested_resource = spec.path, .has_initial_text = spec.initial_text.has_value()});
