@@ -303,16 +303,18 @@ switches to that explicit target before invoking the accept command, so the acce
 document context even though submission began in the minibuffer. An accept command may return
 another request, which supports multi-step interactions without retaining a C++ closure.
 
-Each request may name a history shared by later requests in the same application. Successful,
-non-empty submissions append to that bounded history. `M-p` moves from the current minibuffer draft
-toward older entries, and `M-n` moves toward newer entries before restoring the saved draft. Editing
-a recalled value exits history traversal while leaving the edited text in the ordinary minibuffer
-Buffer. History replacement updates the same View caret and candidate generation as direct editing.
+Each request may name a history shared by later requests in the same application. `(cind
+minibuffer)` applies the configured history policy to successful non-empty submissions; the core
+policy keeps 100 adjacent-deduplicated entries. `M-p` moves from the current minibuffer draft toward
+older entries, and `M-n` moves toward newer entries before restoring the saved draft. Editing a
+recalled value exits history traversal while leaving the edited text in the ordinary minibuffer
+Buffer. Native history storage and input replacement update the same View caret and candidate
+generation as direct editing.
 
 Candidate providers return semantic values, labels, details, and filter text immediately, through
 a cancellable native worker job, or through a scripted async request paired with an editor-thread
-result transform. Provider preparation runs on the editor thread and captures immutable worker
-input; filesystem traversal and large candidate ranking run through the async runtime. Every input
+result transform. Provider preparation and Scheme completion ranking run on the editor thread and
+capture immutable worker input; filesystem traversal runs through the async runtime. Every input
 change receives a monotonically increasing generation, and only results for the active generation
 can update the interaction. An asynchronous refresh retains the last complete candidate snapshot
 until the replacement is ready, then swaps the candidate list atomically.

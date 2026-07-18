@@ -98,41 +98,4 @@ CFamilyMechanismsRegistration ensure_c_family_mechanisms(EditorRuntime& runtime)
             .highlighting = provider("cind.c-family.highlighting", LanguageFacet::Highlighting)};
 }
 
-CppModeRegistration ensure_cpp_mode(EditorRuntime& runtime) {
-    const CFamilyMechanismsRegistration mechanisms = ensure_c_family_mechanisms(runtime);
-    if (const std::optional<ModeId> existing = runtime.modes().find("cind.cpp")) {
-        const std::optional<LanguageProfileId> language =
-            runtime.languages().find_profile("cind.cpp");
-        if (!language) {
-            throw std::logic_error("incomplete built-in C++ mode registration");
-        }
-        return {mechanisms.dialect, *language, *existing};
-    }
-
-    const std::optional<LanguageProfileId> existing_language =
-        runtime.languages().find_profile("cind.cpp");
-    const LanguageProfileId language =
-        existing_language ? *existing_language : runtime.languages().define_profile("cind.cpp");
-    if (!existing_language) {
-        runtime.languages().bind(language, LanguageFacet::Lexing, mechanisms.lexer);
-        runtime.languages().bind(language, LanguageFacet::Syntax, mechanisms.syntax);
-        runtime.languages().bind(language, LanguageFacet::Indentation, mechanisms.indentation);
-        runtime.languages().bind(language, LanguageFacet::StructuralEditing,
-                                 mechanisms.structural_editing);
-        runtime.languages().bind(language, LanguageFacet::Highlighting, mechanisms.highlighting);
-        runtime.languages().profile_for_configuration(language).defaults.set(mechanisms.dialect,
-                                                                             std::string("c++"));
-    }
-    const ModeId mode = runtime.modes().define("cind.cpp", ModeKind::Major, language);
-    if (const std::optional<ModeId> parent = runtime.modes().find("prog-mode")) {
-        runtime.modes().set_parent(mode, parent);
-    } else {
-        runtime.modes().set_interaction_class(mode, InteractionClass::Editing);
-    }
-    runtime.modes().set_things(mode, {{.name = "angle", .definition = "cind.angle"},
-                                      {.name = "defun", .definition = "cind.defun"},
-                                      {.name = "string", .definition = "cind.string"}});
-    return {mechanisms.dialect, language, mode};
-}
-
 } // namespace cind

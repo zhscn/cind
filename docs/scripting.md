@@ -425,6 +425,10 @@ not a capability flag. An editing session resolves the provider selected by its 
 profile and creates mechanism state lazily. Facets backed by the same mechanism share that state,
 including its incremental analysis cache.
 
+The terminal indentation, fixture, and REPL tools install the same bundled mode policy before
+selecting `cind.cpp`; they do not maintain a native fallback mode definition. C++ registers only
+the C-family provider inventory and the dialect setting consumed by the Scheme profile.
+
 `(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
 `define-minor-mode!`. A major-mode definition accepts `#:parent`, `#:language`, `#:keymap`,
 `#:interaction-class`, `#:initial-state`, and `#:things`; thing bindings are an association list of

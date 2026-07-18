@@ -2,7 +2,6 @@
 #include <doctest/doctest.h>
 
 #include "editor/command_loop.hpp"
-#include "editor/cpp_mode.hpp"
 #include "editor/interaction.hpp"
 #include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
@@ -267,27 +266,6 @@ TEST_CASE("major modes select composed language profiles instead of inheriting p
     CHECK(runtime.settings_for(buffer, view).get_as<std::string>(dialect) == "c++");
     CHECK(runtime.languages().profile(cpp).provider(LanguageFacet::Syntax) == syntax);
     CHECK(runtime.languages().profile(c).provider(LanguageFacet::Syntax) == syntax);
-}
-
-TEST_CASE("the built-in C++ mode advertises native C-family editing facets") {
-    EditorRuntime runtime;
-    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
-    const LanguageRegistry::ProfileDefinition& profile = runtime.languages().profile(cpp.language);
-
-    CHECK(profile.provider(LanguageFacet::Lexing).has_value());
-    CHECK(profile.provider(LanguageFacet::Syntax).has_value());
-    CHECK(profile.provider(LanguageFacet::Indentation).has_value());
-    CHECK(profile.provider(LanguageFacet::StructuralEditing).has_value());
-    const LanguageProviderId syntax = *profile.provider(LanguageFacet::Syntax);
-    const LanguageProviderId indentation = *profile.provider(LanguageFacet::Indentation);
-    CHECK(runtime.languages().provider(syntax).mechanism ==
-          runtime.languages().provider(indentation).mechanism);
-    CHECK(runtime.modes().definition(cpp.mode).language == cpp.language);
-    CHECK(runtime.modes().definition(cpp.mode).things ==
-          std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
-                                        {.name = "defun", .definition = "cind.defun"},
-                                        {.name = "string", .definition = "cind.string"}});
-    CHECK(ensure_cpp_mode(runtime).mode == cpp.mode);
 }
 
 TEST_CASE("mode policy inheritance rederives every view input state") {

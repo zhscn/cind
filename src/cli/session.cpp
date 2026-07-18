@@ -1,6 +1,6 @@
 #include "cli/session.hpp"
 
-#include "editor/cpp_mode.hpp"
+#include "script/guile_runtime.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -14,14 +14,22 @@ namespace cind {
 namespace {
 
 BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text) {
-    const CppModeRegistration cpp = ensure_cpp_mode(runtime);
+    GuileRuntime guile(runtime);
+    const std::expected<std::size_t, std::string> installed = guile.install_core_modes();
+    if (!installed) {
+        throw std::runtime_error("cannot install session mode policy: " + installed.error());
+    }
+    const std::optional<ModeId> cpp = runtime.modes().find("cind.cpp");
+    if (!cpp) {
+        throw std::logic_error("session mode policy did not define cind.cpp");
+    }
     const BufferId buffer =
         runtime.buffers().create(BufferSpec{.name = "*session*",
                                             .initial_text = std::move(initial_text),
                                             .kind = BufferKind::Scratch,
                                             .resource_uri = std::nullopt,
                                             .read_only = false});
-    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp.mode);
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp);
     return buffer;
 }
 
