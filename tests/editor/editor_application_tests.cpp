@@ -2007,6 +2007,47 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK_FALSE(application.close_workbench(first_workbench));
 }
 
+TEST_CASE("three workbenches retain independent layouts and recency") {
+    EditorApplication application = make_application("sample.cc", "one\ntwo\n");
+    const BufferId source = application.buffer_id();
+    const WorkbenchId code = application.workbench_id();
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+
+    const WorkbenchId notes = application.create_workbench("notes");
+    send_keys(application, "C-h b");
+    const BufferId help = application.buffer_id();
+    CHECK(help != source);
+    REQUIRE(application.window_layout().leaves().size() == 2);
+
+    const WorkbenchId scratch = application.create_workbench("scratch");
+    CHECK(application.window_layout().leaves().size() == 1);
+    CHECK(application.workbench_buffers(scratch) == std::vector<BufferId>{help});
+
+    REQUIRE(application.switch_workbench(code));
+    CHECK(application.window_layout().leaves().size() == 2);
+    CHECK(application.workbench_buffers(code) == std::vector<BufferId>{source});
+
+    REQUIRE(application.switch_workbench(notes));
+    CHECK(application.window_layout().leaves().size() == 2);
+    CHECK(application.buffer_id() == help);
+    CHECK(application.workbench_buffers(notes) == std::vector<BufferId>{help, source});
+
+    REQUIRE(application.switch_workbench(scratch));
+    CHECK(application.window_layout().leaves().size() == 1);
+    CHECK(application.buffer_id() == help);
+    const std::vector<WorkbenchSnapshot> snapshots = application.workbench_snapshots();
+    REQUIRE(snapshots.size() == 3);
+    CHECK(std::ranges::any_of(snapshots, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name.empty() && workbench.windows.size() == 2;
+    }));
+    CHECK(std::ranges::any_of(snapshots, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name == "notes" && workbench.windows.size() == 2;
+    }));
+    CHECK(std::ranges::any_of(snapshots, [](const WorkbenchSnapshot& workbench) {
+        return workbench.name == "scratch" && workbench.active && workbench.windows.size() == 1;
+    }));
+}
+
 TEST_CASE("workbench project scope unifies repositories without leaking into other workbenches") {
     TemporaryDirectory directory(
         std::format("cind-workbench-scope-{}", static_cast<long>(::getpid())));
