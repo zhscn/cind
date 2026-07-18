@@ -909,7 +909,7 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             major = named_keymap_source_value(runtime, "major-mode", mode.name, keymaps);
         }
 
-        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(9, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
         scm_c_vector_set_x(result, 1, buffer_kind_symbol(buffer.kind()));
         scm_c_vector_set_x(result, 2, states);
@@ -918,6 +918,7 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
         scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
         scm_c_vector_set_x(result, 6, minors);
         scm_c_vector_set_x(result, 7, major);
+        scm_c_vector_set_x(result, 8, scm_from_bool(window.created_by_policy()));
         return result;
     } catch (const std::exception& exception) {
         scm_misc_error("keymap-context-snapshot", exception.what(), SCM_EOL);

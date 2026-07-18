@@ -526,12 +526,13 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const CommandId location_visit = define_command(runtime, "location.visit");
     const CommandId location_next = define_command(runtime, "location.next");
     const CommandId location_previous = define_command(runtime, "location.previous");
+    const CommandId window_dismiss = define_command(runtime, "window.dismiss");
 
     GuileRuntime guile(runtime);
     const std::expected<std::size_t, std::string> installed = guile.install_default_keymaps();
 
     REQUIRE(installed.has_value());
-    CHECK(*installed == 19);
+    CHECK(*installed == 21);
     const KeymapId editor = require_keymap(runtime, "editor.default");
     const KeymapId application = require_keymap(runtime, "application.global");
     const KeymapId control_x = require_keymap(runtime, "editor.control-x");
@@ -539,6 +540,7 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const KeymapId interaction_text = require_keymap(runtime, "interaction.text");
     const KeymapId interaction_picker = require_keymap(runtime, "interaction.picker");
     const KeymapId location_list = require_keymap(runtime, "cind.location-list.map");
+    const KeymapId policy_created_window = require_keymap(runtime, "window.policy-created");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(resolve_command(runtime, editor, "M-%") == replace);
     CHECK(resolve_command(runtime, application, "C-x C-c") == quit);
@@ -552,6 +554,7 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(resolve_command(runtime, location_list, "RET") == location_visit);
     CHECK(resolve_command(runtime, location_list, "M-n") == location_next);
     CHECK(resolve_command(runtime, location_list, "M-p") == location_previous);
+    CHECK(resolve_command(runtime, policy_created_window, "q") == window_dismiss);
     CHECK(runtime.keymaps().parent(interaction_text) ==
           runtime.keymaps().find("editor.text-input"));
     CHECK(runtime.keymaps().parent(interaction_picker) == interaction_text);

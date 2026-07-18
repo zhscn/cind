@@ -2829,6 +2829,9 @@
     ("p" . "window.toggle-pinned")
     ("d" . "window.dismiss")))
 
+(define policy-created-window-bindings
+  '(("q" . "window.dismiss")))
+
 (define scheme-mode-bindings
   '(("C-c C-e" . "scheme.eval-expression")
     ("C-c C-r" . "scheme.eval-region")
@@ -2863,6 +2866,7 @@
   (define-keymap! host 'interaction.picker 'interaction.text)
   (define-keymap! host 'workbench.buffer-picker 'interaction.picker)
   (define-keymap! host 'editor.workbench #f)
+  (define-keymap! host 'window.policy-created #f)
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
@@ -2880,6 +2884,7 @@
        (bind-all! host 'interaction.text interaction-text-bindings)
        (bind-all! host 'interaction.picker interaction-picker-bindings)
        (bind-all! host 'editor.workbench workbench-bindings)
+       (bind-all! host 'window.policy-created policy-created-window-bindings)
        (bind-all! host 'scheme-mode-map scheme-mode-bindings)
        (bind-all! host 'cind.location-list.map location-list-bindings)
        (install-helix-keymaps! host)

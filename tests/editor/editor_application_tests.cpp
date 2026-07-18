@@ -2343,7 +2343,19 @@ TEST_CASE("display intents reuse named slots and route jumps around pinned windo
     send_keys(application, "C-h b");
     CHECK(application.open_windows().size() == 2);
     CHECK(application.window_id() == doc_window);
-    send_keys(application, "C-x w d");
+    CHECK(std::ranges::any_of(application.active_keymap_layers(), [&](const KeymapLayer& layer) {
+        return application.runtime().keymaps().definition(layer.keymap).name ==
+                   "window.policy-created" &&
+               layer.scope == "window:policy-created";
+    }));
+    send_keys(application, "M-x");
+    REQUIRE(application.interaction().active());
+    CHECK(std::ranges::none_of(application.active_keymap_layers(), [&](const KeymapLayer& layer) {
+        return application.runtime().keymaps().definition(layer.keymap).name ==
+               "window.policy-created";
+    }));
+    send_keys(application, "C-g");
+    send_keys(application, "q");
     CHECK(application.open_windows().size() == 1);
     CHECK(application.window_id() == edit_window);
 

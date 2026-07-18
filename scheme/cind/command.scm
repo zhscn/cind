@@ -130,7 +130,8 @@
 (define default-keymap-root-policy
   (vector (vector 'editor.default)
           (vector 'application.global)
-          (vector 'editor.system)))
+          (vector 'editor.system)
+          (vector 'window.policy-created)))
 
 (define (keymap-name-vector value name)
   (let ((result (cond ((vector? value) value)
@@ -148,10 +149,13 @@
                                    #:key
                                    (editor (vector 'editor.default))
                                    (application (vector 'application.global))
-                                   (overrides (vector 'editor.system)))
+                                   (overrides (vector 'editor.system))
+                                   (policy-created-window (vector 'window.policy-created)))
   (let ((policy (vector (keymap-name-vector editor "editor keymaps")
                         (keymap-name-vector application "application keymaps")
-                        (keymap-name-vector overrides "override keymaps"))))
+                        (keymap-name-vector overrides "override keymaps")
+                        (keymap-name-vector policy-created-window
+                                            "policy-created window keymaps"))))
     (hashq-set! keymap-root-policies host policy)
     policy))
 
@@ -207,8 +211,13 @@
          (minor-modes (vector-ref snapshot 6))
          (major-mode (vector-ref snapshot 7))
          (window-layers (append-keymap-vector initial window-maps "window"))
+         (policy-window-layers
+          (if (and (not (eq? kind 'minibuffer)) (vector-ref snapshot 8))
+              (append-keymap-vector window-layers (vector-ref roots 3)
+                                    "window:policy-created")
+              window-layers))
          (view-layers (append-keymap-vector
-                       window-layers view-maps
+                       policy-window-layers view-maps
                        (if (eq? kind 'minibuffer) "minibuffer" "view")))
          (buffer-layers (append-keymap-vector view-layers buffer-maps "buffer"))
          (minor-layers (append-mode-layers buffer-layers minor-modes "minor-mode:"))

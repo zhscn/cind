@@ -289,9 +289,10 @@ keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
 
-`keymap-context-snapshot` returns the focused Buffer kind and the named keymaps attached to the
-InputState stack, Window, View, Buffer, active minor modes, and major mode. It exposes attachment and
-activation facts without assigning precedence or selecting global roots.
+`keymap-context-snapshot` returns the focused Buffer kind, the named keymaps attached to the
+InputState stack, Window, View, Buffer, active minor modes, and major mode, and whether display
+policy created the Window. It exposes attachment and activation facts without assigning precedence
+or selecting global roots.
 
 `(cind command)` owns the corresponding policy interface:
 
@@ -299,7 +300,8 @@ activation facts without assigning precedence or selecting global roots.
 (configure-keymap-policy! host
   #:editor editor-root-names
   #:application application-root-names
-  #:overrides override-root-names)
+  #:overrides override-root-names
+  #:policy-created-window policy-created-window-map-names)
 (resolve-base-keymap-policy host context)
 (resolve-keymap-policy host context)
 (base-keymap-layers host context)
