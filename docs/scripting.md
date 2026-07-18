@@ -211,7 +211,7 @@ The native module exports:
 (async-file-read path)
 (async-file-write path contents)
 (async-directory-list path [maximum-entries])
-(async-clang-format-style path)
+(async-clang-format-style path fallback-preset fallback-origin)
 (async-project-discovery path provider-definitions)
 (async-rg-result-parse project-root output)
 (async-process executable arguments [working-directory])
@@ -225,8 +225,8 @@ The native module exports:
 typed result. File reads produce `#(file-read path exists? contents)` and atomic writes produce
 `#(file-write path)`. Directory enumeration produces
 `#(directory-list normalized-path entries)`, where each entry is `#(path name directory?)`.
-Clang-format discovery produces
-`#(clang-format-style path found? cpp-indent-style origin)`. Project discovery produces
+Clang-format discovery applies the Scheme-selected fallback preset when no configuration exists
+and produces `#(clang-format-style path found? cpp-indent-style origin)`. Project discovery produces
 `#(project-discovery path root-or-#f provider-or-#f marker-or-#f)` from the immutable provider
 definitions supplied with the request. Processes produce
 `#(process exit-status termination-signal standard-output standard-error)`. A nonzero process exit

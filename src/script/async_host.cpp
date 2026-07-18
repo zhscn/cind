@@ -4,6 +4,7 @@
 
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
+#include "formatting/clang_format_style.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -282,9 +283,16 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                         throw std::invalid_argument("clang-format-style path is empty");
                     }
                     const std::string path = operation.path;
+                    CppIndentStyle fallback;
+                    if (!apply_clang_format_preset(operation.fallback_preset, fallback)) {
+                        throw std::invalid_argument("unknown clang-format fallback preset: " +
+                                                    operation.fallback_preset);
+                    }
+                    const std::string fallback_origin = operation.fallback_origin;
                     // Throwing reports worker failures through AsyncRuntime::failed.
                     // NOLINTNEXTLINE(bugprone-exception-escape)
-                    AsyncWork work = [path, weak_state, id, completed = callbacks.completed](
+                    AsyncWork work = [path, fallback, fallback_origin, weak_state, id,
+                                      completed = callbacks.completed](
                                          const std::stop_token& cancellation) mutable {
                         if (cancellation.stop_requested()) {
                             throw AsyncTaskCancelled{};
@@ -292,8 +300,8 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                         ScriptClangFormatStyleResult style{
                             .path = path,
                             .found = false,
-                            .style = {},
-                            .origin = "llvm (fallback)",
+                            .style = fallback,
+                            .origin = fallback_origin,
                         };
                         if (std::optional<LoadedStyle> loaded = load_clang_format_style(
                                 std::filesystem::path(path).parent_path())) {

@@ -43,6 +43,8 @@ struct ScriptDirectoryListRequest {
 
 struct ScriptClangFormatStyleRequest {
     std::string path;
+    std::string fallback_preset;
+    std::string fallback_origin;
 };
 
 struct ScriptProjectDiscoveryRequest {

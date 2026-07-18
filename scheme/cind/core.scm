@@ -597,7 +597,8 @@
      (set-pending-open-file-ready! open #t)))
   (unless (pending-open-style-ready? open)
     (start-open-task!
-     host open (async-clang-format-style (pending-open-resource open))
+     host open (async-clang-format-style (pending-open-resource open)
+                                         "LLVM" "llvm (fallback)")
      (lambda (result)
        (set-pending-open-style! open (vector-ref result 3))
        (set-pending-open-style-origin! open (vector-ref result 4))

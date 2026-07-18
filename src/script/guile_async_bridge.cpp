@@ -190,10 +190,17 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                                               scm_to_size_t(scm_c_vector_ref(value, 2))};
     }
     if (symbol_is(tag, "clang-format-style")) {
-        if (size != 2 || !scm_is_string(scm_c_vector_ref(value, 1))) {
-            scm_wrong_type_arg_msg(caller, position, value, "#(clang-format-style path) request");
+        if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
+            !scm_is_string(scm_c_vector_ref(value, 2)) ||
+            !scm_is_string(scm_c_vector_ref(value, 3))) {
+            scm_wrong_type_arg_msg(
+                caller, position, value,
+                "#(clang-format-style path fallback-preset fallback-origin) request");
         }
-        return ScriptClangFormatStyleRequest{.path = scheme_string(scm_c_vector_ref(value, 1))};
+        return ScriptClangFormatStyleRequest{
+            .path = scheme_string(scm_c_vector_ref(value, 1)),
+            .fallback_preset = scheme_string(scm_c_vector_ref(value, 2)),
+            .fallback_origin = scheme_string(scm_c_vector_ref(value, 3))};
     }
     if (symbol_is(tag, "project-discovery")) {
         if (size != 3 || !scm_is_string(scm_c_vector_ref(value, 1))) {

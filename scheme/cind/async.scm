@@ -32,10 +32,14 @@
            maximum-entries))
   (vector 'directory-list path maximum-entries))
 
-(define (async-clang-format-style path)
+(define (async-clang-format-style path fallback-preset fallback-origin)
   (unless (string? path)
     (error "clang-format style path must be a string" path))
-  (vector 'clang-format-style path))
+  (unless (string? fallback-preset)
+    (error "clang-format fallback preset must be a string" fallback-preset))
+  (unless (string? fallback-origin)
+    (error "clang-format fallback origin must be a string" fallback-origin))
+  (vector 'clang-format-style path fallback-preset fallback-origin))
 
 (define (async-project-discovery path providers)
   (unless (string? path)

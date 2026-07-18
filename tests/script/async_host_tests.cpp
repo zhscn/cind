@@ -134,15 +134,16 @@ TEST_CASE("script async host discovers language style and project metadata") {
     bool style_completed = false;
     bool project_completed = false;
 
-    const auto style = host.start(ScriptClangFormatStyleRequest{.path = file.string()},
-                                  {.completed =
-                                       [&](std::uint64_t, ScriptAsyncResult result) {
-                                           style_result = std::get<ScriptClangFormatStyleResult>(
-                                               std::move(result));
-                                           style_completed = true;
-                                       },
-                                   .cancelled = {},
-                                   .failed = {}});
+    const auto style = host.start(
+        ScriptClangFormatStyleRequest{
+            .path = file.string(), .fallback_preset = "Google", .fallback_origin = "test fallback"},
+        {.completed =
+             [&](std::uint64_t, ScriptAsyncResult result) {
+                 style_result = std::get<ScriptClangFormatStyleResult>(std::move(result));
+                 style_completed = true;
+             },
+         .cancelled = {},
+         .failed = {}});
     const auto project = host.start(
         ScriptProjectDiscoveryRequest{.path = file.string(),
                                       .providers = {{.name = "test.vcs", .markers = {".git"}}}},
@@ -167,6 +168,33 @@ TEST_CASE("script async host discovers language style and project metadata") {
     CHECK(discovery.root == directory.path().string());
     CHECK(discovery.provider == "test.vcs");
     CHECK(discovery.marker == ".git");
+}
+
+TEST_CASE("script async host applies the requested style fallback") {
+    TemporaryDirectory directory;
+    AsyncRuntime runtime;
+    AsyncScriptHost host(runtime);
+    ScriptClangFormatStyleResult style_result;
+    bool completed = false;
+
+    const auto task =
+        host.start(ScriptClangFormatStyleRequest{.path = (directory.path() / "sample.cpp").string(),
+                                                 .fallback_preset = "Google",
+                                                 .fallback_origin = "script fallback"},
+                   {.completed =
+                        [&](std::uint64_t, ScriptAsyncResult result) {
+                            style_result =
+                                std::get<ScriptClangFormatStyleResult>(std::move(result));
+                            completed = true;
+                        },
+                    .cancelled = {},
+                    .failed = {}});
+
+    REQUIRE(task.has_value());
+    drain_until(runtime, [&] { return completed; });
+    CHECK_FALSE(style_result.found);
+    CHECK(style_result.origin == "script fallback");
+    CHECK(style_result.style.indent_width == 2);
 }
 
 TEST_CASE("script async host parses ripgrep output into location data") {
