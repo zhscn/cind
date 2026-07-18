@@ -227,6 +227,7 @@ public:
     keymap_policy(const CommandContext& context) const;
     std::expected<GuileKeymapPolicy, std::string>
     base_keymap_policy(const CommandContext& context) const;
+    std::expected<std::string, std::string> idle_echo_text(const CommandContext& context) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

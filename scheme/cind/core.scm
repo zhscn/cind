@@ -25,6 +25,7 @@
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!
+            idle-echo-text
             open-resource!
             project-search-running?
             project-index-updated!))
@@ -49,6 +50,43 @@
 (define (internal-command? name)
   (or (string-suffix?* ".accept" name)
       (string-prefix?* "interaction." name)))
+
+(define idle-echo-commands
+  '(("file.save" . "save")
+    ("file.open" . "open")
+    ("buffer.switch" . "buffer")
+    ("application.quit" . "quit")
+    ("search.prompt" . "search")
+    ("command.palette" . "commands")
+    ("help.describe-bindings" . "help")))
+
+(define (vector-contains-string? values target)
+  (let loop ((index 0))
+    (and (< index (vector-length values))
+         (or (string=? (vector-ref values index) target)
+             (loop (+ index 1))))))
+
+(define (command-echo-hint enabled bindings entry)
+  (and (vector-contains-string? enabled (car entry))
+       (let loop ((index 0))
+         (and (< index (vector-length bindings))
+              (let ((binding (vector-ref bindings index)))
+                (if (string=? (vector-ref binding 1) (car entry))
+                    (string-append (vector-ref binding 0) " " (cdr entry))
+                    (loop (+ index 1))))))))
+
+(define (idle-echo-text host context)
+  (let ((enabled (enabled-command-names host context))
+        (bindings (active-key-bindings host)))
+    (let loop ((commands idle-echo-commands)
+               (result ""))
+      (if (null? commands)
+          result
+          (let ((hint (command-echo-hint enabled bindings (car commands))))
+            (loop (cdr commands)
+                  (if hint
+                      (string-append result (if (zero? (string-length result)) "" "  ") hint)
+                      result)))))))
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

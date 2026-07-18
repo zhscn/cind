@@ -435,8 +435,11 @@ module inspection preserves application isolation.
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
 moves a view caret using zero-based logical line and display-column coordinates, clamps the line to
 the document, resets vertical-motion state and requests caret reveal. `set-message!` replaces the
-application message. Mutating capabilities execute synchronously on the owning editor thread and
-raise a Scheme condition when the ID or requested transition is invalid.
+application's transient message. The message remains visible until the next normalized key begins
+a new message lifetime. When it is empty, `(cind core)` derives idle echo text from the enabled
+commands and their bindings in the active keymap policy. Mutating capabilities execute
+synchronously on the owning editor thread and raise a Scheme condition when the ID or requested
+transition is invalid.
 
 `buffer-locations` exposes the semantic location vector attached to a generated buffer.
 `set-buffer-locations!` validates ordered source ranges against the current document and atomically

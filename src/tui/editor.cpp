@@ -167,14 +167,7 @@ public:
                                               },
                                               .read_clipboard = {},
                                               .wake_event_loop = [this] { wakeup_.notify(); }},
-                        .init_file = discover_user_init_file()}),
-          command_loop_(application_.command_loop()), message_(application_.message()) {
-        const DocumentSnapshot snap = session().snapshot();
-        const Text& text = snap.content();
-        if (message_.empty()) {
-            message_ = std::format("read {} lines", reported_lines(text));
-        }
-    }
+                        .init_file = discover_user_init_file()}) {}
 
     int run() {
         while (!application_.should_quit()) {
@@ -214,8 +207,6 @@ private:
     // ---- editing ----------------------------------------------------------
 
     void handle_key(const Key& key) {
-        command_keep_message_ = false;
-
         if (key.kind == KeyKind::Char) {
             if (!key.text.empty()) {
                 char32_t character = ui::decode_utf8(key.text).cp;
@@ -229,24 +220,11 @@ private:
                 if (!handled) {
                     application_.insert_text(key.text);
                 }
-                command_keep_message_ =
-                    application_.interaction().active() ||
-                    (handled && (!message_.empty() || !command_loop_.pending_sequence().empty()));
             }
         } else if (key.kind == KeyKind::Eof) {
             (void)application_.execute_command("application.force-quit");
         } else if (const std::optional<KeyStroke> stroke = normalize_key(key)) {
-            message_.clear();
-            const bool handled = application_.handle_key(*stroke, text_rows());
-            command_keep_message_ =
-                handled && (!message_.empty() || application_.interaction().active() ||
-                            !command_loop_.pending_sequence().empty());
-        } else {
-            command_keep_message_ = true;
-        }
-
-        if (!command_keep_message_) {
-            message_.clear();
+            (void)application_.handle_key(*stroke, text_rows());
         }
     }
 
@@ -255,18 +233,6 @@ private:
     bool dirty() const { return application_.dirty(); }
 
     const std::string& path() const { return application_.path(); }
-
-    // ---- saving / quitting --------------------------------------------------
-
-    // Line count the way nano reports it: a trailing newline does not start
-    // a new line.
-    static std::uint32_t reported_lines(const Text& text) {
-        const std::uint32_t lines = text.line_count();
-        if (lines > 1 && text.line_range(lines - 1).empty()) {
-            return lines - 1;
-        }
-        return lines;
-    }
 
     // ---- rendering --------------------------------------------------------
 
@@ -297,12 +263,10 @@ private:
         const bool picker_active =
             interaction != nullptr && interaction->request.kind == InteractionKind::Picker;
         const bool any_prompt = interaction != nullptr;
-        const std::string echo_text =
-            picker_active      ? std::string()
-            : interaction      ? interaction->request.prompt + interaction_input
-            : message_.empty() ? "C-x C-s save  C-x C-f open  C-x b buffer  C-x C-c quit  "
-                                 "C-s search  M-x commands  C-h b help"
-                               : message_;
+        const std::string echo_text = picker_active ? std::string()
+                                      : interaction
+                                          ? interaction->request.prompt + interaction_input
+                                          : application_.echo_text();
         std::optional<int> echo_cursor;
         std::optional<std::size_t> echo_cursor_byte;
         if (interaction != nullptr && !picker_active) {
@@ -549,14 +513,11 @@ private:
     Terminal term_;
     EventLoopWakeup wakeup_;
     EditorApplication application_;
-    CommandLoop& command_loop_;
-    std::string& message_;
     ui::LineSigns signs_;
     BufferId signs_buffer_;
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
     ui::ListViewport popup_viewport_;
-    bool command_keep_message_ = false;
 };
 
 } // namespace

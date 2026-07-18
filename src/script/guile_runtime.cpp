@@ -4749,6 +4749,7 @@ struct GuileCall {
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
+        IdleEchoText,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -4766,6 +4767,7 @@ struct GuileCall {
     std::string path;
     std::string source;
     std::string source_name;
+    std::string text;
     SCM host = SCM_UNDEFINED;
     SCM module = SCM_UNDEFINED;
     SCM procedure = SCM_UNDEFINED;
@@ -5196,6 +5198,14 @@ SCM call_body(void* data) {
             call.keymap_policy =
                 keymap_policy_from_scheme(require_host(call.host, "resolve-base-keymap-policy"),
                                           call.result, "resolve-base-keymap-policy");
+            break;
+        case GuileCall::Operation::IdleEchoText:
+            call.result = scm_call_2(scm_c_public_ref("cind core", "idle-echo-text"), call.host,
+                                     command_context_value(*call.context));
+            if (!scm_is_string(call.result)) {
+                scm_wrong_type_arg_msg("idle-echo-text", 0, call.result, "string");
+            }
+            call.text = scheme_string(call.result);
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -6030,6 +6040,19 @@ public:
         return std::move(call.keymap_policy);
     }
 
+    std::expected<std::string, std::string> idle_echo_text(const CommandContext& context) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::IdleEchoText;
+        call.host = host_;
+        call.context = &context;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return std::move(call.text);
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -6237,6 +6260,11 @@ GuileRuntime::keymap_policy(const CommandContext& context) const {
 std::expected<GuileKeymapPolicy, std::string>
 GuileRuntime::base_keymap_policy(const CommandContext& context) const {
     return impl_->keymap_policy(context, true);
+}
+
+std::expected<std::string, std::string>
+GuileRuntime::idle_echo_text(const CommandContext& context) const {
+    return impl_->idle_echo_text(context);
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

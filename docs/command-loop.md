@@ -318,6 +318,12 @@ render the same candidate and loading state through frontend-specific layout. In
 own a stable minibuffer band containing the prompt, input and candidate rows; the echo area is a
 separate message surface. Prefix help uses the same structured popup content without an input.
 
+The application owns one transient message independently of either frontend. A normalized key
+starts a new message lifetime; command errors and `set-message!` may replace the cleared value.
+When no message or non-picker minibuffer input owns the echo area, `(cind core)` derives an idle hint
+from commands that are enabled and bound in the active keymap policy. GUI and TUI therefore present
+the same binding-aware echo content without frontend-specific shortcut tables or retention state.
+
 ## Extension boundary
 
 Command, keymap, mode, InputState, and provider names, generational editor IDs, `SettingValue`

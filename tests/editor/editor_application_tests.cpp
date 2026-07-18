@@ -442,6 +442,20 @@ TEST_CASE("user initialization owns root keymap policy") {
     CHECK(layers.back().scope == "global");
     REQUIRE(application.command_loop().override_keymaps().size() == 1);
     CHECK(application.command_loop().override_keymaps().front() == *override);
+    CHECK(application.echo_text().empty());
+}
+
+TEST_CASE("shared echo policy follows active bindings and input lifetime") {
+    EditorApplication application = make_application("sample.cc", "text");
+    const std::string idle = application.echo_text();
+    CHECK(idle.find("save") != std::string::npos);
+    CHECK(idle.find("commands") != std::string::npos);
+
+    application.set_message("transient message");
+    CHECK(application.echo_text() == "transient message");
+    send_keys(application, "C-f");
+    CHECK(application.message().empty());
+    CHECK(application.echo_text() == idle);
 }
 
 TEST_CASE("per-view input states precede window layers and may handle keys") {

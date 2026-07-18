@@ -579,6 +579,7 @@ void EditorApplication::refresh_default_keymap() {
 }
 
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
+    message_.clear();
     command_page_rows_ = std::max(1, page_rows);
     last_key_ = format_key_stroke(key);
     const ViewId focused_view = interaction_.active() ? interaction_.state()->view : view_id();
@@ -660,6 +661,14 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     }
     sync_keymaps();
     return consumed;
+}
+
+std::string EditorApplication::echo_text() {
+    if (!message_.empty()) {
+        return message_;
+    }
+    std::expected<std::string, std::string> text = guile_.idle_echo_text(command_context());
+    return text ? std::move(*text) : std::string();
 }
 
 bool EditorApplication::execute_command(std::string_view name,

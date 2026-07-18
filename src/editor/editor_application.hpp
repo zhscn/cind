@@ -153,8 +153,8 @@ public:
     std::uint32_t save_generation(WindowId window) const;
 
     const std::string& message() const { return message_; }
-    std::string& message() { return message_; }
     void set_message(std::string message) { message_ = std::move(message); }
+    std::string echo_text();
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }
 

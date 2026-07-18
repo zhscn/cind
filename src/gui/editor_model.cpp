@@ -21,11 +21,7 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial, C
                     .style_origin = std::move(style_origin),
                     .initial_line = initial_line,
                     .platform_services = std::move(platform_services),
-                    .init_file = std::move(init_file)}) {
-    if (!application_.has_background_work() && application_.message().empty()) {
-        application_.set_message("SDL3 · Skia · C-x C-s save · C-x C-c quit · M-x commands");
-    }
-}
+                    .init_file = std::move(init_file)}) {}
 
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
     const InteractionState* interaction = application_.interaction().state();
@@ -133,6 +129,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     const std::string interaction_input = application_.interaction().active()
                                               ? application_.interaction().input_text()
                                               : std::string();
+    std::string idle_echo;
     const std::size_t interaction_caret = application_.interaction().input_caret().value;
     std::optional<int> echo_cursor;
     std::optional<std::size_t> echo_cursor_byte;
@@ -146,8 +143,14 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             echo_cursor_byte = interaction->request.prompt.size() + interaction_caret;
             return interaction_echo;
         }
-        return preedit_.empty() ? std::string_view(application_.message())
-                                : std::string_view(preedit_);
+        if (interaction != nullptr) {
+            return {};
+        }
+        if (!preedit_.empty()) {
+            return preedit_;
+        }
+        idle_echo = application_.echo_text();
+        return idle_echo;
     }();
     const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
     std::vector<ui::EditorPopupItem> popup_items;
