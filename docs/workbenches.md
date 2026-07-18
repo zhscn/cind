@@ -55,7 +55,7 @@ to a deterministic reuse or split plan:
 | Intent | Default placement |
 | --- | --- |
 | `edit` | Reuse the active Window |
-| `jump` | Reuse the active Window unless pinned; otherwise use or create the `jump` slot |
+| `jump` | Reuse an existing `jump` slot; otherwise reuse the active Window unless pinned or a tool Window, then use an adjacent Window or create the slot |
 | `tools` | Reuse or create a bottom `tools` slot |
 | `doc` | Reuse or create a bottom `doc` slot |
 | `pop` | Split beside the active Window |

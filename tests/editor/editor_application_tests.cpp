@@ -2007,6 +2007,87 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK_FALSE(application.close_workbench(first_workbench));
 }
 
+TEST_CASE("workbench project scope unifies repositories without leaking into other workbenches") {
+    TemporaryDirectory directory(
+        std::format("cind-workbench-scope-{}", static_cast<long>(::getpid())));
+    const std::filesystem::path backend = directory.path() / "backend";
+    const std::filesystem::path frontend = directory.path() / "frontend";
+    std::filesystem::create_directories(backend / ".git");
+    std::filesystem::create_directories(backend / "src");
+    std::filesystem::create_directories(frontend / ".git");
+    std::filesystem::create_directories(frontend / "src");
+    const std::filesystem::path backend_source =
+        directory.write("backend/src/server.cc", "int server() { return 1; }\n");
+    const std::filesystem::path frontend_source =
+        directory.write("frontend/src/client.cc", "int client() { return 2; }\n");
+
+    WakeSignal wake;
+    EditorApplication application({
+        .path = backend_source.string(),
+        .initial_text = std::nullopt,
+        .initial_line = 0,
+        .platform_services = {.write_clipboard = {},
+                              .read_clipboard = {},
+                              .wake_event_loop = [&wake] { wake.notify(); }},
+        .init_file = std::nullopt,
+    });
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    const BufferId backend_buffer = application.buffer_id();
+    const ProjectId backend_project =
+        application.runtime().buffers().get(backend_buffer).project_id().value_or(ProjectId{});
+    REQUIRE(backend_project);
+
+    REQUIRE(application.open_file(frontend_source.string()).has_value());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    const BufferId frontend_buffer = application.buffer_id();
+    const ProjectId frontend_project =
+        application.runtime().buffers().get(frontend_buffer).project_id().value_or(ProjectId{});
+    REQUIRE(frontend_project);
+    CHECK(frontend_project != backend_project);
+
+    const WorkbenchId shop = application.create_workbench("shop", frontend_project);
+    REQUIRE(application.adopt_project(shop, backend_project));
+    const std::vector<BufferId> shop_buffers = application.workbench_buffers(shop);
+    REQUIRE(shop_buffers.size() == 2);
+    CHECK(shop_buffers.front() == frontend_buffer);
+    CHECK(std::ranges::find(shop_buffers, backend_buffer) != shop_buffers.end());
+
+    send_keys(application, "C-x p f");
+    REQUIRE(application.interaction().state() != nullptr);
+    const std::vector<InteractionCandidate>& candidates =
+        application.interaction().state()->candidates;
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.value == backend_source.string() && candidate.detail == backend.string();
+    }));
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.value == frontend_source.string() && candidate.detail == frontend.string();
+    }));
+    send_keys(application, "C-g");
+
+    const WorkbenchId isolated = application.create_workbench("cind");
+    const std::vector<BufferId> isolated_buffers = application.workbench_buffers(isolated);
+    CHECK(isolated_buffers == std::vector<BufferId>{frontend_buffer});
+    CHECK(std::ranges::find(isolated_buffers, backend_buffer) == isolated_buffers.end());
+    REQUIRE(application.switch_workbench(shop));
+    CHECK(application.workbench_buffers(shop).size() == 2);
+
+    const std::vector<WorkbenchSnapshot> snapshots = application.workbench_snapshots();
+    const auto shop_snapshot =
+        std::ranges::find(snapshots, std::string{"shop"}, &WorkbenchSnapshot::name);
+    const auto isolated_snapshot =
+        std::ranges::find(snapshots, std::string{"cind"}, &WorkbenchSnapshot::name);
+    REQUIRE(shop_snapshot != snapshots.end());
+    REQUIRE(isolated_snapshot != snapshots.end());
+    CHECK(shop_snapshot->scope == std::vector<ProjectId>{frontend_project, backend_project});
+    CHECK(isolated_snapshot->scope.empty());
+}
+
 TEST_CASE("workbench session capture uses stable resources and layout topology") {
     EditorApplication application = make_application("/tmp/source.cc", "one\ntwo\n");
     const WorkbenchId first = application.workbench_id();
