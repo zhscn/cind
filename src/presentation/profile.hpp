@@ -10,6 +10,7 @@ struct PresentationProfile {
     PresentationStyleSheet styles;
     PresentationMotion motion;
     PresentationMetrics metrics;
+    PresentationTypography typography;
 
     friend bool operator==(const PresentationProfile&, const PresentationProfile&) = default;
 };

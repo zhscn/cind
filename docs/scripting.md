@@ -297,6 +297,8 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-presentation-motion host)
 (configure-metrics-policy! host procedure)
 (resolve-presentation-metrics host)
+(configure-typography-policy! host procedure)
+(resolve-presentation-typography host)
 (resolve-presentation-profile host)
 ```
 
@@ -364,8 +366,8 @@ alpha, and secondary alpha. Terminal output composites alpha onto the effective 
 emitting true-color SGR.
 
 `resolve-presentation-profile` resolves the theme once and supplies that exact value to the style
-policy, then returns theme, styles, motion, and metrics as one immutable frontend snapshot. Native
-frontends acquire this profile atomically during application initialization.
+policy, then returns theme, styles, motion, metrics, and typography as one immutable frontend
+snapshot. Native frontends acquire this profile atomically during application initialization.
 
 The GUI motion policy returns
 `#(presentation-motion view-duration-ms scroll-spring-frequency position-tolerance
@@ -385,6 +387,11 @@ Pixel measurements are finite non-negative reals; visible padding and cursor thi
 positive. Minimum dimensions are positive integers. Scheme owns the chrome proportions and minimum
 window grid, while C++ derives font-relative rectangles, shaped-text positions, hit targets, damage,
 and inspector geometry from the profile. The terminal frontend continues to use cell geometry.
+
+The typography policy returns `#(presentation-typography font-family font-size)`. The family is a
+non-empty generic or concrete font family and the size is a positive finite logical-pixel value.
+Pixel frontends use this policy unless an explicit launch argument overrides one field. Font
+resolution, fallback shaping, and rasterization remain presenter mechanisms.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

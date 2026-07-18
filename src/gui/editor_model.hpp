@@ -51,6 +51,9 @@ public:
     const PresentationMetrics& presentation_metrics() const {
         return application_.presentation_metrics();
     }
+    const PresentationTypography& presentation_typography() const {
+        return application_.presentation_typography();
+    }
     EditorRenderState render_state();
     EditorStateSnapshot inspect();
 

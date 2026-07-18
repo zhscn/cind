@@ -165,6 +165,9 @@ public:
     const PresentationMetrics& presentation_metrics() const {
         return presentation_profile_.metrics;
     }
+    const PresentationTypography& presentation_typography() const {
+        return presentation_profile_.typography;
+    }
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }
 

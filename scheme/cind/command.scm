@@ -33,6 +33,8 @@
             resolve-presentation-motion
             configure-metrics-policy!
             resolve-presentation-metrics
+            configure-typography-policy!
+            resolve-presentation-typography
             resolve-presentation-profile
             invocation-arguments
             invocation-repeat-count
@@ -339,6 +341,20 @@
       (error "metrics policy is not configured"))
     (procedure host)))
 
+(define typography-policies (make-weak-key-hash-table))
+
+(define (configure-typography-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "typography policy must be a procedure" procedure))
+  (hashq-set! typography-policies host procedure)
+  procedure)
+
+(define (resolve-presentation-typography host)
+  (let ((procedure (hashq-ref typography-policies host)))
+    (unless procedure
+      (error "typography policy is not configured"))
+    (procedure host)))
+
 (define (resolve-presentation-profile host)
   (let* ((theme (resolve-presentation-theme host))
          (style-procedure (hashq-ref style-policies host)))
@@ -348,7 +364,8 @@
             theme
             (style-procedure host theme)
             (resolve-presentation-motion host)
-            (resolve-presentation-metrics host))))
+            (resolve-presentation-metrics host)
+            (resolve-presentation-typography host))))
 
 (define (invocation-arguments invocation)
   (vector-ref invocation 1))

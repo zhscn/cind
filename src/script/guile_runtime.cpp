@@ -5348,17 +5348,38 @@ PresentationMetrics presentation_metrics_from_scheme(SCM value, const char* call
             .minimum_rows = dimensions[1]};
 }
 
+PresentationTypography presentation_typography_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 3 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-typography") ||
+        !scm_is_string(scm_c_vector_ref(value, 1)) ||
+        scm_is_real(scm_c_vector_ref(value, 2)) == 0) {
+        scm_wrong_type_arg_msg(caller, 0, value,
+                               "#(presentation-typography font-family font-size)");
+    }
+    PresentationTypography typography{
+        .font_family = scheme_string(scm_c_vector_ref(value, 1)),
+        .font_size = static_cast<float>(scm_to_double(scm_c_vector_ref(value, 2)))};
+    if (typography.font_family.empty()) {
+        scm_misc_error(caller, "presentation font family must not be empty", SCM_EOL);
+    }
+    if (!std::isfinite(typography.font_size) || typography.font_size <= 0.0F) {
+        scm_misc_error(caller, "presentation font size must be positive and finite", SCM_EOL);
+    }
+    return typography;
+}
+
 PresentationProfile presentation_profile_from_scheme(SCM value, const char* caller) {
-    if (!scm_is_vector(value) || scm_c_vector_length(value) != 5 ||
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 6 ||
         !symbol_is(scm_c_vector_ref(value, 0), "presentation-profile")) {
         scm_wrong_type_arg_msg(caller, 0, value,
-                               "#(presentation-profile theme styles motion metrics)");
+                               "#(presentation-profile theme styles motion metrics typography)");
     }
     return {
         .theme = presentation_theme_from_scheme(scm_c_vector_ref(value, 1), caller),
         .styles = presentation_styles_from_scheme(scm_c_vector_ref(value, 2), caller),
         .motion = presentation_motion_from_scheme(scm_c_vector_ref(value, 3), caller),
         .metrics = presentation_metrics_from_scheme(scm_c_vector_ref(value, 4), caller),
+        .typography = presentation_typography_from_scheme(scm_c_vector_ref(value, 5), caller),
     };
 }
 
@@ -6748,7 +6769,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 6) {
+        if (call.count != 7) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }

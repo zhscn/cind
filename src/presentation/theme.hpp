@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace cind {
 
@@ -49,6 +50,13 @@ struct PresentationMetrics {
     std::uint32_t minimum_rows = 0;
 
     friend bool operator==(const PresentationMetrics&, const PresentationMetrics&) = default;
+};
+
+struct PresentationTypography {
+    std::string font_family;
+    float font_size = 0.0F;
+
+    friend bool operator==(const PresentationTypography&, const PresentationTypography&) = default;
 };
 
 } // namespace cind

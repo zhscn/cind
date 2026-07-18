@@ -526,6 +526,10 @@ TEST_CASE("user initialization owns frontend presentation policy") {
  (lambda (host)
    (vector 'presentation-metrics
            13.0 9.0 11.0 7.0 9.0 15.0 12.0 3.0 42 7)))
+(configure-typography-policy!
+ host
+ (lambda (host)
+   (vector 'presentation-typography "Test Mono" 18.5)))
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
@@ -561,6 +565,9 @@ TEST_CASE("user initialization owns frontend presentation policy") {
     CHECK(metrics.cursor_stroke == doctest::Approx(3.0F));
     CHECK(metrics.minimum_columns == 42);
     CHECK(metrics.minimum_rows == 7);
+    const PresentationTypography typography = application.presentation_typography();
+    CHECK(typography.font_family == "Test Mono");
+    CHECK(typography.font_size == doctest::Approx(18.5F));
 }
 
 TEST_CASE("frontend acquires presentation policy as one coherent profile") {

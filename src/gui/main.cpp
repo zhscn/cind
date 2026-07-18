@@ -1167,7 +1167,6 @@ private:
 // the real chrome for font-smoothing comparisons. The vendored Skia is
 // built without encoders, so a tiny external step turns the dump into a PNG.
 struct ScreenshotGeometry {
-    float font_size = 16.0F;
     int logical_width = 0;
     int logical_height = 0;
     float scale = 1.0F;
@@ -1175,8 +1174,8 @@ struct ScreenshotGeometry {
 
 int run_screenshot(const std::string& path, std::uint32_t initial_line,
                    const std::filesystem::path& output, SkiaFontSmoothing smoothing,
-                   std::string font_family, ScreenshotGeometry geometry,
-                   std::string_view key_notation) {
+                   const std::optional<std::string>& font_family, std::optional<float> font_size,
+                   ScreenshotGeometry geometry, std::string_view key_notation) {
     HeadlessWakeup wakeup;
     EditorModel editor(path, std::nullopt, initial_line,
                        {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wakeup] {
@@ -1186,7 +1185,9 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
         wakeup.wait();
         (void)editor.poll_background_work();
     }
-    SkiaPresenter presenter(std::move(font_family), geometry.font_size, editor.presentation_theme(),
+    const PresentationTypography& typography = editor.presentation_typography();
+    SkiaPresenter presenter(font_family.value_or(typography.font_family),
+                            font_size.value_or(typography.font_size), editor.presentation_theme(),
                             editor.presentation_styles(), editor.presentation_metrics(), smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
@@ -1257,7 +1258,8 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
 
 int run_editor(const std::string& path, std::uint32_t initial_line,
                const std::optional<std::filesystem::path>& inspector_socket,
-               SkiaFontSmoothing smoothing, std::string font_family, float font_size) {
+               SkiaFontSmoothing smoothing, const std::optional<std::string>& font_family,
+               std::optional<float> font_size) {
     SdlRuntime runtime;
     const Uint32 background_event = SDL_RegisterEvents(1);
     if (background_event == 0) {
@@ -1289,7 +1291,9 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
             }};
     EditorModel editor(path, std::nullopt, initial_line, std::move(platform_services),
                        discover_user_init_file());
-    SkiaPresenter presenter(std::move(font_family), font_size, editor.presentation_theme(),
+    const PresentationTypography& typography = editor.presentation_typography();
+    SkiaPresenter presenter(font_family.value_or(typography.font_family),
+                            font_size.value_or(typography.font_size), editor.presentation_theme(),
                             editor.presentation_styles(), editor.presentation_metrics(), smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
@@ -1316,8 +1320,8 @@ int main(int argc, char** argv) {
     std::optional<std::filesystem::path> screenshot;
     std::string screenshot_keys;
     cind::gui::SkiaFontSmoothing smoothing = cind::gui::SkiaFontSmoothing::Smooth;
-    std::string_view font_family = "monospace";
-    float font_size = 16.0F;
+    std::optional<std::string> font_family;
+    std::optional<float> font_size;
 
     try {
         for (int index = 1; index < argc; ++index) {
@@ -1345,7 +1349,7 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("--font-family requires a family");
                 }
                 font_family = argv[index];
-                if (font_family.empty()) {
+                if (font_family->empty()) {
                     throw std::runtime_error("--font-family must not be empty");
                 }
             } else if (argument == "--screenshot") {
@@ -1362,10 +1366,11 @@ int main(int argc, char** argv) {
                 if (++index >= argc) {
                     throw std::runtime_error("--font-size requires a value");
                 }
-                font_size = std::stof(argv[index]);
-                if (!(font_size > 0.0F)) {
+                const float parsed = std::stof(argv[index]);
+                if (!std::isfinite(parsed) || parsed <= 0.0F) {
                     throw std::runtime_error("--font-size must be positive");
                 }
+                font_size = parsed;
             } else if (argument.starts_with('+')) {
                 if (argument.size() == 1 || initial_line != 0) {
                     throw std::runtime_error("invalid +LINE argument");
@@ -1391,20 +1396,16 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (screenshot) {
-            return cind::gui::run_screenshot(*file, initial_line, *screenshot, smoothing,
-                                             std::string(font_family),
-                                             {.font_size = font_size,
-                                              .logical_width = 900,
-                                              .logical_height = 600,
-                                              .scale = 1.5F},
-                                             screenshot_keys);
+            return cind::gui::run_screenshot(
+                *file, initial_line, *screenshot, smoothing, font_family, font_size,
+                {.logical_width = 900, .logical_height = 600, .scale = 1.5F}, screenshot_keys);
         }
         if (inspect && !inspector_socket) {
             inspector_socket =
                 cind::gui::default_inspector_socket_path(static_cast<int>(::getpid()));
         }
-        return cind::gui::run_editor(*file, initial_line, inspector_socket, smoothing,
-                                     std::string(font_family), font_size);
+        return cind::gui::run_editor(*file, initial_line, inspector_socket, smoothing, font_family,
+                                     font_size);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "cind-gui: %s\n", error.what());
         return 1;
