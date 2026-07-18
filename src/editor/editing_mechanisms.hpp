@@ -41,8 +41,7 @@ public:
     void reset_preferred_column(ViewId view);
     void move_lines(ViewId view, std::int64_t delta);
     void move_line_boundary(ViewId view, bool end);
-    DeleteGraphemeOutcome delete_grapheme(ViewId view, bool forward,
-                                          DeleteGraphemeMode mode);
+    DeleteGraphemeOutcome delete_grapheme(ViewId view, bool forward, DeleteGraphemeMode mode);
     void newline(ViewId view);
     std::optional<FormatRole> indent(ViewId view);
     void type_text(ViewId view, std::string_view text);

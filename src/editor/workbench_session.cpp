@@ -78,16 +78,18 @@ WorkbenchLayoutSessionState read_layout(std::istream& input, std::size_t& nodes)
         if ((has_resource && resource.empty()) || (has_role && role.empty())) {
             throw std::invalid_argument("workbench leaf contains an empty stable identifier");
         }
-        return {.window = WorkbenchWindowSessionState{
+        return {
+            .window =
+                WorkbenchWindowSessionState{
                     .resource = has_resource ? std::optional(std::move(resource)) : std::nullopt,
                     .caret = static_cast<std::uint32_t>(caret),
                     .role = has_role ? std::optional(std::move(role)) : std::nullopt,
                     .pinned = pinned,
                     .created_by_policy = created},
-                .axis = WindowSplitAxis::Rows,
-                .ratio = 0.5F,
-                .first = nullptr,
-                .second = nullptr};
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr};
     }
     if (kind != "branch") {
         throw std::invalid_argument("unknown workbench layout node");
@@ -118,7 +120,8 @@ std::string serialize_workbench_session(const WorkbenchSessionState& state) {
     output << "cind-workbench-session " << state.version << ' ' << state.active_workbench << ' '
            << state.workbenches.size() << '\n';
     for (const WorkbenchSessionEntry& workbench : state.workbenches) {
-        output << "workbench " << std::quoted(workbench.name) << ' ' << workbench.scope_roots.size();
+        output << "workbench " << std::quoted(workbench.name) << ' '
+               << workbench.scope_roots.size();
         for (const std::string& root : workbench.scope_roots) {
             output << ' ' << std::quoted(root);
         }

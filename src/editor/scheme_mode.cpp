@@ -121,19 +121,15 @@ std::vector<DatumToken> tokenize(std::string_view text) {
         if (text[at] == '"' || text[at] == '|') {
             const std::size_t start = at;
             at = quoted_end(text, at, text[at]);
-            tokens.push_back({.kind = DatumTokenKind::Atom,
-                              .start = start,
-                              .end = at,
-                              .pair = std::nullopt});
+            tokens.push_back(
+                {.kind = DatumTokenKind::Atom, .start = start, .end = at, .pair = std::nullopt});
             continue;
         }
         if (at + 1 < text.size() && text[at] == '#' && text[at + 1] == '\\') {
             const std::size_t start = at;
             at = character_end(text, at);
-            tokens.push_back({.kind = DatumTokenKind::Atom,
-                              .start = start,
-                              .end = at,
-                              .pair = std::nullopt});
+            tokens.push_back(
+                {.kind = DatumTokenKind::Atom, .start = start, .end = at, .pair = std::nullopt});
             continue;
         }
         if (is_open(text[at])) {
@@ -162,10 +158,8 @@ std::vector<DatumToken> tokenize(std::string_view text) {
             if (text[start] == ',' && at < text.size() && text[at] == '@') {
                 ++at;
             }
-            tokens.push_back({.kind = DatumTokenKind::Prefix,
-                              .start = start,
-                              .end = at,
-                              .pair = std::nullopt});
+            tokens.push_back(
+                {.kind = DatumTokenKind::Prefix, .start = start, .end = at, .pair = std::nullopt});
             continue;
         }
         if (at + 1 < text.size() && text[at] == '#' &&
@@ -176,10 +170,8 @@ std::vector<DatumToken> tokenize(std::string_view text) {
             if (text[start + 1] == ',' && at < text.size() && text[at] == '@') {
                 ++at;
             }
-            tokens.push_back({.kind = DatumTokenKind::Prefix,
-                              .start = start,
-                              .end = at,
-                              .pair = std::nullopt});
+            tokens.push_back(
+                {.kind = DatumTokenKind::Prefix, .start = start, .end = at, .pair = std::nullopt});
             continue;
         }
         if (text[at] == '#') {
@@ -208,16 +200,13 @@ std::vector<DatumToken> tokenize(std::string_view text) {
         if (at == start) {
             ++at;
         }
-        tokens.push_back({.kind = DatumTokenKind::Atom,
-                          .start = start,
-                          .end = at,
-                          .pair = std::nullopt});
+        tokens.push_back(
+            {.kind = DatumTokenKind::Atom, .start = start, .end = at, .pair = std::nullopt});
     }
     return tokens;
 }
 
-std::optional<std::size_t> forward_token(const std::vector<DatumToken>& tokens,
-                                         std::size_t index) {
+std::optional<std::size_t> forward_token(const std::vector<DatumToken>& tokens, std::size_t index) {
     while (index < tokens.size() && tokens[index].kind == DatumTokenKind::Prefix) {
         ++index;
     }
@@ -231,21 +220,18 @@ std::optional<std::size_t> forward_token(const std::vector<DatumToken>& tokens,
 }
 
 std::optional<TextOffset> forward_datum(const std::vector<DatumToken>& tokens, std::size_t from) {
-    const auto found = std::ranges::find_if(tokens, [from](const DatumToken& token) {
-        return token.end > from;
-    });
+    const auto found =
+        std::ranges::find_if(tokens, [from](const DatumToken& token) { return token.end > from; });
     if (found == tokens.end()) {
         return std::nullopt;
     }
     const std::size_t index = static_cast<std::size_t>(found - tokens.begin());
     const std::optional<std::size_t> end = forward_token(tokens, index);
-    return end ? std::optional<TextOffset>{TextOffset{
-                     static_cast<std::uint32_t>(tokens[*end].end)}}
+    return end ? std::optional<TextOffset>{TextOffset{static_cast<std::uint32_t>(tokens[*end].end)}}
                : std::nullopt;
 }
 
-std::optional<TextOffset> backward_datum(const std::vector<DatumToken>& tokens,
-                                         std::size_t from) {
+std::optional<TextOffset> backward_datum(const std::vector<DatumToken>& tokens, std::size_t from) {
     std::optional<std::size_t> found;
     for (std::size_t index = tokens.size(); index > 0; --index) {
         if (tokens[index - 1].start < from) {
@@ -284,15 +270,14 @@ std::optional<TextOffset> enclosing_list(const std::vector<DatumToken>& tokens, 
             selected = &token;
         }
     }
-    return selected ? std::optional<TextOffset>{
-                          TextOffset{static_cast<std::uint32_t>(selected->start)}}
-                    : std::nullopt;
+    return selected
+               ? std::optional<TextOffset>{TextOffset{static_cast<std::uint32_t>(selected->start)}}
+               : std::nullopt;
 }
 
 class SchemeMechanismSession final : public LanguageMechanismSession {
 public:
-    std::optional<TextOffset> move_structurally(const DocumentSnapshot& snapshot,
-                                                TextOffset from,
+    std::optional<TextOffset> move_structurally(const DocumentSnapshot& snapshot, TextOffset from,
                                                 StructuralMotion motion) override {
         const std::vector<DatumToken> tokens = tokenize(snapshot.content().to_string());
         switch (motion) {
