@@ -2471,6 +2471,42 @@ TEST_CASE("buffer picker defaults to the active workbench and can widen globally
     CHECK(application.buffer_id() == help);
 }
 
+TEST_CASE("asynchronous display completion stays with its origin workbench") {
+    TemporaryFile source(
+        std::format("cind-workbench-async-origin-{}.txt", static_cast<long>(::getpid())),
+        "visitor\n");
+    WakeSignal wake;
+    EditorApplication application =
+        make_application("sample.cc", "one\n",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    const WorkbenchId origin_workbench = application.workbench_id();
+    const WindowId origin_window = application.window_id();
+    REQUIRE(application.open_file(source.path().string()).has_value());
+
+    const WorkbenchId foreground_workbench = application.create_workbench("notes");
+    const BufferId foreground_buffer = application.buffer_id();
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+
+    CHECK(application.workbench_id() == foreground_workbench);
+    CHECK(application.buffer_id() == foreground_buffer);
+    const std::optional<BufferId> opened =
+        application.runtime().buffers().find_by_resource(source.path().string());
+    REQUIRE(opened.has_value());
+    const std::vector<BufferId> foreground = application.workbench_buffers(foreground_workbench);
+    CHECK(std::ranges::find(foreground, *opened) == foreground.end());
+
+    REQUIRE(application.switch_workbench(origin_workbench));
+    CHECK(application.window_id() == origin_window);
+    CHECK(application.buffer_id() == *opened);
+    CHECK(application.session().buffer().resource_uri() ==
+          std::optional<std::string>{source.path().string()});
+}
+
 TEST_CASE("view release runs state lifecycle while its editor session is available") {
     EditorApplication application = make_application("sample.cc", "one two\n");
     REQUIRE(application.split_window(WindowSplitAxis::Columns));

@@ -70,6 +70,10 @@ The display policy is a replaceable Guile procedure. Native code validates its c
 applies WindowLayout invariants, and provides a deterministic fallback when the procedure reports
 an error.
 
+The origin Window also identifies the target workbench. An asynchronous open or tool request may
+finish while another workbench is active; its result updates the originating layout and MRU without
+changing the application's active workbench. A destroyed origin falls back to the active workbench.
+
 ## Persistent sessions
 
 The session format stores stable values rather than runtime IDs:

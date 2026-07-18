@@ -695,22 +695,13 @@
                   (string-append "open cancelled: "
                                  (pending-open-resource open)))))
 
-(define (window-open? host window)
-  (let ((windows (open-window-ids host)))
-    (let loop ((index 0))
-      (and (< index (vector-length windows))
-           (or (equal? window (vector-ref windows index))
-               (loop (+ index 1)))))))
-
 (define (display-open-buffer! host open buffer)
-  (let ((window (if (window-open? host (pending-open-window open))
-                    (pending-open-window open)
-                    (active-window-id host))))
-    (let ((target (display-buffer! host window buffer (pending-open-intent open))))
-      (when (pending-open-line open)
-        (move-caret-to-line! host (window-view-id host target)
+  (let ((target (display-buffer! host (pending-open-window open) buffer
+                                 (pending-open-intent open))))
+    (when (pending-open-line open)
+      (move-caret-to-line! host (window-view-id host target)
                            (pending-open-line open)
-                            (or (pending-open-column open) 0))))))
+                           (or (pending-open-column open) 0)))))
 
 (define (project-from-discovery! host discovery)
   (and discovery
@@ -1396,11 +1387,6 @@
     (cancel-project-search-tasks! host search)
     (set-message! host "project search cancelled")))
 
-(define (project-search-target-window host search)
-  (if (window-open? host (pending-project-search-window search))
-      (pending-project-search-window search)
-      (active-window-id host)))
-
 (define (finish-project-search! host search result)
   (when (project-search-live? host search)
     (catch #t
@@ -1420,7 +1406,7 @@
             (set-buffer-project! host buffer
                                  (and (= (vector-length projects) 1)
                                       (vector-ref projects 0))))
-          (display-buffer! host (project-search-target-window host search) buffer 'tools)
+          (display-buffer! host (pending-project-search-window search) buffer 'tools)
           (clear-project-search! host search)
           (set-message! host (string-append "project search finished: " query))))
       (lambda (key . arguments)

@@ -1031,8 +1031,10 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     if (runtime_.buffers().try_get(buffer) == nullptr) {
         return std::unexpected("unknown display buffer");
     }
-    Workbench& workbench = active_workbench();
-    if (!workbench.layout().contains(origin)) {
+    const WorkbenchId workbench_id =
+        workbenches_.find_by_window(origin).value_or(workbenches_.active_id());
+    Workbench& workbench = workbenches_.get(workbench_id);
+    if (!workbench.layout().contains(origin) || runtime_.windows().try_get(origin) == nullptr) {
         origin = workbench.active_window();
     }
     GuileDisplayFacts facts{.intent = std::string(intent),
@@ -1079,7 +1081,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     }
     const GuileDisplayPlan& plan = *resolved;
     if (plan.action == GuileDisplayPlan::Action::Reuse) {
-        if (!show_buffer(plan.target, buffer) || !focus_window(plan.target)) {
+        if (!show_buffer(plan.target, buffer) || !focus_window(workbench_id, plan.target)) {
             return std::unexpected("display policy target cannot show the buffer");
         }
         return plan.target;
@@ -1105,7 +1107,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
         }
     }
     workbench.visit_buffer(buffer);
-    if (!focus_window(window)) {
+    if (!focus_window(workbench_id, window)) {
         return std::unexpected("display policy window cannot receive focus");
     }
     return window;
@@ -1116,17 +1118,26 @@ bool EditorApplication::switch_buffer(BufferId buffer) {
 }
 
 bool EditorApplication::focus_window(WindowId window) {
-    Workbench& workbench = active_workbench();
-    if (!workbench.layout().contains(window) || runtime_.windows().try_get(window) == nullptr) {
+    return focus_window(workbenches_.active_id(), window);
+}
+
+bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) {
+    Workbench* target = workbenches_.try_get(workbench_id);
+    if (target == nullptr || !target->layout().contains(window) ||
+        runtime_.windows().try_get(window) == nullptr) {
         return false;
     }
-    if (window != workbench.active_window()) {
+    const bool active = workbench_id == workbenches_.active_id();
+    Workbench& workbench = *target;
+    if (active && window != workbench.active_window()) {
         command_loop_.cancel_pending();
     }
     workbench.set_active_window(window);
     workbench.visit_buffer(buffer_id(window));
-    reveal_caret_ = true;
-    sync_keymaps();
+    if (active) {
+        reveal_caret_ = true;
+        sync_keymaps();
+    }
     return true;
 }
 
