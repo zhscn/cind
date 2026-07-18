@@ -186,17 +186,16 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                         append_text(signature, item.label);
                         append_text(signature, item.detail);
                     }
-                } else if (const Region::StatusContent* status = region.status()) {
+                } else if (const ModelineContent* status = region.status()) {
                     signature.push_back('\x1c');
-                    append_text(signature, status->path);
-                    append_integer(signature, static_cast<std::uint32_t>(status->dirty));
-                    append_integer(signature, status->line);
-                    append_integer(signature, status->column);
-                    append_integer(signature, status->line_count);
-                    append_integer(signature, status->revision);
-                    append_text(signature, status->style_origin);
-                    append_text(signature, status->key);
-                    append_text(signature, status->input_state);
+                    append_integer(signature, status->segments.size());
+                    for (const ModelineSegment& segment : status->segments) {
+                        append_text(signature, segment.text);
+                        append_integer(signature, static_cast<std::uint32_t>(segment.group));
+                        append_integer(signature, static_cast<std::uint32_t>(segment.tone));
+                        append_integer(signature, static_cast<std::uint32_t>(segment.weight));
+                        append_integer(signature, static_cast<std::uint32_t>(segment.debug));
+                    }
                 } else if (const Region::EchoContent* echo = region.echo()) {
                     signature.push_back('\x1d');
                     append_text(signature, echo->text);
@@ -312,8 +311,7 @@ SceneDamage SceneDamageTracker::update(const Scene& scene, bool force_full_repai
                 ++damage.damaged_cells;
             }
         }
-        if (!grid_transform_changed && total_cells > 0 &&
-            damage.damaged_cells * 2 >= total_cells) {
+        if (!grid_transform_changed && total_cells > 0 && damage.damaged_cells * 2 >= total_cells) {
             damage.full_repaint = true;
         } else {
             damage.cell_rects = coalesce_cells(dirty, scene);

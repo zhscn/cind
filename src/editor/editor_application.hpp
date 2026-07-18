@@ -155,6 +155,7 @@ public:
     const std::string& message() const { return message_; }
     void set_message(std::string message) { message_ = std::move(message); }
     std::string echo_text();
+    ModelineContent modeline(WindowId window);
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }
 
@@ -235,6 +236,7 @@ private:
     void register_resource_policies();
     void register_interaction_providers();
     void register_keymaps();
+    void register_presentation_policies();
     void sync_keymaps();
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);

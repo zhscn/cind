@@ -4,6 +4,7 @@
 #include "ui/scene_damage.hpp"
 #include "ui/scene_layout.hpp"
 
+using namespace cind;
 using namespace cind::ui;
 
 namespace {
@@ -250,20 +251,13 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
 
 TEST_CASE("scene damage tracks structured status content") {
     Scene scene = text_scene("line");
-    scene.regions.back().set_status(Region::StatusContent{
-        .path = "sample.cc",
-        .line = 1,
-        .column = 1,
-        .line_count = 1,
-        .revision = 3,
-        .style_origin = ".clang-format",
-        .key = "C-x",
-        .input_state = {},
-    });
+    scene.regions.back().set_status(
+        ModelineContent{.segments = {{.text = "sample.cc", .group = ModelineGroup::Left},
+                                     {.text = "C-x", .group = ModelineGroup::Right}}});
 
     SceneDamageTracker tracker;
     REQUIRE(tracker.update(scene).full_repaint);
-    scene.regions.back().status()->key = "C-x C-s";
+    scene.regions.back().status()->segments.back().text = "C-x C-s";
     const SceneDamage changed = tracker.update(scene);
     CHECK_FALSE(changed.full_repaint);
     CHECK_FALSE(changed.cell_rects.empty());

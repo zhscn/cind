@@ -458,6 +458,30 @@ TEST_CASE("shared echo policy follows active bindings and input lifetime") {
     CHECK(application.echo_text() == idle);
 }
 
+TEST_CASE("user initialization owns modeline content policy") {
+    TemporaryFile init(std::format("cind-modeline-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-modeline-policy!
+ host
+ (lambda (host context facts)
+   (vector 'modeline
+           (vector (vector 'modeline-segment 'left 'salient 'strong #f
+                           (string-append "custom:" (vector-ref facts 1)))))))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "text",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    const ModelineContent content = application.modeline(application.window_id());
+    REQUIRE(content.segments.size() == 1);
+    CHECK(content.segments.front().text == "custom:sample.cc");
+    CHECK(content.segments.front().group == ModelineGroup::Left);
+    CHECK(content.segments.front().tone == ModelineTone::Salient);
+    CHECK(content.segments.front().weight == ModelineWeight::Strong);
+}
+
 TEST_CASE("per-view input states precede window layers and may handle keys") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();

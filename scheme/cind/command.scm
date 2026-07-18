@@ -21,6 +21,8 @@
             resolve-base-keymap-policy
             base-keymap-layers
             active-keymap-layers
+            configure-modeline-policy!
+            resolve-modeline-content
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -241,6 +243,20 @@
 
 (define (active-keymap-layers host context)
   (keymap-policy-names (resolve-keymap-policy host context) #t))
+
+(define modeline-policies (make-weak-key-hash-table))
+
+(define (configure-modeline-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "modeline policy must be a procedure" procedure))
+  (hashq-set! modeline-policies host procedure)
+  procedure)
+
+(define (resolve-modeline-content host context facts)
+  (let ((procedure (hashq-ref modeline-policies host)))
+    (unless procedure
+      (error "modeline policy is not configured"))
+    (procedure host context facts)))
 
 (define (invocation-arguments invocation)
   (vector-ref invocation 1))

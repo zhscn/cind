@@ -62,13 +62,9 @@ struct EditorSceneInput {
     // row count, which is appropriate for a terminal presenter.
     float visible_text_rows = 0.0F;
     int tab_width = 4;
-    std::string_view path;
-    bool dirty = false;
     RevisionId revision = 0;
-    std::string_view style_origin;
-    std::string_view last_key;
+    const ModelineContent& modeline;
     CursorShape cursor_shape = CursorShape::Beam;
-    std::string_view input_state_indicator;
     // In-progress key sequence prefix (e.g. "C-x"). Pixel frontends echo it
     // at the message line's right edge; empty when no sequence is pending.
     std::string_view pending_key;

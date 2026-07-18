@@ -193,16 +193,10 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         {0, 2, "1", StyleClass::PositionHint, false, PrimKind::PositionHint, "hint:0", 1});
     Region status{RegionRole::StatusBar,  {1, 0, 1, 10},     {}, SurfaceClass::Status,
                   VerticalAnchor::Bottom, "editor/modeline", 7};
-    status.set_status(Region::StatusContent{
-        .path = "sample.cc",
-        .line = 1,
-        .column = 4,
-        .line_count = 1,
-        .revision = 7,
-        .style_origin = ".clang-format",
-        .key = "C-x",
-        .input_state = {},
-    });
+    status.set_status(
+        ModelineContent{.segments = {{.text = "sample.cc", .group = ModelineGroup::Left},
+                                     {.text = "1:4", .group = ModelineGroup::Right},
+                                     {.text = "C-x", .group = ModelineGroup::Right}}});
     Region popup{RegionRole::Popup,       {0, 5, 2, 5},           {}, SurfaceClass::Status,
                  VerticalAnchor::Overlay, "editor/overlay/popup", 7};
     popup.set_popup(Region::PopupContent{
@@ -409,12 +403,14 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":45") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":46") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);
     CHECK(snapshot.find("\"role\":\"text-area\"") != std::string::npos);
     CHECK(snapshot.find("\"content_type\":\"popup\"") != std::string::npos);
     CHECK(snapshot.find("\"content_type\":\"status\"") != std::string::npos);
+    CHECK(snapshot.find("\"group\":\"left\",\"tone\":\"normal\",\"weight\":\"regular\"") !=
+          std::string::npos);
     CHECK(snapshot.find("\"view_tree\":{\"id\":\"scene\"") != std::string::npos);
     CHECK(snapshot.find("\"id\":\"scene/overlay\"") != std::string::npos);
     CHECK(snapshot.find("\"vertical_anchor\":\"bottom\"") != std::string::npos);

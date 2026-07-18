@@ -135,13 +135,17 @@ this focus stack. Ordinary movement, deletion, undo, kill, yank, selection, and 
 therefore operate on the minibuffer through their normal `CommandContext` without interaction-only
 command copies.
 
-The focused View state also supplies its cursor shape and modeline indicator. These presentation
-properties travel through the shared Scene and are rendered by both terminal and graphical
-frontends. A state may additionally supply pure document-position hints derived from the current
-document revision, Selection, and effective mode policy. The application validates and memoizes the
-derived labels, while Scene composition maps byte offsets to visible replacement spans; neither the
-ANSI nor Skia renderer calls scripting policy. Popup and echo-area composition render the
-minibuffer View's caret as a beam cursor.
+The focused View state also supplies its cursor shape and modeline indicator. C++ gathers immutable
+Buffer, View, revision, caret, style, and InputState facts; the host's configured Guile modeline
+policy turns them into ordered chip, left, and right segments with semantic tone, weight, and debug
+metadata. The shared Scene carries those segments unchanged. ANSI clips them to terminal cells and
+Skia shapes them into pixel groups without selecting fields or constructing editor-facing text.
+
+A state may additionally supply pure document-position hints derived from the current document
+revision, Selection, and effective mode policy. The application validates and memoizes the derived
+labels, while Scene composition maps byte offsets to visible replacement spans; neither the ANSI
+nor Skia renderer calls scripting policy. Popup and echo-area composition render the minibuffer
+View's caret as a beam cursor.
 
 Lookup evaluates the complete pending sequence against every active layer on each keystroke. The
 first layer that recognizes that complete sequence decides whether it is a command or a prefix. A

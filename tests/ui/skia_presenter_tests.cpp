@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+using namespace cind;
 using namespace cind::gui;
 using namespace cind::ui;
 
@@ -487,8 +488,8 @@ TEST_CASE("Skia presenter limits fractional scroll damage to the document grid")
 
     const int width = presenter.cell_width() * scene.cols;
     const int height = presenter.cell_height() * scene.rows;
-    const float grid_height = static_cast<float>(height) - presenter.status_bar_height() -
-                              presenter.echo_area_height();
+    const float grid_height =
+        static_cast<float>(height) - presenter.status_bar_height() - presenter.echo_area_height();
     const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
     std::vector<std::uint32_t> retained(static_cast<std::size_t>(width * height));
     std::vector<std::uint32_t> reference(retained.size());
@@ -507,8 +508,7 @@ TEST_CASE("Skia presenter limits fractional scroll damage to the document grid")
     CHECK(rectangles.front().width == static_cast<float>(width));
     CHECK(rectangles.front().height == doctest::Approx(grid_height));
 
-    const std::optional<SkiaGridTranslation> translation =
-        presenter.render_grid_translation_damage(
+    const std::optional<SkiaGridTranslation> translation = presenter.render_grid_translation_damage(
         presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height)),
         damage, width, height, retained.data(), row_bytes);
     REQUIRE(translation);
@@ -1086,9 +1086,9 @@ TEST_CASE("Skia scroll layer handoff keeps transient active line continuous") {
     const int blank_left = presenter.cell_width() * 10;
     for (int y = 0; y < height; ++y) {
         for (int x = blank_left; x < width; ++x) {
-            const std::size_t index = static_cast<std::size_t>(y) *
-                                          static_cast<std::size_t>(width) +
-                                      static_cast<std::size_t>(x);
+            const std::size_t index =
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                static_cast<std::size_t>(x);
             CAPTURE(x);
             CAPTURE(y);
             CHECK(before[index] == after[index]);
@@ -1164,17 +1164,24 @@ TEST_CASE("Skia presenter lays the modeline out from structured status content")
         Region body{RegionRole::TextArea, {0, 0, 2, 40}, {}};
         Region status{
             RegionRole::StatusBar, {2, 0, 1, 40}, {}, SurfaceClass::Status, VerticalAnchor::Bottom};
-        status.set_status(Region::StatusContent{
-            .path = "src/ui/editor_scene.cpp",
-            .dirty = dirty,
-            .line = 12,
-            .column = 5,
-            .line_count = 48,
-            .revision = 7,
-            .style_origin = ".clang-format",
-            .key = std::move(key),
-            .input_state = {},
-        });
+        status.set_status(ModelineContent{
+            .segments = {
+                {.text = dirty ? "**" : "RW",
+                 .group = ModelineGroup::Chip,
+                 .tone = dirty ? ModelineTone::Critical : ModelineTone::Faded,
+                 .weight = ModelineWeight::Strong},
+                {.text = "editor_scene.cpp",
+                 .group = ModelineGroup::Left,
+                 .tone = ModelineTone::Strong,
+                 .weight = ModelineWeight::Strong},
+                {.text = ".clang-format",
+                 .group = ModelineGroup::Right,
+                 .tone = ModelineTone::Faint},
+                {.text = "12:5", .group = ModelineGroup::Right, .tone = ModelineTone::Faded},
+                {.text = std::move(key),
+                 .group = ModelineGroup::Right,
+                 .tone = ModelineTone::Salient},
+            }});
         Region echo{
             RegionRole::EchoArea, {3, 0, 1, 40}, {}, SurfaceClass::Echo, VerticalAnchor::Bottom};
         scene.regions = {std::move(body), std::move(status), std::move(echo)};
@@ -1249,26 +1256,14 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
     inactive_body.primitives().push_back({0, 0, "idle", StyleClass::Text, false});
     Region active_status =
         pane_region(RegionRole::StatusBar, {2, 0, 1, 10}, "active/modeline", "window:0:1", true);
-    active_status.set_status({.path = "active.cc",
-                              .dirty = false,
-                              .line = 1,
-                              .column = 1,
-                              .line_count = 1,
-                              .revision = 0,
-                              .style_origin = {},
-                              .key = {},
-                              .input_state = {}});
+    active_status.set_status(
+        ModelineContent{.segments = {{.text = "RW", .group = ModelineGroup::Chip},
+                                     {.text = "active.cc", .group = ModelineGroup::Left}}});
     Region inactive_status = pane_region(RegionRole::StatusBar, {2, 11, 1, 10}, "inactive/modeline",
                                          "window:1:1", false);
-    inactive_status.set_status({.path = "idle.cc",
-                                .dirty = false,
-                                .line = 1,
-                                .column = 1,
-                                .line_count = 1,
-                                .revision = 0,
-                                .style_origin = {},
-                                .key = {},
-                                .input_state = {}});
+    inactive_status.set_status(
+        ModelineContent{.segments = {{.text = "RW", .group = ModelineGroup::Chip},
+                                     {.text = "idle.cc", .group = ModelineGroup::Left}}});
     Region echo{RegionRole::EchoArea, {3, 0, 1, scene.cols},  {},
                 SurfaceClass::Echo,   VerticalAnchor::Bottom, "editor/echo"};
     echo.set_echo({.text = "window split right", .cursor_byte = std::nullopt, .key = {}});
@@ -1305,9 +1300,9 @@ TEST_CASE("Skia workspace distinguishes active pane chrome and paints dividers")
     CHECK(target->pane_id == "window:1:1");
 
     scene.regions[0].primitives()[0].text = "changed";
-    Region::StatusContent* status = scene.regions[2].status();
+    ModelineContent* status = scene.regions[2].status();
     REQUIRE(status != nullptr);
-    status->key = "C-x";
+    status->segments.push_back({.text = "C-x", .group = ModelineGroup::Right});
     const SceneDamage damage = tracker.update(scene);
     REQUIRE_FALSE(damage.full_repaint);
     const std::vector<SkiaLogicalRect> rectangles = presenter.damage_rects(
@@ -1341,15 +1336,9 @@ TEST_CASE("Skia horizontal pane modelines use pane pixel boundaries") {
                       VerticalAnchor::Cell,  std::move(id)};
         region.pane_id = std::move(pane);
         region.active = active;
-        region.set_status({.path = active ? "active.cc" : "idle.cc",
-                           .dirty = false,
-                           .line = 1,
-                           .column = 1,
-                           .line_count = 1,
-                           .revision = 0,
-                           .style_origin = {},
-                           .key = {},
-                           .input_state = {}});
+        region.set_status(ModelineContent{.segments = {{.text = "RW", .group = ModelineGroup::Chip},
+                                                       {.text = active ? "active.cc" : "idle.cc",
+                                                        .group = ModelineGroup::Left}}});
         return region;
     };
     Region active_status = status_region({2, 0, 1, 10}, "active/modeline", "window:0:1", true);

@@ -196,6 +196,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         application_.position_hints(application_.window_id());
     const std::vector<PositionHint> active_position_hints =
         active_hint_result ? std::move(*active_hint_result) : std::vector<PositionHint>{};
+    const ModelineContent active_modeline = application_.modeline(application_.window_id());
     const ui::EditorSceneInput active_input{.text = snapshot.content(),
                                             .tokens = application_.syntax_tokens(),
                                             .signs = signs(application_.window_id()),
@@ -206,13 +207,9 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .cols = columns,
                                             .visible_text_rows = visible_text_rows,
                                             .tab_width = session.style().tab_width,
-                                            .path = application_.path(),
-                                            .dirty = application_.dirty(),
                                             .revision = snapshot.revision(),
-                                            .style_origin = application_.style_origin(),
-                                            .last_key = application_.last_key(),
+                                            .modeline = active_modeline,
                                             .cursor_shape = active_input_state.cursor,
-                                            .input_state_indicator = active_input_state.indicator,
                                             .pending_key = pending_key,
                                             .echo = echo,
                                             .echo_cursor_column = echo_cursor,
@@ -247,6 +244,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         PositionHintProviderResult pane_hint_result = application_.position_hints(placement.window);
         const std::vector<PositionHint> pane_position_hints =
             pane_hint_result ? std::move(*pane_hint_result) : std::vector<PositionHint>{};
+        const ModelineContent pane_modeline = application_.modeline(placement.window);
         ui::Scene pane_scene = ui::compose_editor_scene(
             {.text = pane_snapshot.content(),
              .tokens = application_.syntax_tokens(placement.window),
@@ -258,13 +256,9 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
              .cols = std::max(1, placement.rect.columns),
              .visible_text_rows = static_cast<float>(std::max(1, placement.rect.rows - 1)),
              .tab_width = pane_session.style().tab_width,
-             .path = application_.path(placement.window),
-             .dirty = application_.dirty(placement.window),
              .revision = pane_snapshot.revision(),
-             .style_origin = application_.style_origin(placement.window),
-             .last_key = active ? std::string_view(application_.last_key()) : std::string_view(),
+             .modeline = pane_modeline,
              .cursor_shape = pane_input_state.cursor,
-             .input_state_indicator = pane_input_state.indicator,
              .pending_key = {},
              .echo = {},
              .echo_cursor_column = std::nullopt,

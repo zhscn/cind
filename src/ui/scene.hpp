@@ -1,5 +1,7 @@
 #pragma once
 
+#include "presentation/modeline.hpp"
+
 #include "presentation/cursor_shape.hpp"
 #include "ui/style.hpp"
 
@@ -145,19 +147,6 @@ struct Region {
 
         bool operator==(const PopupContent&) const = default;
     };
-    struct StatusContent {
-        std::string path;
-        bool dirty = false;
-        std::uint32_t line = 0;
-        std::uint32_t column = 0;
-        std::uint32_t line_count = 0;
-        std::uint64_t revision = 0;
-        std::string style_origin;
-        std::string key;
-        std::string input_state;
-
-        bool operator==(const StatusContent&) const = default;
-    };
     struct EchoContent {
         std::string text;
         // UTF-8 byte offset in `text`. A present value makes the echo area an
@@ -171,7 +160,7 @@ struct Region {
 
         bool operator==(const EchoContent&) const = default;
     };
-    using Content = std::variant<PrimitiveContent, PopupContent, StatusContent, EchoContent>;
+    using Content = std::variant<PrimitiveContent, PopupContent, ModelineContent, EchoContent>;
 
     Region() = default;
     Region(RegionRole role, Rect rect, std::vector<Prim> prims,
@@ -210,13 +199,13 @@ struct Region {
 
     PopupContent* popup() { return std::get_if<PopupContent>(&content); }
     const PopupContent* popup() const { return std::get_if<PopupContent>(&content); }
-    StatusContent* status() { return std::get_if<StatusContent>(&content); }
-    const StatusContent* status() const { return std::get_if<StatusContent>(&content); }
+    ModelineContent* status() { return std::get_if<ModelineContent>(&content); }
+    const ModelineContent* status() const { return std::get_if<ModelineContent>(&content); }
     EchoContent* echo() { return std::get_if<EchoContent>(&content); }
     const EchoContent* echo() const { return std::get_if<EchoContent>(&content); }
 
     void set_popup(PopupContent popup) { content = std::move(popup); }
-    void set_status(StatusContent status) { content = std::move(status); }
+    void set_status(ModelineContent status) { content = std::move(status); }
     void set_echo(EchoContent echo) { content = std::move(echo); }
     void set_document_mapping(DocumentMapping mapping) {
         std::get<PrimitiveContent>(content).document = mapping;

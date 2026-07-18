@@ -91,7 +91,7 @@ std::string render_ansi(const Scene& scene) {
     };
 
     // Primitive regions are already cell-shaped. Semantic chrome is projected
-    // into cells here, keeping its formatting policy in the terminal backend.
+    // into cells here; its content and segment ordering are already resolved.
     const ViewTree tree(scene);
     for (const ViewLayerNode& layer : tree.layers()) {
         for (const ViewNode& node : layer.children) {
@@ -99,26 +99,34 @@ std::string render_ansi(const Scene& scene) {
             for (const Prim& prim : region.primitives()) {
                 paint_primitive(region, prim);
             }
-            if (const Region::StatusContent* status = region.status()) {
-                std::string left = std::format(
-                    " {}{}  {}:{}  rev {}  style {} ", status->path, status->dirty ? " [+]" : "",
-                    status->line, status->column, status->revision, status->style_origin);
-                std::string key = status->input_state.empty()
-                                      ? std::string()
-                                      : std::format("[{}] ", status->input_state);
-                if (!status->key.empty()) {
-                    key += std::format("key: {} ", status->key);
+            if (const ModelineContent* status = region.status()) {
+                std::string left;
+                std::string right;
+                const auto append = [](std::string& group, std::string_view text) {
+                    if (!group.empty()) {
+                        group += "  ";
+                    }
+                    group += text;
+                };
+                for (const ModelineSegment& segment : status->segments) {
+                    if (segment.group == ModelineGroup::Right) {
+                        append(right, segment.text);
+                    } else {
+                        append(left, segment.text);
+                    }
                 }
-                key = std::string(clip_to_display_width(key, region.rect.cols));
-                const int key_width = display_width(key);
-                left = std::string(clip_to_display_width(left, region.rect.cols - key_width));
-                const int fill = region.rect.cols - display_width(left) - key_width;
+                left = left.empty() ? std::string() : std::format(" {} ", left);
+                right = right.empty() ? std::string() : std::format(" {} ", right);
+                right = std::string(clip_to_display_width(right, region.rect.cols));
+                const int right_width = display_width(right);
+                left = std::string(clip_to_display_width(left, region.rect.cols - right_width));
+                const int fill = region.rect.cols - display_width(left) - right_width;
                 paint_primitive(region,
                                 {0, 0, left + std::string(static_cast<std::size_t>(fill), ' '),
                                  StyleClass::StatusBar, false, PrimKind::Text, "status:main"});
-                if (!key.empty()) {
+                if (!right.empty()) {
                     paint_primitive(region,
-                                    {0, region.rect.cols - key_width, std::move(key),
+                                    {0, region.rect.cols - right_width, std::move(right),
                                      StyleClass::StatusKey, false, PrimKind::Text, "status:key"});
                 }
             } else if (const Region::EchoContent* echo = region.echo()) {

@@ -282,7 +282,7 @@ public:
     SkiaPreparedAnimationFrame prepare_animation_frame(const SkiaAnimationFrame& animation,
                                                        float viewport_width,
                                                        float viewport_height) const;
-    // Shows the faint revision segment at the modeline's right edge.
+    // Includes modeline segments marked as debug-only.
     void set_show_debug_status(bool show);
 
     // Returns the graphical caret bounds in logical pixels. A popup prompt

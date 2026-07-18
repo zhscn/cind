@@ -230,10 +230,6 @@ private:
 
     std::optional<TextRange> selection() const { return session().selection(); }
 
-    bool dirty() const { return application_.dirty(); }
-
-    const std::string& path() const { return application_.path(); }
-
     // ---- rendering --------------------------------------------------------
 
     const TokenBuffer& tokens() { return application_.syntax_tokens(); }
@@ -314,6 +310,7 @@ private:
             application_.position_hints(application_.window_id());
         const std::vector<PositionHint> active_position_hints =
             active_hint_result ? std::move(*active_hint_result) : std::vector<PositionHint>{};
+        const ModelineContent active_modeline = application_.modeline(application_.window_id());
         const std::string pending_command = application_.pending_command_text();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
@@ -353,6 +350,7 @@ private:
                     application_.position_hints(placement.window);
                 const std::vector<PositionHint> pane_position_hints =
                     pane_hint_result ? std::move(*pane_hint_result) : std::vector<PositionHint>{};
+                const ModelineContent pane_modeline = application_.modeline(placement.window);
                 ui::Scene pane_scene = ui::compose_editor_scene(
                     {.text = pane_snapshot.content(),
                      .tokens = application_.syntax_tokens(placement.window),
@@ -363,14 +361,9 @@ private:
                      .rows = std::max(3, placement.rect.rows + 1),
                      .cols = std::max(1, placement.rect.columns),
                      .tab_width = pane_session.style().tab_width,
-                     .path = application_.path(placement.window),
-                     .dirty = application_.dirty(placement.window),
                      .revision = pane_snapshot.revision(),
-                     .style_origin = application_.style_origin(placement.window),
-                     .last_key =
-                         active ? std::string_view(application_.last_key()) : std::string_view(),
+                     .modeline = pane_modeline,
                      .cursor_shape = pane_input_state.cursor,
-                     .input_state_indicator = pane_input_state.indicator,
                      .pending_key = {},
                      .echo = {},
                      .echo_cursor_column = std::nullopt,
@@ -421,34 +414,29 @@ private:
                                                    .popup_selection = popup_selection},
                                                   chrome_view);
             popup_viewport_ = chrome_view.popup;
-            ui::Scene chrome =
-                ui::compose_editor_scene({.text = snap.content(),
-                                          .tokens = tokens(),
-                                          .signs = signs(),
-                                          .caret = session().caret(),
-                                          .selections = active_selections,
-                                          .position_hints = active_position_hints,
-                                          .rows = size.rows,
-                                          .cols = size.cols,
-                                          .tab_width = tab_width(),
-                                          .path = path(),
-                                          .dirty = dirty(),
-                                          .revision = snap.revision(),
-                                          .style_origin = application_.style_origin(),
-                                          .last_key = application_.last_key(),
-                                          .cursor_shape = active_input_state.cursor,
-                                          .input_state_indicator = active_input_state.indicator,
-                                          .pending_key = pending_command,
-                                          .echo = echo_text,
-                                          .echo_cursor_column = echo_cursor,
-                                          .echo_cursor_byte = echo_cursor_byte,
-                                          .popup_title = popup_title,
-                                          .popup_items = popup_items,
-                                          .popup_capacity = popup_capacity,
-                                          .popup_selection = popup_selection,
-                                          .popup_input = popup_input,
-                                          .popup_input_cursor = popup_input_cursor},
-                                         chrome_view);
+            ui::Scene chrome = ui::compose_editor_scene({.text = snap.content(),
+                                                         .tokens = tokens(),
+                                                         .signs = signs(),
+                                                         .caret = session().caret(),
+                                                         .selections = active_selections,
+                                                         .position_hints = active_position_hints,
+                                                         .rows = size.rows,
+                                                         .cols = size.cols,
+                                                         .tab_width = tab_width(),
+                                                         .revision = snap.revision(),
+                                                         .modeline = active_modeline,
+                                                         .cursor_shape = active_input_state.cursor,
+                                                         .pending_key = pending_command,
+                                                         .echo = echo_text,
+                                                         .echo_cursor_column = echo_cursor,
+                                                         .echo_cursor_byte = echo_cursor_byte,
+                                                         .popup_title = popup_title,
+                                                         .popup_items = popup_items,
+                                                         .popup_capacity = popup_capacity,
+                                                         .popup_selection = popup_selection,
+                                                         .popup_input = popup_input,
+                                                         .popup_input_cursor = popup_input_cursor},
+                                                        chrome_view);
             return ui::compose_editor_workspace({.rows = size.rows, .cols = size.cols},
                                                 std::move(panes), std::move(dividers),
                                                 std::move(chrome));
@@ -474,34 +462,29 @@ private:
         state.top_line_offset = view.viewport.top_line_offset;
         state.left_column = view.viewport.left_column;
         popup_viewport_ = view.popup;
-        ui::Scene scene =
-            ui::compose_editor_scene({.text = snap.content(),
-                                      .tokens = tokens(),
-                                      .signs = signs(),
-                                      .caret = session().caret(),
-                                      .selections = active_selections,
-                                      .position_hints = active_position_hints,
-                                      .rows = size.rows,
-                                      .cols = size.cols,
-                                      .tab_width = tab_width(),
-                                      .path = path(),
-                                      .dirty = dirty(),
-                                      .revision = snap.revision(),
-                                      .style_origin = application_.style_origin(),
-                                      .last_key = application_.last_key(),
-                                      .cursor_shape = active_input_state.cursor,
-                                      .input_state_indicator = active_input_state.indicator,
-                                      .pending_key = pending_command,
-                                      .echo = echo_text,
-                                      .echo_cursor_column = echo_cursor,
-                                      .echo_cursor_byte = echo_cursor_byte,
-                                      .popup_title = popup_title,
-                                      .popup_items = popup_items,
-                                      .popup_capacity = popup_capacity,
-                                      .popup_selection = popup_selection,
-                                      .popup_input = popup_input,
-                                      .popup_input_cursor = popup_input_cursor},
-                                     view);
+        ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
+                                                    .tokens = tokens(),
+                                                    .signs = signs(),
+                                                    .caret = session().caret(),
+                                                    .selections = active_selections,
+                                                    .position_hints = active_position_hints,
+                                                    .rows = size.rows,
+                                                    .cols = size.cols,
+                                                    .tab_width = tab_width(),
+                                                    .revision = snap.revision(),
+                                                    .modeline = active_modeline,
+                                                    .cursor_shape = active_input_state.cursor,
+                                                    .pending_key = pending_command,
+                                                    .echo = echo_text,
+                                                    .echo_cursor_column = echo_cursor,
+                                                    .echo_cursor_byte = echo_cursor_byte,
+                                                    .popup_title = popup_title,
+                                                    .popup_items = popup_items,
+                                                    .popup_capacity = popup_capacity,
+                                                    .popup_selection = popup_selection,
+                                                    .popup_input = popup_input,
+                                                    .popup_input_cursor = popup_input_cursor},
+                                                   view);
         return scene;
     }
 

@@ -22,10 +22,12 @@
             install-input-states!
             install-core-modes!
             install-core-resource-policies!
+            install-presentation-policies!
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!
             idle-echo-text
+            modeline-content
             open-resource!
             project-search-running?
             project-index-updated!))
@@ -87,6 +89,57 @@
                   (if hint
                       (string-append result (if (zero? (string-length result)) "" "  ") hint)
                       result)))))))
+
+(define (modeline-segment group tone weight debug? text)
+  (vector 'modeline-segment group tone weight debug? text))
+
+(define (modeline-content host context facts)
+  (let* ((buffer-name (vector-ref facts 1))
+         (resource (vector-ref facts 2))
+         (dirty? (vector-ref facts 3))
+         (line (vector-ref facts 4))
+         (column (vector-ref facts 5))
+         (line-count (vector-ref facts 6))
+         (revision (vector-ref facts 7))
+         (style-origin (vector-ref facts 8))
+         (last-key (vector-ref facts 9))
+         (input-state (vector-ref facts 10))
+         (name (if resource (path-filename host resource) buffer-name))
+         (directory (if resource (path-parent host resource) ""))
+         (percent (if (zero? line-count)
+                      ""
+                      (format #f "~a%" (min 100 (quotient (* line 100) line-count)))))
+         (segments
+          (append
+           (list (modeline-segment 'chip
+                                   (if dirty? 'critical 'faded)
+                                   'strong #f
+                                   (if dirty? "**" "RW"))
+                 (modeline-segment 'left 'strong 'strong #f name))
+           (if (zero? (string-length directory))
+               '()
+               (list (modeline-segment 'left 'faded 'regular #f directory)))
+           (if (zero? (string-length style-origin))
+               '()
+               (list (modeline-segment 'right 'faint 'regular #f style-origin)))
+           (list (modeline-segment 'right 'faded 'regular #f
+                                   (format #f "~a:~a" line column)))
+           (if (zero? (string-length percent))
+               '()
+               (list (modeline-segment 'right 'faint 'regular #f percent)))
+           (if (zero? (string-length input-state))
+               '()
+               (list (modeline-segment 'right 'salient 'strong #f input-state)))
+           (if (zero? (string-length last-key))
+               '()
+               (list (modeline-segment 'right 'salient 'regular #f last-key)))
+           (list (modeline-segment 'right 'faint 'regular #t
+                                   (format #f "r~a" revision))))))
+    (vector 'modeline (list->vector segments))))
+
+(define (install-presentation-policies! host)
+  (configure-modeline-policy! host modeline-content)
+  1)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

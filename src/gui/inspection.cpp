@@ -103,6 +103,46 @@ std::string_view vertical_anchor_name(ui::VerticalAnchor anchor) {
     return "unknown";
 }
 
+std::string_view modeline_group_name(ModelineGroup group) {
+    switch (group) {
+    case ModelineGroup::Chip:
+        return "chip";
+    case ModelineGroup::Left:
+        return "left";
+    case ModelineGroup::Right:
+        return "right";
+    }
+    return "unknown";
+}
+
+std::string_view modeline_tone_name(ModelineTone tone) {
+    switch (tone) {
+    case ModelineTone::Strong:
+        return "strong";
+    case ModelineTone::Normal:
+        return "normal";
+    case ModelineTone::Faded:
+        return "faded";
+    case ModelineTone::Faint:
+        return "faint";
+    case ModelineTone::Salient:
+        return "salient";
+    case ModelineTone::Critical:
+        return "critical";
+    }
+    return "unknown";
+}
+
+std::string_view modeline_weight_name(ModelineWeight weight) {
+    switch (weight) {
+    case ModelineWeight::Regular:
+        return "regular";
+    case ModelineWeight::Strong:
+        return "strong";
+    }
+    return "unknown";
+}
+
 std::string_view view_layer_name(ui::ViewLayer layer) {
     switch (layer) {
     case ui::ViewLayer::Grid:
@@ -184,11 +224,17 @@ std::optional<ui::Prim> inspection_primitive(const ui::Region& region, std::size
             ui::PrimKind::Text,
             std::format("{}/item:{}", region_id(region), popup->first_item + item_index)};
     }
-    if (const ui::Region::StatusContent* status = region.status();
-        status != nullptr && index == 0) {
+    if (const ModelineContent* status = region.status(); status != nullptr && index == 0) {
+        std::string text;
+        for (const ModelineSegment& segment : status->segments) {
+            if (!text.empty()) {
+                text += " ";
+            }
+            text += segment.text;
+        }
         return ui::Prim{0,
                         0,
-                        status->path,
+                        std::move(text),
                         ui::StyleClass::StatusBar,
                         false,
                         ui::PrimKind::Text,
@@ -741,20 +787,26 @@ void append_region(std::string& output, const ui::Region& region) {
         output += "null";
     }
     output += ",\"status\":";
-    if (const ui::Region::StatusContent* status = region.status()) {
-        output += "{\"path\":";
-        append_json_string(output, status->path);
-        output += ",\"dirty\":";
-        append_bool(output, status->dirty);
-        output += std::format(",\"line\":{},\"column\":{},\"line_count\":{},\"revision\":{}",
-                              status->line, status->column, status->line_count, status->revision);
-        output += ",\"style_origin\":";
-        append_json_string(output, status->style_origin);
-        output += ",\"key\":";
-        append_json_string(output, status->key);
-        output += ",\"input_state\":";
-        append_json_string(output, status->input_state);
-        output.push_back('}');
+    if (const ModelineContent* status = region.status()) {
+        output += "{\"segments\":[";
+        for (std::size_t index = 0; index < status->segments.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const ModelineSegment& segment = status->segments[index];
+            output += "{\"text\":";
+            append_json_string(output, segment.text);
+            output += ",\"group\":";
+            append_json_string(output, modeline_group_name(segment.group));
+            output += ",\"tone\":";
+            append_json_string(output, modeline_tone_name(segment.tone));
+            output += ",\"weight\":";
+            append_json_string(output, modeline_weight_name(segment.weight));
+            output += ",\"debug\":";
+            append_bool(output, segment.debug);
+            output.push_back('}');
+        }
+        output += "]}";
     } else {
         output += "null";
     }
@@ -1492,10 +1544,15 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
                 violations.emplace_back("popup selection is outside the visible viewport");
             }
         }
-        if (const ui::Region::StatusContent* status = region.status()) {
+        if (const ModelineContent* status = region.status()) {
             (void)status;
             if (region.role != ui::RegionRole::StatusBar) {
                 violations.emplace_back("structured status content is outside the status region");
+            }
+            if (std::ranges::any_of(status->segments, [](const ModelineSegment& segment) {
+                    return segment.text.empty();
+                })) {
+                violations.emplace_back("modeline segment text is empty");
             }
         }
         if (const ui::Region::EchoContent* echo = region.echo()) {
@@ -2647,6 +2704,16 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                     output << "none";
                 }
                 output << '\n';
+            }
+            if (const ModelineContent* status = region.status()) {
+                output << "      modeline segments=" << status->segments.size() << '\n';
+                for (const ModelineSegment& segment : status->segments) {
+                    output << "        " << modeline_group_name(segment.group)
+                           << " tone=" << modeline_tone_name(segment.tone)
+                           << " weight=" << modeline_weight_name(segment.weight)
+                           << (segment.debug ? " debug" : "") << " text=\""
+                           << printable(segment.text) << "\"\n";
+                }
             }
             for (std::size_t index = 0; index < region.primitives().size(); ++index) {
                 const ui::Prim& prim = region.primitives()[index];

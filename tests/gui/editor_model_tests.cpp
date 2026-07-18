@@ -205,7 +205,9 @@ TEST_CASE("scripted toy normal state drives input, cursor, and modeline policy")
     const ui::Region* status = scene.find(ui::RegionRole::StatusBar);
     REQUIRE(status != nullptr);
     REQUIRE(status->status() != nullptr);
-    CHECK(status->status()->input_state == "N");
+    CHECK(std::ranges::any_of(status->status()->segments, [](const ModelineSegment& segment) {
+        return segment.text == "N" && segment.group == ModelineGroup::Right;
+    }));
 
     model.insert_text("z");
     CHECK(model.inspect().document_bytes == 3);

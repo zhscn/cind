@@ -208,8 +208,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   状态和局部 `content_offset_rows`；单 grid 的 `grid_offset_rows` 与 pane-grid 的局部偏移
   都表示顶部行的分数偏移；scene cursor 使用 1-based 坐标。Popup region 还携带结构化 title、input、
   `input_cursor`、`first_item`、`total_items`、`selected_item` 以及可见项的 label 和 detail，
-  供 GUI 进行独立于 cell 网格的浮层布局并检查 text/list viewport；StatusBar region 同样
-  携带结构化 path、dirty、line、column、line_count、revision、style_origin 和 key。
+  供 GUI 进行独立于 cell 网格的浮层布局并检查 text/list viewport；StatusBar region 携带
+  Guile modeline policy 生成的结构化 segment，每项记录 `chip`/`left`/`right` group、语义
+  tone、字重、debug 可见性和文本。
   EchoArea region 携带完整 UTF-8 文本和可选 byte caret。每个 frontend 把这些结构化 chrome
   内容投影到自己的坐标系统；正文和 gutter 继续使用 local cell primitive。
 - `render`：视频驱动、SDL render driver、window 与 output 大小、device scale、cell

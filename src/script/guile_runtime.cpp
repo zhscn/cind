@@ -4734,6 +4734,103 @@ GuileKeymapPolicy keymap_policy_from_scheme(HostLease& host, SCM value, const ch
     return policy;
 }
 
+SCM modeline_facts_value(const ModelineFacts& facts) {
+    SCM value = scm_c_make_vector(11, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("modeline-facts"));
+    scm_c_vector_set_x(value, 1, scm_from_utf8_string(facts.buffer_name.c_str()));
+    scm_c_vector_set_x(value, 2,
+                       facts.resource.empty() ? SCM_BOOL_F
+                                              : scm_from_utf8_string(facts.resource.c_str()));
+    scm_c_vector_set_x(value, 3, scm_from_bool(facts.dirty));
+    scm_c_vector_set_x(value, 4, scm_from_uint32(facts.line));
+    scm_c_vector_set_x(value, 5, scm_from_uint32(facts.column));
+    scm_c_vector_set_x(value, 6, scm_from_uint32(facts.line_count));
+    scm_c_vector_set_x(value, 7, scm_from_uint64(facts.revision));
+    scm_c_vector_set_x(value, 8, scm_from_utf8_string(facts.style_origin.c_str()));
+    scm_c_vector_set_x(value, 9, scm_from_utf8_string(facts.last_key.c_str()));
+    scm_c_vector_set_x(value, 10, scm_from_utf8_string(facts.input_state.c_str()));
+    return value;
+}
+
+ModelineGroup modeline_group_from_scheme(SCM value, const char* caller) {
+    if (symbol_is(value, "chip")) {
+        return ModelineGroup::Chip;
+    }
+    if (symbol_is(value, "left")) {
+        return ModelineGroup::Left;
+    }
+    if (symbol_is(value, "right")) {
+        return ModelineGroup::Right;
+    }
+    scm_wrong_type_arg_msg(caller, 0, value, "chip, left, or right symbol");
+}
+
+ModelineTone modeline_tone_from_scheme(SCM value, const char* caller) {
+    if (symbol_is(value, "strong")) {
+        return ModelineTone::Strong;
+    }
+    if (symbol_is(value, "normal")) {
+        return ModelineTone::Normal;
+    }
+    if (symbol_is(value, "faded")) {
+        return ModelineTone::Faded;
+    }
+    if (symbol_is(value, "faint")) {
+        return ModelineTone::Faint;
+    }
+    if (symbol_is(value, "salient")) {
+        return ModelineTone::Salient;
+    }
+    if (symbol_is(value, "critical")) {
+        return ModelineTone::Critical;
+    }
+    scm_wrong_type_arg_msg(caller, 0, value, "modeline tone symbol");
+}
+
+ModelineWeight modeline_weight_from_scheme(SCM value, const char* caller) {
+    if (symbol_is(value, "regular")) {
+        return ModelineWeight::Regular;
+    }
+    if (symbol_is(value, "strong")) {
+        return ModelineWeight::Strong;
+    }
+    scm_wrong_type_arg_msg(caller, 0, value, "regular or strong symbol");
+}
+
+ModelineContent modeline_content_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 2 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "modeline") ||
+        !scm_is_vector(scm_c_vector_ref(value, 1))) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(modeline segments)");
+    }
+    const SCM segments = scm_c_vector_ref(value, 1);
+    ModelineContent content;
+    content.segments.reserve(scm_c_vector_length(segments));
+    for (std::size_t index = 0; index < scm_c_vector_length(segments); ++index) {
+        const SCM segment = scm_c_vector_ref(segments, index);
+        const SCM debug_value = scm_is_vector(segment) && scm_c_vector_length(segment) == 6
+                                    ? scm_c_vector_ref(segment, 4)
+                                    : SCM_UNDEFINED;
+        if (!scm_is_vector(segment) || scm_c_vector_length(segment) != 6 ||
+            !symbol_is(scm_c_vector_ref(segment, 0), "modeline-segment") ||
+            !scheme_boolean(debug_value) || !scm_is_string(scm_c_vector_ref(segment, 5))) {
+            scm_wrong_type_arg_msg(caller, 0, segment,
+                                   "#(modeline-segment group tone weight debug? text)");
+        }
+        std::string text = scheme_string(scm_c_vector_ref(segment, 5));
+        if (text.empty()) {
+            scm_misc_error(caller, "modeline segment text must not be empty", SCM_EOL);
+        }
+        content.segments.push_back(
+            {.text = std::move(text),
+             .group = modeline_group_from_scheme(scm_c_vector_ref(segment, 1), caller),
+             .tone = modeline_tone_from_scheme(scm_c_vector_ref(segment, 2), caller),
+             .weight = modeline_weight_from_scheme(scm_c_vector_ref(segment, 3), caller),
+             .debug = scheme_true(debug_value)});
+    }
+    return content;
+}
+
 struct GuileCall {
     enum class Operation : std::uint8_t {
         Load,
@@ -4746,10 +4843,12 @@ struct GuileCall {
         InstallInputStates,
         InstallModes,
         InstallResourcePolicies,
+        InstallPresentationPolicies,
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
         IdleEchoText,
+        ModelineContent,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -4789,6 +4888,8 @@ struct GuileCall {
     std::vector<InteractionCandidate> provider_candidates;
     std::vector<PositionHint> position_hints;
     GuileKeymapPolicy keymap_policy;
+    ModelineContent modeline_content;
+    const ModelineFacts* modeline_facts = nullptr;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -5178,6 +5279,11 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind core", "install-core-resource-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallPresentationPolicies:
+            call.result = scm_call_1(
+                scm_c_public_ref("cind core", "install-presentation-policies!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::OpenResource:
             call.result = scm_call_5(scm_c_public_ref("cind core", "open-resource!"), call.host,
                                      entity_id(call.window.slot, call.window.generation),
@@ -5206,6 +5312,13 @@ SCM call_body(void* data) {
                 scm_wrong_type_arg_msg("idle-echo-text", 0, call.result, "string");
             }
             call.text = scheme_string(call.result);
+            break;
+        case GuileCall::Operation::ModelineContent:
+            call.result = scm_call_3(scm_c_public_ref("cind command", "resolve-modeline-content"),
+                                     call.host, command_context_value(*call.context),
+                                     modeline_facts_value(*call.modeline_facts));
+            call.modeline_content =
+                modeline_content_from_scheme(call.result, "resolve-modeline-content");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -5928,6 +6041,23 @@ public:
         return installed;
     }
 
+    std::expected<void, std::string> install_presentation_policies() {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallPresentationPolicies;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != 1) {
+            state_->last_error = "Guile presentation policy returned an inconsistent policy count";
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     std::expected<std::size_t, std::string> install_input_states() {
         require_owner_thread();
         lease_->input_states_installed = 0;
@@ -6051,6 +6181,21 @@ public:
             return std::unexpected(result.error());
         }
         return std::move(call.text);
+    }
+
+    std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
+                                                                 const ModelineFacts& facts) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ModelineContent;
+        call.host = host_;
+        call.context = &context;
+        call.modeline_facts = &facts;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        return std::move(call.modeline_content);
     }
 
     void project_index_updated(ProjectId project) {
@@ -6242,6 +6387,10 @@ std::expected<std::size_t, std::string> GuileRuntime::install_core_resource_poli
     return impl_->install_core_resource_policies();
 }
 
+std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
+    return impl_->install_presentation_policies();
+}
+
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,
                                                              std::optional<std::uint32_t> line,
                                                              std::optional<std::uint32_t> column) {
@@ -6265,6 +6414,11 @@ GuileRuntime::base_keymap_policy(const CommandContext& context) const {
 std::expected<std::string, std::string>
 GuileRuntime::idle_echo_text(const CommandContext& context) const {
     return impl_->idle_echo_text(context);
+}
+
+std::expected<ModelineContent, std::string>
+GuileRuntime::modeline_content(const CommandContext& context, const ModelineFacts& facts) const {
+    return impl_->modeline_content(context, facts);
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

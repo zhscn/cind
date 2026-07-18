@@ -273,6 +273,8 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-keymap-policy host context)
 (base-keymap-layers host context)
 (active-keymap-layers host context)
+(configure-modeline-policy! host procedure)
+(resolve-modeline-content host context facts)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -281,6 +283,14 @@ always-active override maps. Minibuffer contexts omit editor roots. Policy resul
 names and diagnostic scopes; the native boundary validates every name and converts it to a
 `KeymapId` before updating the command loop. `base-keymap-layers` and `active-keymap-layers` expose
 name-only projections for scripted translators and self-description.
+
+A modeline policy receives the explicit host, command context, and
+`#(modeline-facts buffer-name resource-or-#f dirty? line column line-count revision style-origin
+last-key input-state)` vector. It returns `#(modeline segments)`, where each segment is
+`#(modeline-segment group tone weight debug? text)`. Groups are `chip`, `left`, and `right`; tones
+are `strong`, `normal`, `faded`, `faint`, `salient`, and `critical`; weights are `regular` and
+`strong`. `configure-modeline-policy!` replaces this procedure for one application. The native
+boundary rejects malformed or empty segments before they enter the frontend-independent Scene.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

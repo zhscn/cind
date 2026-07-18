@@ -90,6 +90,8 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
 
     const std::vector<EditorPopupItem> items(
         20, EditorPopupItem{.label = "command", .detail = "command"});
+    const ModelineContent modeline{.segments = {{.text = "sample.cc", .group = ModelineGroup::Left},
+                                                {.text = "N", .group = ModelineGroup::Right}}};
     const EditorSceneInput input{.text = text,
                                  .tokens = tokens,
                                  .signs = signs,
@@ -100,13 +102,9 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .cols = 40,
                                  .visible_text_rows = 3.5F,
                                  .tab_width = 4,
-                                 .path = "sample.cc",
-                                 .dirty = false,
                                  .revision = 0,
-                                 .style_origin = {},
-                                 .last_key = "C-x",
+                                 .modeline = modeline,
                                  .cursor_shape = CursorShape::Block,
-                                 .input_state_indicator = "N",
                                  .pending_key = "C-x",
                                  .echo = "hello",
                                  .echo_cursor_column = std::nullopt,
@@ -136,7 +134,7 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     REQUIRE(echo->echo() != nullptr);
     REQUIRE(popup->popup() != nullptr);
     CHECK(first.cursor_shape == CursorShape::Block);
-    CHECK(status->status()->input_state == "N");
+    CHECK(status->status()->segments.back().text == "N");
     CHECK(render_ansi(first).find("sample.cc") != std::string::npos);
     CHECK(render_ansi(first).find("hello") != std::string::npos);
     CHECK(render_ansi(first).find("command") != std::string::npos);
@@ -172,6 +170,8 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
         .viewport = {.top_line = 1, .top_line_offset = 0.0F, .left_column = 4},
         .popup = {},
     };
+    const ModelineContent modeline{
+        .segments = {{.text = "sample.cc", .group = ModelineGroup::Left}}};
     const Scene scene = compose_editor_scene({.text = text,
                                               .tokens = tokens,
                                               .signs = {},
@@ -182,12 +182,8 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .cols = 80,
                                               .visible_text_rows = 6.0F,
                                               .tab_width = 4,
-                                              .path = "sample.cc",
-                                              .dirty = false,
                                               .revision = 3,
-                                              .style_origin = ".clang-format",
-                                              .last_key = {},
-                                              .input_state_indicator = {},
+                                              .modeline = modeline,
                                               .pending_key = {},
                                               .echo = {},
                                               .echo_cursor_column = std::nullopt,
@@ -240,6 +236,8 @@ TEST_CASE("position hints replace document cells without changing text layout") 
     const Text text("a中b\n");
     const TokenBuffer tokens(lex(text).tokens);
     const std::vector<PositionHint> hints{{.position = TextOffset{1}, .label = "1"}};
+    const ModelineContent modeline{
+        .segments = {{.text = "sample.cc", .group = ModelineGroup::Left}}};
     const Scene scene = compose_editor_scene({.text = text,
                                               .tokens = tokens,
                                               .signs = {},
@@ -250,12 +248,8 @@ TEST_CASE("position hints replace document cells without changing text layout") 
                                               .cols = 40,
                                               .visible_text_rows = 2.0F,
                                               .tab_width = 4,
-                                              .path = "sample.cc",
-                                              .dirty = false,
                                               .revision = 1,
-                                              .style_origin = {},
-                                              .last_key = {},
-                                              .input_state_indicator = "N",
+                                              .modeline = modeline,
                                               .pending_key = {},
                                               .echo = {},
                                               .echo_cursor_column = std::nullopt,

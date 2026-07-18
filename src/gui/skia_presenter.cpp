@@ -514,25 +514,6 @@ std::optional<SkiaLogicalRect> changed_pixel_bounds(const PixelProbe& probe,
                            .height = static_cast<float>(bottom - top) / raster.device_scale};
 }
 
-std::string status_basename(std::string_view path) {
-    const std::size_t slash = path.find_last_of('/');
-    return std::string(slash == std::string_view::npos ? path : path.substr(slash + 1));
-}
-
-std::string status_directory(std::string_view path) {
-    const std::size_t slash = path.find_last_of('/');
-    return slash == std::string_view::npos ? std::string() : std::string(path.substr(0, slash));
-}
-
-std::string status_percent(const ui::Region::StatusContent& status) {
-    if (status.line_count == 0) {
-        return {};
-    }
-    const std::uint64_t percent = std::min<std::uint64_t>(
-        100, static_cast<std::uint64_t>(status.line) * 100 / status.line_count);
-    return std::format("{}%", percent);
-}
-
 void validate_layout_viewport(LogicalViewport logical, PixelViewport output) {
     if (!(output.device_scale > 0.0F)) {
         throw std::invalid_argument("SkiaPresenter received an invalid device scale");
@@ -1383,7 +1364,7 @@ struct SkiaPresenter::Impl {
         if (damage_bounds && !SkRect::Intersects(bounds, *damage_bounds)) {
             return;
         }
-        const ui::Region::StatusContent& status = *region.status();
+        const ModelineContent& status = *region.status();
 
         canvas.save();
         canvas.clipRect(bounds);
@@ -1419,70 +1400,78 @@ struct SkiaPresenter::Impl {
             }
         };
 
-        // Status chip: the only solid block in the frame. It fills the bar
-        // height and pairs a state color with canvas ink — RW on faded,
-        // ** (dirty) on critical; an inactive pane's chip drops to selection.
-        const ShapedText chip_text = shape_text(status.dirty ? "**" : "RW", strong_font);
-        const SkRect chip =
-            SkRect::MakeXYWH(bounds.left(), bounds.top(), chip_text.advance + 2.0F * chip_padding_x,
-                             bounds.height());
-        SkPaint chip_fill;
-        chip_fill.setAntiAlias(false);
-        chip_fill.setColor(color(!region.active ? theme.selection
-                                 : status.dirty ? theme.critical
-                                                : theme.faded));
-        canvas.drawRect(chip, chip_fill);
-        draw_text(chip_text, SkPoint::Make(chip.left() + chip_padding_x, text_top),
-                  region.active ? theme.canvas : theme.faded);
+        const auto segment_color = [&](ModelineTone tone) {
+            if (!region.active) {
+                return theme.faint;
+            }
+            switch (tone) {
+            case ModelineTone::Strong:
+                return theme.strong;
+            case ModelineTone::Normal:
+                return theme.text;
+            case ModelineTone::Faded:
+                return theme.faded;
+            case ModelineTone::Faint:
+                return theme.faint;
+            case ModelineTone::Salient:
+                return theme.salient;
+            case ModelineTone::Critical:
+                return theme.critical;
+            }
+            return theme.text;
+        };
+        const auto segment_font = [&](const ModelineSegment& segment) -> const SkFont& {
+            return segment.weight == ModelineWeight::Strong ? strong_font : font;
+        };
+        const auto visible = [&](const ModelineSegment& segment) {
+            return !segment.debug || show_debug_status;
+        };
+
+        SkRect chip = SkRect::MakeXYWH(bounds.left(), bounds.top(), 0.0F, bounds.height());
+        const auto chip_segment = std::ranges::find_if(status.segments, [&](const auto& segment) {
+            return segment.group == ModelineGroup::Chip && visible(segment);
+        });
+        if (chip_segment != status.segments.end()) {
+            const ShapedText chip_text =
+                shape_text(chip_segment->text, segment_font(*chip_segment));
+            chip = SkRect::MakeXYWH(bounds.left(), bounds.top(),
+                                    chip_text.advance + 2.0F * chip_padding_x, bounds.height());
+            SkPaint chip_fill;
+            chip_fill.setAntiAlias(false);
+            chip_fill.setColor(
+                color(region.active ? segment_color(chip_segment->tone) : theme.selection));
+            canvas.drawRect(chip, chip_fill);
+            draw_text(chip_text, SkPoint::Make(chip.left() + chip_padding_x, text_top),
+                      region.active ? theme.canvas : theme.faded);
+        }
 
         // The right group is placed first so the left group can clip against
         // it on narrow viewports.
         float right = bounds.right() - footer_padding_x;
-        struct RightText {
-            std::string text;
-            std::uint32_t color = 0;
-            float trailing_gap = 0.0F;
-        };
-        const auto draw_right = [&](RightText segment) {
-            if (segment.text.empty()) {
-                return;
-            }
-            const ShapedText shaped = shape_text(std::move(segment.text));
+        const auto draw_right = [&](const ModelineSegment& segment) {
+            const ShapedText shaped = shape_text(segment.text, segment_font(segment));
             right -= shaped.advance;
-            draw_text(shaped, SkPoint::Make(right, text_top),
-                      region.active ? segment.color : theme.faint);
-            right -= segment.trailing_gap;
+            draw_text(shaped, SkPoint::Make(right, text_top), segment_color(segment.tone));
+            right -= segment_gap;
         };
-        if (show_debug_status) {
-            draw_right({.text = std::format("r{}", status.revision),
-                        .color = theme.faint,
-                        .trailing_gap = footer_padding_x});
-        }
-        if (!status.input_state.empty()) {
-            draw_right({.text = status.input_state,
-                        .color = theme.salient,
-                        .trailing_gap = footer_padding_x});
-        }
-        draw_right({.text = status_percent(status),
-                    .color = theme.faint,
-                    .trailing_gap = footer_padding_x});
-        draw_right({.text = std::format("{}:{}", status.line, status.column),
-                    .color = theme.faded,
-                    .trailing_gap = segment_gap});
-        if (!status.style_origin.empty()) {
-            draw_right(
-                {.text = status.style_origin, .color = theme.faint, .trailing_gap = segment_gap});
+        for (auto segment = status.segments.rbegin(); segment != status.segments.rend();
+             ++segment) {
+            if (segment->group == ModelineGroup::Right && visible(*segment)) {
+                draw_right(*segment);
+            }
         }
 
         canvas.save();
         canvas.clipRect(SkRect::MakeLTRB(chip.right(), bounds.top(), right, bounds.bottom()));
         float x = chip.right() + footer_padding_x;
-        const ShapedText shaped_name = shape_text(status_basename(status.path), strong_font);
-        draw_text(shaped_name, SkPoint::Make(x, text_top),
-                  region.active ? theme.strong : theme.faded);
-        x += shaped_name.advance + segment_gap + 2.0F;
-        draw_text(shape_text(status_directory(status.path)), SkPoint::Make(x, text_top),
-                  region.active ? theme.faded : theme.faint);
+        for (const ModelineSegment& segment : status.segments) {
+            if (segment.group != ModelineGroup::Left || !visible(segment)) {
+                continue;
+            }
+            const ShapedText shaped = shape_text(segment.text, segment_font(segment));
+            draw_text(shaped, SkPoint::Make(x, text_top), segment_color(segment.tone));
+            x += shaped.advance + segment_gap;
+        }
         canvas.restore();
         canvas.restore();
 
@@ -2699,8 +2688,8 @@ void SkiaPresenter::render_damage(const SkiaFrameLayout& layout, int pixel_width
 }
 
 std::optional<SkiaGridTranslation> SkiaPresenter::render_grid_translation_damage(
-    const SkiaFrameLayout& layout, const ui::SceneDamage& damage, int pixel_width,
-    int pixel_height, void* pixels, std::size_t row_bytes, float device_scale) {
+    const SkiaFrameLayout& layout, const ui::SceneDamage& damage, int pixel_width, int pixel_height,
+    void* pixels, std::size_t row_bytes, float device_scale) {
     const SkiaFrameLayout::Storage& storage = checked_layout(layout);
     validate_layout_viewport(
         {.width = storage.viewport_width, .height = storage.viewport_height},
@@ -2719,17 +2708,16 @@ std::optional<SkiaGridTranslation> SkiaPresenter::render_grid_translation_damage
         throw std::invalid_argument("SkiaPresenter received an invalid pixel buffer");
     }
 
-    const float output_translation = damage.grid_translation_rows *
-                                     static_cast<float>(impl_->cell_height) * device_scale;
+    const float output_translation =
+        damage.grid_translation_rows * static_cast<float>(impl_->cell_height) * device_scale;
     const int output_rows = static_cast<int>(std::lround(output_translation));
     if (output_rows == 0 ||
         std::abs(output_translation - static_cast<float>(output_rows)) > 0.001F) {
         return std::nullopt;
     }
     const float logical_grid_bottom = storage.pixel_layout->vertical().grid_clip_bottom();
-    const int grid_output_bottom =
-        std::clamp(static_cast<int>(std::ceil(logical_grid_bottom * device_scale)), 0,
-                   pixel_height);
+    const int grid_output_bottom = std::clamp(
+        static_cast<int>(std::ceil(logical_grid_bottom * device_scale)), 0, pixel_height);
     if (std::abs(output_rows) >= grid_output_bottom) {
         return std::nullopt;
     }

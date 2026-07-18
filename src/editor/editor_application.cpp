@@ -473,6 +473,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     register_commands();
     register_interaction_providers();
     register_keymaps();
+    register_presentation_policies();
     if (spec.init_file) {
         if (std::expected<void, std::string> loaded = guile_.load_extension(*spec.init_file);
             !loaded) {
@@ -669,6 +670,32 @@ std::string EditorApplication::echo_text() {
     }
     std::expected<std::string, std::string> text = guile_.idle_echo_text(command_context());
     return text ? std::move(*text) : std::string();
+}
+
+ModelineContent EditorApplication::modeline(WindowId window_id) {
+    EditSession& active = session(window_id);
+    const DocumentSnapshot snapshot = active.snapshot();
+    const Text& text = snapshot.content();
+    const LinePosition position = text.position(active.caret());
+    const Buffer& buffer = active.buffer();
+    const View& view = active.view();
+    CommandContext context(runtime_, window_id, buffer.id(), view.id());
+    const InputStateRegistry::Definition& state = input_state(window_id);
+    const ModelineFacts facts{
+        .buffer_name = buffer.name(),
+        .resource = buffer.resource_uri().value_or(std::string()),
+        .dirty = buffer.modified(),
+        .line = position.line + 1,
+        .column = static_cast<std::uint32_t>(
+            ui::display_column(text, active.caret(), active.style().tab_width) + 1),
+        .line_count = text.line_count(),
+        .revision = snapshot.revision(),
+        .style_origin = style_origin(window_id),
+        .last_key = window_id == active_window_ ? last_key_ : std::string(),
+        .input_state = state.indicator,
+    };
+    std::expected<ModelineContent, std::string> content = guile_.modeline_content(context, facts);
+    return content ? std::move(*content) : ModelineContent{};
 }
 
 bool EditorApplication::execute_command(std::string_view name,
@@ -1411,6 +1438,14 @@ void EditorApplication::register_interaction_providers() {
 
 void EditorApplication::register_keymaps() {
     refresh_default_keymap();
+}
+
+void EditorApplication::register_presentation_policies() {
+    if (std::expected<void, std::string> installed = guile_.install_presentation_policies();
+        !installed) {
+        throw std::runtime_error(
+            std::format("Guile presentation policy failed: {}", installed.error()));
+    }
 }
 
 std::vector<KeymapLayer> EditorApplication::base_keymap_layers(WindowId window_id) {

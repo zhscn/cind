@@ -250,15 +250,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                                      span_cols});
     }
 
-    status.set_status({.path = std::string(input.path),
-                       .dirty = input.dirty,
-                       .line = caret_position.line + 1,
-                       .column = static_cast<std::uint32_t>(caret_column + 1),
-                       .line_count = input.text.line_count(),
-                       .revision = input.revision,
-                       .style_origin = std::string(input.style_origin),
-                       .key = std::string(input.last_key),
-                       .input_state = std::string(input.input_state_indicator)});
+    status.set_status(input.modeline);
     echo.set_echo({
         .text = std::string(input.echo),
         .cursor_byte = input.echo_cursor_byte

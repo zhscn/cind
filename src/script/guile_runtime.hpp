@@ -5,6 +5,7 @@
 #include "editor/ids.hpp"
 #include "editor/selection.hpp"
 #include "editor/window.hpp"
+#include "presentation/modeline.hpp"
 #include "script/async_host.hpp"
 
 #include <cstddef>
@@ -217,6 +218,7 @@ public:
     std::expected<std::size_t, std::string> install_input_states();
     std::expected<std::size_t, std::string> install_core_modes();
     std::expected<std::size_t, std::string> install_core_resource_policies();
+    std::expected<void, std::string> install_presentation_policies();
     std::expected<void, std::string>
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,
@@ -228,6 +230,8 @@ public:
     std::expected<GuileKeymapPolicy, std::string>
     base_keymap_policy(const CommandContext& context) const;
     std::expected<std::string, std::string> idle_echo_text(const CommandContext& context) const;
+    std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
+                                                                 const ModelineFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;
