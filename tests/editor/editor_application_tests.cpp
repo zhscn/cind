@@ -1382,6 +1382,9 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(project.roots() == std::vector<std::string>{root.string()});
         CHECK(project.files().size() == 2);
 
+        send_keys(application, "C-x p f");
+        REQUIRE(application.interaction().state() != nullptr);
+        CHECK(application.interaction().state()->request.provider == "project-files");
         {
             std::ofstream output(root / "src" / "watched.cpp");
             output << "int watched() {}\n";
@@ -1397,13 +1400,9 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             (void)application.poll_background_work();
         }
         CHECK(application.runtime().projects().get(*project_id).files().size() == 3);
-
-        send_keys(application, "C-x p f");
-        REQUIRE(application.interaction().state() != nullptr);
-        CHECK(application.interaction().state()->request.provider == "project-files");
         CHECK(std::ranges::any_of(application.interaction().state()->candidates,
                                   [](const InteractionCandidate& candidate) {
-                                      return candidate.label == "src/other.cpp";
+                                      return candidate.label == "src/watched.cpp";
                                   }));
         application.insert_text("other");
         send_keys(application, "RET");

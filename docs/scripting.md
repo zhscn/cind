@@ -153,8 +153,12 @@ The native module exports:
 (display-generated-buffer! host window-id buffer-name text)
 (evaluate-scheme! host source source-name)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
+(interaction-provider host)
+(interaction-origin-project host)
+(refresh-interaction! host)
 (set-message! host message)
-(ensure-project-index! host project-id)
+(project-index-state host project-id)
+(request-project-index! host project-id)
 (normalize-resource-path host path)
 (set-buffer-resource! host buffer-id path)
 (rename-buffer! host buffer-id name)
@@ -535,8 +539,12 @@ commands inspect buffer state and own the quit confirmation interaction before i
 mechanism.
 
 `project-id-by-root` and `create-project!` expose registry identity and validated construction;
-`set-buffer-project!` applies the chosen attachment. `ensure-project-index!` idempotently schedules
-the native asynchronous indexer for a project. `(cind core)` implements `open-resource!` by
+`set-buffer-project!` applies the chosen attachment. `project-index-state` returns
+`#(revision indexing? error-or-#f)`, while `request-project-index!` submits an explicit refresh to
+the native scan/watch mechanism. `(cind core)` requests an initial index only when the project has
+no published revision and no scan in progress. It handles index-update events by refreshing a live
+`project-files` interaction whose origin belongs to that project. `(cind core)` implements
+`open-resource!` by
 normalizing and deduplicating the path, snapshotting mode and provider policy, scheduling file,
 clang-format and project-discovery tasks, and composing their results into buffer creation,
 project attachment, window presentation, startup-placeholder cleanup and user feedback. Duplicate

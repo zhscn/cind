@@ -15,9 +15,9 @@ namespace cind {
 
 class EditorRuntime;
 
-// Owns project attachment, asynchronous file-index refreshes and native
-// directory watches. ProjectRegistry remains the main-thread domain store;
-// Scheme policy creates and attaches projects before requesting indexing.
+// Owns asynchronous file-index refreshes and native directory watches.
+// ProjectRegistry remains the main-thread domain store; Scheme policy creates
+// and attaches projects, requests initial indexing and reacts to update events.
 class ProjectService {
 public:
     using IndexUpdated = std::function<void(ProjectId)>;

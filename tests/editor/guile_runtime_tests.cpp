@@ -872,6 +872,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .type_text = {},
          .page_rows = {},
          .interaction_status = {},
+         .interaction_provider = {},
+         .interaction_origin_project = {},
+         .refresh_interaction = {},
          .submit_interaction = {},
          .move_interaction_candidate = {},
          .move_interaction_history = {},
@@ -882,7 +885,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .set_location_navigation = {},
          .position_buffer_view = {},
          .set_message = [&](std::string value) { message = std::move(value); },
-         .ensure_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
+         .request_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
              project_index_requested = true;
              return {};
@@ -1577,8 +1580,19 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(find_file_request->provider == "project-files");
     CHECK(runtime.commands().definition(find_file_request->accept_command).name ==
           "project.find-file.accept");
+    CHECK_FALSE(project_index_requested);
+
+    const ProjectId unindexed_project = runtime.projects().create({.name = "unindexed",
+                                                                   .roots = {"/tmp/unindexed"},
+                                                                   .discovery_provider = {},
+                                                                   .discovery_marker = {}});
+    runtime.projects().assign(buffer, unindexed_project);
+    const CommandResult unindexed_find_file = runtime.commands().invoke(project_find_file, context);
+    REQUIRE(unindexed_find_file.has_value());
     REQUIRE(project_index_requested);
-    CHECK(indexed_project == project);
+    CHECK(indexed_project == unindexed_project);
+    runtime.projects().assign(buffer, project);
+    project_index_requested = false;
 
     const std::size_t async_before_project_file = async_requests.size();
     const CommandResult file_accepted = runtime.commands().invoke(

@@ -84,7 +84,9 @@ performs the atomic file replacement as one worker task. Its completion marks th
 save point. Edits made while the write is in progress stay modified, so asynchronous completion
 cannot mark newer content as saved.
 
-Project indexing uses worker tasks, directory watches and generation checks. Scheme project-search
+Project indexing uses worker tasks, directory watches and generation checks. The native service
+publishes immutable registry snapshots and emits an index-updated event; Scheme decides when an
+initial index is needed and which interaction should refresh in response. Scheme project-search
 policy runs `rg` through the process service, interprets tool exit status and schedules the typed
 ripgrep parser. Native parsing runs on the worker pool; its Scheme completion creates and presents
 the read-only location-list buffer on the editor thread.

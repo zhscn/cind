@@ -25,6 +25,11 @@ one main-thread update. Each update increments `index_revision`; `indexing` and 
 describe the current refresh state. A scan is limited to 200,000 files and skips version-control
 metadata, dependency caches and conventional build-output directories.
 
+Scheme policy reads the project index state and requests the initial scan when no revision exists.
+Index completion is delivered back to Scheme as a project event. A live `project-files` picker is
+refreshed only when its origin buffer belongs to the updated project; the native service does not
+encode interaction-provider policy.
+
 After publishing an index, the service retains libuv directory watches for the indexed directory
 set. Existing watches survive refreshes, removed directories lose their watches, and newly indexed
 directories receive new watches. Starting a new watch requests a verification scan, closing the

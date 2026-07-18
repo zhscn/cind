@@ -97,6 +97,19 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .picker = state != nullptr && state->request.kind == InteractionKind::Picker,
                        .has_history = state != nullptr && !state->request.history.empty()};
                },
+           .interaction_provider = [this]() -> std::optional<std::string> {
+               const InteractionState* state = interaction_.state();
+               return state != nullptr ? std::optional(state->request.provider) : std::nullopt;
+           },
+           .interaction_origin_project = [this]() -> std::optional<ProjectId> {
+               const InteractionState* state = interaction_.state();
+               if (state == nullptr) {
+                   return std::nullopt;
+               }
+               const Buffer* buffer = runtime_.buffers().try_get(state->origin.buffer);
+               return buffer != nullptr ? buffer->project_id() : std::nullopt;
+           },
+           .refresh_interaction = [this] { interaction_.refresh_candidates(); },
            .submit_interaction = [this]() -> std::expected<CommandDispatch, std::string> {
                std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
                if (!submission) {
@@ -180,12 +193,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
            },
            .set_message = [this](std::string message) { message_ = std::move(message); },
-           .ensure_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
+           .request_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
                try {
-                   const Project& definition = runtime_.projects().get(project);
-                   if (definition.index_revision() == 0 && !definition.indexing()) {
-                       project_service_->request_index(project);
-                   }
+                   (void)runtime_.projects().get(project);
+                   project_service_->request_index(project);
                    return {};
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
@@ -466,11 +477,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     interaction_.attach_async_runtime(async_runtime_);
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
-            if (InteractionState* active = interaction_.state();
-                active != nullptr && active->request.provider == "project-files" &&
-                session().buffer().project_id() == project) {
-                interaction_.refresh_candidates();
-            }
+            guile_.project_index_updated(project);
         });
     register_input_states();
     register_modes();

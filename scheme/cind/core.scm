@@ -26,7 +26,8 @@
             define-minor-mode!
             install-default-keymaps!
             open-resource!
-            project-search-running?))
+            project-search-running?
+            project-index-updated!))
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -272,6 +273,17 @@
                               (let ((name (path-filename host root)))
                                 (if (= (string-length name) 0) root name))
                               (vector root) provider marker)))))
+
+(define (ensure-project-index! host project)
+  (let ((state (project-index-state host project)))
+    (when (and (= (vector-ref state 0) 0)
+               (not (vector-ref state 1)))
+      (request-project-index! host project))))
+
+(define (project-index-updated! host project)
+  (when (and (equal? (interaction-provider host) "project-files")
+             (equal? (interaction-origin-project host) project))
+    (refresh-interaction! host)))
 
 (define (release-startup-placeholder! host buffer)
   (let ((placeholder (startup-placeholder host)))

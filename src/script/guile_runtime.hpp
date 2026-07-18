@@ -88,6 +88,9 @@ struct GuileHostServices {
     std::function<void(ViewId, std::string_view)> type_text;
     std::function<int()> page_rows;
     std::function<GuileInteractionStatus()> interaction_status;
+    std::function<std::optional<std::string>()> interaction_provider;
+    std::function<std::optional<ProjectId>()> interaction_origin_project;
+    std::function<void()> refresh_interaction;
     std::function<std::expected<CommandDispatch, std::string>()> submit_interaction;
     std::function<bool(int)> move_interaction_candidate;
     std::function<bool(int)> move_interaction_history;
@@ -101,7 +104,7 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
     std::function<void(std::string)> set_message;
-    std::function<std::expected<void, std::string>(ProjectId)> ensure_project_index;
+    std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
     std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
     std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
     std::function<void(BufferId)> abort_buffer_save;
@@ -207,6 +210,7 @@ public:
                   std::optional<std::uint32_t> line = std::nullopt,
                   std::optional<std::uint32_t> column = std::nullopt);
     bool project_search_running() const;
+    void project_index_updated(ProjectId project);
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

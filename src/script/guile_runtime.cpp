@@ -3422,26 +3422,47 @@ SCM set_message(SCM host_object, SCM message_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
-SCM ensure_project_index(SCM host_object, SCM project_value) {
-    HostLease& host = require_host(host_object, "ensure-project-index!");
+SCM project_index_state(SCM host_object, SCM project_value) {
+    HostLease& host = require_host(host_object, "project-index-state");
     const ProjectId project =
-        entity_id_from_scheme<ProjectTag>(project_value, "ensure-project-index!", 2);
-    if (!host.services.ensure_project_index) {
-        scm_misc_error("ensure-project-index!", "project-index capability is unavailable", SCM_EOL);
+        entity_id_from_scheme<ProjectTag>(project_value, "project-index-state", 2);
+    try {
+        const Project& definition = host.runtime->projects().get(project);
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_uint64(definition.index_revision()));
+        scm_c_vector_set_x(result, 1, scm_from_bool(definition.indexing()));
+        scm_c_vector_set_x(result, 2,
+                           definition.index_error()
+                               ? scm_from_utf8_string(definition.index_error()->c_str())
+                               : SCM_BOOL_F);
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("project-index-state", exception.what());
+    } catch (...) {
+        scm_misc_error("project-index-state", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM request_project_index(SCM host_object, SCM project_value) {
+    HostLease& host = require_host(host_object, "request-project-index!");
+    const ProjectId project =
+        entity_id_from_scheme<ProjectTag>(project_value, "request-project-index!", 2);
+    if (!host.services.request_project_index) {
+        scm_misc_error("request-project-index!", "project-index capability is unavailable",
+                       SCM_EOL);
     }
     try {
         const std::expected<void, std::string> requested =
-            host.services.ensure_project_index(project);
+            host.services.request_project_index(project);
         if (!requested) {
-            raise_host_error("ensure-project-index!", requested.error());
+            raise_host_error("request-project-index!", requested.error());
         }
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("ensure-project-index!", exception.what());
+        raise_host_error("request-project-index!", exception.what());
     } catch (...) {
-        scm_misc_error("ensure-project-index!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("request-project-index!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4066,6 +4087,53 @@ SCM interaction_status(SCM host_object) {
     return SCM_BOOL_F;
 }
 
+SCM interaction_provider(SCM host_object) {
+    HostLease& host = require_host(host_object, "interaction-provider");
+    try {
+        const std::optional<std::string> provider = host.services.interaction_provider
+                                                        ? host.services.interaction_provider()
+                                                        : std::nullopt;
+        return provider ? scm_from_utf8_string(provider->c_str()) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("interaction-provider", exception.what());
+    } catch (...) {
+        scm_misc_error("interaction-provider", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM interaction_origin_project(SCM host_object) {
+    HostLease& host = require_host(host_object, "interaction-origin-project");
+    try {
+        const std::optional<ProjectId> project = host.services.interaction_origin_project
+                                                     ? host.services.interaction_origin_project()
+                                                     : std::nullopt;
+        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("interaction-origin-project", exception.what());
+    } catch (...) {
+        scm_misc_error("interaction-origin-project", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM refresh_interaction(SCM host_object) {
+    HostLease& host = require_host(host_object, "refresh-interaction!");
+    if (!host.services.refresh_interaction) {
+        scm_misc_error("refresh-interaction!", "interaction refresh capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        host.services.refresh_interaction();
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("refresh-interaction!", exception.what());
+    } catch (...) {
+        scm_misc_error("refresh-interaction!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM submit_interaction(SCM host_object) {
     HostLease& host = require_host(host_object, "submit-interaction!");
     if (!host.services.submit_interaction) {
@@ -4451,6 +4519,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
     (void)scm_c_define_gsubr("interaction-status", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_status));
+    (void)scm_c_define_gsubr("interaction-provider", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_provider));
+    (void)scm_c_define_gsubr("interaction-origin-project", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_origin_project));
+    (void)scm_c_define_gsubr("refresh-interaction!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(refresh_interaction));
     (void)scm_c_define_gsubr("submit-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(submit_interaction));
     (void)scm_c_define_gsubr("move-interaction-candidate!", 2, 0, 0,
@@ -4469,8 +4543,10 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("position-buffer-view!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(position_buffer_view));
     (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
-    (void)scm_c_define_gsubr("ensure-project-index!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(ensure_project_index));
+    (void)scm_c_define_gsubr("project-index-state", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(project_index_state));
+    (void)scm_c_define_gsubr("request-project-index!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(request_project_index));
     (void)scm_c_define_gsubr("normalize-resource-path", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(normalize_resource));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
@@ -4550,10 +4626,11 @@ void initialize_host_module(void*) {
         "display-buffer!", "display-generated-buffer!", "evaluate-scheme!", "move-caret-to-line!",
         "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
         "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "interaction-provider", "interaction-origin-project", "refresh-interaction!",
         "submit-interaction!", "move-interaction-candidate!", "move-interaction-history!",
         "cancel-interaction!", "cancel-pending-input!", "view-position", "location-navigation",
-        "set-location-navigation!", "position-buffer-view!", "set-message!",
-        "ensure-project-index!", "normalize-resource-path", "set-buffer-resource!",
+        "set-location-navigation!", "position-buffer-view!", "set-message!", "project-index-state",
+        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
         "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
@@ -4599,6 +4676,7 @@ struct GuileCall {
         InstallResourcePolicies,
         OpenResource,
         ProjectSearchRunning,
+        ProjectIndexUpdated,
         StopAres,
         InvokeCommand,
         InvokeProvider,
@@ -4622,6 +4700,7 @@ struct GuileCall {
     std::size_t count = 0;
     std::string query;
     WindowId window;
+    ProjectId project;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
     const CommandContext* context = nullptr;
@@ -5033,6 +5112,11 @@ SCM call_body(void* data) {
             call.result =
                 scm_call_1(scm_c_public_ref("cind core", "project-search-running?"), call.host);
             call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::ProjectIndexUpdated:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind core", "project-index-updated!"), call.host,
+                           entity_id(call.project.slot, call.project.generation));
             break;
         case GuileCall::Operation::StopAres:
             call.result = scm_call_1(scm_c_public_ref("cind ares", "stop-host-ares!"), call.host);
@@ -5842,6 +5926,17 @@ public:
         return call.enabled;
     }
 
+    void project_index_updated(ProjectId project) {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::ProjectIndexUpdated;
+        call.host = host_;
+        call.project = project;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+        }
+    }
+
     std::expected<void, std::string> load_extension(const std::string& input_path) {
         require_owner_thread();
         std::error_code error;
@@ -6028,6 +6123,10 @@ std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, st
 
 bool GuileRuntime::project_search_running() const {
     return impl_->project_search_running();
+}
+
+void GuileRuntime::project_index_updated(ProjectId project) {
+    impl_->project_index_updated(project);
 }
 
 std::expected<void, std::string> GuileRuntime::load_extension(const std::string& path) {
