@@ -252,58 +252,11 @@ private:
     ui::Scene compose() {
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
-        const InteractionState* interaction = application_.interaction().state();
-        const std::string interaction_input =
-            interaction != nullptr ? application_.interaction().input_text() : std::string();
-        const std::size_t interaction_caret = application_.interaction().input_caret().value;
-        const bool picker_active =
-            interaction != nullptr && interaction->request.kind == InteractionKind::Picker;
-        const bool any_prompt = interaction != nullptr;
-        const std::string echo_text = picker_active ? std::string()
-                                      : interaction
-                                          ? interaction->request.prompt + interaction_input
-                                          : application_.echo_text();
-        std::optional<int> echo_cursor;
-        std::optional<std::size_t> echo_cursor_byte;
-        if (interaction != nullptr && !picker_active) {
-            echo_cursor =
-                ui::display_width(interaction->request.prompt) +
-                ui::display_width(std::string_view(interaction_input).substr(0, interaction_caret));
-            echo_cursor_byte = interaction->request.prompt.size() + interaction_caret;
-        } else if (any_prompt) {
-            echo_cursor = ui::display_width(echo_text);
-            echo_cursor_byte = echo_text.size();
-        }
-        const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
-        std::vector<ui::EditorPopupItem> popup_items;
-        std::string popup_title;
-        std::optional<std::size_t> popup_selection;
-        std::optional<std::string_view> popup_input;
-        std::optional<std::size_t> popup_input_cursor;
-        std::size_t popup_capacity = 0;
-        if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
-            popup_capacity = ui::editor_picker_capacity;
-            popup_title = interaction->request.prompt;
-            popup_selection = interaction->candidates.empty()
-                                  ? std::nullopt
-                                  : std::optional<std::size_t>(interaction->selected);
-            popup_items.reserve(interaction->candidates.size());
-            popup_input = interaction_input;
-            popup_input_cursor = interaction_caret;
-            for (const InteractionCandidate& candidate : interaction->candidates) {
-                popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
-            }
-        } else if (!key_hints.empty()) {
-            popup_capacity = key_hints.size();
-            popup_title = application_.pending_key_sequence_text() + " …";
-            popup_items.reserve(key_hints.size());
-            for (const KeyBindingHint& hint : key_hints) {
-                const std::string_view detail = hint.detail.empty() && hint.prefix
-                                                    ? std::string_view("prefix")
-                                                    : std::string_view(hint.detail);
-                popup_items.push_back({.label = hint.key, .detail = detail});
-            }
-        }
+        const ChromeContent chrome_content = application_.chrome_content();
+        const std::optional<std::string_view> popup_input =
+            chrome_content.popup_input
+                ? std::optional<std::string_view>(*chrome_content.popup_input)
+                : std::nullopt;
         const InputStateRegistry::Definition& active_input_state = application_.input_state();
         const std::vector<TextRange> active_selections = session().selected_ranges();
         PositionHintProviderResult active_hint_result =
@@ -311,7 +264,6 @@ private:
         const std::vector<PositionHint> active_position_hints =
             active_hint_result ? std::move(*active_hint_result) : std::vector<PositionHint>{};
         const ModelineContent active_modeline = application_.modeline(application_.window_id());
-        const std::string pending_command = application_.pending_command_text();
         if (application_.window_layout().leaves().size() > 1) {
             const WindowPartition partition =
                 application_.window_layout().partition(size.rows - 1, size.cols);
@@ -403,40 +355,42 @@ private:
                              .left_column = active_state.left_column},
                 .popup = popup_viewport_,
             };
-            chrome_view = ui::layout_editor_scene({.text = snap.content(),
-                                                   .caret = session().caret(),
-                                                   .rows = size.rows,
-                                                   .cols = size.cols,
-                                                   .tab_width = tab_width(),
-                                                   .reveal_caret = false,
-                                                   .popup_item_count = popup_items.size(),
-                                                   .popup_capacity = popup_capacity,
-                                                   .popup_selection = popup_selection},
-                                                  chrome_view);
+            chrome_view =
+                ui::layout_editor_scene({.text = snap.content(),
+                                         .caret = session().caret(),
+                                         .rows = size.rows,
+                                         .cols = size.cols,
+                                         .tab_width = tab_width(),
+                                         .reveal_caret = false,
+                                         .popup_item_count = chrome_content.popup_items.size(),
+                                         .popup_capacity = chrome_content.popup_capacity,
+                                         .popup_selection = chrome_content.popup_selection},
+                                        chrome_view);
             popup_viewport_ = chrome_view.popup;
-            ui::Scene chrome = ui::compose_editor_scene({.text = snap.content(),
-                                                         .tokens = tokens(),
-                                                         .signs = signs(),
-                                                         .caret = session().caret(),
-                                                         .selections = active_selections,
-                                                         .position_hints = active_position_hints,
-                                                         .rows = size.rows,
-                                                         .cols = size.cols,
-                                                         .tab_width = tab_width(),
-                                                         .revision = snap.revision(),
-                                                         .modeline = active_modeline,
-                                                         .cursor_shape = active_input_state.cursor,
-                                                         .pending_key = pending_command,
-                                                         .echo = echo_text,
-                                                         .echo_cursor_column = echo_cursor,
-                                                         .echo_cursor_byte = echo_cursor_byte,
-                                                         .popup_title = popup_title,
-                                                         .popup_items = popup_items,
-                                                         .popup_capacity = popup_capacity,
-                                                         .popup_selection = popup_selection,
-                                                         .popup_input = popup_input,
-                                                         .popup_input_cursor = popup_input_cursor},
-                                                        chrome_view);
+            ui::Scene chrome =
+                ui::compose_editor_scene({.text = snap.content(),
+                                          .tokens = tokens(),
+                                          .signs = signs(),
+                                          .caret = session().caret(),
+                                          .selections = active_selections,
+                                          .position_hints = active_position_hints,
+                                          .rows = size.rows,
+                                          .cols = size.cols,
+                                          .tab_width = tab_width(),
+                                          .revision = snap.revision(),
+                                          .modeline = active_modeline,
+                                          .cursor_shape = active_input_state.cursor,
+                                          .pending_key = chrome_content.pending_key,
+                                          .echo = chrome_content.echo,
+                                          .echo_cursor_column = chrome_content.echo_cursor_column,
+                                          .echo_cursor_byte = chrome_content.echo_cursor_byte,
+                                          .popup_title = chrome_content.popup_title,
+                                          .popup_items = chrome_content.popup_items,
+                                          .popup_capacity = chrome_content.popup_capacity,
+                                          .popup_selection = chrome_content.popup_selection,
+                                          .popup_input = popup_input,
+                                          .popup_input_cursor = chrome_content.popup_input_cursor},
+                                         chrome_view);
             return ui::compose_editor_workspace({.rows = size.rows, .cols = size.cols},
                                                 std::move(panes), std::move(dividers),
                                                 std::move(chrome));
@@ -454,37 +408,38 @@ private:
                                         .cols = size.cols,
                                         .tab_width = tab_width(),
                                         .reveal_caret = true,
-                                        .popup_item_count = popup_items.size(),
-                                        .popup_capacity = popup_capacity,
-                                        .popup_selection = popup_selection},
+                                        .popup_item_count = chrome_content.popup_items.size(),
+                                        .popup_capacity = chrome_content.popup_capacity,
+                                        .popup_selection = chrome_content.popup_selection},
                                        view);
         state.top_line = view.viewport.top_line;
         state.top_line_offset = view.viewport.top_line_offset;
         state.left_column = view.viewport.left_column;
         popup_viewport_ = view.popup;
-        ui::Scene scene = ui::compose_editor_scene({.text = snap.content(),
-                                                    .tokens = tokens(),
-                                                    .signs = signs(),
-                                                    .caret = session().caret(),
-                                                    .selections = active_selections,
-                                                    .position_hints = active_position_hints,
-                                                    .rows = size.rows,
-                                                    .cols = size.cols,
-                                                    .tab_width = tab_width(),
-                                                    .revision = snap.revision(),
-                                                    .modeline = active_modeline,
-                                                    .cursor_shape = active_input_state.cursor,
-                                                    .pending_key = pending_command,
-                                                    .echo = echo_text,
-                                                    .echo_cursor_column = echo_cursor,
-                                                    .echo_cursor_byte = echo_cursor_byte,
-                                                    .popup_title = popup_title,
-                                                    .popup_items = popup_items,
-                                                    .popup_capacity = popup_capacity,
-                                                    .popup_selection = popup_selection,
-                                                    .popup_input = popup_input,
-                                                    .popup_input_cursor = popup_input_cursor},
-                                                   view);
+        ui::Scene scene =
+            ui::compose_editor_scene({.text = snap.content(),
+                                      .tokens = tokens(),
+                                      .signs = signs(),
+                                      .caret = session().caret(),
+                                      .selections = active_selections,
+                                      .position_hints = active_position_hints,
+                                      .rows = size.rows,
+                                      .cols = size.cols,
+                                      .tab_width = tab_width(),
+                                      .revision = snap.revision(),
+                                      .modeline = active_modeline,
+                                      .cursor_shape = active_input_state.cursor,
+                                      .pending_key = chrome_content.pending_key,
+                                      .echo = chrome_content.echo,
+                                      .echo_cursor_column = chrome_content.echo_cursor_column,
+                                      .echo_cursor_byte = chrome_content.echo_cursor_byte,
+                                      .popup_title = chrome_content.popup_title,
+                                      .popup_items = chrome_content.popup_items,
+                                      .popup_capacity = chrome_content.popup_capacity,
+                                      .popup_selection = chrome_content.popup_selection,
+                                      .popup_input = popup_input,
+                                      .popup_input_cursor = chrome_content.popup_input_cursor},
+                                     view);
         return scene;
     }
 

@@ -7,6 +7,7 @@
 #include "editor/selection.hpp"
 #include "editor/startup.hpp"
 #include "editor/window.hpp"
+#include "presentation/chrome.hpp"
 #include "presentation/modeline.hpp"
 #include "script/async_host.hpp"
 
@@ -242,7 +243,8 @@ public:
     keymap_policy(const CommandContext& context) const;
     std::expected<GuileKeymapPolicy, std::string>
     base_keymap_policy(const CommandContext& context) const;
-    std::expected<std::string, std::string> idle_echo_text(const CommandContext& context) const;
+    std::expected<ChromeContent, std::string> chrome_content(const CommandContext& context,
+                                                             const ChromeFacts& facts) const;
     std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
                                                                  const ModelineFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);

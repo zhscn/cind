@@ -442,20 +442,20 @@ TEST_CASE("user initialization owns root keymap policy") {
     CHECK(layers.back().scope == "global");
     REQUIRE(application.command_loop().override_keymaps().size() == 1);
     CHECK(application.command_loop().override_keymaps().front() == *override);
-    CHECK(application.echo_text().empty());
+    CHECK(application.chrome_content().echo.empty());
 }
 
 TEST_CASE("shared echo policy follows active bindings and input lifetime") {
     EditorApplication application = make_application("sample.cc", "text");
-    const std::string idle = application.echo_text();
+    const std::string idle = application.chrome_content().echo;
     CHECK(idle.find("save") != std::string::npos);
     CHECK(idle.find("commands") != std::string::npos);
 
     application.set_message("transient message");
-    CHECK(application.echo_text() == "transient message");
+    CHECK(application.chrome_content().echo == "transient message");
     send_keys(application, "C-f");
     CHECK(application.message().empty());
-    CHECK(application.echo_text() == idle);
+    CHECK(application.chrome_content().echo == idle);
 }
 
 TEST_CASE("user initialization owns modeline content policy") {
@@ -480,6 +480,36 @@ TEST_CASE("user initialization owns modeline content policy") {
     CHECK(content.segments.front().group == ModelineGroup::Left);
     CHECK(content.segments.front().tone == ModelineTone::Salient);
     CHECK(content.segments.front().weight == ModelineWeight::Strong);
+}
+
+TEST_CASE("user initialization owns editor chrome policy") {
+    TemporaryFile init(std::format("cind-chrome-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-chrome-policy!
+ host
+ (lambda (host context facts)
+   (vector 'chrome "custom-key" "custom-echo" 6 "custom-popup"
+           (vector (vector 'chrome-item "first" "detail"))
+           1 0 "query" 2)))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "text",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    const ChromeContent content = application.chrome_content();
+    CHECK(content.pending_key == "custom-key");
+    CHECK(content.echo == "custom-echo");
+    CHECK(content.echo_cursor_byte == 6);
+    CHECK(content.echo_cursor_column == 6);
+    CHECK(content.popup_title == "custom-popup");
+    REQUIRE(content.popup_items.size() == 1);
+    CHECK(content.popup_items.front() == ChromeItem{.label = "first", .detail = "detail"});
+    CHECK(content.popup_capacity == 1);
+    CHECK(content.popup_selection == 0);
+    CHECK(content.popup_input == "query");
+    CHECK(content.popup_input_cursor == 2);
 }
 
 TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {
@@ -814,7 +844,7 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     send_keys(application, "SPC 1 2");
     CHECK(application.input_state().name == "meow-numeric");
     CHECK(application.pending_prefix_text() == "12");
-    CHECK(application.pending_command_text() == "12");
+    CHECK(application.chrome_content().pending_key == "12");
     CHECK(application.command_loop().pending_prefix().count == 12);
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{12});
@@ -825,15 +855,15 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     send_keys(application, "SPC 3");
     send_keys(application, "\"");
     CHECK(application.input_state().name == "input.read-key");
-    CHECK(application.pending_command_text() == "3 \"");
+    CHECK(application.chrome_content().pending_key == "3 \"");
     send_keys(application, "a");
     CHECK(application.input_state().name == "meow-normal");
-    CHECK(application.pending_command_text() == "3 \"a");
+    CHECK(application.chrome_content().pending_key == "3 \"a");
     CHECK(application.command_loop().pending_prefix().register_name ==
           std::optional<std::string>{"a"});
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{3});
-    CHECK(application.pending_command_text().empty());
+    CHECK(application.chrome_content().pending_key.empty());
 
     send_keys(application, "- 2 l");
     CHECK(application.session().caret() == TextOffset{1});
@@ -843,14 +873,14 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     CHECK(application.input_state().name == "input.read-key");
     send_keys(application, "C-g");
     CHECK(application.input_state().name == "meow-normal");
-    CHECK(application.pending_command_text().empty());
+    CHECK(application.chrome_content().pending_key.empty());
 
     send_keys(application, "\" b");
     CHECK(application.input_state().name == "meow-normal");
     CHECK(application.command_loop().pending_prefix().register_name ==
           std::optional<std::string>{"b"});
     send_keys(application, "l");
-    CHECK(application.pending_command_text().empty());
+    CHECK(application.chrome_content().pending_key.empty());
 
     send_keys(application, "x");
     CHECK(application.input_state().name == "meow-keypad");
@@ -922,7 +952,7 @@ TEST_CASE("Guile meow motions and things consume shared noun registries") {
 
     send_keys(application, "SPC 3 w");
     CHECK(application.session().caret() == TextOffset{14});
-    CHECK(application.pending_command_text().empty());
+    CHECK(application.chrome_content().pending_key.empty());
     REQUIRE(application.session().active_selection().has_value());
     CHECK(application.session().active_selection()->ranges.front().ordered() == make_range(0, 14));
     CHECK(application.session().active_selection()->metadata.find("strategy . meow") !=

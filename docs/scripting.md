@@ -279,6 +279,8 @@ activation facts without assigning precedence or selecting global roots.
 (active-keymap-layers host context)
 (configure-modeline-policy! host procedure)
 (resolve-modeline-content host context facts)
+(configure-chrome-policy! host procedure)
+(resolve-chrome-content host context facts)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -295,6 +297,26 @@ last-key input-state)` vector. It returns `#(modeline segments)`, where each seg
 are `strong`, `normal`, `faded`, `faint`, `salient`, and `critical`; weights are `regular` and
 `strong`. `configure-modeline-policy!` replaces this procedure for one application. The native
 boundary rejects malformed or empty segments before they enter the frontend-independent Scene.
+
+The chrome policy receives immutable presentation facts:
+
+```scheme
+#(chrome-facts kind prompt input input-caret candidates selection-or-#f
+               message preedit pending-sequence pending-prefix hints prompt-byte-count)
+```
+
+`kind` is `none`, `text`, or `picker`; candidates are `#(chrome-item label detail)` values and
+hints are `#(chrome-hint key detail prefix?)` values. The policy returns:
+
+```scheme
+#(chrome pending-key echo echo-caret-or-#f popup-title items capacity
+         selection-or-#f popup-input-or-#f popup-input-caret-or-#f)
+```
+
+Caret positions are UTF-8 byte offsets. Picker ownership of the minibuffer input, empty-result
+layout, and which-key presentation are identical in terminal and pixel frontends.
+`configure-chrome-policy!` replaces the procedure for one application; C++ validates byte offsets
+and popup indices and projects the result into the shared Scene.
 
 `key-sequence-completions` performs a side-effect-free layered query over an explicit ordered
 keymap vector; an empty sequence requests root entries. It returns `#(key detail prefix?)` vectors,

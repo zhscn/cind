@@ -2,6 +2,7 @@
 
 #include "cpp_lexer/token_buffer.hpp"
 #include "document/text.hpp"
+#include "presentation/chrome.hpp"
 #include "presentation/position_hint.hpp"
 #include "ui/line_signs.hpp"
 #include "ui/list_view.hpp"
@@ -14,17 +15,10 @@
 
 namespace cind::ui {
 
-inline constexpr std::size_t editor_picker_capacity = 12;
-
 struct EditorViewport {
     std::uint32_t top_line = 0;
     float top_line_offset = 0.0F;
     int left_column = 0;
-};
-
-struct EditorPopupItem {
-    std::string_view label;
-    std::string_view detail;
 };
 
 struct EditorSceneViewState {
@@ -76,7 +70,7 @@ struct EditorSceneInput {
     std::optional<std::size_t> echo_cursor_byte;
 
     std::string_view popup_title;
-    std::span<const EditorPopupItem> popup_items;
+    std::span<const ChromeItem> popup_items;
     std::size_t popup_capacity = 0;
     std::optional<std::size_t> popup_selection;
     // Present for an interactive picker. The popup is the sole presentation

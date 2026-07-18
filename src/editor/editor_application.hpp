@@ -139,7 +139,6 @@ public:
     }
     std::string pending_key_sequence_text() const;
     std::string pending_prefix_text() const;
-    std::string pending_command_text() const;
     std::string pending_input_state_name() const;
     std::vector<KeyBindingHint> pending_key_hints() const;
     PositionHintProviderResult position_hints(WindowId window);
@@ -158,7 +157,7 @@ public:
 
     const std::string& message() const { return message_; }
     void set_message(std::string message) { message_ = std::move(message); }
-    std::string echo_text();
+    ChromeContent chrome_content(std::string_view preedit = {});
     ModelineContent modeline(WindowId window);
     const std::string& last_key() const { return last_key_; }
     const std::string& last_command() const { return last_command_; }

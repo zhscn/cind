@@ -1,7 +1,6 @@
 #include "gui/editor_model.hpp"
 
 #include "document/text.hpp"
-#include "ui/char_width.hpp"
 #include "ui/text_position.hpp"
 
 #include <algorithm>
@@ -24,20 +23,7 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial, C
                     .init_file = std::move(init_file)}) {}
 
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
-    const InteractionState* interaction = application_.interaction().state();
-    std::size_t popup_item_count = 0;
-    std::size_t popup_capacity = 0;
-    std::optional<std::size_t> popup_selection;
-    if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
-        popup_item_count = interaction->candidates.size();
-        popup_capacity = ui::editor_picker_capacity;
-        popup_selection = interaction->candidates.empty()
-                              ? std::nullopt
-                              : std::optional<std::size_t>(interaction->selected);
-    } else {
-        popup_item_count = application_.pending_key_hints().size();
-        popup_capacity = popup_item_count;
-    }
+    const ChromeContent chrome = application_.chrome_content(preedit_);
 
     if (application_.window_layout().leaves().size() > 1) {
         const WindowPartition partition = application_.window_layout().partition(rows - 1, columns);
@@ -85,9 +71,9 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                               .visible_text_rows = visible_text_rows,
                                               .tab_width = active.style().tab_width,
                                               .reveal_caret = false,
-                                              .popup_item_count = popup_item_count,
-                                              .popup_capacity = popup_capacity,
-                                              .popup_selection = popup_selection},
+                                              .popup_item_count = chrome.popup_items.size(),
+                                              .popup_capacity = chrome.popup_capacity,
+                                              .popup_selection = chrome.popup_selection},
                                              popup_view);
         popup_viewport_ = popup_view.popup;
         last_rows_ = rows;
@@ -111,9 +97,9 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                     .visible_text_rows = visible_text_rows,
                                     .tab_width = session.style().tab_width,
                                     .reveal_caret = application_.reveal_caret(),
-                                    .popup_item_count = popup_item_count,
-                                    .popup_capacity = popup_capacity,
-                                    .popup_selection = popup_selection},
+                                    .popup_item_count = chrome.popup_items.size(),
+                                    .popup_capacity = chrome.popup_capacity,
+                                    .popup_selection = chrome.popup_selection},
                                    view);
     state.top_line = view.viewport.top_line;
     state.top_line_offset = view.viewport.top_line_offset;
@@ -125,64 +111,9 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
 ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
-    std::string interaction_echo;
-    const std::string interaction_input = application_.interaction().active()
-                                              ? application_.interaction().input_text()
-                                              : std::string();
-    std::string idle_echo;
-    const std::size_t interaction_caret = application_.interaction().input_caret().value;
-    std::optional<int> echo_cursor;
-    std::optional<std::size_t> echo_cursor_byte;
-    const InteractionState* interaction = application_.interaction().state();
-    const std::string_view echo = [&]() -> std::string_view {
-        if (interaction != nullptr && interaction->request.kind != InteractionKind::Picker) {
-            interaction_echo = interaction->request.prompt + interaction_input;
-            echo_cursor =
-                ui::display_width(interaction->request.prompt) +
-                ui::display_width(std::string_view(interaction_input).substr(0, interaction_caret));
-            echo_cursor_byte = interaction->request.prompt.size() + interaction_caret;
-            return interaction_echo;
-        }
-        if (interaction != nullptr) {
-            return {};
-        }
-        if (!preedit_.empty()) {
-            return preedit_;
-        }
-        idle_echo = application_.echo_text();
-        return idle_echo;
-    }();
-    const std::vector<KeyBindingHint> key_hints = application_.pending_key_hints();
-    std::vector<ui::EditorPopupItem> popup_items;
-    std::string popup_title;
-    std::optional<std::size_t> popup_selection;
-    std::optional<std::string_view> popup_input;
-    std::optional<std::size_t> popup_input_cursor;
-    std::size_t popup_capacity = 0;
-    if (interaction != nullptr && interaction->request.kind == InteractionKind::Picker) {
-        popup_capacity = ui::editor_picker_capacity;
-        popup_title = interaction->request.prompt;
-        popup_selection = interaction->candidates.empty()
-                              ? std::nullopt
-                              : std::optional<std::size_t>(interaction->selected);
-        popup_items.reserve(interaction->candidates.size());
-        popup_input = interaction_input;
-        popup_input_cursor = interaction_caret;
-        for (const InteractionCandidate& candidate : interaction->candidates) {
-            popup_items.push_back({.label = candidate.label, .detail = candidate.detail});
-        }
-    } else if (!key_hints.empty()) {
-        popup_capacity = key_hints.size();
-        popup_title = application_.pending_key_sequence_text() + " …";
-        popup_items.reserve(key_hints.size());
-        for (const KeyBindingHint& hint : key_hints) {
-            const std::string_view detail = hint.detail.empty() && hint.prefix
-                                                ? std::string_view("prefix")
-                                                : std::string_view(hint.detail);
-            popup_items.push_back({.label = hint.key, .detail = detail});
-        }
-    }
-    const std::string pending_key = application_.pending_command_text();
+    const ChromeContent chrome = application_.chrome_content(preedit_);
+    const std::optional<std::string_view> popup_input =
+        chrome.popup_input ? std::optional<std::string_view>(*chrome.popup_input) : std::nullopt;
     const InputStateRegistry::Definition& active_input_state = application_.input_state();
     const ViewportState& state = session.view().viewport();
     const ui::EditorSceneViewState view{
@@ -210,16 +141,16 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .revision = snapshot.revision(),
                                             .modeline = active_modeline,
                                             .cursor_shape = active_input_state.cursor,
-                                            .pending_key = pending_key,
-                                            .echo = echo,
-                                            .echo_cursor_column = echo_cursor,
-                                            .echo_cursor_byte = echo_cursor_byte,
-                                            .popup_title = popup_title,
-                                            .popup_items = popup_items,
-                                            .popup_capacity = popup_capacity,
-                                            .popup_selection = popup_selection,
+                                            .pending_key = chrome.pending_key,
+                                            .echo = chrome.echo,
+                                            .echo_cursor_column = chrome.echo_cursor_column,
+                                            .echo_cursor_byte = chrome.echo_cursor_byte,
+                                            .popup_title = chrome.popup_title,
+                                            .popup_items = chrome.popup_items,
+                                            .popup_capacity = chrome.popup_capacity,
+                                            .popup_selection = chrome.popup_selection,
                                             .popup_input = popup_input,
-                                            .popup_input_cursor = popup_input_cursor};
+                                            .popup_input_cursor = chrome.popup_input_cursor};
     if (application_.window_layout().leaves().size() == 1) {
         return ui::compose_editor_scene(active_input, view);
     }

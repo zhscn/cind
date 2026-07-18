@@ -3,6 +3,7 @@
 #include "editor/noun_evaluator.hpp"
 #include "editor/resource_policy.hpp"
 #include "syntax/structure.hpp"
+#include "ui/char_width.hpp"
 #include "ui/text_position.hpp"
 
 #include <algorithm>
@@ -672,12 +673,44 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     return consumed;
 }
 
-std::string EditorApplication::echo_text() {
-    if (!message_.empty()) {
-        return message_;
+ChromeContent EditorApplication::chrome_content(std::string_view preedit) {
+    ChromeFacts facts;
+    facts.message = message_;
+    facts.preedit = preedit;
+    facts.pending_sequence = pending_key_sequence_text();
+    facts.pending_prefix = pending_prefix_text();
+    if (const InteractionState* interaction = interaction_.state()) {
+        facts.interaction = interaction->request.kind == InteractionKind::Picker
+                                ? ChromeInteractionKind::Picker
+                                : ChromeInteractionKind::Text;
+        facts.prompt = interaction->request.prompt;
+        facts.input = interaction_.input_text();
+        facts.input_caret = interaction_.input_caret().value;
+        if (!interaction->candidates.empty()) {
+            facts.selection = interaction->selected;
+        }
+        facts.candidates.reserve(interaction->candidates.size());
+        for (const InteractionCandidate& candidate : interaction->candidates) {
+            facts.candidates.push_back({.label = candidate.label, .detail = candidate.detail});
+        }
     }
-    std::expected<std::string, std::string> text = guile_.idle_echo_text(command_context());
-    return text ? std::move(*text) : std::string();
+    const std::vector<KeyBindingHint> hints = pending_key_hints();
+    facts.hints.reserve(hints.size());
+    for (const KeyBindingHint& hint : hints) {
+        facts.hints.push_back({.key = hint.key, .detail = hint.detail, .prefix = hint.prefix});
+    }
+    std::expected<ChromeContent, std::string> content =
+        guile_.chrome_content(command_context(), facts);
+    if (!content) {
+        ChromeContent fallback;
+        fallback.echo = std::format("presentation policy failed: {}", content.error());
+        return fallback;
+    }
+    if (content->echo_cursor_byte) {
+        content->echo_cursor_column = ui::display_width(
+            std::string_view(content->echo).substr(0, *content->echo_cursor_byte));
+    }
+    return std::move(*content);
 }
 
 ModelineContent EditorApplication::modeline(WindowId window_id) {
@@ -1043,15 +1076,6 @@ std::string EditorApplication::pending_key_sequence_text() const {
 
 std::string EditorApplication::pending_prefix_text() const {
     return format_command_prefix(command_loop_.pending_prefix());
-}
-
-std::string EditorApplication::pending_command_text() const {
-    const std::string prefix = pending_prefix_text();
-    std::string keys = pending_key_sequence_text();
-    if (prefix.empty()) {
-        return keys;
-    }
-    return keys.empty() ? prefix : prefix + " " + keys;
 }
 
 std::string EditorApplication::pending_input_state_name() const {

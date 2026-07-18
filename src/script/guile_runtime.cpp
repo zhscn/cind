@@ -4847,6 +4847,117 @@ ModelineContent modeline_content_from_scheme(SCM value, const char* caller) {
     return content;
 }
 
+SCM chrome_item_value(const ChromeItem& item) {
+    SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("chrome-item"));
+    scm_c_vector_set_x(value, 1, scm_from_utf8_string(item.label.c_str()));
+    scm_c_vector_set_x(value, 2, scm_from_utf8_string(item.detail.c_str()));
+    return value;
+}
+
+SCM chrome_facts_value(const ChromeFacts& facts) {
+    SCM candidates = scm_c_make_vector(facts.candidates.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < facts.candidates.size(); ++index) {
+        scm_c_vector_set_x(candidates, index, chrome_item_value(facts.candidates[index]));
+    }
+    SCM hints = scm_c_make_vector(facts.hints.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < facts.hints.size(); ++index) {
+        const ChromeHint& hint = facts.hints[index];
+        SCM value = scm_c_make_vector(4, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("chrome-hint"));
+        scm_c_vector_set_x(value, 1, scm_from_utf8_string(hint.key.c_str()));
+        scm_c_vector_set_x(value, 2, scm_from_utf8_string(hint.detail.c_str()));
+        scm_c_vector_set_x(value, 3, scm_from_bool(hint.prefix));
+        scm_c_vector_set_x(hints, index, value);
+    }
+    SCM value = scm_c_make_vector(13, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("chrome-facts"));
+    scm_c_vector_set_x(value, 1,
+                       scm_from_utf8_symbol(!facts.interaction ? "none"
+                                            : *facts.interaction == ChromeInteractionKind::Picker
+                                                ? "picker"
+                                                : "text"));
+    scm_c_vector_set_x(value, 2, scm_from_utf8_string(facts.prompt.c_str()));
+    scm_c_vector_set_x(value, 3, scm_from_utf8_string(facts.input.c_str()));
+    scm_c_vector_set_x(value, 4, scm_from_size_t(facts.input_caret));
+    scm_c_vector_set_x(value, 5, candidates);
+    scm_c_vector_set_x(value, 6, facts.selection ? scm_from_size_t(*facts.selection) : SCM_BOOL_F);
+    scm_c_vector_set_x(value, 7, scm_from_utf8_string(facts.message.c_str()));
+    scm_c_vector_set_x(value, 8, scm_from_utf8_string(facts.preedit.c_str()));
+    scm_c_vector_set_x(value, 9, scm_from_utf8_string(facts.pending_sequence.c_str()));
+    scm_c_vector_set_x(value, 10, scm_from_utf8_string(facts.pending_prefix.c_str()));
+    scm_c_vector_set_x(value, 11, hints);
+    scm_c_vector_set_x(value, 12, scm_from_size_t(facts.prompt.size()));
+    return value;
+}
+
+ChromeItem chrome_item_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 3 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "chrome-item") ||
+        !scm_is_string(scm_c_vector_ref(value, 1)) || !scm_is_string(scm_c_vector_ref(value, 2))) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(chrome-item label detail)");
+    }
+    return {.label = scheme_string(scm_c_vector_ref(value, 1)),
+            .detail = scheme_string(scm_c_vector_ref(value, 2))};
+}
+
+std::optional<std::size_t> optional_size_from_scheme(SCM value, const char* caller) {
+    if (scheme_false(value)) {
+        return std::nullopt;
+    }
+    if (scm_is_unsigned_integer(value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, 0, value, "non-negative exact integer or #f");
+    }
+    return scm_to_size_t(value);
+}
+
+ChromeContent chrome_content_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 10 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "chrome") ||
+        !scm_is_string(scm_c_vector_ref(value, 1)) || !scm_is_string(scm_c_vector_ref(value, 2)) ||
+        !scm_is_string(scm_c_vector_ref(value, 4)) || !scm_is_vector(scm_c_vector_ref(value, 5))) {
+        scm_wrong_type_arg_msg(caller, 0, value,
+                               "#(chrome pending-key echo echo-caret popup-title items capacity "
+                               "selection input input-caret)");
+    }
+    const SCM capacity = scm_c_vector_ref(value, 6);
+    if (scm_is_unsigned_integer(capacity, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, 0, capacity, "non-negative exact integer");
+    }
+    ChromeContent content;
+    content.pending_key = scheme_string(scm_c_vector_ref(value, 1));
+    content.echo = scheme_string(scm_c_vector_ref(value, 2));
+    content.echo_cursor_byte = optional_size_from_scheme(scm_c_vector_ref(value, 3), caller);
+    content.popup_title = scheme_string(scm_c_vector_ref(value, 4));
+    content.popup_capacity = scm_to_size_t(capacity);
+    content.popup_selection = optional_size_from_scheme(scm_c_vector_ref(value, 7), caller);
+    const SCM items = scm_c_vector_ref(value, 5);
+    content.popup_items.reserve(scm_c_vector_length(items));
+    for (std::size_t index = 0; index < scm_c_vector_length(items); ++index) {
+        content.popup_items.push_back(
+            chrome_item_from_scheme(scm_c_vector_ref(items, index), caller));
+    }
+    const SCM input = scm_c_vector_ref(value, 8);
+    if (!scheme_false(input)) {
+        if (!scm_is_string(input)) {
+            scm_wrong_type_arg_msg(caller, 0, input, "string or #f");
+        }
+        content.popup_input = scheme_string(input);
+    }
+    content.popup_input_cursor = optional_size_from_scheme(scm_c_vector_ref(value, 9), caller);
+    if (content.echo_cursor_byte && *content.echo_cursor_byte > content.echo.size()) {
+        scm_misc_error(caller, "echo caret exceeds the UTF-8 byte length", SCM_EOL);
+    }
+    if (content.popup_selection && *content.popup_selection >= content.popup_items.size()) {
+        scm_misc_error(caller, "popup selection is outside the item vector", SCM_EOL);
+    }
+    if (content.popup_input_cursor &&
+        (!content.popup_input || *content.popup_input_cursor > content.popup_input->size())) {
+        scm_misc_error(caller, "popup input caret is invalid", SCM_EOL);
+    }
+    return content;
+}
+
 SCM startup_facts_value(const StartupFacts& facts) {
     SCM value = scm_c_make_vector(3, SCM_UNSPECIFIED);
     scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("startup-facts"));
@@ -4983,7 +5094,7 @@ struct GuileCall {
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
-        IdleEchoText,
+        ChromeContent,
         ModelineContent,
         ProjectSearchRunning,
         ProjectIndexUpdated,
@@ -5002,7 +5113,6 @@ struct GuileCall {
     std::string path;
     std::string source;
     std::string source_name;
-    std::string text;
     SCM host = SCM_UNDEFINED;
     SCM module = SCM_UNDEFINED;
     SCM procedure = SCM_UNDEFINED;
@@ -5028,9 +5138,11 @@ struct GuileCall {
     GuileKeymapPolicy keymap_policy;
     StartupPlan startup_plan;
     ModelineContent modeline_content;
+    ChromeContent chrome_content;
     const StartupFacts* startup_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
+    const ChromeFacts* chrome_facts = nullptr;
     bool pending_key_sequence = false;
     double scroll_lines = 0.0;
     bool force = false;
@@ -5497,13 +5609,11 @@ SCM call_body(void* data) {
                 keymap_policy_from_scheme(require_host(call.host, "resolve-base-keymap-policy"),
                                           call.result, "resolve-base-keymap-policy");
             break;
-        case GuileCall::Operation::IdleEchoText:
-            call.result = scm_call_2(scm_c_public_ref("cind core", "idle-echo-text"), call.host,
-                                     command_context_value(*call.context));
-            if (!scm_is_string(call.result)) {
-                scm_wrong_type_arg_msg("idle-echo-text", 0, call.result, "string");
-            }
-            call.text = scheme_string(call.result);
+        case GuileCall::Operation::ChromeContent:
+            call.result = scm_call_3(scm_c_public_ref("cind command", "resolve-chrome-content"),
+                                     call.host, command_context_value(*call.context),
+                                     chrome_facts_value(*call.chrome_facts));
+            call.chrome_content = chrome_content_from_scheme(call.result, "resolve-chrome-content");
             break;
         case GuileCall::Operation::ModelineContent:
             call.result = scm_call_3(scm_c_public_ref("cind command", "resolve-modeline-content"),
@@ -6240,7 +6350,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 1) {
+        if (call.count != 2) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6480,17 +6590,19 @@ public:
         return std::move(call.keymap_policy);
     }
 
-    std::expected<std::string, std::string> idle_echo_text(const CommandContext& context) const {
+    std::expected<ChromeContent, std::string> chrome_content(const CommandContext& context,
+                                                             const ChromeFacts& facts) const {
         require_owner_thread();
         GuileCall call;
-        call.operation = GuileCall::Operation::IdleEchoText;
+        call.operation = GuileCall::Operation::ChromeContent;
         call.host = host_;
         call.context = &context;
+        call.chrome_facts = &facts;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(result.error());
         }
-        return std::move(call.text);
+        return std::move(call.chrome_content);
     }
 
     std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
@@ -6760,9 +6872,9 @@ GuileRuntime::base_keymap_policy(const CommandContext& context) const {
     return impl_->keymap_policy(context, true);
 }
 
-std::expected<std::string, std::string>
-GuileRuntime::idle_echo_text(const CommandContext& context) const {
-    return impl_->idle_echo_text(context);
+std::expected<ChromeContent, std::string>
+GuileRuntime::chrome_content(const CommandContext& context, const ChromeFacts& facts) const {
+    return impl_->chrome_content(context, facts);
 }
 
 std::expected<ModelineContent, std::string>

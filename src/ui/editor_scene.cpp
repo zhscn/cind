@@ -36,9 +36,7 @@ std::size_t scene_popup_capacity(SceneGeometry geometry, std::size_t requested_c
     // The minibuffer reflows the frame instead of overlaying it: prompt and
     // candidates may claim at most half of the text rows.
     const int budget = std::max(1, text_rows / 2 - 1);
-    return std::min<std::size_t>(
-        requested_capacity,
-        std::min<std::size_t>(editor_picker_capacity, static_cast<std::size_t>(budget)));
+    return std::min(requested_capacity, static_cast<std::size_t>(budget));
 }
 
 // Scene rows the minibuffer band occupies (prompt row + visible candidates);
@@ -290,7 +288,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
 
         for (std::size_t offset = 0; offset < visible_count; ++offset) {
             const std::size_t index = first + offset;
-            const EditorPopupItem& item = input.popup_items[index];
+            const ChromeItem& item = input.popup_items[index];
             popup_content.items.push_back(
                 {.label = std::string(item.label), .detail = std::string(item.detail)});
         }

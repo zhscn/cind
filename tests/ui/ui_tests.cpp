@@ -88,8 +88,7 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     CHECK(laid_out.viewport.top_line == 0);
     CHECK(laid_out.viewport.top_line_offset == doctest::Approx(0.0F));
 
-    const std::vector<EditorPopupItem> items(
-        20, EditorPopupItem{.label = "command", .detail = "command"});
+    const std::vector<ChromeItem> items(20, ChromeItem{.label = "command", .detail = "command"});
     const ModelineContent modeline{.segments = {{.text = "sample.cc", .group = ModelineGroup::Left},
                                                 {.text = "N", .group = ModelineGroup::Right}}};
     const EditorSceneInput input{.text = text,
@@ -162,7 +161,7 @@ TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
 TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     const Text text("zero\none\ntwo\nthree\n");
     const TokenBuffer tokens(lex(text).tokens);
-    const std::vector<EditorPopupItem> popup_items{
+    const std::vector<ChromeItem> popup_items{
         {.label = "first", .detail = "command"},
         {.label = "second", .detail = "command"},
     };

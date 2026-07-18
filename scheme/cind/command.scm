@@ -23,6 +23,8 @@
             active-keymap-layers
             configure-modeline-policy!
             resolve-modeline-content
+            configure-chrome-policy!
+            resolve-chrome-content
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -256,6 +258,20 @@
   (let ((procedure (hashq-ref modeline-policies host)))
     (unless procedure
       (error "modeline policy is not configured"))
+    (procedure host context facts)))
+
+(define chrome-policies (make-weak-key-hash-table))
+
+(define (configure-chrome-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "chrome policy must be a procedure" procedure))
+  (hashq-set! chrome-policies host procedure)
+  procedure)
+
+(define (resolve-chrome-content host context facts)
+  (let ((procedure (hashq-ref chrome-policies host)))
+    (unless procedure
+      (error "chrome policy is not configured"))
     (procedure host context facts)))
 
 (define (invocation-arguments invocation)

@@ -210,9 +210,66 @@
                                    (format #f "r~a" revision))))))
     (vector 'modeline (list->vector segments))))
 
+(define (chrome-content pending-key echo echo-caret popup-title popup-items popup-capacity
+                        popup-selection popup-input popup-input-caret)
+  (vector 'chrome pending-key echo echo-caret popup-title popup-items popup-capacity
+          popup-selection popup-input popup-input-caret))
+
+(define (default-chrome-content host context facts)
+  (let* ((kind (vector-ref facts 1))
+         (prompt (vector-ref facts 2))
+         (input (vector-ref facts 3))
+         (input-caret (vector-ref facts 4))
+         (candidates (vector-ref facts 5))
+         (selection (vector-ref facts 6))
+         (message (vector-ref facts 7))
+         (preedit (vector-ref facts 8))
+         (pending-sequence (vector-ref facts 9))
+         (pending-prefix (vector-ref facts 10))
+         (hints (vector-ref facts 11))
+         (prompt-bytes (vector-ref facts 12))
+         (pending-key (cond ((zero? (string-length pending-prefix)) pending-sequence)
+                            ((zero? (string-length pending-sequence)) pending-prefix)
+                            (else (string-append pending-prefix " " pending-sequence)))))
+    (cond
+     ((eq? kind 'picker)
+      (chrome-content pending-key "" #f prompt candidates 12 selection input input-caret))
+     ((eq? kind 'text)
+      (chrome-content pending-key (string-append prompt input)
+                      (+ prompt-bytes input-caret) "" #() 0 #f #f #f))
+     ((> (string-length preedit) 0)
+      (chrome-content pending-key preedit #f "" #() 0 #f #f #f))
+     ((> (vector-length hints) 0)
+      (let ((items (make-vector (vector-length hints))))
+        (let loop ((index 0))
+          (when (< index (vector-length hints))
+            (let* ((hint (vector-ref hints index))
+                   (detail (vector-ref hint 2)))
+              (vector-set! items index
+                           (vector 'chrome-item
+                                   (vector-ref hint 1)
+                                   (if (and (zero? (string-length detail))
+                                            (vector-ref hint 3))
+                                       "prefix"
+                                       detail))))
+            (loop (+ index 1))))
+        (chrome-content pending-key
+                        (if (> (string-length message) 0)
+                            message
+                            (idle-echo-text host context))
+                        #f (string-append pending-sequence " …") items
+                        (vector-length items) #f #f #f)))
+     (else
+      (chrome-content pending-key
+                      (if (> (string-length message) 0)
+                          message
+                          (idle-echo-text host context))
+                      #f "" #() 0 #f #f #f)))))
+
 (define (install-presentation-policies! host)
   (configure-modeline-policy! host modeline-content)
-  1)
+  (configure-chrome-policy! host default-chrome-content)
+  2)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))
