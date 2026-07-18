@@ -533,6 +533,28 @@ TEST_CASE("user initialization owns the last-buffer fallback policy") {
     CHECK(application.style_origin() == "custom fallback");
 }
 
+TEST_CASE("user initialization owns semantic pointer behavior") {
+    TemporaryFile init(std::format("cind-pointer-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-pointer-policy!
+ host
+ (lambda (host context event) #f))
+)");
+    EditorApplication application({.path = {},
+                                   .initial_text = "zero\none\n",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    CHECK_FALSE(application.handle_pointer({.target = PointerTargetKind::DocumentText,
+                                            .window = application.window_id(),
+                                            .document_line = 1,
+                                            .display_column = 2,
+                                            .popup_item = std::nullopt}));
+    CHECK(application.session().caret() == TextOffset{});
+}
+
 TEST_CASE("per-view input states precede window layers and may handle keys") {
     EditorApplication application = make_application("sample.cc", "text");
     EditorRuntime& runtime = application.runtime();

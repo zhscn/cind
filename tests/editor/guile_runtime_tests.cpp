@@ -551,11 +551,12 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
-    CHECK(snapshot.modules == std::vector<std::string>{
-                                  "cind command", "cind input", "cind async", "cind extension",
-                                  "cind emacs", "cind toy-modal", "cind meow", "cind vim",
-                                  "cind helix", "cind structural", "cind minibuffer",
-                                  "cind development", "cind ares", "cind introspect", "cind core"});
+    CHECK(snapshot.modules ==
+          std::vector<std::string>{"cind command", "cind input", "cind async", "cind lifecycle",
+                                   "cind pointer", "cind extension", "cind emacs", "cind toy-modal",
+                                   "cind meow", "cind vim", "cind helix", "cind structural",
+                                   "cind minibuffer", "cind development", "cind ares",
+                                   "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

@@ -29,6 +29,7 @@ defines the public command value API; `(cind async)` defines cancellable native 
 `(cind minibuffer)` defines high-level text and completion interaction constructors;
 `(cind lifecycle)` owns configurable startup and fallback-buffer policy and per-application startup
 placeholder state;
+`(cind pointer)` owns semantic pointer-target behavior;
 `(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
 `(cind emacs)`, `(cind helix)`, `(cind meow)`, `(cind vim)`, and `(cind toy-modal)` define input
@@ -52,9 +53,10 @@ Interactive frontends discover `cind/init.scm` under `XDG_CONFIG_HOME`, falling 
 so their behavior is independent of the invoking account.
 
 `(cind extension)` evaluates each source file in a fresh Guile module. The module imports
-`(cind host)`, `(cind command)`, `(cind async)`, `(cind input)`, `(cind lifecycle)`, and
-`(cind minibuffer)`, and binds the owning application's foreign host as `host`. File-private
-definitions remain module-local while registered closures retain access to them.
+`(cind host)`, `(cind command)`, `(cind async)`, `(cind input)`, `(cind lifecycle)`,
+`(cind minibuffer)`, and `(cind pointer)`, and binds the owning application's foreign host as
+`host`. File-private definitions remain module-local while registered closures retain access to
+them.
 
 An extension load checkpoints the registries and protected Scheme callback ownership before
 evaluation. Successful definitions become visible together. A Scheme condition or native bridge
@@ -579,6 +581,19 @@ deferred resource is passed to the shared Scheme `open-resource!` policy. The li
 retains the placeholder Buffer identity in per-host Scheme state so successful asynchronous open
 policy can release it. `configure-fallback-buffer-policy!` replaces the procedure used when a
 command needs a Buffer after releasing the last open Buffer.
+
+`(cind pointer)` dispatches normalized semantic hits through a per-host procedure configured with
+`configure-pointer-policy!`. The procedure receives the active command context and:
+
+```scheme
+#(pointer-event kind window-or-#f line-or-#f column-or-#f popup-item-or-#f pending-key?)
+```
+
+GUI code resolves pixels to a Scene hit and converts the hit into this frontend-independent event.
+The default policy ignores document clicks while an interaction or key prefix is active, focuses
+the target Window, and composes `window-view-id` with `move-caret-to-line!`. Gutter hits select
+display column zero. The host operations own validated Window/View lookup and caret mutation; the
+policy owns when and how a semantic target invokes them.
 
 Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
 `columns`; split, delete, retain and focus operations return `#f` on success or an invariant error

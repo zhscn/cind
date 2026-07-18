@@ -8,6 +8,7 @@
 #include <cmath>
 #include <format>
 #include <optional>
+#include <stdexcept>
 
 namespace cind::gui {
 
@@ -311,36 +312,45 @@ void EditorModel::set_preedit(std::string_view text) {
 }
 
 void EditorModel::click(const ui::HitTarget& target) {
-    if (application_.interaction().active() ||
-        !application_.command_loop().pending_sequence().empty()) {
-        return;
-    }
-    if (!target.document_line || (target.kind != ui::HitTargetKind::DocumentText &&
-                                  target.kind != ui::HitTargetKind::DocumentGutter)) {
-        return;
-    }
+    const PointerTargetKind target_kind = [&] {
+        switch (target.kind) {
+        case ui::HitTargetKind::DocumentText:
+            return PointerTargetKind::DocumentText;
+        case ui::HitTargetKind::DocumentGutter:
+            return PointerTargetKind::DocumentGutter;
+        case ui::HitTargetKind::PopupHeader:
+            return PointerTargetKind::PopupHeader;
+        case ui::HitTargetKind::PopupItem:
+            return PointerTargetKind::PopupItem;
+        case ui::HitTargetKind::Status:
+            return PointerTargetKind::Status;
+        case ui::HitTargetKind::Echo:
+            return PointerTargetKind::Echo;
+        case ui::HitTargetKind::Region:
+            return PointerTargetKind::Region;
+        }
+        throw std::logic_error("unknown UI pointer target kind");
+    }();
+    PointerEvent event{.target = target_kind,
+                       .window = std::nullopt,
+                       .document_line = target.document_line,
+                       .display_column = target.display_column
+                                             ? std::optional(static_cast<std::uint32_t>(
+                                                   std::max(0, *target.display_column)))
+                                             : std::nullopt,
+                       .popup_item = target.popup_item};
     if (!target.pane_id.empty()) {
         for (const OpenWindowSnapshot& window : application_.open_windows()) {
             if (pane_id(window.window) == target.pane_id) {
-                (void)application_.focus_window(window.window);
+                event.window = window.window;
                 break;
             }
         }
+        if (!event.window) {
+            return;
+        }
     }
-    application_.reset_preferred_column();
-    EditSession& session = application_.session();
-    const DocumentSnapshot snapshot = session.snapshot();
-    const Text& text = snapshot.content();
-    const std::uint32_t line = std::min(*target.document_line, text.line_count() - 1);
-    if (target.kind == ui::HitTargetKind::DocumentGutter || !target.display_column) {
-        session.set_caret(text.line_start(line));
-        application_.show_caret();
-        return;
-    }
-    session.set_caret(ui::offset_at_display_column(
-        text, {.line = line, .column = std::max(0, *target.display_column)},
-        session.style().tab_width));
-    application_.show_caret();
+    (void)application_.handle_pointer(event);
 }
 
 void EditorModel::scroll_lines(float delta) {

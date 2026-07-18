@@ -15,6 +15,7 @@
   #:use-module (cind lifecycle)
   #:use-module (cind meow)
   #:use-module (cind minibuffer)
+  #:use-module (cind pointer)
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
@@ -24,6 +25,7 @@
             install-core-modes!
             install-core-resource-policies!
             install-buffer-lifecycle-policies!
+            install-pointer-policies!
             install-presentation-policies!
             define-major-mode!
             define-minor-mode!
@@ -66,6 +68,29 @@
   (configure-startup-policy! host default-startup-plan)
   (configure-fallback-buffer-policy! host default-fallback-buffer)
   2)
+
+(define (default-pointer-policy host context event)
+  (let ((kind (vector-ref event 1))
+        (window (or (vector-ref event 2) (context-window context)))
+        (line (vector-ref event 3))
+        (column (vector-ref event 4))
+        (pending-key? (vector-ref event 6)))
+    (if (or pending-key?
+            (interaction-active? host context)
+            (not line)
+            (not (memq kind '(document-text document-gutter))))
+        #f
+        (let ((focus-error (focus-window! host window)))
+          (if focus-error
+              #f
+              (begin
+                (move-caret-to-line! host (window-view-id host window) line
+                                     (if (eq? kind 'document-gutter) 0 (or column 0)))
+                #t))))))
+
+(define (install-pointer-policies! host)
+  (configure-pointer-policy! host default-pointer-policy)
+  1)
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))

@@ -6,6 +6,7 @@
 #include "editor/editing_mechanisms.hpp"
 #include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
+#include "editor/pointer.hpp"
 #include "editor/project_service.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "script/guile_runtime.hpp"
@@ -109,6 +110,7 @@ public:
     void refresh_default_keymap();
 
     bool handle_key(KeyStroke key, int page_rows);
+    bool handle_pointer(const PointerEvent& event);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;
@@ -234,6 +236,7 @@ private:
     void register_modes();
     void register_resource_policies();
     void register_buffer_lifecycle_policies();
+    void register_pointer_policies();
     void register_interaction_providers();
     void register_keymaps();
     void register_presentation_policies();

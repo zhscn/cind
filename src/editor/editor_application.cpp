@@ -468,6 +468,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     }
     register_resource_policies();
     register_buffer_lifecycle_policies();
+    register_pointer_policies();
     register_commands();
     register_interaction_providers();
     register_keymaps();
@@ -741,6 +742,12 @@ const InputStateRegistry::Definition& EditorApplication::input_state(WindowId wi
         throw std::logic_error("view has no input state");
     }
     return runtime_.input_states().definition(*state);
+}
+
+bool EditorApplication::handle_pointer(const PointerEvent& event) {
+    const std::expected<bool, std::string> handled =
+        guile_.handle_pointer(command_context(), event, !command_loop_.pending_sequence().empty());
+    return handled.value_or(false);
 }
 
 void EditorApplication::insert_text(std::string_view text) {
@@ -1423,6 +1430,13 @@ void EditorApplication::register_buffer_lifecycle_policies() {
         !installed) {
         throw std::runtime_error(
             std::format("Guile buffer lifecycle policy failed: {}", installed.error()));
+    }
+}
+
+void EditorApplication::register_pointer_policies() {
+    if (std::expected<void, std::string> installed = guile_.install_pointer_policies();
+        !installed) {
+        throw std::runtime_error(std::format("Guile pointer policy failed: {}", installed.error()));
     }
 }
 

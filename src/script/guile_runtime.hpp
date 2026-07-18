@@ -3,6 +3,7 @@
 #include "editor/buffer.hpp"
 #include "editor/command.hpp"
 #include "editor/ids.hpp"
+#include "editor/pointer.hpp"
 #include "editor/selection.hpp"
 #include "editor/startup.hpp"
 #include "editor/window.hpp"
@@ -218,9 +219,13 @@ public:
     std::expected<std::size_t, std::string> install_core_modes();
     std::expected<std::size_t, std::string> install_core_resource_policies();
     std::expected<void, std::string> install_buffer_lifecycle_policies();
+    std::expected<void, std::string> install_pointer_policies();
     std::expected<void, std::string> install_presentation_policies();
     std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const;
     std::expected<void, std::string> set_startup_placeholder(std::optional<BufferId> buffer);
+    std::expected<bool, std::string> handle_pointer(const CommandContext& context,
+                                                    const PointerEvent& event,
+                                                    bool pending_key_sequence) const;
     std::expected<void, std::string>
     open_resource(WindowId window, std::string_view path,
                   std::optional<std::uint32_t> line = std::nullopt,

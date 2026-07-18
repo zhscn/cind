@@ -7,6 +7,7 @@
 
 #include <libguile.h>
 
+#include <array>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -22,6 +23,12 @@
 namespace cind {
 
 namespace {
+
+constexpr std::array<std::string_view, 17> bundled_guile_modules = {
+    "command",    "input",       "async", "lifecycle",  "pointer", "extension",
+    "emacs",      "toy-modal",   "meow",  "vim",        "helix",   "structural",
+    "minibuffer", "development", "ares",  "introspect", "core",
+};
 
 struct ScriptCommand {
     SCM execute = SCM_UNDEFINED;
@@ -4799,6 +4806,43 @@ SCM startup_facts_value(const StartupFacts& facts) {
     return value;
 }
 
+SCM pointer_target_symbol(PointerTargetKind target) {
+    switch (target) {
+    case PointerTargetKind::DocumentText:
+        return scm_from_utf8_symbol("document-text");
+    case PointerTargetKind::DocumentGutter:
+        return scm_from_utf8_symbol("document-gutter");
+    case PointerTargetKind::PopupHeader:
+        return scm_from_utf8_symbol("popup-header");
+    case PointerTargetKind::PopupItem:
+        return scm_from_utf8_symbol("popup-item");
+    case PointerTargetKind::Status:
+        return scm_from_utf8_symbol("status");
+    case PointerTargetKind::Echo:
+        return scm_from_utf8_symbol("echo");
+    case PointerTargetKind::Region:
+        return scm_from_utf8_symbol("region");
+    }
+    throw std::logic_error("unknown pointer target kind");
+}
+
+SCM pointer_event_value(const PointerEvent& event, bool pending_key_sequence) {
+    SCM value = scm_c_make_vector(7, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("pointer-event"));
+    scm_c_vector_set_x(value, 1, pointer_target_symbol(event.target));
+    scm_c_vector_set_x(value, 2,
+                       event.window ? entity_id(event.window->slot, event.window->generation)
+                                    : SCM_BOOL_F);
+    scm_c_vector_set_x(value, 3,
+                       event.document_line ? scm_from_uint32(*event.document_line) : SCM_BOOL_F);
+    scm_c_vector_set_x(value, 4,
+                       event.display_column ? scm_from_uint32(*event.display_column) : SCM_BOOL_F);
+    scm_c_vector_set_x(value, 5,
+                       event.popup_item ? scm_from_size_t(*event.popup_item) : SCM_BOOL_F);
+    scm_c_vector_set_x(value, 6, scm_from_bool(pending_key_sequence));
+    return value;
+}
+
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
                                      const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 4 ||
@@ -4880,9 +4924,11 @@ struct GuileCall {
         InstallModes,
         InstallResourcePolicies,
         InstallBufferLifecyclePolicies,
+        InstallPointerPolicies,
         InstallPresentationPolicies,
         ResolveStartupPlan,
         SetStartupPlaceholder,
+        HandlePointer,
         OpenResource,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
@@ -4931,7 +4977,9 @@ struct GuileCall {
     StartupPlan startup_plan;
     ModelineContent modeline_content;
     const StartupFacts* startup_facts = nullptr;
+    const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
+    bool pending_key_sequence = false;
     bool enabled = false;
     std::exception_ptr cpp_failure;
     std::string error;
@@ -5326,6 +5374,11 @@ SCM call_body(void* data) {
                 scm_c_public_ref("cind core", "install-buffer-lifecycle-policies!"), call.host);
             call.count = scm_to_size_t(call.result);
             break;
+        case GuileCall::Operation::InstallPointerPolicies:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind core", "install-pointer-policies!"), call.host);
+            call.count = scm_to_size_t(call.result);
+            break;
         case GuileCall::Operation::InstallPresentationPolicies:
             call.result = scm_call_1(
                 scm_c_public_ref("cind core", "install-presentation-policies!"), call.host);
@@ -5342,6 +5395,16 @@ SCM call_body(void* data) {
             call.result = scm_call_2(
                 scm_c_public_ref("cind lifecycle", "set-startup-placeholder!"), call.host,
                 call.enabled ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::HandlePointer:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind pointer", "handle-pointer!"), call.host,
+                           command_context_value(*call.context),
+                           pointer_event_value(*call.pointer_event, call.pending_key_sequence));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("handle-pointer!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
             break;
         case GuileCall::Operation::OpenResource:
             call.result = scm_call_5(scm_c_public_ref("cind core", "open-resource!"), call.host,
@@ -5956,10 +6019,7 @@ public:
         (void)ensure_c_family_mechanisms(runtime);
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (std::string_view module :
-             {"command", "input", "async", "lifecycle", "extension", "emacs", "toy-modal", "meow",
-              "vim", "helix", "structural", "minibuffer", "development", "ares", "introspect",
-              "core"}) {
+        for (const std::string_view module : bundled_guile_modules) {
             GuileCall load;
             load.operation = GuileCall::Operation::Load;
             load.path = bundled_module_path(module).string();
@@ -6202,6 +6262,23 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> install_pointer_policies() {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::InstallPointerPolicies;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        if (call.count != 1) {
+            state_->last_error = "Guile pointer policy returned an inconsistent policy count";
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     std::expected<StartupPlan, std::string> startup_plan(const StartupFacts& facts) const {
         require_owner_thread();
         GuileCall call;
@@ -6232,6 +6309,24 @@ public:
         }
         state_->last_error.reset();
         return {};
+    }
+
+    std::expected<bool, std::string> handle_pointer(const CommandContext& context,
+                                                    const PointerEvent& event,
+                                                    bool pending_key_sequence) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::HandlePointer;
+        call.host = host_;
+        call.context = &context;
+        call.pointer_event = &event;
+        call.pending_key_sequence = pending_key_sequence;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return call.enabled;
     }
 
     std::expected<void, std::string> open_resource(WindowId window, std::string_view path,
@@ -6403,10 +6498,15 @@ public:
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
-                .modules = {"cind command", "cind input", "cind async", "cind extension",
-                            "cind emacs", "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                            "cind structural", "cind minibuffer", "cind development", "cind ares",
-                            "cind introspect", "cind core"},
+                .modules =
+                    [] {
+                        std::vector<std::string> modules;
+                        modules.reserve(bundled_guile_modules.size());
+                        for (const std::string_view module : bundled_guile_modules) {
+                            modules.push_back(std::format("cind {}", module));
+                        }
+                        return modules;
+                    }(),
                 .extensions =
                     [&] {
                         std::vector<std::string> paths;
@@ -6501,6 +6601,10 @@ std::expected<void, std::string> GuileRuntime::install_buffer_lifecycle_policies
     return impl_->install_buffer_lifecycle_policies();
 }
 
+std::expected<void, std::string> GuileRuntime::install_pointer_policies() {
+    return impl_->install_pointer_policies();
+}
+
 std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
     return impl_->install_presentation_policies();
 }
@@ -6513,6 +6617,12 @@ GuileRuntime::startup_plan(const StartupFacts& facts) const {
 std::expected<void, std::string>
 GuileRuntime::set_startup_placeholder(std::optional<BufferId> buffer) {
     return impl_->set_startup_placeholder(buffer);
+}
+
+std::expected<bool, std::string> GuileRuntime::handle_pointer(const CommandContext& context,
+                                                              const PointerEvent& event,
+                                                              bool pending_key_sequence) const {
+    return impl_->handle_pointer(context, event, pending_key_sequence);
 }
 
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,
