@@ -3,6 +3,7 @@
 #include "cli/style_loader.hpp"
 #include "commands/file_io.hpp"
 #include "editor/noun_evaluator.hpp"
+#include "editor/resource_policy.hpp"
 #include "project/project_files.hpp"
 #include "project/search_results.hpp"
 #include "syntax/structure.hpp"
@@ -21,18 +22,6 @@ namespace cind {
 namespace {
 
 namespace fs = std::filesystem;
-
-std::expected<std::string, std::string> normalized_path(std::string_view input) {
-    if (input.empty()) {
-        return std::unexpected("file path is empty");
-    }
-    std::error_code error;
-    fs::path path = fs::absolute(fs::path(input), error).lexically_normal();
-    if (error) {
-        return std::unexpected(std::format("invalid path: {}", error.message()));
-    }
-    return path.string();
-}
 
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
@@ -232,23 +221,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](ProjectId project, WindowId window, std::string query) {
                    return start_project_search(project, std::move(query), window);
                },
-           .set_buffer_resource = [this](BufferId buffer, const std::string& input)
-               -> std::expected<void, std::string> {
-               std::expected<std::string, std::string> path = normalized_path(input);
-               if (!path) {
-                   return std::unexpected(path.error());
-               }
-               try {
-                   runtime_.buffers().set_resource(buffer, *path, BufferKind::File);
-                   runtime_.buffers().rename(buffer, fs::path(*path).filename().string());
-                   runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(),
-                                                                    mode_for_resource(*path));
-                   runtime_.projects().assign(buffer, runtime_.projects().find_for_resource(*path));
-                   return {};
-               } catch (const std::exception& exception) {
-                   return std::unexpected(exception.what());
-               }
-           },
            .begin_buffer_save = [this](BufferId buffer) { return begin_buffer_save(buffer); },
            .complete_buffer_save = [this](BufferId buffer) { return complete_buffer_save(buffer); },
            .abort_buffer_save = [this](BufferId buffer) { abort_buffer_save(buffer); },
@@ -560,7 +532,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         .resource_uri = std::nullopt,
         .read_only = false};
     if (!spec.path.empty() && !deferred_initial_load) {
-        std::expected<std::string, std::string> path = normalized_path(spec.path);
+        std::expected<std::string, std::string> path = normalize_resource_path(spec.path);
         if (!path) {
             throw std::invalid_argument(path.error());
         }
@@ -820,7 +792,7 @@ std::expected<void, std::string> EditorApplication::open_file(std::string_view i
 std::expected<void, std::string>
 EditorApplication::open_file(std::string_view input, WindowId target_window,
                              std::optional<LinePosition> position) {
-    std::expected<std::string, std::string> normalized = normalized_path(input);
+    std::expected<std::string, std::string> normalized = normalize_resource_path(input);
     if (!normalized) {
         return std::unexpected(normalized.error());
     }

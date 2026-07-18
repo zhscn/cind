@@ -810,9 +810,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     WindowId searched_window;
     std::string search_query;
     bool project_search_started = false;
-    BufferId resource_buffer;
-    std::string resource_path;
-    bool buffer_resource_set = false;
     BufferId saved_buffer;
     bool buffer_saved = false;
     bool buffer_save_completed = false;
@@ -907,13 +904,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              searched_window = target_window;
              search_query = std::move(query);
              project_search_started = true;
-             return {};
-         },
-         .set_buffer_resource = [&](BufferId target_buffer,
-                                    std::string path) -> std::expected<void, std::string> {
-             resource_buffer = target_buffer;
-             resource_path = std::move(path);
-             buffer_resource_set = true;
              return {};
          },
          .begin_buffer_save =
@@ -1334,9 +1324,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         save_as_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/written.cpp")}, .prefix = {}});
     REQUIRE(save_as_accepted.has_value());
-    REQUIRE(buffer_resource_set);
-    CHECK(resource_buffer == buffer);
-    CHECK(resource_path == "/tmp/written.cpp");
+    CHECK(runtime.buffers().get(buffer).resource_uri() == "/tmp/written.cpp");
+    CHECK(runtime.buffers().get(buffer).name() == "written.cpp");
+    CHECK(runtime.buffers().get(buffer).modes().major() == fundamental_mode);
+    CHECK_FALSE(runtime.buffers().get(buffer).project_id().has_value());
     const auto* save_dispatch = std::get_if<CommandDispatch>(&*save_as_accepted);
     REQUIRE(save_dispatch != nullptr);
     CHECK(save_dispatch->command == save);

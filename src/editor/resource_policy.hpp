@@ -3,12 +3,15 @@
 #include "editor/mode.hpp"
 #include "project/project_files.hpp"
 
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace cind {
+
+std::expected<std::string, std::string> normalize_resource_path(std::string_view input);
 
 struct FileModeRule {
     std::string name;

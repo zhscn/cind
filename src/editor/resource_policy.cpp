@@ -12,8 +12,6 @@ namespace cind {
 
 namespace {
 
-// The two strings have distinct roles at every call site: the value is followed by its schema
-// label. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void require_name(std::string_view name, std::string_view kind) {
     if (name.empty()) {
         throw std::invalid_argument(std::format("{} name must not be empty", kind));
@@ -45,6 +43,19 @@ void replace_named(std::vector<Definition>& definitions, Definition definition) 
 }
 
 } // namespace
+
+std::expected<std::string, std::string> normalize_resource_path(std::string_view input) {
+    if (input.empty()) {
+        return std::unexpected("file path is empty");
+    }
+    std::error_code error;
+    const std::filesystem::path path =
+        std::filesystem::absolute(std::filesystem::path(input), error).lexically_normal();
+    if (error) {
+        return std::unexpected(std::format("invalid path: {}", error.message()));
+    }
+    return path.string();
+}
 
 void ResourcePolicyRegistry::define_file_mode(std::string name, ModeId mode,
                                               std::vector<std::string> suffixes,

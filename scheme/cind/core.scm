@@ -244,8 +244,15 @@
           ((= (string-length path) 0)
            (command-error "file path is empty"))
           (else
-           (set-buffer-resource! host (context-buffer context) path)
-           (command-dispatch "file.save")))))
+           (let* ((buffer (context-buffer context))
+                  (resource (normalize-resource-path host path))
+                  (mode (or (resource-mode host resource) 'fundamental-mode))
+                  (project (project-for-resource host resource)))
+             (set-buffer-resource! host buffer resource)
+             (rename-buffer! host buffer (path-filename host resource))
+             (set-buffer-major-mode! host buffer mode)
+             (set-buffer-project! host buffer project)
+             (command-dispatch "file.save"))))))
 
 (define (buffer-switch context invocation)
   (completing-read "Switch buffer: " "buffers" "buffer.switch.accept"

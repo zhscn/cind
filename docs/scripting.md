@@ -154,7 +154,13 @@ The native module exports:
 (ensure-project-index! host project-id)
 (open-file! host window-id path)
 (start-project-search! host project-id window-id query)
+(normalize-resource-path host path)
 (set-buffer-resource! host buffer-id path)
+(rename-buffer! host buffer-id name)
+(buffer-id-by-resource host path)
+(resource-mode host path)
+(project-for-resource host path)
+(set-buffer-project! host buffer-id project-id-or-#f)
 (begin-buffer-save! host buffer-id)
 (complete-buffer-save! host buffer-id)
 (abort-buffer-save! host buffer-id)
@@ -476,9 +482,10 @@ clipboard success. This result domain lets Scheme own kill-ring policy without m
 
 `buffer-resource` returns a buffer's resource path or `#f`. `path-parent`, `directory-path?` and
 `path-as-directory` expose platform filesystem syntax without embedding separator rules in Scheme.
-`set-buffer-resource!` normalizes a path, changes the buffer to file-backed storage, derives its
-display name, resolves its major mode through the resource-policy registry and attaches the
-matching project. File commands use these primitives to keep prompt and save-as policy in Scheme.
+`normalize-resource-path` applies native filesystem path rules. `set-buffer-resource!`,
+`rename-buffer!`, `set-buffer-major-mode!` and `set-buffer-project!` mutate one explicit Buffer
+property. `buffer-id-by-resource`, `resource-mode` and `project-for-resource` query the registries
+without changing editor state. The bundled save-as policy composes these mechanisms in Scheme.
 `begin-buffer-save!` acquires a Buffer save lease and returns the immutable snapshot contents.
 `complete-buffer-save!` publishes that snapshot as the saved baseline, releases the lease and
 reports whether newer edits remain. `abort-buffer-save!` releases a failed or cancelled lease.

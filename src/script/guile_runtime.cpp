@@ -1,6 +1,7 @@
 #include "script/guile_runtime.hpp"
 
 #include "editor/cpp_mode.hpp"
+#include "editor/resource_policy.hpp"
 #include "editor/runtime.hpp"
 #include "script/guile_async_bridge.hpp"
 
@@ -3458,8 +3459,20 @@ SCM start_project_search(SCM host_object, SCM project_value, SCM window_value, S
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
-// name and validation preserve the semantic order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM normalize_resource(SCM host_object, SCM path_value) {
+    (void)require_host(host_object, "normalize-resource-path");
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("normalize-resource-path", 2, path_value, "string");
+    }
+    const std::expected<std::string, std::string> path =
+        normalize_resource_path(scheme_string(path_value));
+    if (!path) {
+        raise_host_error("normalize-resource-path", path.error());
+    }
+    return scm_from_utf8_string(path->c_str());
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     if (!scm_is_string(path_value)) {
@@ -3468,21 +3481,105 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     HostLease& host = require_host(host_object, "set-buffer-resource!");
     const BufferId buffer =
         entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-resource!", 2);
-    if (!host.services.set_buffer_resource) {
-        scm_misc_error("set-buffer-resource!", "buffer-resource capability is unavailable",
-                       SCM_EOL);
-    }
     try {
-        const std::expected<void, std::string> updated =
-            host.services.set_buffer_resource(buffer, scheme_string(path_value));
-        if (!updated) {
-            raise_host_error("set-buffer-resource!", updated.error());
-        }
+        host.runtime->buffers().set_resource(buffer, scheme_string(path_value), BufferKind::File);
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("set-buffer-resource!", exception.what());
     } catch (...) {
         scm_misc_error("set-buffer-resource!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM rename_buffer(SCM host_object, SCM buffer_value, SCM name_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("rename-buffer!", 3, name_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "rename-buffer!");
+        const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "rename-buffer!", 2);
+        host.runtime->buffers().rename(buffer, scheme_string(name_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("rename-buffer!", exception.what());
+    } catch (...) {
+        scm_misc_error("rename-buffer!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM buffer_id_by_resource(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("buffer-id-by-resource", 2, path_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "buffer-id-by-resource");
+        const std::optional<BufferId> buffer =
+            host.runtime->buffers().find_by_resource(scheme_string(path_value));
+        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-id-by-resource", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-id-by-resource", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM resource_mode(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("resource-mode", 2, path_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "resource-mode");
+        const std::optional<ModeId> mode =
+            host.runtime->resource_policies().mode_for(scheme_string(path_value));
+        return mode ? name_symbol(host.runtime->modes().definition(*mode).name) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("resource-mode", exception.what());
+    } catch (...) {
+        scm_misc_error("resource-mode", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM project_for_resource(SCM host_object, SCM path_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("project-for-resource", 2, path_value, "string");
+    }
+    try {
+        HostLease& host = require_host(host_object, "project-for-resource");
+        const std::optional<ProjectId> project =
+            host.runtime->projects().find_for_resource(scheme_string(path_value));
+        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("project-for-resource", exception.what());
+    } catch (...) {
+        scm_misc_error("project-for-resource", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-buffer-project!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-project!", 2);
+        std::optional<ProjectId> project;
+        if (!scheme_false(project_value)) {
+            project = entity_id_from_scheme<ProjectTag>(project_value, "set-buffer-project!", 3);
+        }
+        host.runtime->projects().assign(buffer, project);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-buffer-project!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-buffer-project!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4285,8 +4382,19 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("open-file!", 3, 0, 0, reinterpret_cast<scm_t_subr>(open_file));
     (void)scm_c_define_gsubr("start-project-search!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_project_search));
+    (void)scm_c_define_gsubr("normalize-resource-path", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(normalize_resource));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_resource));
+    (void)scm_c_define_gsubr("rename-buffer!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(rename_buffer));
+    (void)scm_c_define_gsubr("buffer-id-by-resource", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_id_by_resource));
+    (void)scm_c_define_gsubr("resource-mode", 2, 0, 0, reinterpret_cast<scm_t_subr>(resource_mode));
+    (void)scm_c_define_gsubr("project-for-resource", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(project_for_resource));
+    (void)scm_c_define_gsubr("set-buffer-project!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_project));
     (void)scm_c_define_gsubr("begin-buffer-save!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(begin_buffer_save));
     (void)scm_c_define_gsubr("complete-buffer-save!", 2, 0, 0,
@@ -4343,11 +4451,12 @@ void initialize_host_module(void*) {
         "move-interaction-history!", "cancel-interaction!", "cancel-pending-input!",
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
-        "start-project-search!", "set-buffer-resource!", "begin-buffer-save!",
-        "complete-buffer-save!", "abort-buffer-save!", "open-buffer-ids", "create-buffer!",
-        "buffer-saving?", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",
-        "delete-window!", "delete-other-windows!", "open-window-ids", "focus-window!",
-        "request-redraw!", nullptr);
+        "start-project-search!", "normalize-resource-path", "set-buffer-resource!",
+        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
+        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
+        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "delete-other-windows!", "open-window-ids", "focus-window!", "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
