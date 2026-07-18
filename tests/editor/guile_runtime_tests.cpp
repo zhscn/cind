@@ -789,6 +789,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                      .read_only = false});
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
+    const ViewId alternate_view = runtime.views().create(other);
+    const WindowId alternate_window = runtime.windows().create(alternate_view);
     CommandContext context(runtime, window, buffer, view);
 
     std::pair<WindowId, BufferId> displayed;
@@ -828,8 +830,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool window_deleted = false;
     WindowId retained_window;
     bool other_windows_deleted = false;
-    WindowId other_window_source;
-    int other_window_delta = 0;
+    WindowId focused_window;
     bool other_window_selected = false;
     bool redraw_requested = false;
     std::string window_error;
@@ -955,18 +956,20 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              window_deleted = true;
              return {};
          },
-         .delete_other_windows =
-             [&](WindowId retained) {
-                 retained_window = retained;
-                 other_windows_deleted = true;
-             },
-         .select_other_window = [&](WindowId source,
-                                    int delta) -> std::expected<void, std::string> {
+         .delete_other_windows = [&](WindowId retained) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
              }
-             other_window_source = source;
-             other_window_delta = delta;
+             retained_window = retained;
+             other_windows_deleted = true;
+             return {};
+         },
+         .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
+         .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
+             if (!window_error.empty()) {
+                 return std::unexpected(window_error);
+             }
+             focused_window = target;
              other_window_selected = true;
              return {};
          },
@@ -1450,13 +1453,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(delete_others.has_value());
     REQUIRE(other_windows_deleted);
     CHECK(retained_window == window);
+    CHECK(message == "other windows deleted");
 
     const CommandResult other_window =
         runtime.commands().invoke(require_command(runtime, "window.other"), context);
     REQUIRE(other_window.has_value());
     REQUIRE(other_window_selected);
-    CHECK(other_window_source == window);
-    CHECK(other_window_delta == 1);
+    CHECK(focused_window == alternate_window);
 
     const CommandResult redraw =
         runtime.commands().invoke(require_command(runtime, "editor.redraw"), context);

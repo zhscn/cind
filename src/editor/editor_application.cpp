@@ -287,13 +287,20 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            },
            .delete_window = [this](WindowId window) -> std::expected<void, std::string> {
                return delete_window(window) ? std::expected<void, std::string>{}
-                                            : std::unexpected(message_);
+                                            : std::unexpected("cannot delete the only window");
            },
-           .delete_other_windows = [this](WindowId window) { delete_other_windows(window); },
-           .select_other_window = [this](WindowId window,
-                                         int delta) -> std::expected<void, std::string> {
-               return select_other_window(window, delta) ? std::expected<void, std::string>{}
-                                                         : std::unexpected(message_);
+           .delete_other_windows = [this](WindowId window) -> std::expected<void, std::string> {
+               return delete_other_windows(window) ? std::expected<void, std::string>{}
+                                                   : std::unexpected("unknown window");
+           },
+           .open_windows =
+               [this] {
+                   return std::vector<WindowId>(window_layout_.leaves().begin(),
+                                                window_layout_.leaves().end());
+               },
+           .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
+               return focus_window(window) ? std::expected<void, std::string>{}
+                                           : std::unexpected("unknown window");
            },
            .request_redraw = [this] { reveal_caret_ = true; },
            .active_key_bindings =
@@ -726,7 +733,8 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     return consumed;
 }
 
-bool EditorApplication::execute_command(std::string_view name, const CommandInvocation& invocation) {
+bool EditorApplication::execute_command(std::string_view name,
+                                        const CommandInvocation& invocation) {
     const std::optional<CommandId> command = runtime_.commands().find(name);
     if (!command) {
         command_loop_.cancel_pending();
@@ -1184,7 +1192,6 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
         destroy_window(window);
         return false;
     }
-    message_ = axis == WindowSplitAxis::Rows ? "window split below" : "window split right";
     reveal_caret_ = true;
     return true;
 }
@@ -1196,31 +1203,27 @@ bool EditorApplication::delete_window() {
 bool EditorApplication::delete_window(WindowId target) {
     const std::optional<WindowId> replacement = window_layout_.next(target);
     if (!replacement || *replacement == target || !window_layout_.erase(target)) {
-        message_ = "cannot delete the only window";
         return false;
     }
     if (active_window_ == target) {
         active_window_ = *replacement;
     }
     destroy_window(target);
-    message_ = "window deleted";
     reveal_caret_ = true;
     sync_keymaps();
     return true;
 }
 
-void EditorApplication::delete_other_windows() {
-    delete_other_windows(active_window_);
+bool EditorApplication::delete_other_windows() {
+    return delete_other_windows(active_window_);
 }
 
-void EditorApplication::delete_other_windows(WindowId retained) {
+bool EditorApplication::delete_other_windows(WindowId retained) {
     if (!window_layout_.contains(retained) || runtime_.windows().try_get(retained) == nullptr) {
-        message_ = "unknown window";
-        return;
+        return false;
     }
     if (window_layout_.leaves().size() <= 1) {
-        message_ = "only window";
-        return;
+        return true;
     }
     const std::vector<WindowId> windows(window_layout_.leaves().begin(),
                                         window_layout_.leaves().end());
@@ -1231,22 +1234,9 @@ void EditorApplication::delete_other_windows(WindowId retained) {
         }
     }
     active_window_ = retained;
-    message_ = "other windows deleted";
     reveal_caret_ = true;
     sync_keymaps();
-}
-
-bool EditorApplication::select_other_window(int delta) {
-    return select_other_window(active_window_, delta);
-}
-
-bool EditorApplication::select_other_window(WindowId from, int delta) {
-    const std::optional<WindowId> target = window_layout_.next(from, delta);
-    if (!target || *target == from) {
-        message_ = "only window";
-        return false;
-    }
-    return focus_window(*target);
+    return true;
 }
 
 std::expected<void, std::string> EditorApplication::release_buffer(BufferId buffer,

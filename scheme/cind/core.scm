@@ -269,6 +269,10 @@
 (define (completed-or-error error)
   (if error (command-error error) (command-completed)))
 
+(define (completed-with-message host message)
+  (set-message! host message)
+  (command-completed))
+
 (define (modified-buffer-count host)
   (let ((buffers (open-buffer-ids host)))
     (let loop ((index 0)
@@ -311,18 +315,37 @@
   (command-completed))
 
 (define (window-split host context axis)
-  (completed-or-error (split-window! host (context-window context) axis)))
+  (let ((error (split-window! host (context-window context) axis)))
+    (if error
+        (command-error error)
+        (completed-with-message
+         host (if (eq? axis 'rows) "window split below" "window split right")))))
 
 (define (window-delete host context)
-  (completed-or-error (delete-window! host (context-window context))))
+  (let ((error (delete-window! host (context-window context))))
+    (if error
+        (command-error error)
+        (completed-with-message host "window deleted"))))
 
 (define (window-delete-others host context)
-  (delete-other-windows! host (context-window context))
-  (command-completed))
+  (if (<= (vector-length (open-window-ids host)) 1)
+      (completed-with-message host "only window")
+      (let ((error (delete-other-windows! host (context-window context))))
+        (if error
+            (command-error error)
+            (completed-with-message host "other windows deleted")))))
 
 (define (window-other host context)
-  (completed-or-error
-   (select-other-window! host (context-window context) 1)))
+  (let* ((windows (open-window-ids host))
+         (count (vector-length windows))
+         (current (vector-index-of windows (context-window context))))
+    (cond ((< count 2)
+           (command-error "only window"))
+          ((not current)
+           (command-error "current window is not open"))
+          (else
+           (completed-or-error
+            (focus-window! host (vector-ref windows (modulo (+ current 1) count))))))))
 
 (define (editor-redraw host)
   (request-redraw! host)

@@ -123,8 +123,7 @@ public:
     bool focus_window(WindowId window);
     bool split_window(WindowSplitAxis axis);
     bool delete_window();
-    void delete_other_windows();
-    bool select_other_window(int delta = 1);
+    bool delete_other_windows();
     std::expected<void, std::string> release_buffer(BufferId buffer, BufferId replacement);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
@@ -245,8 +244,7 @@ private:
                                                         std::uint32_t display_column);
     bool split_window(WindowId target, WindowSplitAxis axis);
     bool delete_window(WindowId target);
-    void delete_other_windows(WindowId retained);
-    bool select_other_window(WindowId from, int delta);
+    bool delete_other_windows(WindowId retained);
     void destroy_window(WindowId window);
     std::expected<void, std::string> start_project_search(ProjectId project, std::string query,
                                                           WindowId target_window);

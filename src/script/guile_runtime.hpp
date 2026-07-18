@@ -115,8 +115,9 @@ struct GuileHostServices {
     std::function<void()> request_exit;
     std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
-    std::function<void(WindowId)> delete_other_windows;
-    std::function<std::expected<void, std::string>(WindowId, int)> select_other_window;
+    std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
+    std::function<std::vector<WindowId>()> open_windows;
+    std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<void()> request_redraw;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<std::vector<KeymapId>(WindowId)> active_keymap_layers;

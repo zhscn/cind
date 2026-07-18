@@ -165,7 +165,8 @@ The native module exports:
 (split-window! host window-id axis)
 (delete-window! host window-id)
 (delete-other-windows! host window-id)
-(select-other-window! host window-id delta)
+(open-window-ids host)
+(focus-window! host window-id)
 (request-redraw! host)
 (%start-async-task! host request completed failed-or-#f cancelled-or-#f)
 (%cancel-async-task! host task-id)
@@ -486,11 +487,13 @@ returns `#f` on success or an invariant error string. The bundled Scheme policy 
 save, applies the force/modified rule, chooses the first remaining Buffer, and creates its named
 `*scratch*` replacement when necessary.
 
-Window capabilities operate on an explicit command-context window. `split-window!` accepts `rows`
-or `columns`; split, delete and focus operations return `#f` on success or an expected error string.
-`delete-other-windows!` retains the identified window, `exit-editor!` marks the native event loop
-for termination, and `request-redraw!` requests caret reveal. The bundled Scheme commands inspect
-buffer state and own the quit confirmation interaction before invoking the exit mechanism.
+Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
+`columns`; split, delete, retain and focus operations return `#f` on success or an invariant error
+string. `open-window-ids` returns layout order. The bundled Scheme policy uses that order for
+window cycling, handles single-window behavior and supplies operation feedback. `exit-editor!`
+marks the native event loop for termination, and `request-redraw!` requests caret reveal. Scheme
+commands inspect buffer state and own the quit confirmation interaction before invoking the exit
+mechanism.
 
 `ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
 `open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the
