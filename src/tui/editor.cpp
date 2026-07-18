@@ -234,7 +234,7 @@ private:
                     (handled && (!message_.empty() || !command_loop_.pending_sequence().empty()));
             }
         } else if (key.kind == KeyKind::Eof) {
-            application_.request_quit(true);
+            (void)application_.execute_command("application.force-quit");
         } else if (const std::optional<KeyStroke> stroke = normalize_key(key)) {
             message_.clear();
             const bool handled = application_.handle_key(*stroke, text_rows());

@@ -3639,24 +3639,18 @@ SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
     return SCM_UNSPECIFIED;
 }
 
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-SCM request_quit(SCM host_object, SCM force_value) {
-    if (!scheme_boolean(force_value)) {
-        scm_wrong_type_arg_msg("request-quit!", 2, force_value, "boolean");
-    }
-    HostLease& host = require_host(host_object, "request-quit!");
-    if (!host.services.request_quit) {
-        scm_misc_error("request-quit!", "application-quit capability is unavailable", SCM_EOL);
+SCM exit_editor(SCM host_object) {
+    HostLease& host = require_host(host_object, "exit-editor!");
+    if (!host.services.request_exit) {
+        scm_misc_error("exit-editor!", "application-exit capability is unavailable", SCM_EOL);
     }
     try {
-        host.services.request_quit(scheme_true(force_value));
+        host.services.request_exit();
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("request-quit!", exception.what());
+        raise_host_error("exit-editor!", exception.what());
     } catch (...) {
-        scm_misc_error("request-quit!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("exit-editor!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -4245,7 +4239,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(buffer_modified_p));
     (void)scm_c_define_gsubr("release-buffer!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(release_buffer));
-    (void)scm_c_define_gsubr("request-quit!", 2, 0, 0, reinterpret_cast<scm_t_subr>(request_quit));
+    (void)scm_c_define_gsubr("exit-editor!", 1, 0, 0, reinterpret_cast<scm_t_subr>(exit_editor));
     (void)scm_c_define_gsubr("split-window!", 3, 0, 0, reinterpret_cast<scm_t_subr>(split_window));
     (void)scm_c_define_gsubr("delete-window!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(delete_window));
@@ -4285,7 +4279,7 @@ void initialize_host_module(void*) {
         "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
         "open-file-at!", "set-message!", "ensure-project-index!", "open-file!",
         "start-project-search!", "set-buffer-resource!", "save-buffer!", "open-buffer-ids",
-        "create-buffer!", "buffer-saving?", "buffer-modified?", "release-buffer!", "request-quit!",
+        "create-buffer!", "buffer-saving?", "buffer-modified?", "release-buffer!", "exit-editor!",
         "split-window!", "delete-window!", "delete-other-windows!", "select-other-window!",
         "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);

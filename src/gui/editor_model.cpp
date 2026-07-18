@@ -640,7 +640,6 @@ EditorStateSnapshot EditorModel::inspect() {
             .location_navigation = location_navigation,
             .background_work = application_.has_background_work(),
             .project_search_running = application_.project_search_running(),
-            .quit_armed = application_.quit_armed(),
             .quit = application_.should_quit()};
 }
 

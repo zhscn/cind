@@ -111,6 +111,7 @@ public:
     void refresh_default_keymap();
 
     bool handle_key(KeyStroke key, int page_rows);
+    bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;
     TextInputPolicy text_input_policy() const;
@@ -170,8 +171,6 @@ public:
     }
     bool poll_background_work();
     bool should_quit() const { return quit_; }
-    bool quit_armed() const { return quit_armed_; }
-    void request_quit(bool force = false);
 
     void mark_saved(Text content);
 
@@ -310,7 +309,6 @@ private:
     std::string last_command_;
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
-    bool quit_armed_ = false;
     bool quit_ = false;
     // These are declared last so the script adapter first cancels its work,
     // then the native runtime joins before captured editor state is destroyed.

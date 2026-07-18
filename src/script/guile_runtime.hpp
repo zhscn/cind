@@ -112,7 +112,7 @@ struct GuileHostServices {
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<bool(BufferId)> buffer_saving;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;
-    std::function<void(bool)> request_quit;
+    std::function<void()> request_exit;
     std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
     std::function<void(WindowId)> delete_other_windows;

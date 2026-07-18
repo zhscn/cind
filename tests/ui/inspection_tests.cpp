@@ -175,7 +175,6 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                                 .location_count = 9},
         .background_work = false,
         .project_search_running = false,
-        .quit_armed = false,
         .quit = false,
     };
     Scene scene;

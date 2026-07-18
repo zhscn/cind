@@ -386,7 +386,7 @@ private:
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-            editor_.request_quit();
+            editor_.request_close();
             return {true, !editor_.should_quit()};
         case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_RESIZED:
@@ -586,8 +586,8 @@ private:
                                          .y = destination_y,
                                          .w = static_cast<float>(pixel_width),
                                          .h = static_cast<float>(overlap_height)};
-        bool copied = SDL_RenderTexture(renderer_.get(), texture_.get(), &grid_source,
-                                        &grid_destination);
+        bool copied =
+            SDL_RenderTexture(renderer_.get(), texture_.get(), &grid_source, &grid_destination);
         if (copied && grid_bottom < pixel_height) {
             const SDL_FRect footer{.x = 0.0F,
                                    .y = static_cast<float>(grid_bottom),
@@ -618,15 +618,15 @@ private:
         }
         std::swap(texture_, scroll_texture_);
         timings.texture_scroll_reused = true;
-        timings.texture_copy_pixels =
-            static_cast<std::uint64_t>(pixel_width) *
-            static_cast<std::uint64_t>(pixel_height - exposed.h);
+        timings.texture_copy_pixels = static_cast<std::uint64_t>(pixel_width) *
+                                      static_cast<std::uint64_t>(pixel_height - exposed.h);
         timings.uploaded_bytes += static_cast<std::uint64_t>(exposed.w) *
                                   static_cast<std::uint64_t>(exposed.h) * sizeof(std::uint32_t);
         ++timings.upload_rects;
         return true;
     }
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     bool texture_matches_pixels(const std::byte* expected, int pixel_width, int pixel_height,
                                 std::size_t row_bytes) const {
         std::unique_ptr<SDL_Surface, SurfaceDeleter> captured(
@@ -645,7 +645,7 @@ private:
             static_cast<std::size_t>(pixel_width) * sizeof(std::uint32_t);
         for (int y = 0; y < pixel_height; ++y) {
             if (std::memcmp(actual + static_cast<std::size_t>(y) *
-                                        static_cast<std::size_t>(converted->pitch),
+                                         static_cast<std::size_t>(converted->pitch),
                             expected + static_cast<std::size_t>(y) * row_bytes,
                             compared_row_bytes) != 0) {
                 return false;
@@ -718,19 +718,19 @@ private:
                                  editor_state.viewport.top_line_offset;
         const SkiaShapeCacheStats shape_cache_before = presenter_.shape_cache_stats();
         const auto build_started = std::chrono::steady_clock::now();
-        PresentedFrame frame = frame_controller_.build({.scene = std::move(scene),
-                                                        .identity = frame_identity(editor_state),
-                                                        .scroll_top = scroll_top,
-                                                        .logical_width = logical_output_width_,
-                                                        .logical_height = logical_output_height_,
-                                                        .output_width = pixel_width,
-                                                        .output_height = pixel_height,
-                                                        .display_scale = scale,
-                                                        .animate_scroll = !direct_scroll_pending_,
-                                                        .constrain_scroll_to_cursor =
-                                                            editor_state.reveal_caret,
-                                                        .geometry_changed = geometry_changed,
-                                                        .now = FrameClock::now()});
+        PresentedFrame frame =
+            frame_controller_.build({.scene = std::move(scene),
+                                     .identity = frame_identity(editor_state),
+                                     .scroll_top = scroll_top,
+                                     .logical_width = logical_output_width_,
+                                     .logical_height = logical_output_height_,
+                                     .output_width = pixel_width,
+                                     .output_height = pixel_height,
+                                     .display_scale = scale,
+                                     .animate_scroll = !direct_scroll_pending_,
+                                     .constrain_scroll_to_cursor = editor_state.reveal_caret,
+                                     .geometry_changed = geometry_changed,
+                                     .now = FrameClock::now()});
         timings.frame_build_us =
             elapsed_microseconds(build_started, std::chrono::steady_clock::now());
         const SkiaShapeCacheStats shape_cache_after = presenter_.shape_cache_stats();
@@ -759,8 +759,7 @@ private:
                                          row_bytes, frame.logical_damage(), scale);
             }
         }
-        timings.raster_us =
-            elapsed_microseconds(raster_started, std::chrono::steady_clock::now());
+        timings.raster_us = elapsed_microseconds(raster_started, std::chrono::steady_clock::now());
 
         bool full_reference_match = true;
         const auto reference_started = std::chrono::steady_clock::now();
@@ -804,8 +803,7 @@ private:
                 ++timings.upload_rects;
             }
         }
-        timings.upload_us =
-            elapsed_microseconds(upload_started, std::chrono::steady_clock::now());
+        timings.upload_us = elapsed_microseconds(upload_started, std::chrono::steady_clock::now());
         const auto present_started = std::chrono::steady_clock::now();
         if (!SDL_RenderClear(renderer_.get()) ||
             !SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr)) {
@@ -817,8 +815,8 @@ private:
             full_reference_match =
                 full_reference_match &&
                 texture_matches_pixels(pixel_bytes, pixel_width, pixel_height, row_bytes);
-            timings.reference_us += elapsed_microseconds(texture_reference_started,
-                                                         std::chrono::steady_clock::now());
+            timings.reference_us +=
+                elapsed_microseconds(texture_reference_started, std::chrono::steady_clock::now());
         }
         const auto present_resumed = std::chrono::steady_clock::now();
         update_text_input_area(frame);
@@ -1105,9 +1103,8 @@ private:
 
 #if defined(__APPLE__)
     void queue_mac_scroll(MacScrollDelta delta) {
-        const float lines = delta.precise
-                                ? delta.y / static_cast<float>(presenter_.cell_height())
-                                : delta.y * wheel_lines_per_step;
+        const float lines = delta.precise ? delta.y / static_cast<float>(presenter_.cell_height())
+                                          : delta.y * wheel_lines_per_step;
         pending_mac_scroll_lines_ += lines;
         if (mac_scroll_event_queued_) {
             return;

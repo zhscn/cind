@@ -279,7 +279,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](BufferId buffer, BufferId replacement) {
                    return release_buffer(buffer, replacement);
                },
-           .request_quit = [this](bool force) { request_quit(force); },
+           .request_exit = [this] { quit_ = true; },
            .split_window = [this](WindowId window,
                                   WindowSplitAxis axis) -> std::expected<void, std::string> {
                return split_window(window, axis) ? std::expected<void, std::string>{}
@@ -726,6 +726,22 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     return consumed;
 }
 
+bool EditorApplication::execute_command(std::string_view name, const CommandInvocation& invocation) {
+    const std::optional<CommandId> command = runtime_.commands().find(name);
+    if (!command) {
+        command_loop_.cancel_pending();
+        message_ = std::format("unknown command '{}'", name);
+        sync_keymaps();
+        return false;
+    }
+    const RevisionId interaction_revision = interaction_.input_revision();
+    CommandContext context = command_context();
+    const bool consumed = handle_loop_result(command_loop_.execute(*command, context, invocation));
+    refresh_interaction_after_edit(interaction_revision);
+    sync_keymaps();
+    return consumed;
+}
+
 TextInputPolicy EditorApplication::text_input_policy() const {
     return input_state().text_input;
 }
@@ -1142,7 +1158,6 @@ bool EditorApplication::focus_window(WindowId window) {
     }
     active_window_ = window;
     reveal_caret_ = true;
-    quit_armed_ = false;
     sync_keymaps();
     return true;
 }
@@ -1290,7 +1305,6 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
     reveal_caret_ = true;
-    quit_armed_ = false;
     sync_keymaps();
     return {};
 }
@@ -1517,21 +1531,6 @@ bool EditorApplication::poll_background_work() {
     return async_runtime_.drain() != 0;
 }
 
-void EditorApplication::request_quit(bool force) {
-    const std::size_t modified = static_cast<std::size_t>(
-        std::ranges::count_if(buffers_, [this](const std::unique_ptr<BufferState>& state) {
-            return runtime_.buffers().get(state->buffer).modified();
-        }));
-    if (modified == 0 || force || quit_armed_) {
-        quit_ = true;
-        return;
-    }
-    quit_armed_ = true;
-    message_ = std::format("{} unsaved buffer{} · C-x C-s saves current · "
-                           "C-x C-c again discards",
-                           modified, modified == 1 ? "" : "s");
-}
-
 void EditorApplication::mark_saved(Text content) {
     mark_saved(buffer_id(), std::move(content));
 }
@@ -1686,7 +1685,6 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     }
     runtime_.windows().set_view(window, view->view);
     reveal_caret_ = true;
-    quit_armed_ = false;
     if (window == active_window_) {
         sync_keymaps();
     }
@@ -1959,7 +1957,6 @@ void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
 }
 
 void EditorApplication::after_edit() {
-    quit_armed_ = false;
     message_.clear();
     reveal_caret_ = true;
 }
@@ -2056,7 +2053,6 @@ void EditorApplication::mark_saved(BufferId buffer, Text content) {
     BufferState& state = state_for(buffer);
     runtime_.buffers().get(buffer).mark_saved(std::move(content));
     ++state.save_generation;
-    quit_armed_ = false;
 }
 
 } // namespace cind

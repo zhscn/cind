@@ -269,8 +269,45 @@
 (define (completed-or-error error)
   (if error (command-error error) (command-completed)))
 
-(define (application-quit host force?)
-  (request-quit! host force?)
+(define (modified-buffer-count host)
+  (let ((buffers (open-buffer-ids host)))
+    (let loop ((index 0)
+               (count 0))
+      (if (= index (vector-length buffers))
+          count
+          (loop (+ index 1)
+                (if (buffer-modified? host (vector-ref buffers index))
+                    (+ count 1)
+                    count))))))
+
+(define (application-quit host)
+  (let ((modified (modified-buffer-count host)))
+    (if (= modified 0)
+        (begin
+          (exit-editor! host)
+          (command-completed))
+        (read-from-minibuffer
+         (string-append (number->string modified)
+                        " modified buffer"
+                        (if (= modified 1) "" "s")
+                        "; exit anyway? (yes or no) ")
+         "application.quit.accept"))))
+
+(define (application-quit-accept host invocation)
+  (let ((answer (last-string-argument invocation)))
+    (cond ((not answer)
+           (command-error "quit confirmation requires yes or no"))
+          ((string-ci=? answer "yes")
+           (exit-editor! host)
+           (command-completed))
+          ((string-ci=? answer "no")
+           (set-message! host "quit cancelled")
+           (command-completed))
+          (else
+           (command-error "please answer yes or no")))))
+
+(define (application-force-quit host)
+  (exit-editor! host)
   (command-completed))
 
 (define (window-split host context axis)
@@ -1197,11 +1234,15 @@
               #f)
         (list "application.quit"
               (lambda (context invocation)
-                (application-quit host #f))
+                (application-quit host))
+              #f)
+        (list "application.quit.accept"
+              (lambda (context invocation)
+                (application-quit-accept host invocation))
               #f)
         (list "application.force-quit"
               (lambda (context invocation)
-                (application-quit host #t))
+                (application-force-quit host))
               #f)
         (list "window.split-below"
               (lambda (context invocation)

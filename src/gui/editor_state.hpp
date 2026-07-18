@@ -234,7 +234,6 @@ struct EditorStateSnapshot {
     LocationNavigationStateSnapshot location_navigation;
     bool background_work = false;
     bool project_search_running = false;
-    bool quit_armed = false;
     bool quit = false;
 };
 

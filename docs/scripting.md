@@ -161,7 +161,7 @@ The native module exports:
 (buffer-saving? host buffer-id)
 (buffer-modified? host buffer-id)
 (release-buffer! host buffer-id replacement-buffer-id)
-(request-quit! host force?)
+(exit-editor! host)
 (split-window! host window-id axis)
 (delete-window! host window-id)
 (delete-other-windows! host window-id)
@@ -488,9 +488,9 @@ save, applies the force/modified rule, chooses the first remaining Buffer, and c
 
 Window capabilities operate on an explicit command-context window. `split-window!` accepts `rows`
 or `columns`; split, delete and focus operations return `#f` on success or an expected error string.
-`delete-other-windows!` retains the identified window, `request-quit!` applies the application's
-unsaved-buffer quit contract, and `request-redraw!` requests caret reveal. Scheme maps these
-mechanisms to the default window and application commands.
+`delete-other-windows!` retains the identified window, `exit-editor!` marks the native event loop
+for termination, and `request-redraw!` requests caret reveal. The bundled Scheme commands inspect
+buffer state and own the quit confirmation interaction before invoking the exit mechanism.
 
 `ensure-project-index!` idempotently schedules the native asynchronous indexer for a project.
 `open-file!` normalizes and opens a resource through the asynchronous file pipeline, targeting the

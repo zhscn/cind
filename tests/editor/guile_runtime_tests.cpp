@@ -821,7 +821,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool buffer_released = false;
     std::string release_error;
     bool quit_requested = false;
-    bool quit_forced = false;
     WindowId split_target;
     WindowSplitAxis split_axis = WindowSplitAxis::Rows;
     bool window_split = false;
@@ -937,11 +936,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              buffer_released = true;
              return {};
          },
-         .request_quit =
-             [&](bool force) {
-                 quit_requested = true;
-                 quit_forced = force;
-             },
+         .request_exit = [&] { quit_requested = true; },
          .split_window = [&](WindowId target,
                              WindowSplitAxis axis) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
@@ -1087,7 +1082,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .async_tasks = {}});
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 190);
+    CHECK(*installed == 191);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 7);
@@ -1397,13 +1392,45 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         runtime.commands().invoke(require_command(runtime, "application.quit"), context);
     REQUIRE(quit.has_value());
     REQUIRE(quit_requested);
-    CHECK_FALSE(quit_forced);
+
+    quit_requested = false;
+    EditTransaction modify_for_quit = restored_buffer.begin_transaction();
+    modify_for_quit.insert(restored_buffer.snapshot().content().end_offset(), "changed");
+    (void)modify_for_quit.commit();
+    const CommandResult quit_prompt =
+        runtime.commands().invoke(require_command(runtime, "application.quit"), context);
+    REQUIRE(quit_prompt.has_value());
+    const auto* confirmation = std::get_if<InteractionRequest>(&*quit_prompt);
+    REQUIRE(confirmation != nullptr);
+    CHECK(confirmation->prompt == "1 modified buffer; exit anyway? (yes or no) ");
+    CHECK(runtime.commands().definition(confirmation->accept_command).name ==
+          "application.quit.accept");
+    CHECK_FALSE(quit_requested);
+
+    const CommandResult declined = runtime.commands().invoke(
+        require_command(runtime, "application.quit.accept"), context,
+        CommandInvocation{.arguments = {std::string("no")}, .prefix = {}});
+    REQUIRE(declined.has_value());
+    CHECK_FALSE(quit_requested);
+    CHECK(message == "quit cancelled");
+
+    const CommandResult confirmed = runtime.commands().invoke(
+        require_command(runtime, "application.quit.accept"), context,
+        CommandInvocation{.arguments = {std::string("yes")}, .prefix = {}});
+    REQUIRE(confirmed.has_value());
+    CHECK(quit_requested);
+
     quit_requested = false;
     const CommandResult force_quit =
         runtime.commands().invoke(require_command(runtime, "application.force-quit"), context);
     REQUIRE(force_quit.has_value());
     REQUIRE(quit_requested);
-    CHECK(quit_forced);
+
+    EditTransaction restore_after_quit = restored_buffer.begin_transaction();
+    restore_after_quit.replace(
+        TextRange{TextOffset{}, restored_buffer.snapshot().content().end_offset()}, "abc\n");
+    (void)restore_after_quit.commit();
+    restored_buffer.mark_saved(restored_buffer.snapshot().content());
 
     const CommandResult split_below =
         runtime.commands().invoke(require_command(runtime, "window.split-below"), context);
@@ -1610,7 +1637,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 190);
+    CHECK(snapshot.scripted_commands == 191);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 7);
     CHECK_FALSE(snapshot.last_error.has_value());

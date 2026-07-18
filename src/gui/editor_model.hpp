@@ -36,7 +36,9 @@ public:
     bool has_background_work() const { return application_.has_background_work(); }
     bool poll_background_work() { return application_.poll_background_work(); }
     bool should_quit() const { return application_.should_quit(); }
-    void request_quit(bool force = false) { application_.request_quit(force); }
+    void request_close(bool force = false) {
+        (void)application_.execute_command(force ? "application.force-quit" : "application.quit");
+    }
 
     RevisionId revision() const { return application_.revision(); }
     EditorRenderState render_state();

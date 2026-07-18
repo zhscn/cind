@@ -620,8 +620,6 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_bool(output, editor.background_work);
     output += ",\"project_search_running\":";
     append_bool(output, editor.project_search_running);
-    output += ",\"quit_armed\":";
-    append_bool(output, editor.quit_armed);
     output += ",\"quit\":";
     append_bool(output, editor.quit);
     output.push_back('}');
