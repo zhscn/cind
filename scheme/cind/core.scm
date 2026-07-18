@@ -2193,9 +2193,14 @@
     '((lexing . cind.c-family.lexer)
       (syntax . cind.c-family.syntax)
       (indentation . cind.c-family.indentation)
+      (structural-motion . cind.c-family.structural-motion)
       (structural-editing . cind.c-family.structural-editing)
       (highlighting . cind.c-family.highlighting))
     '((language.c-family.dialect . "c++")))
+  (define-language-profile!
+    host 'cind.scheme
+    '((structural-motion . cind.scheme.structural-motion))
+    '())
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
@@ -2210,6 +2215,7 @@
     #:interaction-class 'interface)
   (define-major-mode! host 'scheme-mode
     #:parent 'prog-mode
+    #:language 'cind.scheme
     #:keymap 'scheme-mode-map
     #:interaction-class 'editing)
   (define-major-mode! host 'cind.cpp

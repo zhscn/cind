@@ -3,6 +3,7 @@
 #include "editor/cpp_mode.hpp"
 #include "editor/resource_policy.hpp"
 #include "editor/runtime.hpp"
+#include "editor/scheme_mode.hpp"
 #include "script/guile_async_bridge.hpp"
 
 #include <libguile.h>
@@ -1400,6 +1401,9 @@ LanguageFacet language_facet_from_scheme(SCM value, const char* caller, int posi
     }
     if (symbol_is(value, "indentation")) {
         return LanguageFacet::Indentation;
+    }
+    if (symbol_is(value, "structural-motion")) {
+        return LanguageFacet::StructuralMotion;
     }
     if (symbol_is(value, "structural-editing")) {
         return LanguageFacet::StructuralEditing;
@@ -6618,6 +6622,7 @@ public:
                             }
                         }) {
         (void)ensure_c_family_mechanisms(runtime);
+        (void)ensure_scheme_mechanisms(runtime);
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
         for (const std::string_view module : bundled_guile_modules) {

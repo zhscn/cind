@@ -433,15 +433,17 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                if ((mechanism == MotionMechanism::ForwardExpression ||
                     mechanism == MotionMechanism::BackwardExpression ||
                     mechanism == MotionMechanism::UpList) &&
-                   !active.has_language_facet(LanguageFacet::StructuralEditing)) {
+                   !active.has_language_facet(LanguageFacet::StructuralMotion)) {
                    return std::unexpected("structural motion is unavailable for the current mode");
                }
-               const SyntaxTree* tree =
-                   active.has_language_facet(LanguageFacet::StructuralEditing)
-                       ? &active.analysis(LanguageFacet::StructuralEditing).tree
-                       : nullptr;
-               return evaluate_motion(runtime_.motions(), *motion, active.snapshot(), tree, source,
-                                      count, extend);
+               StructuralMotionResolver resolver;
+               if (active.has_language_facet(LanguageFacet::StructuralMotion)) {
+                   resolver = [&active](StructuralMotion motion, TextOffset from) {
+                       return active.move_structurally(from, motion);
+                   };
+               }
+               return evaluate_motion(runtime_.motions(), *motion, active.snapshot(), source, count,
+                                      extend, resolver);
            },
            .expand_selection = [this](ViewId view, const ViewSelection& source)
                -> std::expected<std::optional<ViewSelection>, std::string> {

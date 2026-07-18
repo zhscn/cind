@@ -735,6 +735,18 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK(runtime.modes().definition(special).parent == fundamental);
     CHECK(runtime.modes().definition(special).interaction_class == InteractionClass::Interface);
     CHECK(runtime.modes().definition(scheme).parent == prog);
+    const std::optional<LanguageProfileId> scheme_language =
+        runtime.languages().find_profile("cind.scheme");
+    REQUIRE(scheme_language.has_value());
+    CHECK(runtime.modes().definition(scheme).language == scheme_language);
+    CHECK(runtime.languages()
+              .profile(*scheme_language)
+              .provider(LanguageFacet::StructuralMotion)
+              .has_value());
+    CHECK_FALSE(runtime.languages()
+                    .profile(*scheme_language)
+                    .provider(LanguageFacet::StructuralEditing)
+                    .has_value());
     CHECK(runtime.modes().definition(scheme).keymaps ==
           std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
     CHECK(runtime.modes().definition(location_list).parent == special);
@@ -746,6 +758,10 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     REQUIRE(cpp_language.has_value());
     CHECK(runtime.modes().definition(cpp).language == cpp_language);
     CHECK(runtime.languages().profile(*cpp_language).provider(LanguageFacet::Lexing).has_value());
+    CHECK(runtime.languages()
+              .profile(*cpp_language)
+              .provider(LanguageFacet::StructuralMotion)
+              .has_value());
     CHECK(runtime.languages()
               .profile(*cpp_language)
               .provider(LanguageFacet::StructuralEditing)

@@ -22,7 +22,7 @@ const Analysis& LanguageMechanismSession::analysis(const DocumentSnapshot&) {
 void LanguageMechanismSession::apply(const DocumentChange&, const DocumentSnapshot&) {}
 
 TypeCharsResult LanguageMechanismSession::type_chars(Document&, std::span<const TextOffset>, char,
-                                                      const CppIndentStyle&) {
+                                                     const CppIndentStyle&) {
     unavailable("structural text input");
 }
 
@@ -31,13 +31,18 @@ EnterResult LanguageMechanismSession::newline(Document&, TextOffset, const CppIn
 }
 
 IndentDecision LanguageMechanismSession::indent_line(Document&, std::uint32_t,
-                                                      const CppIndentStyle&) {
+                                                     const CppIndentStyle&) {
     unavailable("language indentation");
 }
 
 IndentDecision LanguageMechanismSession::explain_indent(const DocumentSnapshot&, std::uint32_t,
-                                                         const CppIndentStyle&) {
+                                                        const CppIndentStyle&) {
     unavailable("indentation explanation");
+}
+
+std::optional<TextOffset>
+LanguageMechanismSession::move_structurally(const DocumentSnapshot&, TextOffset, StructuralMotion) {
+    unavailable("structural motion");
 }
 
 LanguageMechanism::LanguageMechanism(LanguageFacetMask facets, OpenSession open_session)

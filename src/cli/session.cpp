@@ -144,6 +144,12 @@ const Analysis& EditSession::analysis(LanguageFacet facet) const {
     return language_session(facet).analysis(snapshot());
 }
 
+std::optional<TextOffset> EditSession::move_structurally(TextOffset from,
+                                                         StructuralMotion motion) const {
+    return language_session(LanguageFacet::StructuralMotion)
+        .move_structurally(snapshot(), from, motion);
+}
+
 void EditSession::set_caret(TextOffset caret) {
     if (caret.value > snapshot().size_bytes()) {
         throw std::out_of_range("EditSession: caret out of range");

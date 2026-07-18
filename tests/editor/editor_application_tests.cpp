@@ -389,6 +389,31 @@ TEST_CASE("resource policy selects file modes without making scratch buffers C++
     CHECK(plain_scheme.message() == "indentation unavailable for this mode");
 }
 
+TEST_CASE("Scheme mode navigates datums without inheriting C-family editing") {
+    const std::string source = "; ignored ( delimiter\n'(define (square x) \"not )\")\n#u8(1 2)\n";
+    EditorApplication application = make_application("sample.scm", source);
+    const std::size_t quoted_start = source.find('\'');
+    const std::size_t quoted_end = source.find("\n#u8");
+    const std::size_t vector_start = source.find("#u8");
+    const std::size_t vector_end = source.find('\n', vector_start);
+    const std::size_t nested_start = source.find("(square");
+
+    application.session().set_caret(TextOffset{0});
+    send_keys(application, "C-M-f");
+    CHECK(application.session().caret().value == quoted_end);
+    send_keys(application, "C-M-f");
+    CHECK(application.session().caret().value == vector_end);
+    send_keys(application, "C-M-b");
+    CHECK(application.session().caret().value == vector_start);
+    send_keys(application, "C-M-b");
+    CHECK(application.session().caret().value == quoted_start);
+
+    application.session().set_caret(TextOffset{static_cast<std::uint32_t>(nested_start + 4)});
+    send_keys(application, "C-M-u");
+    CHECK(application.session().caret().value == nested_start);
+    CHECK_FALSE(application.session().has_language_facet(LanguageFacet::StructuralEditing));
+}
+
 TEST_CASE("user initialization overrides file mode policy before the first buffer") {
     TemporaryFile init(std::format("cind-mode-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((%define-mode! host 'user-notes 'major 'fundamental-mode #f #f

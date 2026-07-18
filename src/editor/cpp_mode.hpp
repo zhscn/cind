@@ -9,6 +9,7 @@ struct CFamilyMechanismsRegistration {
     LanguageProviderId lexer;
     LanguageProviderId syntax;
     LanguageProviderId indentation;
+    LanguageProviderId structural_motion;
     LanguageProviderId structural_editing;
     LanguageProviderId highlighting;
 };

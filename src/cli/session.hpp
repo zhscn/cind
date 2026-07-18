@@ -97,6 +97,7 @@ public:
     // Analysis from the exact provider selected for `facet` by the Buffer's
     // scripted language profile. Valid until the next mutation.
     const Analysis& analysis(LanguageFacet facet = LanguageFacet::Syntax) const;
+    std::optional<TextOffset> move_structurally(TextOffset from, StructuralMotion motion) const;
 
     std::string render_with_caret() const;
 

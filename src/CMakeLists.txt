@@ -92,6 +92,12 @@ add_library(cind_c_family STATIC
 target_include_directories(cind_c_family PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cind_c_family PUBLIC cind_application PRIVATE cind_indent)
 
+add_library(cind_scheme STATIC
+  editor/scheme_mode.cpp
+)
+target_include_directories(cind_scheme PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cind_scheme PUBLIC cind_application)
+
 set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
 set(CIND_ARES_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/ares.scm")
 set(CIND_ARES_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/ares.scm")
@@ -219,7 +225,7 @@ target_compile_definitions(cind_guile PRIVATE
 )
 add_dependencies(cind_guile cind_scheme_resources cind_fibers_external)
 target_link_libraries(cind_guile
-  PUBLIC cind_application cind_c_family cind_script_async
+  PUBLIC cind_application cind_c_family cind_scheme cind_script_async
   PRIVATE Cind::Guile
 )
 

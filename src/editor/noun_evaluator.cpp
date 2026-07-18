@@ -329,7 +329,7 @@ TextOffset backward_word(const Text& text, TextOffset from, bool symbol_words = 
 }
 
 TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot,
-                     const SyntaxTree* tree, TextOffset from) {
+                     const StructuralMotionResolver& structural_motion, TextOffset from) {
     switch (mechanism) {
     case MotionMechanism::ForwardCharacter:
         return ui::next_grapheme(snapshot.content(), from);
@@ -346,22 +346,28 @@ TextOffset move_once(MotionMechanism mechanism, const DocumentSnapshot& snapshot
     case MotionMechanism::BackwardSymbol:
         return backward_word(snapshot.content(), from, true);
     case MotionMechanism::ForwardExpression:
-        if (tree == nullptr)
-            return from;
-        if (const std::optional<TextRange> range = sexp_forward(*tree, from))
-            return range->end;
+        if (structural_motion) {
+            if (const std::optional<TextOffset> target =
+                    structural_motion(StructuralMotion::ForwardExpression, from)) {
+                return *target;
+            }
+        }
         return from;
     case MotionMechanism::BackwardExpression:
-        if (tree == nullptr)
-            return from;
-        if (const std::optional<TextRange> range = sexp_backward(*tree, from))
-            return range->start;
+        if (structural_motion) {
+            if (const std::optional<TextOffset> target =
+                    structural_motion(StructuralMotion::BackwardExpression, from)) {
+                return *target;
+            }
+        }
         return from;
     case MotionMechanism::UpList:
-        if (tree == nullptr)
-            return from;
-        if (const std::optional<TextRange> range = enclosing_list(*tree, from))
-            return range->start;
+        if (structural_motion) {
+            if (const std::optional<TextOffset> target =
+                    structural_motion(StructuralMotion::UpList, from)) {
+                return *target;
+            }
+        }
         return from;
     }
     return from;
@@ -376,8 +382,9 @@ std::optional<ThingMatch> evaluate_thing(const ThingRegistry& registry, ThingId 
 }
 
 ViewSelection evaluate_motion(const MotionRegistry& registry, MotionId motion,
-                              const DocumentSnapshot& snapshot, const SyntaxTree* tree,
-                              const ViewSelection& selection, std::int64_t count, bool extend) {
+                              const DocumentSnapshot& snapshot, const ViewSelection& selection,
+                              std::int64_t count, bool extend,
+                              const StructuralMotionResolver& structural_motion) {
     MotionMechanism mechanism = registry.definition(motion).mechanism;
     if (count < 0) {
         mechanism = reversed(mechanism);
@@ -389,7 +396,7 @@ ViewSelection evaluate_motion(const MotionRegistry& registry, MotionId motion,
     for (SelectionRange& range : result.ranges) {
         TextOffset target = range.head;
         for (std::uint64_t step = 0; step < magnitude; ++step) {
-            const TextOffset next = move_once(mechanism, snapshot, tree, target);
+            const TextOffset next = move_once(mechanism, snapshot, structural_motion, target);
             if (next == target) {
                 break;
             }

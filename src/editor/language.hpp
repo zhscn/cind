@@ -39,6 +39,7 @@ enum class LanguageFacet : std::uint8_t {
     Lexing,
     Syntax,
     Indentation,
+    StructuralMotion,
     StructuralEditing,
     Highlighting,
     Completion,

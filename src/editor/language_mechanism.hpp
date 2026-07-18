@@ -1,10 +1,12 @@
 #pragma once
 
+#include "document/snapshot.hpp"
 #include "editor/language.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace cind {
@@ -12,12 +14,16 @@ namespace cind {
 struct Analysis;
 class Document;
 struct DocumentChange;
-class DocumentSnapshot;
 struct CppIndentStyle;
 struct EnterResult;
 struct IndentDecision;
-struct TextOffset;
 struct TypeCharsResult;
+
+enum class StructuralMotion : std::uint8_t {
+    ForwardExpression,
+    BackwardExpression,
+    UpList,
+};
 
 // Per-EditSession state for one native language mechanism. The default
 // operations reject unsupported use; concrete mechanisms override the
@@ -30,12 +36,13 @@ public:
     virtual void apply(const DocumentChange& change, const DocumentSnapshot& snapshot);
     virtual TypeCharsResult type_chars(Document& document, std::span<const TextOffset> carets,
                                        char character, const CppIndentStyle& style);
-    virtual EnterResult newline(Document& document, TextOffset caret,
-                                const CppIndentStyle& style);
+    virtual EnterResult newline(Document& document, TextOffset caret, const CppIndentStyle& style);
     virtual IndentDecision indent_line(Document& document, std::uint32_t line,
                                        const CppIndentStyle& style);
     virtual IndentDecision explain_indent(const DocumentSnapshot& snapshot, std::uint32_t line,
                                           const CppIndentStyle& style);
+    virtual std::optional<TextOffset> move_structurally(const DocumentSnapshot& snapshot,
+                                                        TextOffset from, StructuralMotion motion);
 };
 
 // Immutable executable implementation shared by provider declarations. One
