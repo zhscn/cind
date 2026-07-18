@@ -93,6 +93,14 @@ struct GuileBufferCreation {
     std::string style_origin;
 };
 
+struct GuileWorkbenchSummary {
+    WorkbenchId workbench;
+    std::string name;
+    std::vector<ProjectId> scope;
+    std::vector<BufferId> mru;
+    bool active = false;
+};
+
 enum class GuileDeleteOutcome : std::uint8_t {
     Unchanged,
     Deleted,
@@ -120,6 +128,7 @@ struct GuileHostServices {
     std::function<int()> page_rows;
     std::function<GuileInteractionStatus()> interaction_status;
     std::function<std::optional<std::string>()> interaction_provider;
+    std::function<std::expected<void, std::string>(std::string)> set_interaction_provider;
     std::function<std::optional<ProjectId>()> interaction_origin_project;
     std::function<void()> refresh_interaction;
     std::function<std::expected<GuileInteractionSubmission, std::string>()> submit_interaction;
@@ -143,6 +152,15 @@ struct GuileHostServices {
     std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
     std::function<void(BufferId)> abort_buffer_save;
     std::function<std::vector<BufferId>()> open_buffers;
+    std::function<std::vector<GuileWorkbenchSummary>()> workbenches;
+    std::function<WorkbenchId()> active_workbench;
+    std::function<std::vector<BufferId>(WorkbenchId, bool)> workbench_buffers;
+    std::function<std::expected<WorkbenchId, std::string>(std::string, std::optional<ProjectId>)>
+        create_workbench;
+    std::function<std::expected<void, std::string>(WorkbenchId)> switch_workbench;
+    std::function<std::expected<void, std::string>(WorkbenchId)> close_workbench;
+    std::function<std::expected<void, std::string>(WorkbenchId, ProjectId)> adopt_project;
+    std::function<std::expected<void, std::string>(WorkbenchId, BufferId)> expel_buffer;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<bool(BufferId)> buffer_saving;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;

@@ -1974,6 +1974,93 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK_FALSE(application.close_workbench(first_workbench));
 }
 
+TEST_CASE("workbench commands manage named editing surfaces") {
+    EditorApplication application = make_application("sample.cc", "one\n");
+    const WorkbenchId initial = application.workbench_id();
+    CHECK(application.workbench_snapshots().size() == 1);
+    CHECK(std::ranges::none_of(
+        application.modeline(application.window_id()).segments,
+        [](const ModelineSegment& segment) { return segment.text == "default"; }));
+
+    send_keys(application, "C-x w n");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.prompt == "New workbench: ");
+    application.insert_text("notes");
+    send_keys(application, "RET");
+
+    REQUIRE(application.workbench_snapshots().size() == 2);
+    const WorkbenchId notes = application.workbench_id();
+    CHECK(notes != initial);
+    CHECK(std::ranges::any_of(
+        application.modeline(application.window_id()).segments, [](const ModelineSegment& segment) {
+            return segment.text == "notes" && segment.tone == ModelineTone::Salient;
+        }));
+
+    send_keys(application, "C-x w s");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.provider == "workbenches");
+    CHECK(application.interaction().state()->candidates.size() == 2);
+    application.insert_text("default");
+    send_keys(application, "RET");
+    CHECK(application.workbench_id() == initial);
+
+    send_keys(application, "C-x w k");
+    CHECK(application.workbench_id() == notes);
+    CHECK(application.workbench_snapshots().size() == 1);
+    CHECK(std::ranges::none_of(
+        application.modeline(application.window_id()).segments,
+        [](const ModelineSegment& segment) { return segment.text == "notes"; }));
+}
+
+TEST_CASE("buffer picker defaults to the active workbench and can widen globally") {
+    WakeSignal wake;
+    EditorApplication application =
+        make_application("sample.cc", "one\n",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    const BufferId initial = application.buffer_id();
+    TemporaryFile first_only_file(
+        std::format("cind-workbench-first-only-{}.txt", static_cast<long>(::getpid())), "one\n");
+    REQUIRE(application.open_file(first_only_file.path().string()).has_value());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    const BufferId first_only = application.buffer_id();
+    const std::string first_only_name = application.session().buffer().name();
+    REQUIRE(application.switch_buffer(initial));
+
+    const WorkbenchId second = application.create_workbench("second");
+    send_keys(application, "C-h b");
+    const BufferId help = application.buffer_id();
+    CHECK(help != initial);
+    const std::vector<BufferId> second_buffers = application.workbench_buffers(second);
+    CHECK(std::ranges::find(second_buffers, first_only) == second_buffers.end());
+
+    send_keys(application, "C-x b");
+    REQUIRE(application.interaction().state() != nullptr);
+    CHECK(application.interaction().state()->request.provider == "buffers");
+    CHECK(std::ranges::none_of(
+        application.interaction().state()->candidates,
+        [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
+
+    send_keys(application, "C-x b");
+    CHECK(application.interaction().state()->request.provider == "buffers-global");
+    CHECK(std::ranges::any_of(
+        application.interaction().state()->candidates,
+        [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
+    send_keys(application, "C-x b");
+    CHECK(application.interaction().state()->request.provider == "buffers");
+    send_keys(application, "C-g");
+
+    CHECK(application.buffer_id() == help);
+    send_keys(application, "C-x Right");
+    CHECK(application.buffer_id() == initial);
+    send_keys(application, "C-x Right");
+    CHECK(application.buffer_id() == help);
+}
+
 TEST_CASE("view release runs state lifecycle while its editor session is available") {
     EditorApplication application = make_application("sample.cc", "one two\n");
     REQUIRE(application.split_window(WindowSplitAxis::Columns));

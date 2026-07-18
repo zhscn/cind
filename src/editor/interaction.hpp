@@ -105,6 +105,7 @@ public:
     TextOffset input_caret() const;
     RevisionId input_revision() const;
     bool select(std::size_t index);
+    std::expected<void, std::string> set_provider(std::string provider);
     bool set_history_navigation(std::optional<std::size_t> index, std::string draft,
                                 std::string_view input);
     void refresh_candidates();

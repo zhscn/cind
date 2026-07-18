@@ -184,6 +184,18 @@
 (define (modeline-segment group tone weight debug? text)
   (vector 'modeline-segment group tone weight debug? text))
 
+(define (active-workbench-name host)
+  (let ((workbenches (workbench-list host)))
+    (and (> (vector-length workbenches) 1)
+         (let ((active (current-workbench host)))
+           (let loop ((index 0))
+             (and (< index (vector-length workbenches))
+                  (let ((summary (vector-ref workbenches index)))
+                    (if (equal? (vector-ref summary 0) active)
+                        (let ((name (vector-ref summary 1)))
+                          (if (zero? (string-length name)) "default" name))
+                        (loop (+ index 1))))))))))
+
 (define (modeline-content host context facts)
   (let* ((buffer-name (vector-ref facts 1))
          (resource (vector-ref facts 2))
@@ -195,6 +207,7 @@
          (style-origin (vector-ref facts 8))
          (last-key (vector-ref facts 9))
          (input-state (vector-ref facts 10))
+         (workbench-name (active-workbench-name host))
          (name (if resource (path-filename host resource) buffer-name))
          (directory (if resource (path-parent host resource) ""))
          (percent (if (zero? line-count)
@@ -207,6 +220,9 @@
                                    'strong #f
                                    (if dirty? "**" "RW"))
                  (modeline-segment 'left 'strong 'strong #f name))
+           (if workbench-name
+               (list (modeline-segment 'left 'salient 'strong #f workbench-name))
+               '())
            (if (zero? (string-length directory))
                '()
                (list (modeline-segment 'left 'faded 'regular #f directory)))
@@ -363,8 +379,9 @@
                       (cons (interaction-candidate name name "command" name)
                             candidates))))))))
 
-(define (buffers-provider host context query)
-  (let ((summaries (open-buffer-summaries host)))
+(define (buffers-provider host context query widen?)
+  (let ((summaries (workbench-buffer-summaries
+                    host (current-workbench host) widen?)))
     (let loop ((index 0)
                (candidates '()))
       (if (= index (vector-length summaries))
@@ -373,11 +390,17 @@
                  (name (vector-ref summary 0))
                  (resource (vector-ref summary 1))
                  (modified? (vector-ref summary 2))
-                 (detail (cond ((and resource modified?)
-                                (string-append resource " · modified"))
-                               (resource resource)
-                               (modified? "modified")
-                               (else "")))
+                 (visitor? (vector-ref summary 3))
+                 (base-detail (cond ((and resource modified?)
+                                     (string-append resource " · modified"))
+                                    (resource resource)
+                                    (modified? "modified")
+                                    (else "")))
+                 (detail (if visitor?
+                             (string-append base-detail
+                                            (if (zero? (string-length base-detail)) "" " · ")
+                                            "visitor")
+                             base-detail))
                  (filter-text (if resource
                                   (string-append name " " resource)
                                   name)))
@@ -425,28 +448,75 @@
    (async-directory-list (files-provider-directory host context query) 1000)
    (lambda (result) (directory-list-candidates host result))))
 
+(define (effective-projects host context)
+  (let ((scope (workbench-scope host (current-workbench host))))
+    (if (> (vector-length scope) 0)
+        scope
+        (let ((project (context-project context)))
+          (if project (vector project) (vector))))))
+
 (define (project-files-provider host context query)
-  (let ((project (context-project context)))
-    (if (not project)
-        (vector)
-        (let ((root (project-root host project))
-              (files (project-files host project)))
-          (if (not root)
-              (vector)
-              (let loop ((index 0)
-                         (candidates '()))
-                (if (= index (vector-length files))
-                    (list->vector (reverse candidates))
-                    (let* ((file (vector-ref files index))
-                           (relative-value (path-relative host file root))
-                           (relative (if (= (string-length relative-value) 0)
-                                         (path-filename host file)
-                                         relative-value)))
-                      (loop (+ index 1)
-                            (cons (interaction-candidate
-                                   file relative (path-parent host relative)
-                                   (string-append relative " " file))
-                                  candidates))))))))))
+  (let* ((projects (effective-projects host context))
+         (multiple-projects? (> (vector-length projects) 1)))
+    (let project-loop ((project-index 0)
+                       (candidates '()))
+      (if (= project-index (vector-length projects))
+          (list->vector (reverse candidates))
+          (let* ((project (vector-ref projects project-index))
+                 (root (project-root host project))
+                 (files (project-files host project)))
+            (if (not root)
+                (project-loop (+ project-index 1) candidates)
+                (let file-loop ((file-index 0)
+                                (result candidates))
+                  (if (= file-index (vector-length files))
+                      (project-loop (+ project-index 1) result)
+                      (let* ((file (vector-ref files file-index))
+                             (relative-value (path-relative host file root))
+                             (relative (if (= (string-length relative-value) 0)
+                                           (path-filename host file)
+                                           relative-value)))
+                        (file-loop
+                         (+ file-index 1)
+                         (cons (interaction-candidate
+                                file relative
+                                (if multiple-projects?
+                                    root
+                                    (path-parent host relative))
+                                (string-append relative " " root " " file))
+                               result)))))))))))
+
+(define (workbenches-provider host context query)
+  (let ((workbenches (workbench-list host)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length workbenches))
+          (list->vector (reverse candidates))
+          (let* ((summary (vector-ref workbenches index))
+                 (name (vector-ref summary 1))
+                 (label (if (zero? (string-length name)) "default" name))
+                 (active? (vector-ref summary 2)))
+            (loop (+ index 1)
+                  (cons (interaction-candidate name label
+                                               (if active? "active" "workbench")
+                                               label)
+                        candidates)))))))
+
+(define (projects-provider host context query)
+  (let ((projects (project-list host)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length projects))
+          (list->vector (reverse candidates))
+          (let* ((summary (vector-ref projects index))
+                 (name (vector-ref summary 1))
+                 (root (vector-ref summary 2)))
+            (loop (+ index 1)
+                  (if root
+                      (cons (interaction-candidate root name root
+                                                   (string-append name " " root))
+                            candidates)
+                      candidates)))))))
 
 (define (key-bindings-provider host context query)
   (let ((bindings (active-key-bindings host)))
@@ -786,7 +856,8 @@
 
 (define (buffer-switch context invocation)
   (completing-read "Switch buffer: " "buffers" "buffer.switch.accept"
-                   #:history "buffers"))
+                   #:history "buffers"
+                   #:keymap 'workbench.buffer-picker))
 
 (define (buffer-switch-accept host context invocation)
   (let ((name (last-string-argument invocation)))
@@ -806,7 +877,7 @@
           (else (loop (+ index 1))))))
 
 (define (buffer-switch-relative host context delta)
-  (let* ((buffers (open-buffer-ids host))
+  (let* ((buffers (workbench-buffer-ids host (current-workbench host) #f))
          (count (vector-length buffers)))
     (if (< count 2)
         (command-completed)
@@ -817,6 +888,100 @@
                 (display-buffer! host (context-window context)
                                  (vector-ref buffers (modulo (+ current delta) count)))
                 (command-completed)))))))
+
+(define (buffer-switch-widen host context invocation)
+  (let ((provider (interaction-provider host)))
+    (cond ((equal? provider "buffers")
+           (set-interaction-provider! host "buffers-global")
+           (set-message! host "showing all buffers")
+           (command-completed/preserve))
+          ((equal? provider "buffers-global")
+           (set-interaction-provider! host "buffers")
+           (set-message! host "showing workbench buffers")
+           (command-completed/preserve))
+          (else
+           (command-error "buffer picker is not active")))))
+
+(define (buffer-picker-active? host context)
+  (let ((provider (interaction-provider host)))
+    (or (equal? provider "buffers")
+        (equal? provider "buffers-global"))))
+
+(define (workbench-summary-by-name host name)
+  (let ((workbenches (workbench-list host)))
+    (let loop ((index 0))
+      (and (< index (vector-length workbenches))
+           (let ((summary (vector-ref workbenches index)))
+             (if (string=? (vector-ref summary 1) name)
+                 summary
+                 (loop (+ index 1))))))))
+
+(define (project-summary-by-root host root)
+  (let ((projects (project-list host)))
+    (let loop ((index 0))
+      (and (< index (vector-length projects))
+           (let ((summary (vector-ref projects index)))
+             (if (and (vector-ref summary 2)
+                      (string=? (vector-ref summary 2) root))
+                 summary
+                 (loop (+ index 1))))))))
+
+(define (workbench-new context invocation)
+  (read-from-minibuffer "New workbench: " "workbench.new.accept"
+                        #:history "workbenches"))
+
+(define (workbench-new-accept host context invocation)
+  (let ((name (last-string-argument invocation)))
+    (cond ((not name)
+           (command-error "new workbench requires a name"))
+          ((zero? (string-length name))
+           (command-error "workbench name is empty"))
+          (else
+           (new-workbench! host name (context-project context))
+           (set-message! host (string-append "workbench " name))
+           (command-completed)))))
+
+(define (workbench-switch context invocation)
+  (completing-read "Switch workbench: " "workbenches"
+                   "workbench.switch.accept"
+                   #:history "workbenches"))
+
+(define (workbench-switch-accept host context invocation)
+  (let* ((name (last-string-argument invocation))
+         (summary (and name (workbench-summary-by-name host name))))
+    (if (not summary)
+        (command-error "unknown workbench")
+        (begin
+          (switch-workbench! host (vector-ref summary 0))
+          (set-message! host
+                        (string-append "workbench "
+                                       (if (zero? (string-length name)) "default" name)))
+          (command-completed)))))
+
+(define (workbench-close host context invocation)
+  (close-workbench! host (current-workbench host))
+  (set-message! host "workbench closed")
+  (command-completed))
+
+(define (workbench-adopt-project context invocation)
+  (completing-read "Adopt project: " "projects"
+                   "workbench.adopt-project.accept"
+                   #:history "projects"))
+
+(define (workbench-adopt-project-accept host context invocation)
+  (let* ((root (last-string-argument invocation))
+         (summary (and root (project-summary-by-root host root))))
+    (if (not summary)
+        (command-error "unknown project")
+        (begin
+          (adopt-project! host (current-workbench host) (vector-ref summary 0))
+          (set-message! host (string-append "adopted " (vector-ref summary 1)))
+          (command-completed)))))
+
+(define (workbench-expel-buffer host context invocation)
+  (expel-buffer! host (current-workbench host) (context-buffer context))
+  (set-message! host "buffer expelled from workbench")
+  (command-completed))
 
 (define (first-other-buffer buffers target)
   (let loop ((index 0))
@@ -976,9 +1141,9 @@
                         #:history "project-search"))
 
 (define-record-type <pending-project-search>
-  (make-pending-project-search project window query root tasks)
+  (make-pending-project-search projects window query root tasks)
   pending-project-search?
-  (project pending-project-search-project)
+  (projects pending-project-search-projects)
   (window pending-project-search-window)
   (query pending-project-search-query)
   (root pending-project-search-root)
@@ -1053,8 +1218,10 @@
                                 "location-list")))
           (set-buffer-locations! host buffer (vector-ref result 2))
           (set-location-navigation! host buffer #f)
-          (set-buffer-project! host buffer
-                               (pending-project-search-project search))
+          (let ((projects (pending-project-search-projects search)))
+            (set-buffer-project! host buffer
+                                 (and (= (vector-length projects) 1)
+                                      (vector-ref projects 0))))
           (display-buffer! host (project-search-target-window host search) buffer)
           (clear-project-search! host search)
           (set-message! host (string-append "project search finished: " query))))
@@ -1104,11 +1271,21 @@
                error-output))
           (start-project-search-parser! host search output)))))
 
-(define (start-project-search! host project window query)
-  (let ((root (project-root host project)))
-    (unless root
-      (error "project has no root" project))
-    (let ((search (make-pending-project-search project window query root '())))
+(define (start-project-search! host projects window query)
+  (when (= (vector-length projects) 0)
+    (error "project search requires at least one project"))
+  (let ((roots
+         (let loop ((index 0)
+                    (result '()))
+           (if (= index (vector-length projects))
+               (reverse result)
+               (let ((root (project-root host (vector-ref projects index))))
+                 (unless root
+                   (error "project has no root" (vector-ref projects index)))
+                 (loop (+ index 1) (cons root result)))))))
+    (let* ((root (car roots))
+           (search (make-pending-project-search projects window query root '()))
+           (targets (if (= (length roots) 1) (list ".") roots)))
       (replace-project-search! host search)
       (catch #t
         (lambda ()
@@ -1118,8 +1295,10 @@
                    host
                    (async-process
                     "rg"
-                    (list "--line-number" "--column" "--no-heading" "--color" "never"
-                          "--smart-case" "--null" "--" query ".")
+                    (append
+                     (list "--line-number" "--column" "--no-heading" "--color" "never"
+                           "--smart-case" "--null" "--" query)
+                     targets)
                     root)
                    (lambda (completed-task result)
                      (project-search-process-completed! host search completed-task result))
@@ -1132,7 +1311,9 @@
                      (remove-project-search-task! search cancelled-task)
                      (cancel-project-search! host search))))
             (set-pending-project-search-tasks! search (list task))
-            (set-message! host "searching project…")))
+            (set-message! host (if (= (length roots) 1)
+                                   "searching project…"
+                                   "searching workbench projects…"))))
         (lambda (key . arguments)
           (fail-project-search! host search (format #f "~S: ~S" key arguments))
           (apply throw key arguments))))))
@@ -1318,21 +1499,24 @@
 
 (define (project-search-accept host context invocation)
   (let ((query (last-string-argument invocation))
-        (project (context-project context)))
+        (projects (effective-projects host context)))
     (cond ((or (not query) (= (string-length query) 0))
            (command-error "project search query is empty"))
-          ((not project)
-           (command-error "current buffer has no project"))
+          ((= (vector-length projects) 0)
+           (command-error "workbench has no project"))
           (else
-           (start-project-search! host project (context-window context) query)
+           (start-project-search! host projects (context-window context) query)
            (command-completed)))))
 
 (define (project-find-file host context invocation)
-  (let ((project (context-project context)))
-    (if (not project)
-        (command-error "current buffer has no project")
+  (let ((projects (effective-projects host context)))
+    (if (= (vector-length projects) 0)
+        (command-error "workbench has no project")
         (begin
-          (ensure-project-index! host project)
+          (let loop ((index 0))
+            (when (< index (vector-length projects))
+              (ensure-project-index! host (vector-ref projects index))
+              (loop (+ index 1))))
           (completing-read "Project file: " "project-files"
                            "project.find-file.accept"
                            #:history "project-files")))))
@@ -1357,8 +1541,8 @@
         (set-message! host binding))
     (command-completed)))
 
-(define (context-has-project? context)
-  (and (context-project context) #t))
+(define (context-has-project? host context)
+  (> (vector-length (effective-projects host context)) 0))
 
 (define (interaction-active? host context)
   (vector-ref (interaction-status host) 0))
@@ -1990,6 +2174,10 @@
                 (buffer-switch-accept host context invocation))
               #f)
         (list "buffer.switch" buffer-switch #f)
+        (list "buffer.switch-widen"
+              (lambda (context invocation)
+                (buffer-switch-widen host context invocation))
+              (lambda (context) (buffer-picker-active? host context)))
         (list "buffer.next"
               (lambda (context invocation)
                 (buffer-switch-relative host context 1))
@@ -2005,6 +2193,29 @@
         (list "buffer.force-kill"
               (lambda (context invocation)
                 (buffer-kill host context #t))
+              #f)
+        (list "workbench.new.accept"
+              (lambda (context invocation)
+                (workbench-new-accept host context invocation))
+              #f)
+        (list "workbench.new" workbench-new #f)
+        (list "workbench.switch.accept"
+              (lambda (context invocation)
+                (workbench-switch-accept host context invocation))
+              #f)
+        (list "workbench.switch" workbench-switch #f)
+        (list "workbench.close"
+              (lambda (context invocation)
+                (workbench-close host context invocation))
+              #f)
+        (list "workbench.adopt-project.accept"
+              (lambda (context invocation)
+                (workbench-adopt-project-accept host context invocation))
+              #f)
+        (list "workbench.adopt-project" workbench-adopt-project #f)
+        (list "workbench.expel"
+              (lambda (context invocation)
+                (workbench-expel-buffer host context invocation))
               #f)
         (list "application.quit"
               (lambda (context invocation)
@@ -2072,12 +2283,13 @@
         (list "project.find-file"
               (lambda (context invocation)
                 (project-find-file host context invocation))
-              context-has-project?)
+              (lambda (context) (context-has-project? host context)))
         (list "project.search.accept"
               (lambda (context invocation)
                 (project-search-accept host context invocation))
               #f)
-        (list "project.search" project-search context-has-project?)
+        (list "project.search" project-search
+              (lambda (context) (context-has-project? host context)))
         (list "search.replace" query-replace #f)
         (list "search.replace.from.accept" query-replace-from-accept #f)
         (list "search.replace.to.accept"
@@ -2122,13 +2334,22 @@
                  (commands-provider host context query)))
          (cons "buffers"
                (lambda (context query)
-                 (buffers-provider host context query)))
+                 (buffers-provider host context query #f)))
+         (cons "buffers-global"
+               (lambda (context query)
+                 (buffers-provider host context query #t)))
          (cons "files"
                (lambda (context query)
                  (files-provider host context query)))
          (cons "project-files"
                (lambda (context query)
                  (project-files-provider host context query)))
+         (cons "workbenches"
+               (lambda (context query)
+                 (workbenches-provider host context query)))
+         (cons "projects"
+               (lambda (context query)
+                 (projects-provider host context query)))
          (cons "key-bindings"
                (lambda (context query)
                  (key-bindings-provider host context query))))
@@ -2354,6 +2575,13 @@
     ("C-p" . "interaction.previous-candidate")
     ("Up" . "interaction.previous-candidate")))
 
+(define workbench-bindings
+  '(("n" . "workbench.new")
+    ("s" . "workbench.switch")
+    ("k" . "workbench.close")
+    ("a" . "workbench.adopt-project")
+    ("e" . "workbench.expel")))
+
 (define scheme-mode-bindings
   '(("C-c C-e" . "scheme.eval-expression")
     ("C-c C-r" . "scheme.eval-region")
@@ -2386,21 +2614,29 @@
   (define-keymap! host 'editor.system #f)
   (define-keymap! host 'interaction.text 'editor.text-input)
   (define-keymap! host 'interaction.picker 'interaction.text)
+  (define-keymap! host 'workbench.buffer-picker 'interaction.picker)
+  (define-keymap! host 'editor.workbench #f)
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
-  (+ 1
-     (bind-all! host 'editor.control-x control-x-bindings)
-     (bind-all! host 'editor.text-input text-input-bindings)
-     (bind-all! host 'editor.default editor-bindings)
-     (bind-all! host 'application.global application-bindings)
-     (bind-all! host 'editor.system system-bindings)
-     (bind-all! host 'interaction.text interaction-text-bindings)
-     (bind-all! host 'interaction.picker interaction-picker-bindings)
-     (bind-all! host 'scheme-mode-map scheme-mode-bindings)
-     (bind-all! host 'cind.location-list.map location-list-bindings)
-     (install-helix-keymaps! host)
-     (install-meow-keymaps! host)
-     (install-structural-keymap! host)
-     (install-vim-keymaps! host)
-     (install-toy-modal-keymap! host)))
+  (bind-key! host 'editor.control-x "w" '(prefix editor.workbench "C-x w"))
+  (let ((picker-binding
+         (if (bind-key-if-command! host 'workbench.buffer-picker
+                                   "C-x b" "buffer.switch-widen")
+             1 0)))
+    (+ 2 picker-binding
+       (bind-all! host 'editor.control-x control-x-bindings)
+       (bind-all! host 'editor.text-input text-input-bindings)
+       (bind-all! host 'editor.default editor-bindings)
+       (bind-all! host 'application.global application-bindings)
+       (bind-all! host 'editor.system system-bindings)
+       (bind-all! host 'interaction.text interaction-text-bindings)
+       (bind-all! host 'interaction.picker interaction-picker-bindings)
+       (bind-all! host 'editor.workbench workbench-bindings)
+       (bind-all! host 'scheme-mode-map scheme-mode-bindings)
+       (bind-all! host 'cind.location-list.map location-list-bindings)
+       (install-helix-keymaps! host)
+       (install-meow-keymaps! host)
+       (install-structural-keymap! host)
+       (install-vim-keymaps! host)
+       (install-toy-modal-keymap! host))))

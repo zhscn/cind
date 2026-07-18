@@ -531,7 +531,7 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const std::expected<std::size_t, std::string> installed = guile.install_default_keymaps();
 
     REQUIRE(installed.has_value());
-    CHECK(*installed == 18);
+    CHECK(*installed == 19);
     const KeymapId editor = require_keymap(runtime, "editor.default");
     const KeymapId application = require_keymap(runtime, "application.global");
     const KeymapId control_x = require_keymap(runtime, "editor.control-x");
@@ -586,8 +586,8 @@ TEST_CASE("Guile keymap policy treats unavailable commands as optional") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 2);
-    CHECK(*second == 2);
+    CHECK(*first == 3);
+    CHECK(*second == 3);
     const KeymapId editor = require_keymap(runtime, "editor.default");
     CHECK(resolve_command(runtime, editor, "C-x C-s") == save);
     CHECK(guile.snapshot().binding_revision == 2);
@@ -960,6 +960,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::optional<std::string> requested_motion;
     std::int64_t requested_motion_count = 0;
     bool requested_motion_extend = false;
+    const WorkbenchId workbench{0, 1};
+    std::vector<ProjectId> workbench_scope;
+    std::string interaction_provider;
     GuileRuntime guile(
         runtime,
         {.display_buffer = [&](WindowId target_window,
@@ -997,6 +1000,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .page_rows = {},
          .interaction_status = {},
          .interaction_provider = {},
+         .set_interaction_provider = [&](std::string provider) -> std::expected<void, std::string> {
+             interaction_provider = std::move(provider);
+             return {};
+         },
          .interaction_origin_project = {},
          .refresh_interaction = {},
          .submit_interaction = {},
@@ -1037,6 +1044,31 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return only_buffer ? std::vector<BufferId>{buffer}
                                     : std::vector<BufferId>{buffer, other};
              },
+         .workbenches =
+             [&] {
+                 return std::vector<GuileWorkbenchSummary>{{.workbench = workbench,
+                                                            .name = {},
+                                                            .scope = workbench_scope,
+                                                            .mru = {buffer, other},
+                                                            .active = true}};
+             },
+         .active_workbench = [=] { return workbench; },
+         .workbench_buffers =
+             [=](WorkbenchId target, bool) {
+                 CHECK(target == workbench);
+                 return only_buffer ? std::vector<BufferId>{buffer}
+                                    : std::vector<BufferId>{buffer, other};
+             },
+         .create_workbench = [](std::string, std::optional<ProjectId>)
+             -> std::expected<WorkbenchId, std::string> { return WorkbenchId{1, 1}; },
+         .switch_workbench = [](WorkbenchId) -> std::expected<void, std::string> { return {}; },
+         .close_workbench = [](WorkbenchId) -> std::expected<void, std::string> { return {}; },
+         .adopt_project = [](WorkbenchId, ProjectId) -> std::expected<void, std::string> {
+             return {};
+         },
+         .expel_buffer = [](WorkbenchId, BufferId) -> std::expected<void, std::string> {
+             return {};
+         },
          .create_buffer = [&](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
              created_buffer = std::move(spec);
              return other;
@@ -1215,10 +1247,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 191);
+    CHECK(*installed == 200);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 7);
+    CHECK(*providers == 10);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -1804,6 +1836,44 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK_FALSE(guile.project_search_running());
     CHECK(message == "project search failed: rg failed");
 
+    const ProjectId tools_project = runtime.projects().create({.name = "tools",
+                                                               .roots = {"/tmp/tools"},
+                                                               .discovery_provider = {},
+                                                               .discovery_marker = {}});
+    runtime.projects().replace_index(tools_project, {"/tmp/tools/src/tool.cpp"});
+    workbench_scope = {project, tools_project};
+    const std::vector<InteractionCandidate> scoped_candidates =
+        complete_provider(runtime, "project-files", context);
+    REQUIRE(scoped_candidates.size() == 3);
+    CHECK(std::ranges::any_of(scoped_candidates, [](const InteractionCandidate& candidate) {
+        return candidate.value == "/tmp/sample/src/main.cpp" && candidate.detail == "/tmp/sample";
+    }));
+    CHECK(std::ranges::any_of(scoped_candidates, [](const InteractionCandidate& candidate) {
+        return candidate.value == "/tmp/tools/src/tool.cpp" && candidate.detail == "/tmp/tools";
+    }));
+
+    const CommandResult scoped_search = runtime.commands().invoke(project_search, context);
+    REQUIRE(scoped_search.has_value());
+    const auto* scoped_search_request = std::get_if<InteractionRequest>(&*scoped_search);
+    REQUIRE(scoped_search_request != nullptr);
+    const std::size_t async_before_scoped_search = async_requests.size();
+    const CommandResult scoped_search_accepted = runtime.commands().invoke(
+        scoped_search_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("shared")}, .prefix = {}});
+    REQUIRE(scoped_search_accepted.has_value());
+    REQUIRE(async_requests.size() == async_before_scoped_search + 1);
+    const auto* scoped_search_process =
+        std::get_if<ScriptProcessRequest>(&async_requests[async_before_scoped_search]);
+    REQUIRE(scoped_search_process != nullptr);
+    CHECK(scoped_search_process->working_directory == "/tmp/sample");
+    CHECK(scoped_search_process->arguments ==
+          std::vector<std::string>{"--line-number", "--column", "--no-heading", "--color", "never",
+                                   "--smart-case", "--null", "--", "shared", "/tmp/sample",
+                                   "/tmp/tools"});
+    pending_async_callbacks.failed(next_async_task - 1, "stopped");
+    CHECK_FALSE(guile.project_search_running());
+    workbench_scope.clear();
+
     runtime.views().set_caret(view, TextOffset{0});
     CommandLoop command_loop(runtime);
     const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");
@@ -1849,8 +1919,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 191);
+    CHECK(snapshot.scripted_commands == 200);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 7);
+    CHECK(snapshot.scripted_providers == 10);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

@@ -143,6 +143,19 @@ bool InteractionController::select(std::size_t index) {
     return true;
 }
 
+std::expected<void, std::string> InteractionController::set_provider(std::string provider) {
+    InteractionState* active = state();
+    if (active == nullptr || active->request.kind != InteractionKind::Picker) {
+        return std::unexpected("no picker interaction is active");
+    }
+    if (provider.empty() || !providers_->contains(provider)) {
+        return std::unexpected(std::format("unknown interaction provider '{}'", provider));
+    }
+    active->request.provider = std::move(provider);
+    refresh();
+    return {};
+}
+
 bool InteractionController::set_history_navigation(std::optional<std::size_t> index,
                                                    std::string draft, std::string_view input) {
     InteractionState* active = state();

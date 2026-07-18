@@ -121,6 +121,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                const InteractionState* state = interaction_.state();
                return state != nullptr ? std::optional(state->request.provider) : std::nullopt;
            },
+           .set_interaction_provider =
+               [this](std::string provider) {
+                   return interaction_.set_provider(std::move(provider));
+               },
            .interaction_origin_project = [this]() -> std::optional<ProjectId> {
                const InteractionState* state = interaction_.state();
                if (state == nullptr) {
@@ -244,6 +248,68 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
+           .workbenches =
+               [this] {
+                   std::vector<GuileWorkbenchSummary> result;
+                   for (WorkbenchSnapshot snapshot : workbench_snapshots()) {
+                       result.push_back({.workbench = snapshot.workbench,
+                                         .name = std::move(snapshot.name),
+                                         .scope = std::move(snapshot.scope),
+                                         .mru = std::move(snapshot.mru),
+                                         .active = snapshot.active});
+                   }
+                   return result;
+               },
+           .active_workbench = [this] { return workbench_id(); },
+           .workbench_buffers = [this](WorkbenchId workbench,
+                                       bool widen) { return workbench_buffers(workbench, widen); },
+           .create_workbench = [this](std::string name, std::optional<ProjectId> project)
+               -> std::expected<WorkbenchId, std::string> {
+               try {
+                   return create_workbench(std::move(name), project);
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .switch_workbench = [this](WorkbenchId workbench) -> std::expected<void, std::string> {
+               return switch_workbench(workbench) ? std::expected<void, std::string>{}
+                                                  : std::unexpected("unknown workbench");
+           },
+           .close_workbench = [this](WorkbenchId workbench) -> std::expected<void, std::string> {
+               return close_workbench(workbench)
+                          ? std::expected<void, std::string>{}
+                          : std::unexpected("cannot close the last workbench");
+           },
+           .adopt_project = [this](WorkbenchId workbench,
+                                   ProjectId project) -> std::expected<void, std::string> {
+               const std::vector<WorkbenchSnapshot> snapshots = workbench_snapshots();
+               if (std::ranges::none_of(snapshots, [workbench](const WorkbenchSnapshot& snapshot) {
+                       return snapshot.workbench == workbench;
+                   })) {
+                   return std::unexpected("unknown workbench");
+               }
+               try {
+                   (void)adopt_project(workbench, project);
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
+           .expel_buffer = [this](WorkbenchId workbench,
+                                  BufferId buffer) -> std::expected<void, std::string> {
+               const std::vector<WorkbenchSnapshot> snapshots = workbench_snapshots();
+               if (std::ranges::none_of(snapshots, [workbench](const WorkbenchSnapshot& snapshot) {
+                       return snapshot.workbench == workbench;
+                   })) {
+                   return std::unexpected("unknown workbench");
+               }
+               try {
+                   (void)expel_buffer(workbench, buffer);
+                   return {};
+               } catch (const std::exception& exception) {
+                   return std::unexpected(exception.what());
+               }
+           },
            .create_buffer =
                [this](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
                try {
