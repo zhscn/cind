@@ -7,6 +7,7 @@
 
 #include <libguile.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -5162,6 +5163,107 @@ PresentationTheme presentation_theme_from_scheme(SCM value, const char* caller) 
             .sign_deleted = colors[15]};
 }
 
+std::uint32_t presentation_color_from_scheme(SCM value, const char* caller, int position) {
+    if (scm_is_unsigned_integer(value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "unsigned 32-bit ARGB color");
+    }
+    return scm_to_uint32(value);
+}
+
+PresentationTextRole presentation_text_role_from_scheme(SCM value, const char* caller,
+                                                        int position) {
+    const std::string name = scheme_name(value, caller, position);
+    const auto found = std::ranges::find(presentation_text_role_names, name);
+    if (found == presentation_text_role_names.end()) {
+        scm_wrong_type_arg_msg(caller, position, value, "known presentation text role");
+    }
+    return static_cast<PresentationTextRole>(
+        std::distance(presentation_text_role_names.begin(), found));
+}
+
+PresentationStyleSheet presentation_styles_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 5 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-styles")) {
+        scm_wrong_type_arg_msg(
+            caller, 0, value,
+            "#(presentation-styles inactive-alpha secondary-alpha text-styles modeline-colors)");
+    }
+    PresentationStyleSheet result;
+    const auto alpha = [&](std::size_t index) {
+        const SCM input = scm_c_vector_ref(value, index);
+        if (scm_is_unsigned_integer(input, 0, 255) == 0) {
+            scm_wrong_type_arg_msg(caller, static_cast<int>(index), input, "unsigned 8-bit alpha");
+        }
+        return static_cast<std::uint8_t>(scm_to_uint8(input));
+    };
+    result.inactive_alpha = alpha(1);
+    result.secondary_alpha = alpha(2);
+
+    const SCM styles = scm_c_vector_ref(value, 3);
+    if (!scm_is_vector(styles) ||
+        scm_c_vector_length(styles) != PresentationStyleSheet::text_role_count) {
+        scm_wrong_type_arg_msg(caller, 3, styles,
+                               "vector containing every presentation text role exactly once");
+    }
+    std::array<bool, PresentationStyleSheet::text_role_count> seen{};
+    for (std::size_t index = 0; index < PresentationStyleSheet::text_role_count; ++index) {
+        const SCM entry = scm_c_vector_ref(styles, index);
+        if (!scm_is_vector(entry) || scm_c_vector_length(entry) != 5 ||
+            !symbol_is(scm_c_vector_ref(entry, 0), "presentation-style")) {
+            scm_wrong_type_arg_msg(
+                caller, 3, entry,
+                "#(presentation-style role foreground background-or-#f regular-or-strong)");
+        }
+        const PresentationTextRole role =
+            presentation_text_role_from_scheme(scm_c_vector_ref(entry, 1), caller, 3);
+        const std::size_t role_index = static_cast<std::size_t>(role);
+        if (seen[role_index]) {
+            scm_misc_error(caller, "presentation text role is duplicated", SCM_EOL);
+        }
+        seen[role_index] = true;
+        PresentationTextStyle& style = result.text[role_index];
+        style.foreground = presentation_color_from_scheme(scm_c_vector_ref(entry, 2), caller, 3);
+        const SCM background = scm_c_vector_ref(entry, 3);
+        if (!scheme_false(background)) {
+            style.background = presentation_color_from_scheme(background, caller, 3);
+        }
+        const SCM weight = scm_c_vector_ref(entry, 4);
+        if (symbol_is(weight, "regular")) {
+            style.weight = PresentationWeight::Regular;
+        } else if (symbol_is(weight, "strong")) {
+            style.weight = PresentationWeight::Strong;
+        } else {
+            scm_wrong_type_arg_msg(caller, 3, weight, "regular or strong symbol");
+        }
+    }
+    constexpr std::array background_roles = {
+        PresentationTextRole::StatusBar,
+        PresentationTextRole::StatusKey,
+        PresentationTextRole::Popup,
+        PresentationTextRole::PositionHint,
+        PresentationTextRole::PopupSelected,
+        PresentationTextRole::ModelineInactive,
+        PresentationTextRole::ModelineInactiveChip,
+    };
+    for (const PresentationTextRole role : background_roles) {
+        if (!result.style(role).background) {
+            scm_misc_error(caller, "presentation role ~A requires a background color",
+                           scm_list_1(name_symbol(presentation_text_role_name(role))));
+        }
+    }
+
+    const SCM modeline = scm_c_vector_ref(value, 4);
+    if (!scm_is_vector(modeline) ||
+        scm_c_vector_length(modeline) != PresentationStyleSheet::modeline_tone_count) {
+        scm_wrong_type_arg_msg(caller, 4, modeline, "six modeline colors in semantic tone order");
+    }
+    for (std::size_t index = 0; index < PresentationStyleSheet::modeline_tone_count; ++index) {
+        result.modeline[index] =
+            presentation_color_from_scheme(scm_c_vector_ref(modeline, index), caller, 4);
+    }
+    return result;
+}
+
 PresentationMotion presentation_motion_from_scheme(SCM value, const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 5 ||
         !symbol_is(scm_c_vector_ref(value, 0), "presentation-motion")) {
@@ -5237,6 +5339,20 @@ PresentationMetrics presentation_metrics_from_scheme(SCM value, const char* call
             .cursor_stroke = values[7],
             .minimum_columns = dimensions[0],
             .minimum_rows = dimensions[1]};
+}
+
+PresentationProfile presentation_profile_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 5 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "presentation-profile")) {
+        scm_wrong_type_arg_msg(caller, 0, value,
+                               "#(presentation-profile theme styles motion metrics)");
+    }
+    return {
+        .theme = presentation_theme_from_scheme(scm_c_vector_ref(value, 1), caller),
+        .styles = presentation_styles_from_scheme(scm_c_vector_ref(value, 2), caller),
+        .motion = presentation_motion_from_scheme(scm_c_vector_ref(value, 3), caller),
+        .metrics = presentation_metrics_from_scheme(scm_c_vector_ref(value, 4), caller),
+    };
 }
 
 StartupPlan startup_plan_from_scheme(HostLease& host, SCM value, const StartupFacts& facts,
@@ -5332,9 +5448,7 @@ struct GuileCall {
         ResolveBaseKeymapPolicy,
         ChromeContent,
         ModelineContent,
-        PresentationTheme,
-        PresentationMotion,
-        PresentationMetrics,
+        PresentationProfile,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         StopAres,
@@ -5348,49 +5462,47 @@ struct GuileCall {
         CheckEnabled,
     };
 
-    Operation operation = Operation::Load;
-    std::string path;
-    std::string source;
-    std::string source_name;
     SCM host = SCM_UNDEFINED;
     SCM module = SCM_UNDEFINED;
     SCM procedure = SCM_UNDEFINED;
     SCM argument = SCM_UNDEFINED;
     SCM result = SCM_UNDEFINED;
     std::size_t count = 0;
-    std::string query;
-    WindowId window;
-    BufferId buffer;
-    ProjectId project;
-    CommandId command;
-    std::optional<std::uint32_t> line;
-    std::optional<std::uint32_t> column;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
-    KeyStroke key;
     const InputStateChange* input_state_change = nullptr;
     const BufferModePolicyChange* mode_policy_change = nullptr;
     EditorRuntime* runtime = nullptr;
-    std::optional<CommandResult> command_result;
-    std::vector<InteractionCandidate> provider_candidates;
-    std::vector<PositionHint> position_hints;
-    GuileKeymapPolicy keymap_policy;
-    StartupPlan startup_plan;
-    ModelineContent modeline_content;
-    ChromeContent chrome_content;
-    PresentationTheme presentation_theme;
-    PresentationMotion presentation_motion;
-    PresentationMetrics presentation_metrics;
     const StartupFacts* startup_facts = nullptr;
     const PointerEvent* pointer_event = nullptr;
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
-    bool pending_key_sequence = false;
+    std::exception_ptr cpp_failure;
     ScrollInput scroll_input;
+    std::string path;
+    std::string source;
+    std::string source_name;
+    std::string query;
+    std::vector<InteractionCandidate> provider_candidates;
+    std::vector<PositionHint> position_hints;
+    ModelineContent modeline_content;
+    std::string error;
+    GuileKeymapPolicy keymap_policy;
+    StartupPlan startup_plan;
+    ChromeContent chrome_content;
+    std::optional<CommandResult> command_result;
+    CommandId command;
+    WindowId window;
+    BufferId buffer;
+    ProjectId project;
+    std::optional<std::uint32_t> line;
+    std::optional<std::uint32_t> column;
+    KeyStroke key;
+    PresentationProfile presentation_profile;
+    Operation operation = Operation::Load;
+    bool pending_key_sequence = false;
     bool force = false;
     bool enabled = false;
-    std::exception_ptr cpp_failure;
-    std::string error;
 };
 
 void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
@@ -5864,23 +5976,11 @@ SCM call_body(void* data) {
             call.modeline_content =
                 modeline_content_from_scheme(call.result, "resolve-modeline-content");
             break;
-        case GuileCall::Operation::PresentationTheme:
-            call.result = scm_call_1(scm_c_public_ref("cind command", "resolve-presentation-theme"),
-                                     call.host);
-            call.presentation_theme =
-                presentation_theme_from_scheme(call.result, "resolve-presentation-theme");
-            break;
-        case GuileCall::Operation::PresentationMotion:
+        case GuileCall::Operation::PresentationProfile:
             call.result = scm_call_1(
-                scm_c_public_ref("cind command", "resolve-presentation-motion"), call.host);
-            call.presentation_motion =
-                presentation_motion_from_scheme(call.result, "resolve-presentation-motion");
-            break;
-        case GuileCall::Operation::PresentationMetrics:
-            call.result = scm_call_1(
-                scm_c_public_ref("cind command", "resolve-presentation-metrics"), call.host);
-            call.presentation_metrics =
-                presentation_metrics_from_scheme(call.result, "resolve-presentation-metrics");
+                scm_c_public_ref("cind command", "resolve-presentation-profile"), call.host);
+            call.presentation_profile =
+                presentation_profile_from_scheme(call.result, "resolve-presentation-profile");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -6610,7 +6710,7 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != 5) {
+        if (call.count != 6) {
             state_->last_error = "Guile presentation policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
@@ -6880,40 +6980,16 @@ public:
         return std::move(call.modeline_content);
     }
 
-    std::expected<PresentationTheme, std::string> presentation_theme() const {
+    std::expected<PresentationProfile, std::string> presentation_profile() const {
         require_owner_thread();
         GuileCall call;
-        call.operation = GuileCall::Operation::PresentationTheme;
+        call.operation = GuileCall::Operation::PresentationProfile;
         call.host = host_;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(result.error());
         }
-        return call.presentation_theme;
-    }
-
-    std::expected<PresentationMotion, std::string> presentation_motion() const {
-        require_owner_thread();
-        GuileCall call;
-        call.operation = GuileCall::Operation::PresentationMotion;
-        call.host = host_;
-        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
-            state_->last_error = result.error();
-            return std::unexpected(result.error());
-        }
-        return call.presentation_motion;
-    }
-
-    std::expected<PresentationMetrics, std::string> presentation_metrics() const {
-        require_owner_thread();
-        GuileCall call;
-        call.operation = GuileCall::Operation::PresentationMetrics;
-        call.host = host_;
-        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
-            state_->last_error = result.error();
-            return std::unexpected(result.error());
-        }
-        return call.presentation_metrics;
+        return call.presentation_profile;
     }
 
     void project_index_updated(ProjectId project) {
@@ -7178,16 +7254,8 @@ GuileRuntime::modeline_content(const CommandContext& context, const ModelineFact
     return impl_->modeline_content(context, facts);
 }
 
-std::expected<PresentationTheme, std::string> GuileRuntime::presentation_theme() const {
-    return impl_->presentation_theme();
-}
-
-std::expected<PresentationMotion, std::string> GuileRuntime::presentation_motion() const {
-    return impl_->presentation_motion();
-}
-
-std::expected<PresentationMetrics, std::string> GuileRuntime::presentation_metrics() const {
-    return impl_->presentation_metrics();
+std::expected<PresentationProfile, std::string> GuileRuntime::presentation_profile() const {
+    return impl_->presentation_profile();
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

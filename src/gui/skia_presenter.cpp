@@ -54,44 +54,15 @@ SkRect cursor_geometry(CursorShape shape, const SkRect& cell, float stroke) {
     return SkRect::MakeXYWH(cell.x(), cell.y(), stroke, height);
 }
 
-// Nano's four-color syntax discipline: keywords are salient, literals pop
-// out, comments fade, everything else is plain text ink.
-SkColor foreground(ui::StyleClass style, const SkiaTheme& theme) {
-    switch (style) {
-    case ui::StyleClass::Text:
-        return color(theme.text);
-    case ui::StyleClass::Keyword:
-    case ui::StyleClass::Preprocessor:
-        return color(theme.salient);
-    case ui::StyleClass::String:
-    case ui::StyleClass::Number:
-        return color(theme.popout);
-    case ui::StyleClass::Comment:
-        return color(theme.faded);
-    case ui::StyleClass::Gutter:
-        return color(theme.faint);
-    case ui::StyleClass::SignAdded:
-        return color(theme.sign_added);
-    case ui::StyleClass::SignModified:
-        return color(theme.sign_modified);
-    case ui::StyleClass::SignDeleted:
-        return color(theme.sign_deleted);
-    case ui::StyleClass::StatusBar:
-    case ui::StyleClass::StatusKey:
-        return color(theme.text);
-    case ui::StyleClass::Message:
-        return color(theme.faded);
-    case ui::StyleClass::Popup:
-        return color(theme.text);
-    case ui::StyleClass::PositionHint:
-        return color(theme.canvas);
-    }
-    return color(theme.text);
+SkColor with_opacity(std::uint32_t argb, std::uint8_t opacity) {
+    const std::uint32_t source_alpha = (argb >> 24U) & 0xFFU;
+    const std::uint32_t alpha = source_alpha * opacity / 255U;
+    return color((argb & 0x00FFFFFFU) | (alpha << 24U));
 }
 
-SkColor pane_foreground(ui::StyleClass style, bool active, const SkiaTheme& theme) {
-    // An inactive pane keeps its hues and drops one level of presence.
-    return active ? foreground(style, theme) : SkColorSetA(foreground(style, theme), 0xB0);
+SkColor text_foreground(const PresentationTextStyle& style, bool active,
+                        const PresentationStyleSheet& styles) {
+    return active ? color(style.foreground) : with_opacity(style.foreground, styles.inactive_alpha);
 }
 
 float footer_height_for(ui::RegionRole role, float cell_height,
@@ -131,6 +102,7 @@ constexpr std::size_t max_shape_cache_entries = 4096;
 
 struct PositionedText {
     std::string role;
+    PresentationTextRole style_role = PresentationTextRole::Text;
     ShapedText shaped;
     SkPoint origin;
 };
@@ -574,9 +546,10 @@ SkiaViewPresentation interpolate_view_presentation(const SkiaViewPresentation& f
 
 struct SkiaPresenter::Impl {
     Impl(std::string requested_family, float requested_size, SkiaTheme requested_theme,
-         PresentationMetrics requested_metrics, SkiaFontSmoothing requested_smoothing)
+         PresentationStyleSheet requested_styles, PresentationMetrics requested_metrics,
+         SkiaFontSmoothing requested_smoothing)
         : family(std::move(requested_family)), size(requested_size), theme(requested_theme),
-          metrics(requested_metrics), smoothing(requested_smoothing) {
+          styles(requested_styles), metrics(requested_metrics), smoothing(requested_smoothing) {
         manager = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
         if (!manager) {
             throw std::runtime_error("Skia Fontconfig manager is unavailable");
@@ -687,6 +660,27 @@ struct SkiaPresenter::Impl {
 
     ShapedText shape_text(std::string text) const { return shape_text(std::move(text), font); }
 
+    const SkFont& text_font(PresentationTextRole role) const {
+        return styles.style(role).weight == PresentationWeight::Strong ? strong_font : font;
+    }
+
+    ShapedText shape_text(std::string text, PresentationTextRole role) const {
+        return shape_text(std::move(text), text_font(role));
+    }
+
+    SkColor text_color(PresentationTextRole role, bool active = true) const {
+        return text_foreground(styles.style(role), active, styles);
+    }
+
+    std::uint32_t text_background(PresentationTextRole role) const {
+        const std::optional<std::uint32_t>& background = styles.style(role).background;
+        if (!background) {
+            throw std::logic_error(std::format("presentation role '{}' has no background",
+                                               presentation_text_role_name(role)));
+        }
+        return background.value();
+    }
+
     float document_x_at_column(const DocumentLayout& layout, const DocumentLineLayout& line,
                                int requested_column) const {
         const int column = std::max(0, requested_column);
@@ -767,7 +761,8 @@ struct SkiaPresenter::Impl {
             const int start_column = std::max(line.end_column, primitive.col);
             const int skipped_columns = std::max(0, primitive.col - line.end_column);
             const float x = line.end_x + static_cast<float>(skipped_columns) * layout.space_advance;
-            ShapedText shaped = shape_text(primitive.text);
+            const PresentationTextRole style_role = ui::presentation_role(primitive.style);
+            ShapedText shaped = shape_text(primitive.text, style_role);
             const int end_column = primitive.col + std::max(0, ui::display_width(primitive.text));
             const float advance = shaped.advance;
             line.runs.push_back(
@@ -776,6 +771,7 @@ struct SkiaPresenter::Impl {
                  .start_column = start_column,
                  .end_column = std::max(start_column, end_column),
                  .text = {.role = primitive.id,
+                          .style_role = style_role,
                           .shaped = std::move(shaped),
                           .origin = SkPoint::Make(x, line.top)},
                  .layout_bounds = SkRect::MakeXYWH(x, line.top, std::max(1.0F, advance),
@@ -796,11 +792,13 @@ struct SkiaPresenter::Impl {
             const int span_columns =
                 std::max({1, primitive.span_cols, ui::display_width(primitive.text)});
             const float end_x = document_x_at_column(layout, line, primitive.col + span_columns);
-            ShapedText shaped = shape_text(primitive.text);
+            const PresentationTextRole style_role = ui::presentation_role(primitive.style);
+            ShapedText shaped = shape_text(primitive.text, style_role);
             const float width = std::max({layout.space_advance, shaped.advance, end_x - x});
             line.hints.push_back({.primitive_index = primitive_index,
                                   .primitive = &primitive,
                                   .text = {.role = primitive.id,
+                                           .style_role = style_role,
                                            .shaped = std::move(shaped),
                                            .origin = SkPoint::Make(x, line.top)},
                                   .layout_bounds = SkRect::MakeXYWH(
@@ -840,12 +838,12 @@ struct SkiaPresenter::Impl {
         const float header_text_top =
             layout.header.top() + (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
         if (layout.input_active) {
-            ShapedText prompt = shape_text(popup_prompt(popup), strong_font);
+            ShapedText prompt = shape_text(popup_prompt(popup), PresentationTextRole::PopupPrompt);
             ShapedText space = shape_text(" ");
-            ShapedText input = shape_text(layout.input);
+            ShapedText input = shape_text(layout.input, PresentationTextRole::PopupInput);
             const std::string count_text =
                 std::format("{}/{}", popup.selected_item.value_or(0) + 1, popup.total_items);
-            ShapedText count = shape_text(count_text);
+            ShapedText count = shape_text(count_text, PresentationTextRole::PopupCount);
             const float count_advance = count.advance;
             const float natural_width = prompt.advance + space.advance + input.advance;
             const float natural_left = layout.header.left() + metrics.minibuffer_padding_x;
@@ -854,13 +852,16 @@ struct SkiaPresenter::Impl {
             layout.horizontal_scroll = text_left - natural_left;
             const float input_left = text_left + prompt.advance + space.advance;
             layout.header_text.push_back({.role = "prompt",
+                                          .style_role = PresentationTextRole::PopupPrompt,
                                           .shaped = std::move(prompt),
                                           .origin = SkPoint::Make(text_left, header_text_top)});
             layout.header_text.push_back({.role = "input",
+                                          .style_role = PresentationTextRole::PopupInput,
                                           .shaped = std::move(input),
                                           .origin = SkPoint::Make(input_left, header_text_top)});
             layout.header_text.push_back(
                 {.role = "count",
+                 .style_role = PresentationTextRole::PopupCount,
                  .shaped = std::move(count),
                  .origin = SkPoint::Make(layout.header.right() - metrics.minibuffer_padding_x -
                                              count_advance,
@@ -868,19 +869,21 @@ struct SkiaPresenter::Impl {
 
             layout.input_cursor =
                 std::min(popup.input_cursor.value_or(layout.input.size()), layout.input.size());
-            ShapedText cursor_prefix = shape_text(layout.input.substr(0, layout.input_cursor));
+            ShapedText cursor_prefix = shape_text(layout.input.substr(0, layout.input_cursor),
+                                                  PresentationTextRole::PopupInput);
             layout.cursor_advance = cursor_prefix.advance;
             layout.unclamped_cursor_x = input_left + layout.cursor_advance;
-            const float cursor_x =
-                std::clamp(layout.unclamped_cursor_x, layout.header.left() + 8.0F,
-                           layout.header.right() - 3.0F);
+            const float cursor_x = std::clamp(layout.unclamped_cursor_x,
+                                              layout.header.left() + metrics.minibuffer_padding_x,
+                                              layout.header.right() - metrics.cursor_stroke);
             layout.cursor_clamped = std::abs(cursor_x - layout.unclamped_cursor_x) > 0.01F;
-            layout.cursor =
-                SkRect::MakeXYWH(cursor_x, header_text_top, 2.0F, static_cast<float>(cell_height));
+            layout.cursor = SkRect::MakeXYWH(cursor_x, header_text_top, metrics.cursor_stroke,
+                                             static_cast<float>(cell_height));
         } else {
             layout.header_text.push_back(
                 {.role = "label",
-                 .shaped = shape_text(popup_label(popup.title), strong_font),
+                 .style_role = PresentationTextRole::PopupLabel,
+                 .shaped = shape_text(popup_label(popup.title), PresentationTextRole::PopupLabel),
                  .origin = SkPoint::Make(layout.header.left() + metrics.minibuffer_padding_x,
                                          header_text_top)});
         }
@@ -901,7 +904,8 @@ struct SkiaPresenter::Impl {
             PopupItemLayout item_layout{
                 .row = row,
                 .label = {.role = "item-label",
-                          .shaped = shape_text(item.label),
+                          .style_role = PresentationTextRole::PopupItem,
+                          .shaped = shape_text(item.label, PresentationTextRole::PopupItem),
                           .origin =
                               SkPoint::Make(row.left() + metrics.minibuffer_padding_x, text_top)},
                 .detail = std::nullopt,
@@ -914,7 +918,8 @@ struct SkiaPresenter::Impl {
                                        metrics.minibuffer_detail_gap;
                 item_layout.detail = PositionedText{
                     .role = "item-detail",
-                    .shaped = shape_text(item.detail),
+                    .style_role = PresentationTextRole::PopupDetail,
+                    .shaped = shape_text(item.detail, PresentationTextRole::PopupDetail),
                     .origin = SkPoint::Make(detail_x, text_top),
                 };
             }
@@ -935,7 +940,7 @@ struct SkiaPresenter::Impl {
         }
         const SkRect bounds = region_pixel_rect(pixel_layout, *region);
         const ui::Region::EchoContent& content = *region->echo();
-        ShapedText shaped = shape_text(content.text);
+        ShapedText shaped = shape_text(content.text, PresentationTextRole::Message);
         const float text_top =
             bounds.top() + (bounds.height() - static_cast<float>(cell_height)) * 0.5F;
         const float natural_left = bounds.left() + metrics.footer_padding_x;
@@ -947,24 +952,29 @@ struct SkiaPresenter::Impl {
         std::optional<SkRect> cursor;
         if (content.cursor_byte) {
             cursor_byte = std::min(*content.cursor_byte, content.text.size());
-            cursor_advance = shape_text(content.text.substr(0, *cursor_byte)).advance;
+            cursor_advance =
+                shape_text(content.text.substr(0, *cursor_byte), PresentationTextRole::Message)
+                    .advance;
             const float cursor_right =
                 std::max(natural_left, bounds.right() - metrics.footer_padding_x);
             horizontal_scroll = std::min(0.0F, cursor_right - natural_left - cursor_advance);
             unclamped_cursor_x = natural_left + horizontal_scroll + cursor_advance;
-            const float maximum_cursor_x = std::max(natural_left, bounds.right() - 3.0F);
+            const float maximum_cursor_x =
+                std::max(natural_left, bounds.right() - metrics.cursor_stroke);
             const float cursor_x = std::clamp(unclamped_cursor_x, natural_left, maximum_cursor_x);
             cursor_clamped = std::abs(cursor_x - unclamped_cursor_x) > 0.01F;
-            cursor = SkRect::MakeXYWH(cursor_x, text_top, 2.0F, static_cast<float>(cell_height));
+            cursor = SkRect::MakeXYWH(cursor_x, text_top, metrics.cursor_stroke,
+                                      static_cast<float>(cell_height));
         }
         // The pending key echoes at the right edge while the line is a
         // passive message surface (emacs semantics).
         std::optional<PositionedText> key;
         if (!content.cursor_byte && !content.key.empty()) {
-            ShapedText shaped_key = shape_text(content.key);
+            ShapedText shaped_key = shape_text(content.key, PresentationTextRole::EchoKey);
             const float key_x = std::max(natural_left, bounds.right() - metrics.footer_padding_x -
                                                            shaped_key.advance);
             key = PositionedText{.role = "echo-key",
+                                 .style_role = PresentationTextRole::EchoKey,
                                  .shaped = std::move(shaped_key),
                                  .origin = SkPoint::Make(key_x, text_top)};
         }
@@ -973,6 +983,7 @@ struct SkiaPresenter::Impl {
             .content = &content,
             .bounds = bounds,
             .text = {.role = "echo",
+                     .style_role = PresentationTextRole::Message,
                      .shaped = std::move(shaped),
                      .origin = SkPoint::Make(natural_left + horizontal_scroll, text_top)},
             .horizontal_scroll = horizontal_scroll,
@@ -1048,7 +1059,7 @@ struct SkiaPresenter::Impl {
                 if (run.text.shaped.blob) {
                     SkPaint paint;
                     paint.setAntiAlias(true);
-                    paint.setColor(pane_foreground(primitive.style, layout.region->active, theme));
+                    paint.setColor(text_color(run.text.style_role, layout.region->active));
                     canvas.drawTextBlob(run.text.shaped.blob, run.text.origin.x(),
                                         run.text.origin.y() + grid_offset_y, paint);
                 }
@@ -1092,7 +1103,6 @@ struct SkiaPresenter::Impl {
                 if (damage_bounds && !SkRect::Intersects(layout_bounds, *damage_bounds)) {
                     continue;
                 }
-                const ui::Prim& primitive = *hint.primitive;
                 std::optional<SkRect> shape_bounds;
                 if (hint.text.shaped.blob) {
                     shape_bounds = positioned_shape_bounds(hint.text);
@@ -1109,14 +1119,16 @@ struct SkiaPresenter::Impl {
 
                 SkPaint background;
                 background.setAntiAlias(false);
+                const std::uint32_t hint_background =
+                    text_background(PresentationTextRole::PositionHint);
                 background.setColor(layout.region->active
-                                        ? color(theme.salient)
-                                        : SkColorSetA(color(theme.salient), 0xB0));
+                                        ? color(hint_background)
+                                        : with_opacity(hint_background, styles.inactive_alpha));
                 canvas.drawRect(layout_bounds, background);
                 if (hint.text.shaped.blob) {
                     SkPaint paint;
                     paint.setAntiAlias(true);
-                    paint.setColor(pane_foreground(primitive.style, layout.region->active, theme));
+                    paint.setColor(text_color(hint.text.style_role, layout.region->active));
                     canvas.drawTextBlob(hint.text.shaped.blob, hint.text.origin.x(),
                                         hint.text.origin.y() + grid_offset_y, paint);
                 }
@@ -1160,7 +1172,7 @@ struct SkiaPresenter::Impl {
 
         SkPaint band_fill;
         band_fill.setAntiAlias(false);
-        band_fill.setColor(color(theme.band));
+        band_fill.setColor(color(text_background(PresentationTextRole::Popup)));
         canvas.drawRect(layout.panel, band_fill);
 
         const auto join_bounds = [](std::optional<SkRect>& bounds, const SkRect& incoming) {
@@ -1228,11 +1240,7 @@ struct SkiaPresenter::Impl {
             canvas.save();
             canvas.clipRect(layout.header);
             for (const PositionedText& text : layout.header_text) {
-                const std::uint32_t text_color = text.role == "prompt"  ? theme.salient
-                                                 : text.role == "count" ? theme.faint
-                                                 : text.role == "label" ? theme.faded
-                                                                        : theme.strong;
-                draw_text(text, text_color, shape_bounds);
+                draw_text(text, text_color(text.style_role), shape_bounds);
             }
             canvas.restore();
             append_diagnostics(0, layout.header, shape_bounds, probe);
@@ -1252,7 +1260,7 @@ struct SkiaPresenter::Impl {
             if (selected) {
                 SkPaint fill;
                 fill.setAntiAlias(false);
-                fill.setColor(color(theme.faded));
+                fill.setColor(color(text_background(PresentationTextRole::PopupSelected)));
                 canvas.drawRect(row, fill);
             }
 
@@ -1263,11 +1271,16 @@ struct SkiaPresenter::Impl {
             std::optional<SkRect> shape_bounds;
             canvas.save();
             canvas.clipRect(row);
-            draw_text(item.label, selected ? theme.canvas : theme.text, shape_bounds);
+            const SkColor item_color = selected ? text_color(PresentationTextRole::PopupSelected)
+                                                : text_color(item.label.style_role);
+            draw_text(item.label, item_color, shape_bounds);
             if (item.detail) {
-                draw_text(*item.detail,
-                          selected ? SkColorSetA(color(theme.canvas), 0xC8) : color(theme.faded),
-                          shape_bounds);
+                const SkColor detail_color =
+                    selected
+                        ? with_opacity(styles.style(PresentationTextRole::PopupSelected).foreground,
+                                       styles.secondary_alpha)
+                        : text_color(item.detail->style_role);
+                draw_text(*item.detail, detail_color, shape_bounds);
             }
             canvas.restore();
             append_diagnostics(primitive_index, row, shape_bounds, probe);
@@ -1296,7 +1309,7 @@ struct SkiaPresenter::Impl {
         if (layout.text.shaped.blob) {
             SkPaint paint;
             paint.setAntiAlias(true);
-            paint.setColor(color(theme.faded));
+            paint.setColor(text_color(layout.text.style_role));
             canvas.save();
             if (layout.key) {
                 // Reserve the key's right-edge slot so a long message cannot
@@ -1312,7 +1325,7 @@ struct SkiaPresenter::Impl {
         if (layout.key && layout.key->shaped.blob) {
             SkPaint paint;
             paint.setAntiAlias(true);
-            paint.setColor(color(theme.text));
+            paint.setColor(text_color(layout.key->style_role));
             canvas.drawTextBlob(layout.key->shaped.blob, layout.key->origin.x(),
                                 layout.key->origin.y(), paint);
         }
@@ -1366,7 +1379,9 @@ struct SkiaPresenter::Impl {
         // an inactive pane's bar drops to the highlight ground.
         SkPaint fill;
         fill.setAntiAlias(false);
-        fill.setColor(color(region.active ? theme.band : theme.highlight));
+        fill.setColor(
+            color(text_background(region.active ? PresentationTextRole::StatusBar
+                                                : PresentationTextRole::ModelineInactive)));
         canvas.drawRect(bounds, fill);
 
         std::optional<PixelProbe> probe;
@@ -1394,25 +1409,11 @@ struct SkiaPresenter::Impl {
             }
         };
 
-        const auto segment_color = [&](ModelineTone tone) {
+        const auto segment_color = [&](ModelineTone tone) -> std::uint32_t {
             if (!region.active) {
-                return theme.faint;
+                return styles.style(PresentationTextRole::ModelineInactive).foreground;
             }
-            switch (tone) {
-            case ModelineTone::Strong:
-                return theme.strong;
-            case ModelineTone::Normal:
-                return theme.text;
-            case ModelineTone::Faded:
-                return theme.faded;
-            case ModelineTone::Faint:
-                return theme.faint;
-            case ModelineTone::Salient:
-                return theme.salient;
-            case ModelineTone::Critical:
-                return theme.critical;
-            }
-            return theme.text;
+            return styles.modeline[static_cast<std::size_t>(tone)];
         };
         const auto segment_font = [&](const ModelineSegment& segment) -> const SkFont& {
             return segment.weight == ModelineWeight::Strong ? strong_font : font;
@@ -1433,11 +1434,15 @@ struct SkiaPresenter::Impl {
                                     bounds.height());
             SkPaint chip_fill;
             chip_fill.setAntiAlias(false);
+            const PresentationTextStyle& inactive_chip =
+                styles.style(PresentationTextRole::ModelineInactiveChip);
             chip_fill.setColor(
-                color(region.active ? segment_color(chip_segment->tone) : theme.selection));
+                color(region.active ? segment_color(chip_segment->tone)
+                                    : text_background(PresentationTextRole::ModelineInactiveChip)));
             canvas.drawRect(chip, chip_fill);
             draw_text(chip_text, SkPoint::Make(chip.left() + metrics.chip_padding_x, text_top),
-                      region.active ? theme.canvas : theme.faded);
+                      region.active ? styles.style(PresentationTextRole::ModelineChip).foreground
+                                    : inactive_chip.foreground);
         }
 
         // The right group is placed first so the left group can clip against
@@ -1687,8 +1692,9 @@ struct SkiaPresenter::Impl {
                                      layer_diagnostics, damage_bounds);
                         continue;
                     }
-                    fill.setColor(color(region.surface == ui::SurfaceClass::Status ? theme.band
-                                                                                   : theme.canvas));
+                    fill.setColor(color(region.surface == ui::SurfaceClass::Status
+                                            ? text_background(PresentationTextRole::StatusBar)
+                                            : theme.canvas));
                     canvas.save();
                     if (moving_grid) {
                         canvas.clipRect(region.vertical_anchor == ui::VerticalAnchor::PaneGrid
@@ -1779,9 +1785,10 @@ struct SkiaPresenter::Impl {
                                            top + static_cast<float>(cell_height)
                                  : layer_scene.active_text_row &&
                                        prim.row == *layer_scene.active_text_row - region.rect.row);
-                        paint.setColor(active_line_number
-                                           ? color(theme.text)
-                                           : pane_foreground(prim.style, region.active, theme));
+                        paint.setColor(
+                            active_line_number
+                                ? text_color(PresentationTextRole::Text)
+                                : text_color(ui::presentation_role(prim.style), region.active));
                         std::optional<SkRect> draw_bounds;
                         std::optional<SkRect> shape_bounds;
                         ShapedText shaped;
@@ -1796,7 +1803,7 @@ struct SkiaPresenter::Impl {
                                                      static_cast<SkScalar>(cell_height - 4));
                             }
                         } else {
-                            shaped = shape_text(prim.text);
+                            shaped = shape_text(prim.text, ui::presentation_role(prim.style));
                             if (shaped.blob) {
                                 shape_bounds = shaped.shape_bounds;
                                 shape_bounds->offset(x, top);
@@ -1947,7 +1954,7 @@ struct SkiaPresenter::Impl {
             SkPaint fill;
             fill.setAntiAlias(false);
             fill.setColor(scene.cursor_shape == CursorShape::Block && !cursor_in_footer
-                              ? SkColorSetA(color(theme.cursor), 0xB0)
+                              ? with_opacity(theme.cursor, styles.inactive_alpha)
                               : color(theme.cursor));
             canvas.save();
             if (!cursor_in_footer) {
@@ -2015,6 +2022,7 @@ struct SkiaPresenter::Impl {
     std::string resolved_family;
     float size;
     SkiaTheme theme;
+    PresentationStyleSheet styles;
     PresentationMetrics metrics;
     sk_sp<SkFontMgr> manager;
     sk_sp<SkTypeface> typeface;
@@ -2049,8 +2057,10 @@ SkiaFontSmoothing parse_font_smoothing(std::string_view name) {
 }
 
 SkiaPresenter::SkiaPresenter(std::string font_family, float font_size, SkiaTheme theme,
-                             PresentationMetrics metrics, SkiaFontSmoothing smoothing)
-    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme, metrics, smoothing)) {}
+                             PresentationStyleSheet styles, PresentationMetrics metrics,
+                             SkiaFontSmoothing smoothing)
+    : impl_(std::make_unique<Impl>(std::move(font_family), font_size, theme, styles, metrics,
+                                   smoothing)) {}
 
 SkiaPresenter::~SkiaPresenter() = default;
 SkiaPresenter::SkiaPresenter(SkiaPresenter&&) noexcept = default;
@@ -2083,6 +2093,10 @@ float SkiaPresenter::font_size() const {
 
 const SkiaTheme& SkiaPresenter::theme() const {
     return impl_->theme;
+}
+
+const PresentationStyleSheet& SkiaPresenter::styles() const {
+    return impl_->styles;
 }
 
 const PresentationMetrics& SkiaPresenter::metrics() const {

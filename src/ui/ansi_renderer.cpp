@@ -24,41 +24,29 @@ std::string foreground_background(std::uint32_t foreground, std::uint32_t backgr
     return color_sgr(foreground, false, strong) + color_sgr(background, true);
 }
 
-// Theme: semantic style -> SGR attributes. The only place in the presenter
-// that knows terminal color encoding.
-std::string sgr_of(StyleClass style, const PresentationTheme& theme) {
-    switch (style) {
-    case StyleClass::Text:
-        return color_sgr(theme.text);
-    case StyleClass::Keyword:
-        return color_sgr(theme.salient, false, true);
-    case StyleClass::String:
-    case StyleClass::Number:
-        return color_sgr(theme.popout);
-    case StyleClass::Comment:
-        return color_sgr(theme.faded);
-    case StyleClass::Preprocessor:
-        return color_sgr(theme.critical);
-    case StyleClass::Gutter:
-        return color_sgr(theme.faint);
-    case StyleClass::SignAdded:
-        return color_sgr(theme.sign_added);
-    case StyleClass::SignModified:
-        return color_sgr(theme.sign_modified);
-    case StyleClass::SignDeleted:
-        return color_sgr(theme.sign_deleted);
-    case StyleClass::StatusBar:
-        return foreground_background(theme.text, theme.band);
-    case StyleClass::StatusKey:
-        return foreground_background(theme.strong, theme.band, true);
-    case StyleClass::Message:
-        return color_sgr(theme.text);
-    case StyleClass::Popup:
-        return foreground_background(theme.text, theme.band);
-    case StyleClass::PositionHint:
-        return foreground_background(theme.canvas, theme.salient, true);
+std::uint32_t composite_alpha(std::uint32_t foreground, std::uint32_t background,
+                              std::uint8_t opacity) {
+    const std::uint32_t source_alpha = (foreground >> 24U) & 0xFFU;
+    const std::uint32_t alpha = source_alpha * opacity / 255U;
+    const auto channel = [&](unsigned shift) {
+        const std::uint32_t source = (foreground >> shift) & 0xFFU;
+        const std::uint32_t target = (background >> shift) & 0xFFU;
+        return (source * alpha + target * (255U - alpha) + 127U) / 255U;
+    };
+    return 0xFF000000U | (channel(16U) << 16U) | (channel(8U) << 8U) | channel(0U);
+}
+
+// Encodes an already-resolved presentation style as terminal SGR. Alpha is
+// composited because terminals accept RGB colors rather than alpha channels.
+std::string sgr_of(const PresentationTextStyle& style, const PresentationTheme& theme,
+                   std::uint8_t opacity = 255) {
+    const std::uint32_t background = style.background.value_or(theme.canvas);
+    const std::uint32_t foreground = composite_alpha(style.foreground, background, opacity);
+    const bool strong = style.weight == PresentationWeight::Strong;
+    if (style.background) {
+        return foreground_background(foreground, *style.background, strong);
     }
-    return color_sgr(theme.text);
+    return color_sgr(foreground, false, strong);
 }
 
 std::string_view cursor_sgr(CursorShape shape) {
@@ -75,7 +63,8 @@ std::string_view cursor_sgr(CursorShape shape) {
 
 } // namespace
 
-std::string render_ansi(const Scene& scene, const PresentationTheme& theme) {
+std::string render_ansi(const Scene& scene, const PresentationTheme& theme,
+                        const PresentationStyleSheet& styles) {
     std::string out;
     out += "\x1b[?25l\x1b[H\x1b[2J"; // hide cursor, home, clear
 
@@ -85,9 +74,13 @@ std::string render_ansi(const Scene& scene, const PresentationTheme& theme) {
                                     : 0;
         out += std::format("\x1b[{};{}H", region.rect.row + prim.row + content_row + 1,
                            region.rect.col + prim.col + 1);
-        const std::string sgr = prim.style == StyleClass::StatusBar && !region.active
-                                    ? foreground_background(theme.faded, theme.highlight)
-                                    : sgr_of(prim.style, theme);
+        const bool inactive_modeline = !region.active && (prim.style == StyleClass::StatusBar ||
+                                                          prim.style == StyleClass::StatusKey);
+        const PresentationTextRole role = inactive_modeline ? PresentationTextRole::ModelineInactive
+                                                            : presentation_role(prim.style);
+        const PresentationTextStyle& style = styles.style(role);
+        const std::string sgr =
+            sgr_of(style, theme, region.active || inactive_modeline ? 255 : styles.inactive_alpha);
         out += sgr;
         if (prim.selected) {
             out += "\x1b[7m";
@@ -172,7 +165,7 @@ std::string render_ansi(const Scene& scene, const PresentationTheme& theme) {
         if (divider.axis == DividerAxis::Vertical) {
             for (int offset = 0; offset < divider.length; ++offset) {
                 out += std::format("\x1b[{};{}H{}│\x1b[0m", divider.start + offset + 1,
-                                   divider.position + 1, color_sgr(theme.faint));
+                                   divider.position + 1, color_sgr(theme.divider));
             }
         }
     }

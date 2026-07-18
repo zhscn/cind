@@ -924,6 +924,40 @@ void append_color(std::string& output, std::uint32_t argb) {
     append_json_string(output, std::format("#{:08X}", argb));
 }
 
+void append_presentation_styles(std::string& output, const PresentationStyleSheet& styles) {
+    output += std::format("{{\"inactive_alpha\":{},\"secondary_alpha\":{},\"text\":[",
+                          styles.inactive_alpha, styles.secondary_alpha);
+    for (std::size_t index = 0; index < styles.text.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const PresentationTextStyle& style = styles.text[index];
+        output += "{\"role\":";
+        append_json_string(output,
+                           presentation_text_role_name(static_cast<PresentationTextRole>(index)));
+        output += ",\"foreground\":";
+        append_color(output, style.foreground);
+        output += ",\"background\":";
+        if (style.background) {
+            append_color(output, *style.background);
+        } else {
+            output += "null";
+        }
+        output += ",\"weight\":";
+        append_json_string(output,
+                           style.weight == PresentationWeight::Strong ? "strong" : "regular");
+        output.push_back('}');
+    }
+    output += "],\"modeline\":[";
+    for (std::size_t index = 0; index < styles.modeline.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_color(output, styles.modeline[index]);
+    }
+    output += "]}";
+}
+
 void append_font_metrics(std::string& output, const FontMetricsSnapshot& metrics) {
     output += std::format(
         "{{\"ascent\":{},\"descent\":{},\"leading\":{},\"baseline_from_row_top\":{}}}",
@@ -1217,8 +1251,10 @@ void append_render(std::string& output, const RenderStateSnapshot& render) {
     append_color(output, render.theme.sign_modified);
     output += ",\"sign_deleted\":";
     append_color(output, render.theme.sign_deleted);
+    output += "},\"styles\":";
+    append_presentation_styles(output, render.styles);
     output +=
-        std::format("}},\"metrics\":{{\"modeline_extra_height\":{},\"echo_extra_height\":{},"
+        std::format(",\"metrics\":{{\"modeline_extra_height\":{},\"echo_extra_height\":{},"
                     "\"footer_padding_x\":{},\"segment_gap\":{},\"chip_padding_x\":{},"
                     "\"minibuffer_padding_x\":{},\"minibuffer_detail_gap\":{},\"cursor_stroke\":{},"
                     "\"minimum_columns\":{},\"minimum_rows\":{}}},\"pixel_hash\":\"0x{:016X}\","

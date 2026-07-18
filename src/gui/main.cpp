@@ -845,6 +845,7 @@ private:
         int window_height = 0;
         SDL_GetWindowSize(window_.get(), &window_width, &window_height);
         const SkiaTheme& theme = presenter_.theme();
+        const PresentationStyleSheet& styles = presenter_.styles();
         const PresentationMetrics& metrics = presenter_.metrics();
         const auto snapshot_rect = [](const SkiaLogicalRect& rect) {
             return LogicalPixelRectSnapshot{
@@ -1040,6 +1041,7 @@ private:
                       .sign_added = theme.sign_added,
                       .sign_modified = theme.sign_modified,
                       .sign_deleted = theme.sign_deleted},
+            .styles = styles,
             .metrics = metrics,
             .pixel_hash = hash_pixels(),
             .animation = animation,
@@ -1185,7 +1187,7 @@ int run_screenshot(const std::string& path, std::uint32_t initial_line,
         (void)editor.poll_background_work();
     }
     SkiaPresenter presenter(std::move(font_family), geometry.font_size, editor.presentation_theme(),
-                            editor.presentation_metrics(), smoothing);
+                            editor.presentation_styles(), editor.presentation_metrics(), smoothing);
 
     const float cell_height = static_cast<float>(presenter.cell_height());
     const float cell_width = static_cast<float>(presenter.cell_width());
@@ -1288,7 +1290,7 @@ int run_editor(const std::string& path, std::uint32_t initial_line,
     EditorModel editor(path, std::nullopt, CppIndentStyle{}, "llvm (fallback)", initial_line,
                        std::move(platform_services), discover_user_init_file());
     SkiaPresenter presenter(std::move(font_family), font_size, editor.presentation_theme(),
-                            editor.presentation_metrics(), smoothing);
+                            editor.presentation_styles(), editor.presentation_metrics(), smoothing);
     std::unique_ptr<InspectionHub> inspection;
     std::unique_ptr<InspectorServer> inspector;
     if (inspector_socket) {

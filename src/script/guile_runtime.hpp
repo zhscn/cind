@@ -9,7 +9,7 @@
 #include "editor/window.hpp"
 #include "presentation/chrome.hpp"
 #include "presentation/modeline.hpp"
-#include "presentation/theme.hpp"
+#include "presentation/profile.hpp"
 #include "script/async_host.hpp"
 
 #include <cstddef>
@@ -263,9 +263,7 @@ public:
                                                              const ChromeFacts& facts) const;
     std::expected<ModelineContent, std::string> modeline_content(const CommandContext& context,
                                                                  const ModelineFacts& facts) const;
-    std::expected<PresentationTheme, std::string> presentation_theme() const;
-    std::expected<PresentationMotion, std::string> presentation_motion() const;
-    std::expected<PresentationMetrics, std::string> presentation_metrics() const;
+    std::expected<PresentationProfile, std::string> presentation_profile() const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     GuileRuntimeSnapshot snapshot() const;

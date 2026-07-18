@@ -522,6 +522,11 @@ TEST_CASE("user initialization owns frontend presentation policy") {
            #xff000005 #xff000006 #xff000007 #xff000008
            #xff000009 #xff00000a #xff00000b #xff00000c
            #xff00000d #xff00000e #xff00000f #xff000010)))
+(define custom-styles (resolve-presentation-styles host))
+(vector-set! (vector-ref (vector-ref custom-styles 3) 1) 2 #xff00f00d)
+(configure-style-policy!
+ host
+ (lambda (host theme) custom-styles))
 (configure-motion-policy!
  host
  (lambda (host)
@@ -544,6 +549,14 @@ TEST_CASE("user initialization owns frontend presentation policy") {
     CHECK(theme.canvas == 0xFF000001);
     CHECK(theme.salient == 0xFF00000A);
     CHECK(theme.sign_deleted == 0xFF000010);
+    const PresentationStyleSheet styles = application.presentation_styles();
+    CHECK(styles.style(PresentationTextRole::Text).foreground == 0xFF000006);
+    CHECK(styles.style(PresentationTextRole::Keyword).foreground == 0xFF00F00D);
+    CHECK(styles.style(PresentationTextRole::Preprocessor).foreground == 0xFF00000C);
+    CHECK(styles.style(PresentationTextRole::StatusBar).background == 0xFF000003);
+    CHECK(styles.style(PresentationTextRole::StatusKey).weight == PresentationWeight::Strong);
+    CHECK(styles.modeline[static_cast<std::size_t>(ModelineTone::Critical)] == 0xFF00000C);
+    CHECK(styles.inactive_alpha == 0xB0);
     const PresentationMotion motion = application.presentation_motion();
     CHECK(motion.view_duration_ms == 90);
     CHECK(motion.scroll_spring_frequency == doctest::Approx(24.0F));
@@ -560,6 +573,39 @@ TEST_CASE("user initialization owns frontend presentation policy") {
     CHECK(metrics.cursor_stroke == doctest::Approx(3.0F));
     CHECK(metrics.minimum_columns == 42);
     CHECK(metrics.minimum_rows == 7);
+}
+
+TEST_CASE("frontend acquires presentation policy as one coherent profile") {
+    TemporaryFile init(
+        std::format("cind-presentation-profile-{}.scm", static_cast<long>(::getpid())),
+        R"((define stable-styles
+  (vector-ref (resolve-presentation-profile host) 2))
+(define theme-calls 0)
+(configure-theme-policy!
+ host
+ (lambda (host)
+   (set! theme-calls (+ theme-calls 1))
+   (vector 'presentation-theme
+           #xff100001 #xff100002 #xff100003 #xff100004
+           #xff100005 #xff100006 #xff100007 #xff100008
+           #xff100009 #xff10000a #xff10000b #xff10000c
+           #xff10000d #xff10000e #xff10000f #xff100010)))
+(configure-style-policy!
+ host
+ (lambda (host theme)
+   (unless (= theme-calls 1)
+     (error "theme and styles were not resolved atomically" theme-calls))
+   stable-styles))
+)");
+    EditorApplication application({.path = "sample.cc",
+                                   .initial_text = "text",
+                                   .style = {},
+                                   .style_origin = "test",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+
+    CHECK(application.presentation_theme().canvas == 0xFF100001);
 }
 
 TEST_CASE("user initialization owns startup buffer policy before native bootstrap") {

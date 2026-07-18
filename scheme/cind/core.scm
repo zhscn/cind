@@ -230,6 +230,45 @@
           #xff6c7086 #xff89b4fa #xfffab387 #xfff9e2af
           #xfff5e0dc #xffa6e3a1 #xfff9e2af #xfff38ba8))
 
+(define (presentation-style role foreground background weight)
+  (vector 'presentation-style role foreground background weight))
+
+(define (default-presentation-styles host theme)
+  (define (color index)
+    (vector-ref theme index))
+  (vector
+   'presentation-styles
+   #xb0
+   #xc8
+   (vector
+    (presentation-style 'text (color 6) #f 'regular)
+    (presentation-style 'keyword (color 10) #f 'regular)
+    (presentation-style 'string (color 11) #f 'regular)
+    (presentation-style 'number (color 11) #f 'regular)
+    (presentation-style 'comment (color 8) #f 'regular)
+    (presentation-style 'preprocessor (color 12) #f 'regular)
+    (presentation-style 'gutter (color 9) #f 'regular)
+    (presentation-style 'sign-added (color 14) #f 'regular)
+    (presentation-style 'sign-modified (color 15) #f 'regular)
+    (presentation-style 'sign-deleted (color 16) #f 'regular)
+    (presentation-style 'status-bar (color 6) (color 3) 'regular)
+    (presentation-style 'status-key (color 7) (color 3) 'strong)
+    (presentation-style 'message (color 6) #f 'regular)
+    (presentation-style 'popup (color 6) (color 3) 'regular)
+    (presentation-style 'position-hint (color 1) (color 10) 'strong)
+    (presentation-style 'popup-prompt (color 10) (color 3) 'regular)
+    (presentation-style 'popup-count (color 9) (color 3) 'regular)
+    (presentation-style 'popup-label (color 8) (color 3) 'strong)
+    (presentation-style 'popup-input (color 7) (color 3) 'regular)
+    (presentation-style 'popup-item (color 6) (color 3) 'regular)
+    (presentation-style 'popup-detail (color 8) (color 3) 'regular)
+    (presentation-style 'popup-selected (color 1) (color 8) 'regular)
+    (presentation-style 'echo-key (color 6) #f 'regular)
+    (presentation-style 'modeline-chip (color 1) #f 'regular)
+    (presentation-style 'modeline-inactive (color 9) (color 2) 'regular)
+    (presentation-style 'modeline-inactive-chip (color 8) (color 4) 'regular))
+   (vector (color 7) (color 6) (color 8) (color 9) (color 10) (color 12))))
+
 (define (default-presentation-motion host)
   (vector 'presentation-motion 70 32.0 0.001 0.01))
 
@@ -292,9 +331,10 @@
   (configure-modeline-policy! host modeline-content)
   (configure-chrome-policy! host default-chrome-content)
   (configure-theme-policy! host default-presentation-theme)
+  (configure-style-policy! host default-presentation-styles)
   (configure-motion-policy! host default-presentation-motion)
   (configure-metrics-policy! host default-presentation-metrics)
-  5)
+  6)
 
 (define (commands-provider host context query)
   (let ((names (enabled-command-names host context)))

@@ -10,13 +10,19 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 using namespace cind::gui;
 using namespace cind::ui;
 using cind::PresentationMetrics;
 using cind::PresentationMotion;
+using cind::PresentationStyleSheet;
+using cind::PresentationTextRole;
+using cind::PresentationTextStyle;
+using cind::PresentationWeight;
 
 int main(int argc, char** argv) {
     doctest::Context context(argc, argv);
@@ -45,6 +51,37 @@ SkiaTheme test_theme() {
             .sign_added = 0xFFA6E3A1,
             .sign_modified = 0xFFF9E2AF,
             .sign_deleted = 0xFFF38BA8};
+}
+
+PresentationStyleSheet test_styles() {
+    const SkiaTheme theme = test_theme();
+    PresentationStyleSheet styles;
+    for (PresentationTextStyle& style : styles.text) {
+        style.foreground = theme.text;
+    }
+    const auto set = [&](PresentationTextRole role, std::uint32_t foreground,
+                         std::optional<std::uint32_t> background = std::nullopt,
+                         PresentationWeight weight = PresentationWeight::Regular) {
+        styles.style(role) = {.foreground = foreground, .background = background, .weight = weight};
+    };
+    set(PresentationTextRole::Gutter, theme.faint);
+    set(PresentationTextRole::StatusBar, theme.text, theme.band);
+    set(PresentationTextRole::Popup, theme.text, theme.band);
+    set(PresentationTextRole::PositionHint, theme.canvas, theme.salient);
+    set(PresentationTextRole::PopupPrompt, theme.salient);
+    set(PresentationTextRole::PopupCount, theme.faint);
+    set(PresentationTextRole::PopupLabel, theme.faded);
+    set(PresentationTextRole::PopupInput, theme.strong);
+    set(PresentationTextRole::PopupDetail, theme.faded);
+    set(PresentationTextRole::PopupSelected, theme.canvas, theme.faded);
+    set(PresentationTextRole::ModelineChip, theme.canvas);
+    set(PresentationTextRole::ModelineInactive, theme.faint, theme.highlight);
+    set(PresentationTextRole::ModelineInactiveChip, theme.faded, theme.selection);
+    styles.modeline = {theme.strong, theme.text,    theme.faded,
+                       theme.faint,  theme.salient, theme.critical};
+    styles.inactive_alpha = 0xB0;
+    styles.secondary_alpha = 0xC8;
+    return styles;
 }
 
 PresentationMotion test_motion() {
@@ -138,7 +175,7 @@ FrameRequest request_for(SkiaPresenter& presenter, Scene scene, float scroll_top
 } // namespace
 
 TEST_CASE("presented frame exposes the animated caret used for IME placement") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -160,7 +197,7 @@ TEST_CASE("presented frame exposes the animated caret used for IME placement") {
 }
 
 TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -174,7 +211,7 @@ TEST_CASE("frame controller reuses one prepared layout for an unchanged scene") 
 }
 
 TEST_CASE("direct scroll input bypasses the spring animation") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -190,7 +227,7 @@ TEST_CASE("direct scroll input bypasses the spring animation") {
 }
 
 TEST_CASE("animated document chrome follows the visual scroll transform") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -216,7 +253,7 @@ TEST_CASE("animated document chrome follows the visual scroll transform") {
 }
 
 TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     const FrameClock::time_point start{};
 
     SUBCASE("downward motion catches up at the bottom edge") {
@@ -283,7 +320,7 @@ TEST_CASE("cursor-driven scroll cannot present the caret outside the grid") {
 }
 
 TEST_CASE("presented frame hit testing follows the visible scroll layer") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -327,7 +364,7 @@ TEST_CASE("presented frame hit testing follows the visible scroll layer") {
 }
 
 TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 
@@ -355,7 +392,7 @@ TEST_CASE("scroll frames retain prepared layouts for visible keyframes") {
 }
 
 TEST_CASE("presented frame gives fixed overlays priority over animated document layers") {
-    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_metrics());
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
     GuiFrameController controller(presenter, test_motion());
     const FrameClock::time_point start{};
 

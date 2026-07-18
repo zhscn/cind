@@ -291,10 +291,13 @@ activation facts without assigning precedence or selecting global roots.
 (resolve-chrome-content host context facts)
 (configure-theme-policy! host procedure)
 (resolve-presentation-theme host)
+(configure-style-policy! host procedure)
+(resolve-presentation-styles host)
 (configure-motion-policy! host procedure)
 (resolve-presentation-motion host)
 (configure-metrics-policy! host procedure)
 (resolve-presentation-metrics host)
+(resolve-presentation-profile host)
 ```
 
 The default policy orders Window, View, Buffer, active minor-mode, major-mode, editor, and
@@ -340,8 +343,29 @@ The theme policy returns a semantic ARGB palette shared by terminal and pixel pr
                      sign-added sign-modified sign-deleted)
 ```
 
-Each color is an unsigned 32-bit straight-alpha ARGB value. Scheme owns the palette; Skia maps it
-to pixels and the terminal presenter maps the same semantic roles to true-color SGR sequences.
+Each color is an unsigned 32-bit straight-alpha ARGB value. Scheme owns the palette and uses it to
+resolve the style policy; pixel and terminal presenters only encode the resulting attributes.
+
+The style policy receives the resolved theme and returns concrete text attributes:
+
+```scheme
+#(presentation-styles inactive-alpha secondary-alpha
+  #(#(presentation-style role foreground background-or-#f regular-or-strong) ...)
+  #(modeline-strong modeline-normal modeline-faded
+    modeline-faint modeline-salient modeline-critical))
+```
+
+The text-style vector contains every published presentation role exactly once. It covers Scene
+style classes, popup subparts, echo key text, and active and inactive modeline text. The native
+boundary rejects missing, duplicate, and unknown roles. Surface-bearing status, popup, position
+hint, selection, and inactive-modeline roles require a background; other roles may use `#f`. Both
+pixel and terminal presenters consume the same resolved foreground, background, weight, inactive
+alpha, and secondary alpha. Terminal output composites alpha onto the effective background before
+emitting true-color SGR.
+
+`resolve-presentation-profile` resolves the theme once and supplies that exact value to the style
+policy, then returns theme, styles, motion, and metrics as one immutable frontend snapshot. Native
+frontends acquire this profile atomically during application initialization.
 
 The GUI motion policy returns
 `#(presentation-motion view-duration-ms scroll-spring-frequency position-tolerance

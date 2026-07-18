@@ -1,5 +1,6 @@
 #pragma once
 
+#include "presentation/style.hpp"
 #include "presentation/theme.hpp"
 #include "ui/scene.hpp"
 
@@ -11,6 +12,7 @@ namespace cind::ui {
 // string (full-frame repaint; the caller writes it in a single flush).
 // Pure — testable against golden strings without a pty. A frame-diffing
 // variant for remote transports can sit next to this one later.
-std::string render_ansi(const Scene& scene, const PresentationTheme& theme);
+std::string render_ansi(const Scene& scene, const PresentationTheme& theme,
+                        const PresentationStyleSheet& styles);
 
 } // namespace cind::ui

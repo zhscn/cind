@@ -19,6 +19,17 @@ using namespace cind::ui;
 
 namespace {
 
+PresentationStyleSheet test_styles() {
+    PresentationStyleSheet styles;
+    for (PresentationTextStyle& style : styles.text) {
+        style.foreground = 0xFFCDD6F4;
+    }
+    styles.modeline.fill(0xFFCDD6F4);
+    styles.inactive_alpha = 0xB0;
+    styles.secondary_alpha = 0xC8;
+    return styles;
+}
+
 void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                         bool full_reference_match = true, bool popup_cursor_mismatch = false,
                         bool echo_frame = false, bool echo_cursor_mismatch = false,
@@ -324,6 +335,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                          .leading = 1.0F,
                          .baseline_from_row_top = 15.0F},
         .theme = {.canvas = 0xFF1E1E1E},
+        .styles = test_styles(),
         .metrics = {.modeline_extra_height = 12.0F,
                     .echo_extra_height = 8.0F,
                     .footer_padding_x = 12.0F,
@@ -413,7 +425,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":47") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":48") != std::string::npos);
+    CHECK(snapshot.find("\"styles\":{\"inactive_alpha\":176") != std::string::npos);
     CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
     CHECK(snapshot.find("\"panes\":[]") != std::string::npos);
     CHECK(snapshot.find("\"path\":\"sample.cc\"") != std::string::npos);

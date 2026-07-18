@@ -444,7 +444,8 @@ private:
     }
 
     void render() {
-        term_.queue(ui::render_ansi(compose(), application_.presentation_theme()));
+        term_.queue(ui::render_ansi(compose(), application_.presentation_theme(),
+                                    application_.presentation_styles()));
         term_.flush();
     }
 

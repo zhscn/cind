@@ -44,6 +44,9 @@ public:
     const PresentationTheme& presentation_theme() const {
         return application_.presentation_theme();
     }
+    const PresentationStyleSheet& presentation_styles() const {
+        return application_.presentation_styles();
+    }
     const PresentationMotion& presentation_motion() const {
         return application_.presentation_motion();
     }

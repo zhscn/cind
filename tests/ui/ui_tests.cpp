@@ -40,6 +40,39 @@ PresentationTheme test_theme() {
             .sign_deleted = 0xFFF38BA8};
 }
 
+PresentationStyleSheet test_styles() {
+    const PresentationTheme theme = test_theme();
+    PresentationStyleSheet styles;
+    for (PresentationTextStyle& style : styles.text) {
+        style.foreground = theme.text;
+    }
+    const auto set = [&](PresentationTextRole role, std::uint32_t foreground,
+                         std::optional<std::uint32_t> background = std::nullopt,
+                         PresentationWeight weight = PresentationWeight::Regular) {
+        styles.style(role) = {.foreground = foreground, .background = background, .weight = weight};
+    };
+    set(PresentationTextRole::Keyword, theme.salient);
+    set(PresentationTextRole::String, theme.popout);
+    set(PresentationTextRole::Number, theme.popout);
+    set(PresentationTextRole::Comment, theme.faded);
+    set(PresentationTextRole::Preprocessor, theme.critical);
+    set(PresentationTextRole::Gutter, theme.faint);
+    set(PresentationTextRole::SignAdded, theme.sign_added);
+    set(PresentationTextRole::SignModified, theme.sign_modified);
+    set(PresentationTextRole::SignDeleted, theme.sign_deleted);
+    set(PresentationTextRole::StatusBar, theme.text, theme.band);
+    set(PresentationTextRole::StatusKey, theme.strong, theme.band, PresentationWeight::Strong);
+    set(PresentationTextRole::Popup, theme.text, theme.band);
+    set(PresentationTextRole::PositionHint, theme.canvas, theme.salient,
+        PresentationWeight::Strong);
+    set(PresentationTextRole::ModelineInactive, theme.faint, theme.highlight);
+    styles.modeline = {theme.strong, theme.text,    theme.faded,
+                       theme.faint,  theme.salient, theme.critical};
+    styles.inactive_alpha = 0xB0;
+    styles.secondary_alpha = 0xC8;
+    return styles;
+}
+
 // Lex a snippet and lay out its single line with the given viewport.
 std::vector<Run> runs_of(const std::string& text, int left_col = 0, int width = 80,
                          std::optional<TextRange> selection = std::nullopt, int tab_width = 4) {
@@ -153,10 +186,10 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     REQUIRE(popup->popup() != nullptr);
     CHECK(first.cursor_shape == CursorShape::Block);
     CHECK(status->status()->segments.back().text == "N");
-    CHECK(render_ansi(first, test_theme()).find("sample.cc") != std::string::npos);
-    CHECK(render_ansi(first, test_theme()).find("hello") != std::string::npos);
-    CHECK(render_ansi(first, test_theme()).find("command") != std::string::npos);
-    CHECK(render_ansi(first, test_theme()).find("\x1b[2 q") != std::string::npos);
+    CHECK(render_ansi(first, test_theme(), test_styles()).find("sample.cc") != std::string::npos);
+    CHECK(render_ansi(first, test_theme(), test_styles()).find("hello") != std::string::npos);
+    CHECK(render_ansi(first, test_theme(), test_styles()).find("command") != std::string::npos);
+    CHECK(render_ansi(first, test_theme(), test_styles()).find("\x1b[2 q") != std::string::npos);
 }
 
 TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
@@ -291,7 +324,7 @@ TEST_CASE("position hints replace document cells without changing text layout") 
     CHECK(hint->style == StyleClass::PositionHint);
     CHECK(hint->span_cols == 2);
     CHECK(hint->id == "hint:0/byte:1");
-    CHECK(render_ansi(scene, test_theme()).find("1 \x1b[0m") != std::string::npos);
+    CHECK(render_ansi(scene, test_theme(), test_styles()).find("1 \x1b[0m") != std::string::npos);
 }
 
 TEST_CASE("view layers define paint order independently of region storage order") {
@@ -307,7 +340,7 @@ TEST_CASE("view layers define paint order independently of region storage order"
     document.primitives().push_back({0, 0, "body", StyleClass::Text, false});
     scene.regions = {overlay, document};
 
-    const std::string rendered = render_ansi(scene, test_theme());
+    const std::string rendered = render_ansi(scene, test_theme(), test_styles());
     CHECK(rendered.find("body") < rendered.find("top"));
 
     SceneDamageTracker tracker;
@@ -514,12 +547,12 @@ TEST_CASE("ansi renderer: regions paint at absolute positions") {
     scene.cursor_row = 1;
     scene.cursor_col = 5;
 
-    const std::string frame = render_ansi(scene, test_theme());
+    const std::string frame = render_ansi(scene, test_theme(), test_styles());
     CHECK(frame.starts_with("\x1b[?25l\x1b[H\x1b[2J"));
     // Region-local coordinates offset by the region's rect (1-based).
     CHECK(frame.find("\x1b[1;1H\x1b[38;2;108;112;134m 1 ") != std::string::npos);
     CHECK(frame.find("\x1b[1;4H\x1b[38;2;249;226;175m▎") != std::string::npos);
-    CHECK(frame.find("\x1b[1;5H\x1b[38;2;137;180;250;1mint") != std::string::npos);
+    CHECK(frame.find("\x1b[1;5H\x1b[38;2;137;180;250mint") != std::string::npos);
     CHECK(frame.find("\x1b[1;8H") != std::string::npos);
     CHECK(frame.find("\x1b[2;5H\x1b[38;2;108;112;134m~") != std::string::npos);
     CHECK(frame.find("\x1b[4;1H\x1b[38;2;205;214;244m\x1b[48;2;49;50;68m f.cc ") !=
@@ -527,11 +560,18 @@ TEST_CASE("ansi renderer: regions paint at absolute positions") {
     CHECK(frame.find("\x1b[5;1H\x1b[38;2;205;214;244mhello") != std::string::npos);
     CHECK(frame.ends_with("\x1b[1;5H\x1b[6 q\x1b[?25h"));
 
+    PresentationStyleSheet overridden = test_styles();
+    overridden.style(PresentationTextRole::Keyword) = {
+        .foreground = 0xFF010203, .background = std::nullopt, .weight = PresentationWeight::Strong};
+    CHECK(render_ansi(scene, test_theme(), overridden).find("\x1b[1;5H\x1b[38;2;1;2;3;1mint") !=
+          std::string::npos);
+
     // Selected primitives add reverse video.
     Scene sel = scene;
     sel.regions[2].primitives()[1].selected = true;
-    CHECK(render_ansi(sel, test_theme()).find("\x1b[38;2;137;180;250;1m") != std::string::npos);
-    CHECK(render_ansi(sel, test_theme()).find("\x1b[7m x;") != std::string::npos);
+    CHECK(render_ansi(sel, test_theme(), test_styles()).find("\x1b[38;2;137;180;250m") !=
+          std::string::npos);
+    CHECK(render_ansi(sel, test_theme(), test_styles()).find("\x1b[7m x;") != std::string::npos);
 
     // find() locates regions by role.
     CHECK(scene.find(RegionRole::TextArea) != nullptr);

@@ -27,10 +27,13 @@
             resolve-chrome-content
             configure-theme-policy!
             resolve-presentation-theme
+            configure-style-policy!
+            resolve-presentation-styles
             configure-motion-policy!
             resolve-presentation-motion
             configure-metrics-policy!
             resolve-presentation-metrics
+            resolve-presentation-profile
             invocation-arguments
             invocation-repeat-count
             invocation-register
@@ -294,6 +297,20 @@
       (error "theme policy is not configured"))
     (procedure host)))
 
+(define style-policies (make-weak-key-hash-table))
+
+(define (configure-style-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "style policy must be a procedure" procedure))
+  (hashq-set! style-policies host procedure)
+  procedure)
+
+(define (resolve-presentation-styles host)
+  (let ((procedure (hashq-ref style-policies host)))
+    (unless procedure
+      (error "style policy is not configured"))
+    (procedure host (resolve-presentation-theme host))))
+
 (define motion-policies (make-weak-key-hash-table))
 
 (define (configure-motion-policy! host procedure)
@@ -321,6 +338,17 @@
     (unless procedure
       (error "metrics policy is not configured"))
     (procedure host)))
+
+(define (resolve-presentation-profile host)
+  (let* ((theme (resolve-presentation-theme host))
+         (style-procedure (hashq-ref style-policies host)))
+    (unless style-procedure
+      (error "style policy is not configured"))
+    (vector 'presentation-profile
+            theme
+            (style-procedure host theme)
+            (resolve-presentation-motion host)
+            (resolve-presentation-metrics host))))
 
 (define (invocation-arguments invocation)
   (vector-ref invocation 1))
