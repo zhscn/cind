@@ -9,6 +9,7 @@
 #include "editor/pointer.hpp"
 #include "editor/project_service.hpp"
 #include "editor/workbench.hpp"
+#include "editor/workbench_session.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "script/guile_runtime.hpp"
 
@@ -153,6 +154,9 @@ public:
     bool expel_buffer(WorkbenchId workbench, BufferId buffer);
     std::vector<BufferId> workbench_buffers(WorkbenchId workbench, bool widen = false) const;
     std::vector<WorkbenchSnapshot> workbench_snapshots() const;
+    WorkbenchSessionState capture_workbench_session() const;
+    std::string serialize_workbench_session() const;
+    std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
     std::expected<void, std::string> release_buffer(BufferId buffer, BufferId replacement);
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
@@ -314,6 +318,7 @@ private:
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_ = false;
+    std::uint64_t workbench_restore_generation_ = 0;
     // These are declared last so the script adapter first cancels its work,
     // then the native runtime joins before captured editor state is destroyed.
     AsyncRuntime async_runtime_;

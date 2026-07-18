@@ -72,6 +72,20 @@ bool Workbench::expel_buffer(BufferId buffer) {
     return std::erase(mru_, buffer) != 0;
 }
 
+void Workbench::replace_mru(const std::vector<BufferId>& buffers) {
+    std::vector<BufferId> unique;
+    unique.reserve(buffers.size());
+    for (const BufferId buffer : buffers) {
+        if (!buffer) {
+            throw std::invalid_argument("workbench MRU contains an invalid buffer");
+        }
+        if (std::ranges::find(unique, buffer) == unique.end()) {
+            unique.push_back(buffer);
+        }
+    }
+    mru_ = std::move(unique);
+}
+
 std::optional<WindowId> Workbench::slot(std::string_view role) const {
     const auto found = slots_.find(std::string(role));
     return found == slots_.end() ? std::nullopt : std::optional(found->second);
@@ -199,6 +213,19 @@ std::optional<WorkbenchId> WorkbenchRegistry::find_by_window(WindowId window) co
         }
     }
     return std::nullopt;
+}
+
+bool WorkbenchRegistry::rename(WorkbenchId id, std::string name) {
+    Workbench* workbench = try_get(id);
+    if (workbench == nullptr) {
+        return false;
+    }
+    if (const std::optional<WorkbenchId> existing = find_by_name(name);
+        existing && *existing != id) {
+        return false;
+    }
+    workbench->set_name(std::move(name));
+    return true;
 }
 
 Workbench& WorkbenchRegistry::active() {

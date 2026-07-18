@@ -72,6 +72,38 @@ private:
     std::filesystem::path path_;
 };
 
+class TemporaryDirectory {
+public:
+    explicit TemporaryDirectory(std::string name)
+        : path_(std::filesystem::temp_directory_path() / std::move(name)) {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+        if (!std::filesystem::create_directories(path_)) {
+            throw std::runtime_error("cannot create temporary test directory");
+        }
+    }
+
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    std::filesystem::path write(std::string name, std::string_view contents) const {
+        const std::filesystem::path path = path_ / std::move(name);
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << contents;
+        if (!output) {
+            throw std::runtime_error("cannot write temporary test file");
+        }
+        return path;
+    }
+
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
 EditorApplication make_application(std::string path, std::string initial,
                                    EditorPlatformServices platform_services = {}) {
     return EditorApplication({.path = std::move(path),
@@ -1973,6 +2005,147 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK(application.runtime().windows().try_get(first_other_window) != nullptr);
     CHECK(application.workbench_snapshots().size() == 1);
     CHECK_FALSE(application.close_workbench(first_workbench));
+}
+
+TEST_CASE("workbench session capture uses stable resources and layout topology") {
+    EditorApplication application = make_application("/tmp/source.cc", "one\ntwo\n");
+    const WorkbenchId first = application.workbench_id();
+    const WindowId first_window = application.window_id();
+    application.session().set_caret(TextOffset{4});
+    REQUIRE(application.split_window(WindowSplitAxis::Rows));
+    const WindowId tool_window = application.window_layout().leaves().back();
+    REQUIRE(application.set_window_role(tool_window, "tools").has_value());
+    REQUIRE(application.set_window_pinned(first_window, true).has_value());
+    const ProjectId project =
+        application.runtime().projects().create({.name = "source",
+                                                 .roots = {"/tmp/source"},
+                                                 .discovery_provider = "session",
+                                                 .discovery_marker = {}});
+    REQUIRE(application.adopt_project(first, project));
+    const WorkbenchId second = application.create_workbench("notes");
+
+    const std::expected<WorkbenchSessionState, std::string> captured =
+        parse_workbench_session(application.serialize_workbench_session());
+    REQUIRE(captured.has_value());
+    REQUIRE(captured->workbenches.size() == 2);
+    CHECK(captured->active_workbench == 1);
+    CHECK(captured->workbenches[0].scope_roots == std::vector<std::string>{"/tmp/source"});
+    CHECK(captured->workbenches[0].mru_resources == std::vector<std::string>{"/tmp/source.cc"});
+    CHECK_FALSE(captured->workbenches[0].layout.leaf());
+    CHECK(captured->workbenches[0].layout.axis == WindowSplitAxis::Rows);
+    REQUIRE(captured->workbenches[0].layout.first->window.has_value());
+    CHECK(captured->workbenches[0].layout.first->window->caret == 4);
+    CHECK(captured->workbenches[0].layout.first->window->pinned);
+    REQUIRE(captured->workbenches[0].layout.second->window.has_value());
+    CHECK(captured->workbenches[0].layout.second->window->role ==
+          std::optional<std::string>{"tools"});
+    CHECK(captured->workbenches[1].name == "notes");
+    CHECK(application.workbench_id() == second);
+}
+
+TEST_CASE("workbench session restore rebuilds durable state and tolerates missing resources") {
+    TemporaryDirectory directory(
+        std::format("cind-workbench-restore-{}", static_cast<long>(::getpid())));
+    const std::filesystem::path main = directory.write("main.cc", "zero\none\ntwo\n");
+    const std::filesystem::path visitor = directory.write("notes.txt", "visitor\n");
+    const std::filesystem::path missing = directory.path() / "missing.cc";
+
+    const auto leaf = [](std::optional<std::string> resource, std::uint32_t caret,
+                         std::optional<std::string> role = std::nullopt, bool pinned = false,
+                         bool created = false) {
+        return WorkbenchLayoutSessionState{
+            .window = WorkbenchWindowSessionState{.resource = std::move(resource),
+                                                  .caret = caret,
+                                                  .role = std::move(role),
+                                                  .pinned = pinned,
+                                                  .created_by_policy = created},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr};
+    };
+    WorkbenchSessionState state;
+    state.active_workbench = 1;
+    WorkbenchSessionEntry code;
+    code.name = "code";
+    code.scope_roots = {directory.path().string()};
+    code.mru_resources = {visitor.string(), main.string(), missing.string()};
+    code.active_leaf = 1;
+    code.layout = {.window = std::nullopt,
+                   .axis = WindowSplitAxis::Rows,
+                   .ratio = 0.35F,
+                   .first = std::make_unique<WorkbenchLayoutSessionState>(
+                       leaf(main.string(), 5, std::nullopt, true)),
+                   .second = std::make_unique<WorkbenchLayoutSessionState>(
+                       leaf(missing.string(), 80, "tools", false, true))};
+    WorkbenchSessionEntry notes;
+    notes.name = "notes";
+    notes.mru_resources = {visitor.string()};
+    notes.layout = leaf(visitor.string(), 3);
+    state.workbenches.push_back(std::move(code));
+    state.workbenches.push_back(std::move(notes));
+
+    WakeSignal wake;
+    EditorApplication application = make_application(
+        {}, "fallback\n", {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                               wake.notify();
+                           }});
+    const WorkbenchId original_workbench = application.workbench_id();
+    const WindowId original_window = application.window_id();
+    CHECK_FALSE(application.restore_workbench_session("not a session").has_value());
+    CHECK(application.workbench_id() == original_workbench);
+
+    REQUIRE(application.restore_workbench_session(serialize_workbench_session(state)).has_value());
+    CHECK(application.runtime().windows().try_get(original_window) == nullptr);
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+
+    const std::vector<WorkbenchSnapshot> snapshots = application.workbench_snapshots();
+    REQUIRE(snapshots.size() == 2);
+    const auto code_snapshot =
+        std::ranges::find(snapshots, std::string{"code"}, &WorkbenchSnapshot::name);
+    const auto notes_snapshot =
+        std::ranges::find(snapshots, std::string{"notes"}, &WorkbenchSnapshot::name);
+    REQUIRE(code_snapshot != snapshots.end());
+    REQUIRE(notes_snapshot != snapshots.end());
+    CHECK_FALSE(code_snapshot->active);
+    CHECK(notes_snapshot->active);
+    REQUIRE(notes_snapshot->mru.size() == 1);
+    CHECK(application.runtime().buffers().get(notes_snapshot->mru.front()).resource_uri() ==
+          std::optional{visitor.string()});
+    CHECK(application.session().caret() == TextOffset{3});
+
+    REQUIRE(code_snapshot->scope.size() == 1);
+    CHECK(application.runtime().projects().get(code_snapshot->scope.front()).roots() ==
+          std::vector<std::string>{directory.path().string()});
+    REQUIRE(code_snapshot->mru.size() == 3);
+    CHECK(application.runtime().buffers().get(code_snapshot->mru[0]).resource_uri() ==
+          std::optional{visitor.string()});
+    CHECK(application.runtime().buffers().get(code_snapshot->mru[1]).resource_uri() ==
+          std::optional{main.string()});
+    CHECK_FALSE(application.runtime().buffers().get(code_snapshot->mru[2]).resource_uri());
+
+    REQUIRE(application.switch_workbench(code_snapshot->workbench));
+    REQUIRE(application.window_layout().root() != nullptr);
+    CHECK_FALSE(application.window_layout().root()->leaf());
+    CHECK(application.window_layout().root()->axis == WindowSplitAxis::Rows);
+    CHECK(application.window_layout().root()->ratio == doctest::Approx(0.35F));
+    REQUIRE(application.open_windows().size() == 2);
+    const WindowId source_window = application.window_layout().leaves().front();
+    const WindowId tool_window = application.window_layout().leaves().back();
+    CHECK(
+        application.runtime().buffers().get(application.buffer_id(source_window)).resource_uri() ==
+        std::optional{main.string()});
+    CHECK(application.session(source_window).caret() == TextOffset{5});
+    CHECK(application.runtime().windows().get(source_window).pinned());
+    CHECK(application.window_id() == tool_window);
+    CHECK(application.runtime().windows().get(tool_window).role() ==
+          std::optional<std::string>{"tools"});
+    CHECK(application.runtime().windows().get(tool_window).created_by_policy());
+    CHECK_FALSE(application.runtime().buffers().find_by_resource(missing.string()));
+    CHECK(application.message() == "workbench session restored · 1 resources unavailable");
 }
 
 TEST_CASE("window roles pinning and policy provenance stay frontend independent") {

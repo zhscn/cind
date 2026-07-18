@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <format>
 #include <limits>
+#include <map>
 #include <new>
 #include <stdexcept>
 #include <utility>
@@ -1382,6 +1384,357 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
              .active = id == workbenches_.active_id()});
     }
     return result;
+}
+
+WorkbenchSessionState EditorApplication::capture_workbench_session() const {
+    WorkbenchSessionState state{.version = WorkbenchSessionState::current_version,
+                                .active_workbench = 0,
+                                .workbenches = {}};
+    const std::vector<WorkbenchId> ids = workbenches_.all();
+    state.workbenches.reserve(ids.size());
+    const auto capture_layout = [&](this const auto& self,
+                                    const WindowLayoutNode& node) -> WorkbenchLayoutSessionState {
+        if (!node.leaf()) {
+            return {.window = std::nullopt,
+                    .axis = node.axis,
+                    .ratio = node.ratio,
+                    .first = std::make_unique<WorkbenchLayoutSessionState>(self(*node.first)),
+                    .second = std::make_unique<WorkbenchLayoutSessionState>(self(*node.second))};
+        }
+        const Window& window = runtime_.windows().get(node.window);
+        const Buffer& buffer =
+            runtime_.buffers().get(runtime_.views().get(window.view_id()).buffer_id());
+        return {
+            .window =
+                WorkbenchWindowSessionState{.resource = buffer.resource_uri(),
+                                            .caret = runtime_.views().caret(window.view_id()).value,
+                                            .role = window.role(),
+                                            .pinned = window.pinned(),
+                                            .created_by_policy = window.created_by_policy()},
+            .axis = WindowSplitAxis::Rows,
+            .ratio = 0.5F,
+            .first = nullptr,
+            .second = nullptr};
+    };
+    for (std::size_t index = 0; index < ids.size(); ++index) {
+        const Workbench& workbench = workbenches_.get(ids[index]);
+        WorkbenchSessionEntry entry{.name = workbench.name(),
+                                    .scope_roots = {},
+                                    .mru_resources = {},
+                                    .layout = capture_layout(*workbench.layout().root()),
+                                    .active_leaf = 0};
+        for (const ProjectId project : workbench.scope()) {
+            const Project& definition = runtime_.projects().get(project);
+            if (!definition.roots().empty()) {
+                entry.scope_roots.push_back(definition.roots().front());
+            }
+        }
+        for (const BufferId buffer : workbench.mru()) {
+            const Buffer* definition = runtime_.buffers().try_get(buffer);
+            if (definition != nullptr && definition->resource_uri()) {
+                entry.mru_resources.push_back(*definition->resource_uri());
+            }
+        }
+        const auto active =
+            std::ranges::find(workbench.layout().leaves(), workbench.active_window());
+        entry.active_leaf =
+            static_cast<std::size_t>(std::distance(workbench.layout().leaves().begin(), active));
+        if (ids[index] == workbenches_.active_id()) {
+            state.active_workbench = index;
+        }
+        state.workbenches.push_back(std::move(entry));
+    }
+    return state;
+}
+
+std::string EditorApplication::serialize_workbench_session() const {
+    return cind::serialize_workbench_session(capture_workbench_session());
+}
+
+std::expected<void, std::string>
+EditorApplication::restore_workbench_session(std::string_view serialized) {
+    std::expected<WorkbenchSessionState, std::string> parsed = parse_workbench_session(serialized);
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
+    const auto leaf_count = [](this const auto& self,
+                               const WorkbenchLayoutSessionState& node) -> std::size_t {
+        return node.leaf() ? 1 : self(*node.first) + self(*node.second);
+    };
+    std::vector<std::string> names;
+    names.reserve(parsed->workbenches.size());
+    for (const WorkbenchSessionEntry& entry : parsed->workbenches) {
+        const std::size_t leaves = leaf_count(entry.layout);
+        if (leaves == 0 || entry.active_leaf >= leaves ||
+            std::ranges::find(names, entry.name) != names.end()) {
+            return std::unexpected(
+                "workbench session contains an invalid layout or duplicate name");
+        }
+        names.push_back(entry.name);
+    }
+
+    struct PendingTarget {
+        WindowId window;
+        std::uint32_t caret = 0;
+    };
+    struct RestoreState {
+        std::uint64_t generation = 0;
+        std::size_t pending = 0;
+        std::size_t missing = 0;
+        std::map<std::string, std::vector<PendingTarget>> resources;
+        std::vector<std::pair<WorkbenchId, std::vector<std::string>>> mru;
+        std::string finalization_failure = "workbench session finalization failed";
+    };
+    auto restore = std::make_shared<RestoreState>();
+    restore->generation = ++workbench_restore_generation_;
+    const BufferId fallback = buffer_id();
+    const std::vector<WorkbenchId> previous = workbenches_.all();
+    const WorkbenchId previous_active = workbenches_.active_id();
+    std::vector<WorkbenchId> created;
+    created.reserve(parsed->workbenches.size());
+
+    const auto project_for_root = [&](const std::string& root) -> std::optional<ProjectId> {
+        if (const std::optional<ProjectId> existing = runtime_.projects().find_by_root(root)) {
+            return existing;
+        }
+        try {
+            std::string name = std::filesystem::path(root).filename().string();
+            if (name.empty()) {
+                name = root;
+            }
+            return runtime_.projects().create({.name = std::move(name),
+                                               .roots = {root},
+                                               .discovery_provider = "session",
+                                               .discovery_marker = {}});
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    };
+    try {
+        for (std::size_t index = 0; index < parsed->workbenches.size(); ++index) {
+            const WorkbenchSessionEntry& source = parsed->workbenches[index];
+            std::vector<ProjectId> scope;
+            for (const std::string& root : source.scope_roots) {
+                if (const std::optional<ProjectId> project = project_for_root(root)) {
+                    scope.push_back(*project);
+                }
+            }
+            const ViewId root_view = create_view({}, fallback);
+            const WindowId root_window = runtime_.windows().create(root_view);
+            view_state_for(root_view).window = root_window;
+            std::string temporary = std::format(" *restore-{}-{}*", restore->generation, index);
+            while (workbenches_.find_by_name(temporary)) {
+                temporary.push_back('*');
+            }
+            const WorkbenchId id = workbenches_.create({.name = std::move(temporary),
+                                                        .root_window = root_window,
+                                                        .scope = std::move(scope)});
+            created.push_back(id);
+            Workbench& workbench = workbenches_.get(id);
+            const auto apply_node = [&](this const auto& self,
+                                        const WorkbenchLayoutSessionState& node,
+                                        WindowId target) -> void {
+                if (!node.leaf()) {
+                    const ViewId second_view = create_view({}, fallback);
+                    const WindowId second_window = runtime_.windows().create(second_view);
+                    view_state_for(second_view).window = second_window;
+                    if (!workbench.layout().split({.target = target,
+                                                   .new_window = second_window,
+                                                   .axis = node.axis,
+                                                   .ratio = node.ratio})) {
+                        destroy_window(second_window);
+                        throw std::runtime_error("cannot restore workbench layout split");
+                    }
+                    self(*node.first, target);
+                    self(*node.second, second_window);
+                    return;
+                }
+                const WorkbenchWindowSessionState& leaf = *node.window;
+                BufferId displayed = fallback;
+                if (leaf.resource) {
+                    if (const std::optional<BufferId> existing =
+                            runtime_.buffers().find_by_resource(*leaf.resource)) {
+                        displayed = *existing;
+                    } else {
+                        restore->resources[*leaf.resource].push_back(
+                            {.window = target, .caret = leaf.caret});
+                    }
+                }
+                if (!show_buffer(target, displayed)) {
+                    throw std::runtime_error("cannot restore workbench window buffer");
+                }
+                const TextOffset end =
+                    runtime_.buffers().get(displayed).snapshot().content().end_offset();
+                runtime_.views().set_caret(runtime_.windows().get(target).view_id(),
+                                           TextOffset{std::min(leaf.caret, end.value)});
+                if (std::expected<void, std::string> role = set_window_role(target, leaf.role);
+                    !role) {
+                    throw std::runtime_error(role.error());
+                }
+                runtime_.windows().get(target).set_pinned(leaf.pinned);
+                runtime_.windows().get(target).set_created_by_policy(leaf.created_by_policy);
+            };
+            apply_node(source.layout, root_window);
+            const std::vector<WindowId> leaves(workbench.layout().leaves().begin(),
+                                               workbench.layout().leaves().end());
+            workbench.set_active_window(leaves[source.active_leaf]);
+            for (const std::string& resource : source.mru_resources) {
+                if (!runtime_.buffers().find_by_resource(resource)) {
+                    (void)restore->resources[resource];
+                }
+            }
+            restore->mru.emplace_back(id, source.mru_resources);
+        }
+    } catch (const std::exception& exception) {
+        (void)workbenches_.activate(previous_active);
+        for (const WorkbenchId id : created) {
+            if (Workbench* workbench = workbenches_.try_get(id)) {
+                const std::vector<WindowId> windows(workbench->layout().leaves().begin(),
+                                                    workbench->layout().leaves().end());
+                (void)workbenches_.erase(id);
+                for (const WindowId window : windows) {
+                    destroy_window(window);
+                }
+            }
+        }
+        return std::unexpected(exception.what());
+    }
+
+    const WorkbenchId selected = created[parsed->active_workbench];
+    (void)workbenches_.activate(selected);
+    for (const WorkbenchId id : previous) {
+        Workbench& old = workbenches_.get(id);
+        const std::vector<WindowId> windows(old.layout().leaves().begin(),
+                                            old.layout().leaves().end());
+        (void)workbenches_.erase(id);
+        for (const WindowId window : windows) {
+            destroy_window(window);
+        }
+    }
+    for (std::size_t index = 0; index < created.size(); ++index) {
+        if (!workbenches_.rename(created[index], parsed->workbenches[index].name)) {
+            return std::unexpected("cannot restore workbench name");
+        }
+    }
+    reveal_caret_ = true;
+    sync_keymaps();
+
+    const auto finish_one = [this, restore] noexcept {
+        try {
+            if (restore->pending == 0) {
+                return;
+            }
+            --restore->pending;
+            if (restore->pending != 0 || restore->generation != workbench_restore_generation_) {
+                return;
+            }
+            for (const auto& [workbench_id, resources] : restore->mru) {
+                Workbench* workbench = workbenches_.try_get(workbench_id);
+                if (workbench == nullptr) {
+                    continue;
+                }
+                std::vector<BufferId> buffers;
+                for (const std::string& resource : resources) {
+                    if (const std::optional<BufferId> buffer =
+                            runtime_.buffers().find_by_resource(resource)) {
+                        buffers.push_back(*buffer);
+                    }
+                }
+                for (const WindowId window : workbench->layout().leaves()) {
+                    const BufferId displayed = buffer_id(window);
+                    if (std::ranges::find(buffers, displayed) == buffers.end()) {
+                        buffers.push_back(displayed);
+                    }
+                }
+                workbench->replace_mru(buffers);
+            }
+            message_ = restore->missing == 0
+                           ? "workbench session restored"
+                           : std::format("workbench session restored · {} resources unavailable",
+                                         restore->missing);
+        } catch (...) {
+            message_.swap(restore->finalization_failure);
+        }
+    };
+    restore->pending = restore->resources.size();
+    if (restore->pending == 0) {
+        restore->pending = 1;
+        finish_one();
+        return {};
+    }
+    for (const auto& resource_entry : restore->resources) {
+        const std::string& resource = resource_entry.first;
+        const std::expected<std::uint64_t, std::string> task = script_async_.start(
+            ScriptFileReadRequest{.path = resource},
+            {.completed =
+                 [this, restore, resource_entry = &resource_entry,
+                  finish_one](std::uint64_t, ScriptAsyncResult result) noexcept {
+                     try {
+                         if (restore->generation == workbench_restore_generation_) {
+                             const std::string& completed_resource = resource_entry->first;
+                             const auto& read = std::get<ScriptFileReadResult>(result);
+                             if (!read.exists) {
+                                 ++restore->missing;
+                                 finish_one();
+                                 return;
+                             }
+                             BufferId buffer;
+                             if (const std::optional<BufferId> existing =
+                                     runtime_.buffers().find_by_resource(completed_resource)) {
+                                 buffer = *existing;
+                             } else {
+                                 const std::optional<ModeId> mode =
+                                     runtime_.resource_policies().mode_for(completed_resource);
+                                 buffer = create_buffer(
+                                     {.name = std::filesystem::path(completed_resource)
+                                                  .filename()
+                                                  .string(),
+                                      .initial_text = read.contents,
+                                      .kind = BufferKind::File,
+                                      .resource_uri = completed_resource,
+                                      .read_only = false},
+                                     CppIndentStyle{}, "session restore", mode);
+                                 runtime_.projects().assign(
+                                     buffer,
+                                     runtime_.projects().find_for_resource(completed_resource));
+                             }
+                             for (const PendingTarget& target : resource_entry->second) {
+                                 if (runtime_.windows().try_get(target.window) != nullptr &&
+                                     show_buffer(target.window, buffer)) {
+                                     const TextOffset end = runtime_.buffers()
+                                                                .get(buffer)
+                                                                .snapshot()
+                                                                .content()
+                                                                .end_offset();
+                                     runtime_.views().set_caret(
+                                         runtime_.windows().get(target.window).view_id(),
+                                         TextOffset{std::min(target.caret, end.value)});
+                                 }
+                             }
+                         }
+                     } catch (...) {
+                         if (restore->generation == workbench_restore_generation_) {
+                             ++restore->missing;
+                         }
+                     }
+                     finish_one();
+                 },
+             .cancelled =
+                 [restore, finish_one](std::uint64_t) noexcept {
+                     ++restore->missing;
+                     finish_one();
+                 },
+             .failed =
+                 [restore, finish_one](std::uint64_t, const std::string&) noexcept {
+                     ++restore->missing;
+                     finish_one();
+                 }});
+        if (!task) {
+            ++restore->missing;
+            finish_one();
+        }
+    }
+    return {};
 }
 
 std::expected<void, std::string> EditorApplication::release_buffer(BufferId buffer,

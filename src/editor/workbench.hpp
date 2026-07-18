@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace cind {
@@ -28,6 +29,7 @@ class Workbench {
 public:
     WorkbenchId id() const { return id_; }
     const std::string& name() const { return name_; }
+    void set_name(std::string name) { name_ = std::move(name); }
 
     const WindowLayout& layout() const { return layout_; }
     WindowLayout& layout() { return layout_; }
@@ -43,6 +45,7 @@ public:
     bool contains_buffer(BufferId buffer) const;
     void visit_buffer(BufferId buffer);
     bool expel_buffer(BufferId buffer);
+    void replace_mru(const std::vector<BufferId>& buffers);
 
     const std::unordered_map<std::string, WindowId>& slots() const { return slots_; }
     std::optional<WindowId> slot(std::string_view role) const;
@@ -80,6 +83,7 @@ public:
     std::vector<WorkbenchId> all() const;
     std::optional<WorkbenchId> find_by_name(std::string_view name) const;
     std::optional<WorkbenchId> find_by_window(WindowId window) const;
+    bool rename(WorkbenchId id, std::string name);
 
     WorkbenchId active_id() const { return active_; }
     Workbench& active();
