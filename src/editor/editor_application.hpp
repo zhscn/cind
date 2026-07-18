@@ -224,7 +224,8 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     bool show_buffer(WindowId window, BufferId buffer);
     std::expected<void, std::string> display_generated_buffer(WindowId window, std::string name,
-                                                              std::string text);
+                                                              std::string text, ModeId mode,
+                                                              std::string style_origin);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
     void scroll_view_lines(ViewId view, double lines);
@@ -265,9 +266,6 @@ private:
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
     CommandLoop command_loop_;
-    ModeId fundamental_mode_;
-    ModeId special_mode_;
-    ModeId location_list_mode_;
     int command_page_rows_ = 1;
     std::string message_;
     std::string last_key_;

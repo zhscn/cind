@@ -3187,12 +3187,16 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value) {
+SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value,
+                             SCM mode_value, SCM style_origin_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("display-generated-buffer!", 3, name_value, "string");
     }
     if (!scm_is_string(text_value)) {
         scm_wrong_type_arg_msg("display-generated-buffer!", 4, text_value, "string");
+    }
+    if (!scm_is_string(style_origin_value)) {
+        scm_wrong_type_arg_msg("display-generated-buffer!", 6, style_origin_value, "string");
     }
     HostLease& host = require_host(host_object, "display-generated-buffer!");
     const WindowId window =
@@ -3202,8 +3206,10 @@ SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, 
                        SCM_EOL);
     }
     try {
+        const ModeId mode = require_mode(host, mode_value, "display-generated-buffer!", 5);
         const std::expected<void, std::string> displayed = host.services.display_generated_buffer(
-            window, scheme_string(name_value), scheme_string(text_value));
+            window, scheme_string(name_value), scheme_string_with_nuls(text_value), mode,
+            scheme_string(style_origin_value));
         if (!displayed) {
             raise_host_error("display-generated-buffer!", displayed.error());
         }
@@ -4555,7 +4561,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(path_as_directory));
     (void)scm_c_define_gsubr("display-buffer!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer));
-    (void)scm_c_define_gsubr("display-generated-buffer!", 4, 0, 0,
+    (void)scm_c_define_gsubr("display-generated-buffer!", 6, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_generated_buffer));
     (void)scm_c_define_gsubr("evaluate-scheme!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(evaluate_scheme));

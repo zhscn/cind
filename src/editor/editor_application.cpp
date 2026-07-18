@@ -45,8 +45,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
            },
            .display_generated_buffer =
-               [this](WindowId window, std::string name, std::string text) {
-                   return display_generated_buffer(window, std::move(name), std::move(text));
+               [this](WindowId window, std::string name, std::string text, ModeId mode,
+                      std::string style_origin) {
+                   return display_generated_buffer(window, std::move(name), std::move(text), mode,
+                                                   std::move(style_origin));
                },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
@@ -459,18 +461,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         });
     register_input_states();
     register_modes();
-    fundamental_mode_ = runtime_.modes().find("fundamental-mode").value_or(ModeId{});
-    if (!fundamental_mode_) {
-        throw std::logic_error("Guile mode policy did not define fundamental-mode");
-    }
-    special_mode_ = runtime_.modes().find("special-mode").value_or(ModeId{});
-    if (!special_mode_) {
-        throw std::logic_error("Guile mode policy did not define special-mode");
-    }
-    location_list_mode_ = runtime_.modes().find("cind.location-list").value_or(ModeId{});
-    if (!location_list_mode_) {
-        throw std::logic_error("Guile mode policy did not define cind.location-list");
-    }
     register_resource_policies();
     register_buffer_lifecycle_policies();
     register_pointer_policies();
@@ -1366,8 +1356,10 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
 }
 
 std::expected<void, std::string>
-EditorApplication::display_generated_buffer(WindowId window, std::string name, std::string text) {
+EditorApplication::display_generated_buffer(WindowId window, std::string name, std::string text,
+                                            ModeId mode, std::string style_origin) {
     try {
+        (void)runtime_.modes().definition(mode);
         BufferId buffer;
         if (const std::optional<BufferId> existing = runtime_.buffers().find_by_name(name)) {
             buffer = *existing;
@@ -1387,13 +1379,15 @@ EditorApplication::display_generated_buffer(WindowId window, std::string name, s
                 target.set_read_only(true);
                 throw;
             }
+            target.modes().set_major(runtime_.modes(), mode);
+            state_for(buffer).style_origin = std::move(style_origin);
         } else {
             buffer = create_buffer(BufferSpec{.name = std::move(name),
                                               .initial_text = std::move(text),
                                               .kind = BufferKind::Generated,
                                               .resource_uri = std::nullopt,
                                               .read_only = true},
-                                   CppIndentStyle{}, "generated", special_mode_);
+                                   CppIndentStyle{}, std::move(style_origin), mode);
         }
         if (!show_buffer(window, buffer)) {
             return std::unexpected("generated buffer cannot be displayed");

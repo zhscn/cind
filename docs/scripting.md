@@ -153,7 +153,7 @@ The native module exports:
 (write-clipboard! host text)
 (read-clipboard host)
 (display-buffer! host window-id buffer-id)
-(display-generated-buffer! host window-id buffer-name text)
+(display-generated-buffer! host window-id buffer-name text major-mode style-origin)
 (evaluate-scheme! host source source-name)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
 (scroll-view-lines! host view-id fractional-lines)
@@ -482,10 +482,10 @@ transition is invalid.
 replaces that vector. Location-list navigation remains a native presentation mechanism; Scheme
 chooses when a generated buffer becomes the current navigation source.
 
-`display-generated-buffer!` creates or replaces a named read-only generated buffer, assigns
-`special-mode`, resets its cached View to the beginning, and displays it through the same Window and
-View lifecycle as any other buffer. Help and evaluation results are frontend-independent editor
-state rather than renderer-owned overlays.
+`display-generated-buffer!` creates or replaces a named read-only generated buffer, applies the
+major mode and presentation origin selected by Scheme, resets its cached View to the beginning, and
+displays it through the same Window and View lifecycle as any other buffer. Help and evaluation
+results are frontend-independent editor state rather than renderer-owned overlays.
 
 ## Interactive evaluation
 

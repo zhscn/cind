@@ -2024,6 +2024,7 @@ TEST_CASE("Scheme buffer and region evaluation share a persistent user module") 
     CHECK(result_buffer.name() == "*Scheme Evaluation*");
     CHECK(result_buffer.kind() == BufferKind::Generated);
     CHECK(result_buffer.read_only());
+    CHECK(application.style_origin() == "scheme evaluation");
     const std::string result_text = result_buffer.snapshot().content().to_string();
     CHECK(result_text.find("Output:\nloaded\n") != std::string::npos);
     CHECK(result_text.find("Values:\n  18\n") != std::string::npos);
@@ -2381,6 +2382,7 @@ TEST_CASE("describe commands display reusable generated help buffers") {
     const ModeId help_mode = help_buffer.modes().major().value_or(ModeId{});
     REQUIRE(help_mode);
     CHECK(runtime.modes().definition(help_mode).name == "special-mode");
+    CHECK(application.style_origin() == "help");
     CHECK(help_buffer.snapshot().content().to_string().find("Active key bindings") !=
           std::string::npos);
 

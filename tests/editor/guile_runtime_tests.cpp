@@ -823,6 +823,7 @@ TEST_CASE("bundled Guile startup policy produces validated bootstrap plans") {
 TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
     const ModeId fundamental_mode = runtime.modes().define("fundamental-mode", ModeKind::Major);
+    const ModeId special_mode = runtime.modes().define("special-mode", ModeKind::Major);
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = "abc\n",
@@ -845,6 +846,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     WindowId displayed_help_window;
     std::string help_name;
     std::string help_text;
+    ModeId help_mode;
+    std::string help_style_origin;
     std::tuple<ViewId, std::uint32_t, std::uint32_t> moved;
     bool caret_moved = false;
     std::string message;
@@ -895,11 +898,14 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              buffer_displayed = true;
              return {};
          },
-         .display_generated_buffer = [&](WindowId target_window, std::string name,
-                                         std::string text) -> std::expected<void, std::string> {
+         .display_generated_buffer =
+             [&](WindowId target_window, std::string name, std::string text, ModeId mode,
+                 std::string style_origin) -> std::expected<void, std::string> {
              displayed_help_window = target_window;
              help_name = std::move(name);
              help_text = std::move(text);
+             help_mode = mode;
+             help_style_origin = std::move(style_origin);
              return {};
          },
          .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
@@ -1196,6 +1202,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         CommandInvocation{.arguments = {describe_mode_function->value}, .prefix = {}});
     REQUIRE(function_help.has_value());
     CHECK(displayed_help_window == window);
+    CHECK(help_mode == special_mode);
+    CHECK(help_style_origin == "help");
     CHECK(help_text.find("describe-mode is defined in (cind introspect)") != std::string::npos);
     CHECK(help_text.find("Kind: function") != std::string::npos);
 

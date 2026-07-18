@@ -91,7 +91,8 @@ enum class GuileDeleteOutcome : std::uint8_t {
 
 struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId)> display_buffer;
-    std::function<std::expected<void, std::string>(WindowId, std::string, std::string)>
+    std::function<std::expected<void, std::string>(WindowId, std::string, std::string, ModeId,
+                                                   std::string)>
         display_generated_buffer;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
