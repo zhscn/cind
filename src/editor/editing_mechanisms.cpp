@@ -120,6 +120,10 @@ DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool for
         return DeleteGraphemeOutcome::Unchanged;
     }
     const TextOffset target = forward ? caret : ui::previous_grapheme(text, caret);
+    if (const std::optional<TextOffset> editable_start = active.buffer().editable_start();
+        editable_start && target < *editable_start) {
+        return DeleteGraphemeOutcome::Unchanged;
+    }
     const char character = text.byte_at(target);
     const auto is_open = [](char ch) { return ch == '(' || ch == '[' || ch == '{'; };
     const auto is_close = [](char ch) { return ch == ')' || ch == ']' || ch == '}'; };
@@ -191,8 +195,13 @@ DeleteGraphemeOutcome EditingMechanisms::raw_delete(ViewId view, bool forward) {
     if ((forward && caret.value >= text.size_bytes()) || (!forward && caret.value == 0)) {
         return DeleteGraphemeOutcome::Unchanged;
     }
-    active.erase(forward ? TextRange{caret, ui::next_grapheme(text, caret)}
-                         : TextRange{ui::previous_grapheme(text, caret), caret});
+    const TextRange range = forward ? TextRange{caret, ui::next_grapheme(text, caret)}
+                                    : TextRange{ui::previous_grapheme(text, caret), caret};
+    if (const std::optional<TextOffset> editable_start = active.buffer().editable_start();
+        editable_start && range.start < *editable_start) {
+        return DeleteGraphemeOutcome::Unchanged;
+    }
+    active.erase(range);
     return DeleteGraphemeOutcome::Deleted;
 }
 

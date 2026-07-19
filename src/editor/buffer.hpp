@@ -73,6 +73,10 @@ public:
                                       AnchorAffinity affinity = AnchorAffinity::AfterInsertion);
     void remove_navigation_anchor(AnchorId anchor);
     TextOffset navigation_anchor_offset(AnchorId anchor) const;
+    std::optional<TextOffset> editable_start() const { return document_.editable_start(); }
+    void set_editable_start(std::optional<TextOffset> offset) {
+        document_.set_editable_start(offset);
+    }
 
     SettingsLayer& settings() { return settings_; }
     const SettingsLayer& settings() const { return settings_; }

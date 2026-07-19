@@ -3063,6 +3063,14 @@ TEST_CASE("Scheme REPL is an editor buffer with persistent evaluation and input 
     const std::optional<ModeId> major = repl.modes().major();
     REQUIRE(major.has_value());
     CHECK(runtime.modes().definition(*major).name == "scheme-repl-mode");
+    CHECK(repl.editable_start() == std::optional(repl.snapshot().content().end_offset()));
+
+    const std::string initial_transcript = repl.snapshot().content().to_string();
+    send_keys(application, "Backspace");
+    CHECK(repl.snapshot().content().to_string() == initial_transcript);
+    application.insert_text("x");
+    send_keys(application, "Backspace");
+    CHECK(repl.snapshot().content().to_string() == initial_transcript);
 
     application.insert_text("(define repl-value 40)");
     send_keys(application, "RET");
@@ -3071,9 +3079,13 @@ TEST_CASE("Scheme REPL is an editor buffer with persistent evaluation and input 
     std::string transcript = application.session().snapshot().content().to_string();
     CHECK(transcript.find("(define repl-value 40)\n") != std::string::npos);
     CHECK(transcript.find("(+ repl-value 2)\n=> 42\nscheme> ") != std::string::npos);
+    CHECK(repl.editable_start() == std::optional(repl.snapshot().content().end_offset()));
+    send_keys(application, "Backspace");
+    CHECK(application.session().snapshot().content().to_string() == transcript);
 
     application.session().set_caret(TextOffset{});
     application.insert_text(";");
+    CHECK(application.session().snapshot().content().to_string() == transcript);
     application.session().set_caret(application.session().snapshot().content().end_offset());
     send_keys(application, "M-p");
     transcript = application.session().snapshot().content().to_string();

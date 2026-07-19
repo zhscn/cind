@@ -96,6 +96,45 @@ TEST_CASE("single edits") {
     }
 }
 
+TEST_CASE("editable start protects a document prefix across transactions") {
+    Document doc("scheme> ");
+    doc.set_editable_start(TextOffset{8});
+    CHECK(doc.editable_start() == std::optional(TextOffset{8}));
+
+    {
+        auto tx = doc.begin_transaction();
+        CHECK_THROWS_WITH_AS(tx.erase(make_range(7, 8)),
+                             "text before the editable boundary is read-only", std::logic_error);
+        CHECK_THROWS_AS(tx.insert(TextOffset{0}, "x"), std::logic_error);
+        tx.abort();
+    }
+
+    {
+        auto tx = doc.begin_transaction();
+        tx.insert(TextOffset{8}, "(+ 1 2)");
+        tx.commit();
+    }
+    CHECK(doc.snapshot().content() == "scheme> (+ 1 2)");
+    CHECK(doc.editable_start() == std::optional(TextOffset{8}));
+    REQUIRE(doc.undo().has_value());
+    CHECK(doc.snapshot().content() == "scheme> ");
+
+    {
+        auto tx = doc.begin_transaction();
+        tx.insert(TextOffset{8}, "\n=> 3\nscheme> ");
+        tx.commit();
+    }
+    doc.set_editable_start(doc.snapshot().content().end_offset());
+    CHECK_THROWS_AS(doc.undo(), std::logic_error);
+    CHECK(doc.snapshot().content() == "scheme> \n=> 3\nscheme> ");
+
+    doc.set_editable_start(std::nullopt);
+    auto tx = doc.begin_transaction();
+    tx.erase(make_range(0, 8));
+    tx.commit();
+    CHECK(doc.snapshot().content() == "\n=> 3\nscheme> ");
+}
+
 TEST_CASE("snapshots are immutable across commits") {
     Document doc("abc");
     auto before = doc.snapshot();

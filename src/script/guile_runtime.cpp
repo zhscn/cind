@@ -3538,6 +3538,41 @@ SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+SCM buffer_editable_start(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-editable-start");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-editable-start", 2);
+        const std::optional<TextOffset> start =
+            host.runtime->buffers().get(buffer).editable_start();
+        return start ? scm_from_uint32(start->value) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-editable-start", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-editable-start", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM set_buffer_editable_start(SCM host_object, SCM buffer_value, SCM offset_value) {
+    try {
+        HostLease& host = require_host(host_object, "set-buffer-editable-start!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-editable-start!", 2);
+        std::optional<TextOffset> start;
+        if (!scheme_false(offset_value)) {
+            start = text_offset_from_scheme(offset_value, "set-buffer-editable-start!", 3);
+        }
+        host.runtime->buffers().get(buffer).set_editable_start(start);
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("set-buffer-editable-start!", exception.what());
+    } catch (...) {
+        scm_misc_error("set-buffer-editable-start!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM create_buffer_marker(SCM host_object, SCM buffer_value, SCM offset_value, SCM affinity_value) {
     try {
         HostLease& host = require_host(host_object, "create-buffer-marker!");
@@ -5881,6 +5916,10 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
+    (void)scm_c_define_gsubr("buffer-editable-start", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_editable_start));
+    (void)scm_c_define_gsubr("set-buffer-editable-start!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_buffer_editable_start));
     (void)scm_c_define_gsubr("create-buffer-marker!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_buffer_marker));
     (void)scm_c_define_gsubr("buffer-marker-offset", 3, 0, 0,
@@ -6069,11 +6108,12 @@ void initialize_host_module(void*) {
         "adopt-project!", "expel-buffer!", "workbench-session-state", "restore-workbench-session!",
         "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
         "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "buffer-byte-size", "create-buffer-marker!",
-        "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
-        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-editable-start",
+        "set-buffer-editable-start!", "create-buffer-marker!", "buffer-marker-offset",
+        "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics", "set-buffer-locations!",
+        "set-location-list!", "buffer-read-only?", "path-parent", "directory-path?",
+        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
+        "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
         "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",

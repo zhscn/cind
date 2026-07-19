@@ -223,6 +223,9 @@
                        (vector (create-buffer-marker!
                                 host buffer (buffer-byte-size host buffer) 'before)
                                #f "")))
+    (set-buffer-editable-start!
+     host buffer
+     (buffer-marker-offset host buffer (vector-ref (repl-state host buffer) 0)))
     (let ((target (display-buffer! host window buffer 'tools)))
       (set-view-caret! host (window-view-id host target)
                        (buffer-byte-size host buffer)))
@@ -250,6 +253,7 @@
             (remove-buffer-marker! host buffer marker)
             (vector-set! state 0
                          (create-buffer-marker! host buffer new-end 'before))
+            (set-buffer-editable-start! host buffer new-end)
             (vector-set! state 1 #f)
             (vector-set! state 2 "")
             (set-view-caret! host (context-view context) new-end))

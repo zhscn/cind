@@ -124,6 +124,13 @@ public:
     AnchorAffinity anchor_affinity(AnchorId id) const;
     void set_anchor_affinity(AnchorId id, AnchorAffinity affinity);
 
+    // Restricts mutations to the suffix beginning at this position. The
+    // boundary is an anchor, so it follows edits without coupling callers to
+    // transaction coordinates. A missing value makes the whole document
+    // editable.
+    std::optional<TextOffset> editable_start() const;
+    void set_editable_start(std::optional<TextOffset> offset);
+
 private:
     friend class EditTransaction;
 
@@ -146,6 +153,7 @@ private:
     Text text_;
     std::map<AnchorId, EditTransaction::AnchorState> anchors_;
     AnchorId next_anchor_id_ = 1;
+    std::optional<AnchorId> editable_start_;
     bool transaction_active_ = false;
     std::vector<UndoNode> undo_nodes_; // [0] = initial state
     UndoNodeId undo_current_ = 0;

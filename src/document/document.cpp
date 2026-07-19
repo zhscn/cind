@@ -215,6 +215,24 @@ void Document::set_anchor_affinity(AnchorId id, AnchorAffinity affinity) {
     it->second.affinity = affinity;
 }
 
+std::optional<TextOffset> Document::editable_start() const {
+    return editable_start_ ? std::optional(anchor_offset(*editable_start_)) : std::nullopt;
+}
+
+void Document::set_editable_start(std::optional<TextOffset> offset) {
+    require_no_transaction("set_editable_start");
+    if (offset && offset->value > text_.size_bytes()) {
+        throw std::out_of_range("Document: editable start out of range");
+    }
+    if (editable_start_) {
+        remove_anchor(*editable_start_);
+        editable_start_.reset();
+    }
+    if (offset) {
+        editable_start_ = create_anchor(*offset, AnchorAffinity::BeforeInsertion);
+    }
+}
+
 // --------------------------------------------------------- EditTransaction
 
 EditTransaction::EditTransaction(Document& document)
@@ -267,6 +285,15 @@ void EditTransaction::apply(std::uint32_t cs, std::uint32_t ce, std::string_view
     }
     if (replacement.contains('\r')) {
         throw std::invalid_argument("EditTransaction: '\\r' not allowed; newlines must be '\\n'");
+    }
+    if (document_->editable_start_) {
+        const auto boundary = anchors_.find(*document_->editable_start_);
+        if (boundary == anchors_.end()) {
+            throw std::logic_error("EditTransaction: editable boundary is unavailable");
+        }
+        if (cs < boundary->second.offset) {
+            throw std::logic_error("text before the editable boundary is read-only");
+        }
     }
 
     const auto new_len = static_cast<std::uint32_t>(replacement.size());
