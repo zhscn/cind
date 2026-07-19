@@ -672,6 +672,72 @@ void append_location_navigation(std::string& output,
     output += std::format(",\"location_count\":{}}}", navigation.location_count);
 }
 
+void append_jumps(std::string& output,
+                  const std::vector<WorkbenchJumpStateSnapshot>& graphs) {
+    output.push_back('[');
+    for (std::size_t graph_index = 0; graph_index < graphs.size(); ++graph_index) {
+        if (graph_index != 0) {
+            output.push_back(',');
+        }
+        const WorkbenchJumpStateSnapshot& graph = graphs[graph_index];
+        output += "{\"workbench\":";
+        append_entity(output, graph.workbench);
+        output += ",\"nodes\":[";
+        for (std::size_t index = 0; index < graph.nodes.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const JumpNodeStateSnapshot& node = graph.nodes[index];
+            output += std::format("{{\"id\":{},\"attached\":", node.id);
+            append_bool(output, node.attached);
+            output += ",\"buffer\":";
+            append_entity(output, node.buffer);
+            output += std::format(
+                ",\"anchor\":{},\"resource\":", node.anchor);
+            append_json_string(output, node.resource);
+            output += std::format(
+                ",\"fallback\":{{\"line\":{},\"byte_column\":{}}},\"excerpt\":",
+                node.fallback.line, node.fallback.byte_column);
+            append_json_string(output, node.excerpt);
+            output += std::format(",\"created_at\":{},\"last_visit\":{}}}", node.created_at,
+                                  node.last_visit);
+        }
+        output += "],\"edges\":[";
+        for (std::size_t index = 0; index < graph.edges.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const JumpEdgeStateSnapshot& edge = graph.edges[index];
+            output += std::format("{{\"from\":{},\"to\":{},\"kind\":", edge.from, edge.to);
+            append_json_string(output, edge.kind);
+            output += std::format(",\"at\":{},\"persistent\":", edge.at);
+            append_bool(output, edge.persistent);
+            output.push_back('}');
+        }
+        output += "],\"walks\":[";
+        for (std::size_t index = 0; index < graph.walks.size(); ++index) {
+            if (index != 0) {
+                output.push_back(',');
+            }
+            const JumpWalkStateSnapshot& walk = graph.walks[index];
+            output += "{\"window\":";
+            append_entity(output, walk.window);
+            output += ",\"entries\":[";
+            for (std::size_t entry = 0; entry < walk.entries.size(); ++entry) {
+                if (entry != 0) {
+                    output.push_back(',');
+                }
+                output += std::to_string(walk.entries[entry]);
+            }
+            output += "],\"cursor\":";
+            output += walk.cursor ? std::to_string(*walk.cursor) : "null";
+            output.push_back('}');
+        }
+        output += "]}";
+    }
+    output.push_back(']');
+}
+
 void append_scripting(std::string& output, const ScriptingStateSnapshot& scripting) {
     output += "{\"engine\":";
     append_json_string(output, scripting.engine);
@@ -818,6 +884,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_location(output, editor.location_at_caret);
     output += ",\"location_navigation\":";
     append_location_navigation(output, editor.location_navigation);
+    output += ",\"jumps\":";
+    append_jumps(output, editor.jumps);
     output += ",\"background_work\":";
     append_bool(output, editor.background_work);
     output += ",\"project_search_running\":";
@@ -1687,6 +1755,57 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             }
         }
     }
+    if (frame.editor.jumps.size() != frame.editor.workbenches.size()) {
+        violations.emplace_back("jump graph count does not match workbenches");
+    }
+    for (const WorkbenchJumpStateSnapshot& graph : frame.editor.jumps) {
+        const auto owner = std::ranges::find(frame.editor.workbenches, graph.workbench,
+                                             &WorkbenchStateSnapshot::workbench);
+        if (owner == frame.editor.workbenches.end()) {
+            violations.emplace_back("jump graph has no owning workbench");
+            continue;
+        }
+        std::vector<std::uint64_t> node_ids;
+        node_ids.reserve(graph.nodes.size());
+        for (const JumpNodeStateSnapshot& node : graph.nodes) {
+            if (node.id == 0 || std::ranges::find(node_ids, node.id) != node_ids.end()) {
+                violations.emplace_back("jump graph contains an invalid or duplicate node");
+                break;
+            }
+            node_ids.push_back(node.id);
+            if (node.attached != (node.buffer.slot != 0 || node.buffer.generation != 0) ||
+                node.attached != (node.anchor != 0)) {
+                violations.emplace_back("jump node attachment state is inconsistent");
+                break;
+            }
+        }
+        for (const JumpEdgeStateSnapshot& edge : graph.edges) {
+            if (edge.kind.empty() || std::ranges::find(node_ids, edge.from) == node_ids.end() ||
+                std::ranges::find(node_ids, edge.to) == node_ids.end()) {
+                violations.emplace_back("jump edge references an unavailable node");
+                break;
+            }
+        }
+        if (graph.walks.size() != owner->windows.size()) {
+            violations.emplace_back("jump walks do not match workbench windows");
+        }
+        for (const JumpWalkStateSnapshot& walk : graph.walks) {
+            const auto window =
+                std::ranges::find_if(owner->windows, [&](const OpenWindowStateSnapshot& candidate) {
+                    return candidate.window_slot == walk.window.slot &&
+                           candidate.window_generation == walk.window.generation;
+                });
+            if (window == owner->windows.end() ||
+                (walk.entries.empty() != !walk.cursor.has_value()) ||
+                (walk.cursor && *walk.cursor >= walk.entries.size()) ||
+                std::ranges::any_of(walk.entries, [&](std::uint64_t node) {
+                    return std::ranges::find(node_ids, node) == node_ids.end();
+                })) {
+                violations.emplace_back("jump walk state is inconsistent");
+                break;
+            }
+        }
+    }
     const std::size_t active_buffers = static_cast<std::size_t>(std::ranges::count_if(
         frame.editor.buffers, [](const OpenBufferStateSnapshot& buffer) { return buffer.active; }));
     if (frame.editor.buffers.empty() || active_buffers != 1) {
@@ -2423,6 +2542,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_location(output, frame.editor.location_at_caret);
     } else if (path == "editor.location_navigation") {
         append_location_navigation(output, frame.editor.location_navigation);
+    } else if (path == "editor.jumps") {
+        append_jumps(output, frame.editor.jumps);
     } else if (path == "editor.focus") {
         output =
             std::format("{{\"window\":{{\"slot\":{},\"generation\":{}}},\"target\":",

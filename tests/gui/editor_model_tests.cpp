@@ -143,9 +143,9 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
                                    "cind minibuffer", "cind development", "cind ares",
                                    "cind introspect", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 213);
+    CHECK(state.scripting.scripted_commands == 221);
     CHECK(state.scripting.provider_revision == 1);
-    CHECK(state.scripting.scripted_providers == 11);
+    CHECK(state.scripting.scripted_providers == 12);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
     CHECK(state.scripting.scripted_input_states == 17);
@@ -155,6 +155,10 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.resource_policy_revision == 1);
     CHECK(state.scripting.scripted_file_mode_rules == 2);
     CHECK(state.scripting.scripted_project_providers == 3);
+    REQUIRE(state.jumps.size() == 1);
+    CHECK(state.jumps[0].nodes.empty());
+    REQUIRE(state.jumps[0].walks.size() == 1);
+    CHECK(state.jumps[0].walks[0].entries.empty());
     CHECK(state.text_input_policy == "accept");
     CHECK(state.text_input_command == "edit.self-insert");
     CHECK(state.text_input_command_available);

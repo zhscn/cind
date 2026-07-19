@@ -1809,6 +1809,30 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
     return result;
 }
 
+std::vector<WorkbenchJumpSnapshot> EditorApplication::jump_graphs() const {
+    std::vector<WorkbenchJumpSnapshot> result;
+    for (const WorkbenchId id : workbenches_.all()) {
+        const Workbench& workbench = workbenches_.get(id);
+        WorkbenchJumpSnapshot snapshot{
+            .workbench = id,
+            .nodes = std::vector<JumpNode>(workbench.jumps().nodes().begin(),
+                                           workbench.jumps().nodes().end()),
+            .edges = std::vector<JumpEdge>(workbench.jumps().edges().begin(),
+                                           workbench.jumps().edges().end()),
+            .walks = {}};
+        snapshot.walks.reserve(workbench.layout().leaves().size());
+        for (const WindowId window : workbench.layout().leaves()) {
+            const JumpWalk& walk = runtime_.windows().get(window).jump_walk();
+            snapshot.walks.push_back(
+                {.window = window,
+                 .entries = std::vector<JumpNodeId>(walk.entries().begin(), walk.entries().end()),
+                 .cursor = walk.cursor()});
+        }
+        result.push_back(std::move(snapshot));
+    }
+    return result;
+}
+
 WorkbenchSessionState EditorApplication::capture_workbench_session() const {
     WorkbenchSessionState state{.version = WorkbenchSessionState::current_version,
                                 .active_workbench = 0,
@@ -3141,9 +3165,9 @@ bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, Jump
             return false;
         }
         (void)workbench.jumps().touch(node);
-        const std::expected<void, std::string> opened = guile_.open_resource(
-            window, target->position.resource, target->position.fallback.line,
-            target->position.fallback.byte_column, "replay");
+        const std::expected<void, std::string> opened =
+            guile_.open_resource(window, target->position.resource, target->position.fallback.line,
+                                 target->position.fallback.byte_column, "replay");
         if (!opened) {
             message_ = std::format("jump reopen failed: {}", opened.error());
             return false;

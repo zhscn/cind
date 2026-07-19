@@ -184,6 +184,39 @@ struct LocationNavigationStateSnapshot {
     std::size_t location_count = 0;
 };
 
+struct JumpNodeStateSnapshot {
+    std::uint64_t id = 0;
+    bool attached = false;
+    EntityStateSnapshot buffer;
+    std::uint64_t anchor = 0;
+    std::string resource;
+    LinePosition fallback;
+    std::string excerpt;
+    std::uint64_t created_at = 0;
+    std::uint64_t last_visit = 0;
+};
+
+struct JumpEdgeStateSnapshot {
+    std::uint64_t from = 0;
+    std::uint64_t to = 0;
+    std::string kind;
+    std::uint64_t at = 0;
+    bool persistent = false;
+};
+
+struct JumpWalkStateSnapshot {
+    EntityStateSnapshot window;
+    std::vector<std::uint64_t> entries;
+    std::optional<std::size_t> cursor;
+};
+
+struct WorkbenchJumpStateSnapshot {
+    EntityStateSnapshot workbench;
+    std::vector<JumpNodeStateSnapshot> nodes;
+    std::vector<JumpEdgeStateSnapshot> edges;
+    std::vector<JumpWalkStateSnapshot> walks;
+};
+
 struct KeymapLayerStateSnapshot {
     std::string name;
     std::string scope;
@@ -306,6 +339,7 @@ struct EditorStateSnapshot {
     std::vector<ProjectStateSnapshot> projects;
     LocationStateSnapshot location_at_caret;
     LocationNavigationStateSnapshot location_navigation;
+    std::vector<WorkbenchJumpStateSnapshot> jumps;
     bool background_work = false;
     bool project_search_running = false;
     bool quit = false;

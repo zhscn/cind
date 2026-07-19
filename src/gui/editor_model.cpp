@@ -666,6 +666,45 @@ EditorStateSnapshot EditorModel::inspect() {
                                .selected_index = navigation.selected_index,
                                .location_count = navigation.location_count};
     }
+    std::vector<WorkbenchJumpStateSnapshot> jumps;
+    for (const WorkbenchJumpSnapshot& graph : application_.jump_graphs()) {
+        WorkbenchJumpStateSnapshot inspected{
+            .workbench = {.slot = graph.workbench.slot,
+                          .generation = graph.workbench.generation},
+            .nodes = {},
+            .edges = {},
+            .walks = {}};
+        inspected.nodes.reserve(graph.nodes.size());
+        for (const JumpNode& node : graph.nodes) {
+            inspected.nodes.push_back(
+                {.id = node.id,
+                 .attached = node.position.buffer.valid(),
+                 .buffer = {.slot = node.position.buffer.slot,
+                            .generation = node.position.buffer.generation},
+                 .anchor = node.position.anchor,
+                 .resource = node.position.resource,
+                 .fallback = node.position.fallback,
+                 .excerpt = node.position.excerpt,
+                 .created_at = node.created_at,
+                 .last_visit = node.last_visit});
+        }
+        inspected.edges.reserve(graph.edges.size());
+        for (const JumpEdge& edge : graph.edges) {
+            inspected.edges.push_back({.from = edge.from,
+                                       .to = edge.to,
+                                       .kind = edge.kind,
+                                       .at = edge.at,
+                                       .persistent = edge.persistent});
+        }
+        inspected.walks.reserve(graph.walks.size());
+        for (const JumpWalkSnapshot& walk : graph.walks) {
+            inspected.walks.push_back(
+                {.window = {.slot = walk.window.slot, .generation = walk.window.generation},
+                 .entries = walk.entries,
+                 .cursor = walk.cursor});
+        }
+        jumps.push_back(std::move(inspected));
+    }
     const WindowId active_window = application_.window_id();
     const InputStateRegistry::Definition& input_state = application_.input_state();
     const View& active_view = application_.runtime().views().get(application_.view_id());
@@ -757,6 +796,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .projects = std::move(projects),
             .location_at_caret = std::move(location_at_caret),
             .location_navigation = location_navigation,
+            .jumps = std::move(jumps),
             .background_work = application_.has_background_work(),
             .project_search_running = application_.project_search_running(),
             .quit = application_.should_quit()};

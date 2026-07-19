@@ -184,6 +184,7 @@ cmk run -p gui cind-ui-inspect -- get editor.lsp
 cmk run -p gui cind-ui-inspect -- get editor.buffers
 cmk run -p gui cind-ui-inspect -- get editor.windows
 cmk run -p gui cind-ui-inspect -- get editor.workbenches
+cmk run -p gui cind-ui-inspect -- get editor.jumps
 cmk run -p gui cind-ui-inspect -- get editor.focus
 cmk run -p gui cind-ui-inspect -- get render.font_metrics
 cmk run -p gui cind-ui-inspect -- get render.animation
@@ -203,7 +204,9 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   viewport、line signs、tab width、style 来源、消息、最近按键、active window、输入焦点、
   command loop、交互状态以及 buffer/window/workbench 列表。Workbench 项包含 scope/MRU 的
   generational ID、具名 slot、active Window、递归 layout 节点，以及 inactive layout 中仍然
-  存活的 Window/View/Buffer 绑定。Command loop 的 layer 同时记录 keymap
+  存活的 Window/View/Buffer 绑定。`jumps` 按 Workbench 暴露节点、边与每个 Window 的 walk。
+  节点同时包含 resource fallback、anchor attachment 和访问时钟，边包含 kind 与 persistent
+  状态，walk 包含完整条目和当前 cursor。Command loop 的 layer 同时记录 keymap
   名称、parent chain 和 window/view/buffer/mode/editor/global/minibuffer 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset，

@@ -110,6 +110,19 @@ struct LocationListSnapshot {
     bool current = false;
 };
 
+struct JumpWalkSnapshot {
+    WindowId window;
+    std::vector<JumpNodeId> entries;
+    std::optional<std::size_t> cursor;
+};
+
+struct WorkbenchJumpSnapshot {
+    WorkbenchId workbench;
+    std::vector<JumpNode> nodes;
+    std::vector<JumpEdge> edges;
+    std::vector<JumpWalkSnapshot> walks;
+};
+
 using KeyBindingHint = InputHint;
 
 // Frontend-independent state and command controller for one editor
@@ -196,6 +209,7 @@ public:
     bool expel_buffer(WorkbenchId workbench, BufferId buffer);
     std::vector<BufferId> workbench_buffers(WorkbenchId workbench, bool widen = false) const;
     std::vector<WorkbenchSnapshot> workbench_snapshots() const;
+    std::vector<WorkbenchJumpSnapshot> jump_graphs() const;
     WorkbenchSessionState capture_workbench_session() const;
     std::string serialize_workbench_session() const;
     std::expected<void, std::string> restore_workbench_session(std::string_view serialized);

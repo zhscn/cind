@@ -221,6 +221,33 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                                 .buffer_generation = 3,
                                 .selected_index = 4,
                                 .location_count = 9},
+        .jumps = {{.workbench = {.slot = 0, .generation = 1},
+                   .nodes = {{.id = 1,
+                              .attached = true,
+                              .buffer = {.slot = 0, .generation = 1},
+                              .anchor = 3,
+                              .resource = "/tmp/sample.cc",
+                              .fallback = {.line = 0, .byte_column = 3},
+                              .excerpt = "sample",
+                              .created_at = 1,
+                              .last_visit = 4},
+                             {.id = 2,
+                              .attached = false,
+                              .buffer = {},
+                              .anchor = 0,
+                              .resource = "/tmp/target.cc",
+                              .fallback = {.line = 2, .byte_column = 1},
+                              .excerpt = "target",
+                              .created_at = 2,
+                              .last_visit = 5}},
+                   .edges = {{.from = 1,
+                              .to = 2,
+                              .kind = "manual",
+                              .at = 6,
+                              .persistent = true}},
+                   .walks = {{.window = {.slot = 0, .generation = 1},
+                              .entries = {1, 2},
+                              .cursor = 0}}}},
         .background_work = false,
         .project_search_running = false,
         .quit = false,
@@ -465,7 +492,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":50") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":51") != std::string::npos);
     CHECK(snapshot.find("\"buffer_name\":\" *minibuffer*\"") != std::string::npos);
     CHECK(snapshot.find("\"styles\":{\"inactive_alpha\":176") != std::string::npos);
     CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
@@ -635,6 +662,13 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(location_navigation.ok);
     CHECK(location_navigation.payload.find("\"selected_index\":4") != std::string::npos);
     CHECK(location_navigation.payload.find("\"location_count\":9") != std::string::npos);
+
+    const InspectionResponse jumps = run_inspection_query(hub, "get editor.jumps");
+    REQUIRE(jumps.ok);
+    CHECK(jumps.payload.find("\"resource\":\"/tmp/target.cc\"") != std::string::npos);
+    CHECK(jumps.payload.find("\"kind\":\"manual\"") != std::string::npos);
+    CHECK(jumps.payload.find("\"persistent\":true") != std::string::npos);
+    CHECK(jumps.payload.find("\"entries\":[1,2],\"cursor\":0") != std::string::npos);
 
     const InspectionResponse focus = run_inspection_query(hub, "get editor.focus");
     REQUIRE(focus.ok);
