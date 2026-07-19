@@ -18,51 +18,37 @@
 ;;; along with guile-ares-rs.  If not, see <http://www.gnu.org/licenses/>.
 
 (define-module (ares-extension nrepl completion)
+  #:use-module (ares completion)
   #:use-module (ares guile)
-  #:use-module (ares reflection metadata)
   #:use-module (ares reflection modules)
-  #:use-module (ice-9 regex)
-  #:use-module (ice-9 session)
-  #:use-module (srfi srfi-197)
   #:export (nrepl.completion))
 
-;; TODO: [Andrew Tropin, 2025-05-13] Reduce the number of completions
-;; based on type inference https://github.com/ashinn/scheme-complete
 (define* (simple-completions prefix module #:optional options)
-  (define (get-candidates)
-    (let ((extra-meta
-           (or (and=> (assoc-ref options "extra-metadata") vector->list)
-               '())))
-      (apropos-fold
-       (lambda (module name var acc)
-         (let ((cand
-                (chain-when
-                 `(("candidate" . ,(symbol->string name))
-                   ("type" . ,(cond
-                               ((macro? var) "macro")
-                               ((procedure? var) "function")
-                               (else "var")))
-                   ("ns" . ,(object->string (module-name module))))
-                 ((member "arglists" extra-meta)
-                  (acons "arglists" (get-arglists var) _))
-                 ((member "docs" extra-meta)
-                  (acons "docs" (get-docstring var) _)))))
-           (cons cand acc)))
-       '()
-       (string-append "^" (regexp-quote prefix))
-       ((@@ (ice-9 session) make-fold-modules)
-        (lambda () (list module))
-	(compose reverse module-uses)
-	identity))))
-
-  (define (candidate<? a b)
-    (string<? (assoc-ref a "candidate")
-              (assoc-ref b "candidate")))
-
-  (chain
-   (get-candidates)
-   (sort! _ candidate<?)
-   (list->vector _)))
+  (let ((extra-metadata
+         (let ((value (assoc-ref options "extra-metadata")))
+           (if value (vector->list value) '())))
+        (candidates (completion-candidates prefix module)))
+    (let loop ((index 0)
+               (result '()))
+      (if (= index (vector-length candidates))
+          (list->vector (reverse result))
+          (let* ((candidate (vector-ref candidates index))
+                 (metadata
+                  `(("candidate" . ,(completion-candidate-name candidate))
+                    ("type" . ,(if (string=? (completion-candidate-type candidate)
+                                             "variable")
+                                    "var"
+                                    (completion-candidate-type candidate)))
+                    ("ns" . ,(completion-candidate-namespace candidate))))
+                 (metadata
+                  (if (member "arglists" extra-metadata)
+                      (acons "arglists" (completion-candidate-arglists candidate) metadata)
+                      metadata))
+                 (metadata
+                  (if (member "docs" extra-metadata)
+                      (acons "docs" (completion-candidate-documentation candidate) metadata)
+                      metadata)))
+            (loop (+ index 1) (cons metadata result)))))))
 
 (define (get-completions context)
   "Handles completion operation."

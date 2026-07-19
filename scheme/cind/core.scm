@@ -2914,7 +2914,6 @@
    (make-search-commands host)
    (introspection-command-definitions host)
    (development-command-definitions host)
-   (ares-command-definitions host)
    (make-region-commands host)
    (emacs-command-definitions host)
    (helix-command-definitions host)
@@ -2934,7 +2933,6 @@
               commands)
     (install-introspection-documentation! host)
     (install-development-documentation! host)
-    (install-ares-documentation! host)
     (length commands)))
 
 (define (core-providers host)
@@ -2969,7 +2967,8 @@
          (cons "jump-branches"
                (lambda (context query)
                  (jump-branches-provider host context query))))
-   (introspection-providers host)))
+   (introspection-providers host)
+   (ares-provider-definitions host)))
 
 (define (install-core-providers! host)
   (let ((providers (core-providers host)))

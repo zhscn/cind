@@ -5,6 +5,7 @@ https://git.sr.ht/~abcdw/guile-ares-rs, commit
 Cind loads the Scheme modules under src/guile directly. Upstream sources are
 distributed under GPL-3.0-or-later; see LICENSE.
 
-The socket accept loop treats closure of its listening port as normal server
-shutdown so an embedded endpoint can stop without reporting an uncaught fiber
-exception.
+The `(ares completion)`, `(ares lookup)`, and `(ares repl)` modules expose
+protocol-independent development primitives. The nREPL completion and lookup
+extensions adapt those primitives to their wire representations. Cind's command
+loop consumes the protocol-independent modules directly.

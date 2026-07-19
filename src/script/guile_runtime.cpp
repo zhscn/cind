@@ -6674,7 +6674,6 @@ struct GuileCall {
         DisplayPlan,
         ProjectSearchRunning,
         ProjectIndexUpdated,
-        StopAres,
         InvokeCommand,
         InvokeProvider,
         TransformProviderResult,
@@ -7263,9 +7262,6 @@ SCM call_body(void* data) {
                 scm_call_2(scm_c_public_ref("cind core", "project-index-updated!"), call.host,
                            entity_id(call.project.slot, call.project.generation));
             break;
-        case GuileCall::Operation::StopAres:
-            call.result = scm_call_1(scm_c_public_ref("cind ares", "stop-host-ares!"), call.host);
-            break;
         case GuileCall::Operation::InvokeCommand:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      command_invocation_value(*call.invocation));
@@ -7852,7 +7848,6 @@ public:
     }
 
     ~Impl() {
-        stop_ares_noexcept();
         for (const ScriptModePolicyObserver& observer : state_->mode_policy_observers) {
             (void)lease_->runtime->modes().unsubscribe(observer.listener);
             (void)scm_gc_unprotect_object(observer.procedure);
@@ -8476,18 +8471,6 @@ public:
     }
 
 private:
-    void stop_ares_noexcept() noexcept {
-        try {
-            GuileCall stop_ares;
-            stop_ares.operation = GuileCall::Operation::StopAres;
-            stop_ares.host = host_;
-            [[maybe_unused]] const std::expected<SCM, std::string> stopped =
-                run_guile_call(stop_ares);
-        } catch (...) {
-            state_->active = false;
-        }
-    }
-
     void require_owner_thread() const {
         if (std::this_thread::get_id() != state_->owner) {
             throw std::logic_error("Guile runtime must run on its editor thread");

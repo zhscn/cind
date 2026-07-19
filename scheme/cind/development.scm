@@ -1,5 +1,5 @@
 (define-module (cind development)
-  #:use-module (ice-9 format)
+  #:use-module (ares repl)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-13)
   #:use-module (cind async)
@@ -26,50 +26,24 @@
         (hashq-set! evaluation-modules host module)
         module)))
 
-(define (read-source source source-name)
-  (let ((port (open-input-string source)))
-    (set-port-filename! port source-name)
-    (let loop ((forms '()))
-      (let ((form (read port)))
-        (if (eof-object? form)
-            (reverse forms)
-            (loop (cons form forms)))))))
-
 (define (render-value value)
   (call-with-output-string
    (lambda (port)
      (write value port))))
 
-(define (evaluate-forms module forms)
-  (let loop ((remaining forms) (values '()))
-    (if (null? remaining)
-        values
-        (call-with-values
-            (lambda () (eval (car remaining) module))
-          (lambda results
-            (loop (cdr remaining) results))))))
-
 (define (evaluate-source module source source-name)
-  (let ((output-port (open-output-string))
-        (error-port (open-output-string)))
-    (catch #t
-      (lambda ()
-        (let ((values
-               (with-output-to-port output-port
-                 (lambda ()
-                   (with-error-to-port error-port
-                     (lambda ()
-                       (evaluate-forms module (read-source source source-name))))))))
-          (vector 'ok
-                  (list->vector
-                   (map render-value (remove unspecified? values)))
-                  (get-output-string output-port)
-                  (get-output-string error-port))))
-      (lambda (key . arguments)
+  (let ((result (repl-evaluate (make-repl module) source source-name)))
+    (if (eq? (repl-result-status result) 'ok)
+        (vector 'ok
+                (list->vector
+                 (map render-value
+                      (remove unspecified? (repl-result-values result))))
+                (repl-result-output result)
+                (repl-result-error-output result))
         (vector 'error
-                (format #f "~S: ~S" key arguments)
-                (get-output-string output-port)
-                (get-output-string error-port))))))
+                (repl-result-error result)
+                (repl-result-output result)
+                (repl-result-error-output result)))))
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))
@@ -145,8 +119,9 @@
                        always-buffer?))
 
 (define (eval-expression context invocation)
-  (read-from-minibuffer "Eval: " "scheme.eval-expression.accept"
-                        #:history "scheme-expression"))
+  (completing-read "Eval: " "scheme-repl" "scheme.eval-expression.accept"
+                   #:history "scheme-expression"
+                   #:allow-custom-input? #t))
 
 (define (eval-expression-accept host context invocation)
   (let ((source (last-string-argument invocation)))

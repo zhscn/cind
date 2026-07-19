@@ -108,18 +108,13 @@ a key sequence, `C-h x` describes a command, `C-h b` lists active bindings, `C-h
 current mode policy, and `C-h f`/`C-h v` describe Scheme functions and variables. Descriptions use a
 read-only `*Help*` buffer in both graphical and terminal frontends.
 
-`M-:` evaluates a Scheme expression in the application's persistent user module. The command
+`M-:` opens the embedded Ares REPL in the command loop. Its minibuffer completes Scheme bindings
+from the application's persistent user module while accepting arbitrary expressions. The command
 palette also exposes `scheme.eval-region` and `scheme.eval-buffer`; definitions made by any of the
 three commands remain available to later evaluations and to `describe-function` /
 `describe-variable`. Multiline output is shown in the reusable `*Scheme Evaluation*` buffer.
 Scheme source files use `scheme-mode`, with `C-c C-e`, `C-c C-r`, and `C-c C-b` bound to expression,
 region, and buffer evaluation.
-
-`M-x scheme.ares-start` starts an Ares nREPL endpoint on localhost and writes `.nrepl-port` in the
-active project root. `scheme.ares-status` reports its address, and `scheme.ares-stop` closes the
-listener and active scheduler. The endpoint uses the same application user module as `M-:`, so
-definitions are visible through both evaluation paths. Closing the editor stops the endpoint and
-removes its port file.
 
 ## Build without the GUI
 

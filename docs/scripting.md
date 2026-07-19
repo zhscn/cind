@@ -1004,10 +1004,11 @@ Additional host APIs follow the same boundary:
 
 ## Ares development runtime
 
-[Guile Ares RS](https://git.sr.ht/~abcdw/guile-ares-rs) fits the development backend for Scheme
-source. Ares is a Guile library and nREPL-compatible RPC server; the `rs` suffix means RPC Server.
-Its protocol provides interruptible asynchronous evaluation, streamed output, stdin, completion,
-symbol lookup, documentation, arglists, sessions and backtraces.
+[Guile Ares RS](https://git.sr.ht/~abcdw/guile-ares-rs) provides protocol-independent Scheme
+evaluation, completion, symbol lookup and exception metadata through `(ares repl)`,
+`(ares completion)` and `(ares lookup)`. Cind's development environment consumes evaluation and
+completion directly. Protocol adapters remain consumers of the same modules rather than owning the
+development primitives.
 
 CMake builds Guile 3.0.11 into a private build-tree prefix and links `GuileRuntime` against that
 library. Fibers 1.4.3 is built by the same dependency graph against the private Guile and installed
@@ -1016,25 +1017,22 @@ into the same prefix. The Ares 0.9.7 Scheme sources are vendored under
 source and compiled-module directories to its module search paths. This keeps the executable,
 native Fibers extension and Scheme modules on one Guile ABI.
 
-Ares protocol results map onto existing editor mechanisms:
+Ares values map onto existing editor mechanisms:
 
-| Ares/nREPL result | cind mechanism |
+| Ares value | cind mechanism |
 | --- | --- |
 | completion candidates | interaction provider |
-| definition file, line and column | source location and location navigation |
-| evaluation values and streamed output | generated result buffer |
-| backtrace frames | location-list buffer |
-| interrupt and session lifecycle | cancellable asynchronous operation |
+| evaluation values and captured output | echo area or generated result buffer |
 
-A standalone Ares process supplies project-wide Guile development without sharing editor memory.
-The application endpoint uses the same Guile VM and persistent evaluation module as
-`GuileRuntime`, which makes `(cind host)`, the explicit `host` capability, loaded cind policy
-modules, and definitions created through `M-:` available for live inspection and evaluation. Ares
-owns its evaluation threads and Fibers scheduler. Native editor mechanisms retain their
-editor-thread checks, so evaluation threads cannot mutate editor state directly.
+`M-:` requests a normal picker interaction from the command loop. The `scheme-repl` provider
+completes the trailing symbol and substitutes the candidate into the complete expression. Custom
+input remains valid, so every readable Scheme form can be submitted. Evaluation uses the same
+persistent module as `GuileRuntime`; `(cind host)`, the explicit `host` capability,
+loaded policy modules and definitions created by earlier evaluations share one lexical environment.
+The result crosses the scripting boundary as status, rendered values, standard output and error
+output. The command policy chooses the echo area for a compact value and the reusable
+`*Scheme Evaluation*` buffer for structured output.
 
-`scheme.ares-start` binds a random unprivileged port on the loopback interface and publishes it as
-`.nrepl-port` in the active project root. `scheme.ares-status` reports the listener state and
-address. `scheme.ares-stop` closes the listener, terminates the scheduler and removes the port file.
-`GuileRuntime` performs the same stop operation during destruction. The controller is keyed by the
-host capability, so multiple editor applications do not share endpoint state.
+The embedded REPL runs as part of the editor command loop. Native mechanisms keep their
+editor-thread checks, and blocking editor work remains expressed through typed `AsyncRuntime`
+requests.

@@ -505,13 +505,11 @@ TEST_CASE("embedded Guile provides the vendored Scheme development runtime") {
     CHECK(result->values == std::vector<std::string>{"(\"3.0.11\" \"0.9.7\" \"1.4.3\")"});
 }
 
-TEST_CASE("Ares endpoint commands own the nREPL server lifecycle") {
+TEST_CASE("Ares REPL participates in the command loop") {
     EditorRuntime runtime;
-    std::string message;
-    GuileHostServices services;
-    services.set_message = [&](std::string value) { message = std::move(value); };
-    GuileRuntime guile(runtime, std::move(services));
+    GuileRuntime guile(runtime);
     REQUIRE(guile.install_core_commands().has_value());
+    REQUIRE(guile.install_core_providers().has_value());
     const BufferId buffer = runtime.buffers().create({.name = "ares-test",
                                                       .initial_text = {},
                                                       .kind = BufferKind::Scratch,
@@ -520,34 +518,37 @@ TEST_CASE("Ares endpoint commands own the nREPL server lifecycle") {
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
-    const std::filesystem::path port_file =
-        std::filesystem::temp_directory_path() / "cind-ares-endpoint-test.port";
-    std::error_code error;
-    std::filesystem::remove(port_file, error);
 
-    const CommandResult started = runtime.commands().invoke(
-        require_command(runtime, "scheme.ares-start"), context,
-        CommandInvocation{.arguments = {port_file.string()}, .prefix = {}});
-    REQUIRE(started.has_value());
-    CHECK(std::holds_alternative<CommandCompleted>(*started));
-    CHECK(message.find("Ares nREPL listening on 127.0.0.1:") != std::string::npos);
-    REQUIRE(std::filesystem::exists(port_file));
-    std::ifstream port_input(port_file);
-    std::uint32_t port = 0;
-    port_input >> port;
-    CHECK(port >= 49152);
-    CHECK(port <= 65535);
+    const CommandResult requested = runtime.commands().invoke(
+        require_command(runtime, "scheme.eval-expression"), context, CommandInvocation{});
+    REQUIRE(requested.has_value());
+    const auto* interaction = std::get_if<InteractionRequest>(&*requested);
+    REQUIRE(interaction != nullptr);
+    CHECK(interaction->kind == InteractionKind::Picker);
+    CHECK(interaction->provider == "scheme-repl");
+    CHECK(interaction->allow_custom_input);
 
-    const CommandResult status = runtime.commands().invoke(
-        require_command(runtime, "scheme.ares-status"), context, CommandInvocation{});
-    REQUIRE(status.has_value());
-    CHECK(message.find(std::to_string(port)) != std::string::npos);
+    const std::vector<InteractionCandidate> candidates =
+        complete_provider(runtime, "scheme-repl", context, "(str");
+    CHECK(std::ranges::any_of(candidates, [](const InteractionCandidate& candidate) {
+        return candidate.value == "(string-append" && candidate.label == "string-append" &&
+               candidate.detail.find("function") != std::string::npos;
+    }));
+    CHECK(complete_provider(runtime, "scheme-repl", context, "(+ 1 2)").empty());
 
-    const CommandResult stopped = runtime.commands().invoke(
-        require_command(runtime, "scheme.ares-stop"), context, CommandInvocation{});
-    REQUIRE(stopped.has_value());
-    CHECK(message == "Ares nREPL is stopped");
-    CHECK_FALSE(std::filesystem::exists(port_file));
+    CHECK_FALSE(runtime.commands().find("scheme.ares-start").has_value());
+    CHECK_FALSE(runtime.commands().find("scheme.ares-status").has_value());
+    CHECK_FALSE(runtime.commands().find("scheme.ares-stop").has_value());
+
+    const auto defined =
+        guile.evaluate({.source = "(define ares-value 41)", .source_name = "ares-repl-test.scm"});
+    REQUIRE(defined.has_value());
+    CHECK_FALSE(defined->error.has_value());
+    const auto evaluated =
+        guile.evaluate({.source = "(+ ares-value 1)", .source_name = "ares-repl-test.scm"});
+    REQUIRE(evaluated.has_value());
+    CHECK_FALSE(evaluated->error.has_value());
+    CHECK(evaluated->values == std::vector<std::string>{"42"});
 }
 
 TEST_CASE("bundled Guile policy installs available default key bindings") {
@@ -1384,10 +1385,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 226);
+    CHECK(*installed == 223);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 12);
+    CHECK(*providers == 13);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -2106,8 +2107,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 226);
+    CHECK(snapshot.scripted_commands == 223);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 12);
+    CHECK(snapshot.scripted_providers == 13);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

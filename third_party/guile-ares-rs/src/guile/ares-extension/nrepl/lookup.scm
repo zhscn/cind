@@ -18,53 +18,11 @@
 ;;; along with guile-ares-rs.  If not, see <http://www.gnu.org/licenses/>.
 
 (define-module (ares-extension nrepl lookup)
-  #:use-module (ares file)
   #:use-module (ares guile)
-  #:use-module (ares reflection metadata)
+  #:use-module (ares lookup)
   #:use-module (ares reflection modules)
-  #:use-module ((ice-9 regex) #:select (regexp-quote))
-  #:use-module ((ice-9 session) #:select (apropos-fold
-                                          apropos-fold-accessible))
-  #:use-module (srfi srfi-197)
   #:use-module (srfi srfi-2)
-  #:use-module (system vm program)
   #:export (nrepl.lookup))
-
-(define (lookup-symbol ns sym)
-  (define (module-location module)
-    `(0 ,(module-filename module) 0 . 0))
-
-  (apropos-fold
-   (lambda (module name var init)
-     (let* ((src (or (get-source var)
-                     (and=> module module-location)))
-            (file (chain-and
-                   (source:file src)
-                   (search-in-load-path _)))
-            (line (and=> src source:line-for-user))
-            (column (and=> src source:column))
-            (arglists (get-arglists var))
-            (docstring (get-docstring var)))
-       (chain-when
-        `(("ns" . ,(object->string (module-name module))))
-        (file (acons "file" file _))
-        (line (acons "line" line _))
-        (column (acons "column" column _))
-        (arglists (acons "arglists" arglists _))
-        (docstring (acons "docstring" docstring _)))))
-   #f
-   ;; Instead of early return we just wrap regexp in ^$ to exactly
-   ;; match the symbol we are interested in, to further speed up the
-   ;; implementation it would be necessary to rewrite module traverse
-   ;; in apropos-fold and use early return in it.
-   (string-append "^" (regexp-quote (symbol->string sym)) "$")
-   ;; apropos-fold-accessible leads to inconsistencies between lookup
-   ;; and symbol resolution. That's why we need reverse here to prevent
-   ;; incorrect symbol shadowing
-   ((@@ (ice-9 session) make-fold-modules)
-    (lambda () (list ns))
-    (compose reverse module-uses)
-    identity)))
 
 (define (get-lookup-information context)
   "Handle lookup operation, provide information necessary for go to

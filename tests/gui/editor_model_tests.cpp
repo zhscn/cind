@@ -143,9 +143,9 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
                                    "cind minibuffer", "cind development", "cind ares",
                                    "cind introspect", "cind core"});
     CHECK(state.scripting.command_revision == 1);
-    CHECK(state.scripting.scripted_commands == 226);
+    CHECK(state.scripting.scripted_commands == 223);
     CHECK(state.scripting.provider_revision == 1);
-    CHECK(state.scripting.scripted_providers == 12);
+    CHECK(state.scripting.scripted_providers == 13);
     CHECK(state.scripting.binding_revision == 1);
     CHECK(state.scripting.input_state_revision == 1);
     CHECK(state.scripting.scripted_input_states == 17);
