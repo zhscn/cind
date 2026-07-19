@@ -396,6 +396,8 @@ private:
     std::expected<bool, std::string> complete_buffer_save(BufferId buffer);
     void abort_buffer_save(BufferId buffer);
     void mark_saved(BufferId buffer, Text content);
+    std::expected<GuileWorkbenchRestorePlan, std::string>
+    prepare_workbench_session_restore(std::string_view serialized);
     EditorRuntime runtime_;
     GuileRuntime guile_;
     std::vector<std::unique_ptr<BufferState>> buffers_;
@@ -414,7 +416,6 @@ private:
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;
     bool quit_ = false;
-    std::uint64_t workbench_restore_generation_ = 0;
     // These are declared last in dependency order. Completion and script tasks
     // cancel while LSP sessions remain live, then the native runtime joins.
     AsyncRuntime async_runtime_;

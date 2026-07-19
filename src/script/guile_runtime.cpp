@@ -2623,29 +2623,157 @@ SCM workbench_session_state(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM restore_workbench_session(SCM host_object, SCM state_value) {
+SCM prepare_workbench_session_restore(SCM host_object, SCM state_value) {
     if (!scm_is_string(state_value)) {
-        scm_wrong_type_arg_msg("restore-workbench-session!", 2, state_value, "string");
+        scm_wrong_type_arg_msg("prepare-workbench-session-restore!", 2, state_value, "string");
     }
-    HostLease& host = require_host(host_object, "restore-workbench-session!");
-    if (!host.services.restore_workbench_session) {
-        scm_misc_error("restore-workbench-session!", "workbench session capability is unavailable",
-                       SCM_EOL);
+    HostLease& host = require_host(host_object, "prepare-workbench-session-restore!");
+    if (!host.services.prepare_workbench_session_restore) {
+        scm_misc_error("prepare-workbench-session-restore!",
+                       "workbench session preparation capability is unavailable", SCM_EOL);
     }
     try {
         const std::string state = scheme_string(state_value);
-        const std::expected<void, std::string> restored =
-            host.services.restore_workbench_session(state);
-        if (!restored) {
-            raise_host_error("restore-workbench-session!", restored.error());
+        std::expected<GuileWorkbenchRestorePlan, std::string> prepared =
+            host.services.prepare_workbench_session_restore(state);
+        if (!prepared) {
+            raise_host_error("prepare-workbench-session-restore!", prepared.error());
+        }
+        SCM resources = scm_c_make_vector(prepared->resources.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < prepared->resources.size(); ++index) {
+            const GuileWorkbenchRestoreResource& source = prepared->resources[index];
+            SCM targets = scm_c_make_vector(source.targets.size(), SCM_UNSPECIFIED);
+            for (std::size_t target_index = 0; target_index < source.targets.size();
+                 ++target_index) {
+                const GuileWorkbenchRestoreTarget& source_target = source.targets[target_index];
+                SCM target = scm_c_make_vector(3, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(target, 0, scm_from_utf8_symbol("target"));
+                scm_c_vector_set_x(
+                    target, 1,
+                    entity_id(source_target.window.slot, source_target.window.generation));
+                scm_c_vector_set_x(target, 2, scm_from_uint32(source_target.caret));
+                scm_c_vector_set_x(targets, target_index, target);
+            }
+            SCM resource = scm_c_make_vector(3, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(resource, 0, scm_from_utf8_symbol("resource"));
+            scm_c_vector_set_x(resource, 1, scm_from_utf8_string(source.resource.c_str()));
+            scm_c_vector_set_x(resource, 2, targets);
+            scm_c_vector_set_x(resources, index, resource);
+        }
+        SCM mru = scm_c_make_vector(prepared->mru.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < prepared->mru.size(); ++index) {
+            const GuileWorkbenchRestoreMru& source = prepared->mru[index];
+            SCM resource_names = scm_c_make_vector(source.resources.size(), SCM_UNSPECIFIED);
+            for (std::size_t resource_index = 0; resource_index < source.resources.size();
+                 ++resource_index) {
+                scm_c_vector_set_x(resource_names, resource_index,
+                                   scm_from_utf8_string(source.resources[resource_index].c_str()));
+            }
+            SCM windows = scm_c_make_vector(source.windows.size(), SCM_UNSPECIFIED);
+            for (std::size_t window_index = 0; window_index < source.windows.size();
+                 ++window_index) {
+                scm_c_vector_set_x(windows, window_index,
+                                   entity_id(source.windows[window_index].slot,
+                                             source.windows[window_index].generation));
+            }
+            SCM entry = scm_c_make_vector(4, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(entry, 0, scm_from_utf8_symbol("mru"));
+            scm_c_vector_set_x(entry, 1,
+                               entity_id(source.workbench.slot, source.workbench.generation));
+            scm_c_vector_set_x(entry, 2, resource_names);
+            scm_c_vector_set_x(entry, 3, windows);
+            scm_c_vector_set_x(mru, index, entry);
+        }
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("workbench-restore-plan"));
+        scm_c_vector_set_x(result, 1, resources);
+        scm_c_vector_set_x(result, 2, mru);
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("prepare-workbench-session-restore!", exception.what());
+    } catch (...) {
+        scm_misc_error("prepare-workbench-session-restore!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM show_buffer_in_window(SCM host_object, SCM window_value, SCM buffer_value, SCM caret_value) {
+    HostLease& host = require_host(host_object, "show-buffer-in-window!");
+    if (!host.services.show_buffer_in_window) {
+        scm_misc_error("show-buffer-in-window!", "window display capability is unavailable",
+                       SCM_EOL);
+    }
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "show-buffer-in-window!", 2);
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "show-buffer-in-window!", 3);
+    if (scm_is_unsigned_integer(caret_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("show-buffer-in-window!", 4, caret_value,
+                               "non-negative 32-bit integer");
+    }
+    try {
+        const std::expected<void, std::string> shown =
+            host.services.show_buffer_in_window(window, buffer, scm_to_uint32(caret_value));
+        if (!shown) {
+            raise_host_error("show-buffer-in-window!", shown.error());
         }
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("restore-workbench-session!", exception.what());
+        raise_host_error("show-buffer-in-window!", exception.what());
     } catch (...) {
-        scm_misc_error("restore-workbench-session!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("show-buffer-in-window!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
+}
+
+SCM replace_workbench_mru(SCM host_object, SCM workbench_value, SCM buffers_value) {
+    HostLease& host = require_host(host_object, "replace-workbench-mru!");
+    if (!host.services.replace_workbench_mru) {
+        scm_misc_error("replace-workbench-mru!", "workbench MRU capability is unavailable",
+                       SCM_EOL);
+    }
+    const WorkbenchId workbench =
+        entity_id_from_scheme<WorkbenchTag>(workbench_value, "replace-workbench-mru!", 2);
+    if (!scm_is_vector(buffers_value)) {
+        scm_wrong_type_arg_msg("replace-workbench-mru!", 3, buffers_value, "vector");
+    }
+    try {
+        std::vector<BufferId> buffers;
+        const std::size_t count = scm_c_vector_length(buffers_value);
+        buffers.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            buffers.push_back(entity_id_from_scheme<BufferTag>(
+                scm_c_vector_ref(buffers_value, index), "replace-workbench-mru!", 3));
+        }
+        const std::expected<void, std::string> replaced =
+            host.services.replace_workbench_mru(workbench, buffers);
+        if (!replaced) {
+            raise_host_error("replace-workbench-mru!", replaced.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("replace-workbench-mru!", exception.what());
+    } catch (...) {
+        scm_misc_error("replace-workbench-mru!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM window_buffer(SCM host_object, SCM window_value) {
+    HostLease& host = require_host(host_object, "window-buffer-id");
+    if (!host.services.window_buffer) {
+        scm_misc_error("window-buffer-id", "window buffer capability is unavailable", SCM_EOL);
+    }
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-buffer-id", 2);
+    try {
+        const BufferId buffer = host.services.window_buffer(window);
+        return entity_id(buffer.slot, buffer.generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("window-buffer-id", exception.what());
+    } catch (...) {
+        scm_misc_error("window-buffer-id", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
 }
 
 SCM owned_user_modules(SCM host_object) {
@@ -5847,8 +5975,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("expel-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(expel_buffer));
     (void)scm_c_define_gsubr("workbench-session-state", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(workbench_session_state));
-    (void)scm_c_define_gsubr("restore-workbench-session!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(restore_workbench_session));
+    (void)scm_c_define_gsubr("prepare-workbench-session-restore!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(prepare_workbench_session_restore));
+    (void)scm_c_define_gsubr("show-buffer-in-window!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(show_buffer_in_window));
+    (void)scm_c_define_gsubr("replace-workbench-mru!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(replace_workbench_mru));
     (void)scm_c_define_gsubr("project-list", 1, 0, 0, reinterpret_cast<scm_t_subr>(project_list));
     (void)scm_c_define_gsubr("owned-user-modules", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(owned_user_modules));
@@ -6068,6 +6200,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("active-window-id", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(active_window));
     (void)scm_c_define_gsubr("window-view-id", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_view));
+    (void)scm_c_define_gsubr("window-buffer-id", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(window_buffer));
     (void)scm_c_define_gsubr("window-role", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_role));
     (void)scm_c_define_gsubr("set-window-role!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_window_role));
@@ -6098,7 +6232,8 @@ void initialize_host_module(void*) {
         "enabled-command-names", "command-properties", "open-buffer-summaries", "workbench-list",
         "current-workbench", "workbench-scope", "workbench-mru", "workbench-buffer-summaries",
         "workbench-buffer-ids", "new-workbench!", "switch-workbench!", "close-workbench!",
-        "adopt-project!", "expel-buffer!", "workbench-session-state", "restore-workbench-session!",
+        "adopt-project!", "expel-buffer!", "workbench-session-state",
+        "prepare-workbench-session-restore!", "show-buffer-in-window!", "replace-workbench-mru!",
         "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
         "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
         "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-editable-start",
@@ -6130,8 +6265,9 @@ void initialize_host_module(void*) {
         "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
         "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
-        "window-role", "set-window-role!", "window-pinned?", "set-window-pinned!",
-        "window-created-by-policy?", "workbench-slot", "focus-window!", "request-redraw!", nullptr);
+        "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
+        "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
+        "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -6883,6 +7019,7 @@ struct GuileCall {
         HandlePointer,
         HandleScroll,
         OpenResource,
+        RestoreWorkbenchSession,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
         ChromeContent,
@@ -7541,6 +7678,11 @@ SCM call_body(void* data) {
                                      call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
                                      call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F,
                                      name_symbol(call.intent));
+            break;
+        case GuileCall::Operation::RestoreWorkbenchSession:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind core", "restore-workbench-session!"), call.host,
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
@@ -8361,6 +8503,20 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> restore_workbench_session(std::string_view serialized) {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::RestoreWorkbenchSession;
+        call.host = host_;
+        call.source = serialized;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     std::expected<std::size_t, std::string> install_input_states() {
         require_owner_thread();
         lease_->input_states_installed = 0;
@@ -8924,6 +9080,11 @@ std::expected<void, std::string> GuileRuntime::install_presentation_policies() {
 
 std::expected<void, std::string> GuileRuntime::install_display_policy() {
     return impl_->install_display_policy();
+}
+
+std::expected<void, std::string>
+GuileRuntime::restore_workbench_session(std::string_view serialized) {
+    return impl_->restore_workbench_session(serialized);
 }
 
 std::expected<StartupPlan, std::string>

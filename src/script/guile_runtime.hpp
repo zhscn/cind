@@ -108,6 +108,27 @@ struct GuileWorkbenchSummary {
     bool active = false;
 };
 
+struct GuileWorkbenchRestoreTarget {
+    WindowId window;
+    std::uint32_t caret = 0;
+};
+
+struct GuileWorkbenchRestoreResource {
+    std::string resource;
+    std::vector<GuileWorkbenchRestoreTarget> targets;
+};
+
+struct GuileWorkbenchRestoreMru {
+    WorkbenchId workbench;
+    std::vector<std::string> resources;
+    std::vector<WindowId> windows;
+};
+
+struct GuileWorkbenchRestorePlan {
+    std::vector<GuileWorkbenchRestoreResource> resources;
+    std::vector<GuileWorkbenchRestoreMru> mru;
+};
+
 struct GuileDisplayWindow {
     WindowId window;
     std::optional<std::string> role;
@@ -245,7 +266,13 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WorkbenchId, ProjectId)> adopt_project;
     std::function<std::expected<void, std::string>(WorkbenchId, BufferId)> expel_buffer;
     std::function<std::string()> workbench_session_state;
-    std::function<std::expected<void, std::string>(std::string_view)> restore_workbench_session;
+    std::function<std::expected<GuileWorkbenchRestorePlan, std::string>(std::string_view)>
+        prepare_workbench_session_restore;
+    std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
+        show_buffer_in_window;
+    std::function<std::expected<void, std::string>(WorkbenchId, const std::vector<BufferId>&)>
+        replace_workbench_mru;
+    std::function<BufferId(WindowId)> window_buffer;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<bool(BufferId)> buffer_saving;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;
@@ -361,6 +388,7 @@ public:
     std::expected<void, std::string> open_resource(
         WindowId window, std::string_view path, std::optional<std::uint32_t> line = std::nullopt,
         std::optional<std::uint32_t> column = std::nullopt, std::string_view intent = "edit");
+    std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
     std::expected<GuileKeymapPolicy, std::string>

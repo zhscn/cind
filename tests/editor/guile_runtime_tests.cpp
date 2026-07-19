@@ -1208,12 +1208,20 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .workbench_session_state = [&] { return workbench_session; },
-         .restore_workbench_session =
-             [&](std::string_view state) -> std::expected<void, std::string> {
+         .prepare_workbench_session_restore =
+             [&](std::string_view state) -> std::expected<GuileWorkbenchRestorePlan, std::string> {
              restored_workbench_session = state;
-             message = "workbench session restored";
-             return {};
+             if (state == "resource session") {
+                 return GuileWorkbenchRestorePlan{
+                     .resources = {{.resource = "/tmp/restored.cc", .targets = {}}}, .mru = {}};
+             }
+             return GuileWorkbenchRestorePlan{};
          },
+         .show_buffer_in_window = [](WindowId, BufferId, std::uint32_t)
+             -> std::expected<void, std::string> { return {}; },
+         .replace_workbench_mru = [](WorkbenchId, const std::vector<BufferId>&)
+             -> std::expected<void, std::string> { return {}; },
+         .window_buffer = [=](WindowId) { return buffer; },
          .create_buffer = [&](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
              created_buffer = std::move(spec);
              return other;
@@ -1475,6 +1483,17 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                            .exists = true,
                                                            .contents = workbench_session});
     CHECK(restored_workbench_session == std::optional{workbench_session});
+    CHECK(message == "workbench session restored");
+
+    REQUIRE(guile.restore_workbench_session("resource session").has_value());
+    const std::uint64_t superseded_resource_task = next_async_task - 1;
+    const auto* resource_read = std::get_if<ScriptFileReadRequest>(&*pending_async_request);
+    REQUIRE(resource_read != nullptr);
+    CHECK(resource_read->path == "/tmp/restored.cc");
+    REQUIRE(guile.restore_workbench_session("replacement session").has_value());
+    CHECK(std::ranges::find(cancelled_async_tasks, superseded_resource_task) !=
+          cancelled_async_tasks.end());
+    CHECK(restored_workbench_session == std::optional<std::string>{"replacement session"});
     CHECK(message == "workbench session restored");
 
     const std::vector<InteractionCandidate> command_candidates =

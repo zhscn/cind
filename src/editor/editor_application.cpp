@@ -570,10 +570,37 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                }
            },
            .workbench_session_state = [this] { return serialize_workbench_session(); },
-           .restore_workbench_session =
+           .prepare_workbench_session_restore =
                [this](std::string_view serialized) {
-                   return restore_workbench_session(serialized);
+                   return prepare_workbench_session_restore(serialized);
                },
+           .show_buffer_in_window = [this](WindowId window, BufferId buffer, std::uint32_t caret)
+               -> std::expected<void, std::string> {
+               if (!show_buffer(window, buffer)) {
+                   return std::unexpected("cannot display restored buffer");
+               }
+               const TextOffset end =
+                   runtime_.buffers().get(buffer).snapshot().content().end_offset();
+               runtime_.views().set_caret(runtime_.windows().get(window).view_id(),
+                                          TextOffset{std::min(caret, end.value)});
+               return {};
+           },
+           .replace_workbench_mru =
+               [this](WorkbenchId workbench,
+                      const std::vector<BufferId>& buffers) -> std::expected<void, std::string> {
+               Workbench* target = workbenches_.try_get(workbench);
+               if (target == nullptr) {
+                   return std::unexpected("unknown workbench");
+               }
+               for (const BufferId buffer : buffers) {
+                   if (runtime_.buffers().try_get(buffer) == nullptr) {
+                       return std::unexpected("workbench MRU contains an unknown buffer");
+                   }
+               }
+               target->replace_mru(buffers);
+               return {};
+           },
+           .window_buffer = [this](WindowId window) { return buffer_id(window); },
            .create_buffer =
                [this](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {
                try {
@@ -2003,6 +2030,11 @@ std::string EditorApplication::serialize_workbench_session() const {
 
 std::expected<void, std::string>
 EditorApplication::restore_workbench_session(std::string_view serialized) {
+    return guile_.restore_workbench_session(serialized);
+}
+
+std::expected<GuileWorkbenchRestorePlan, std::string>
+EditorApplication::prepare_workbench_session_restore(std::string_view serialized) {
     std::expected<WorkbenchSessionState, std::string> parsed = parse_workbench_session(serialized);
     if (!parsed) {
         return std::unexpected(parsed.error());
@@ -2097,20 +2129,8 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
         }
     }
 
-    struct PendingTarget {
-        WindowId window;
-        std::uint32_t caret = 0;
-    };
-    struct RestoreState {
-        std::uint64_t generation = 0;
-        std::size_t pending = 0;
-        std::size_t missing = 0;
-        std::map<std::string, std::vector<PendingTarget>> resources;
-        std::vector<std::pair<WorkbenchId, std::vector<std::string>>> mru;
-        std::string finalization_failure = "workbench session finalization failed";
-    };
-    auto restore = std::make_shared<RestoreState>();
-    restore->generation = ++workbench_restore_generation_;
+    std::map<std::string, std::vector<GuileWorkbenchRestoreTarget>> resources;
+    std::vector<GuileWorkbenchRestoreMru> mru;
     const BufferId fallback = buffer_id();
     const std::vector<WorkbenchId> previous = workbenches_.all();
     const WorkbenchId previous_active = workbenches_.active_id();
@@ -2144,7 +2164,7 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
             const ViewId root_view = create_view({}, fallback);
             const WindowId root_window = runtime_.windows().create(root_view);
             view_state_for(root_view).window = root_window;
-            std::string temporary = std::format(" *restore-{}-{}*", restore->generation, index);
+            std::string temporary = std::format(" *restore-{}*", index);
             while (workbenches_.find_by_name(temporary) ||
                    std::ranges::find(names, temporary) != names.end()) {
                 temporary.push_back('*');
@@ -2204,7 +2224,7 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                             runtime_.buffers().find_by_resource(*leaf.resource)) {
                         displayed = *existing;
                     } else {
-                        restore->resources[*leaf.resource].push_back(
+                        resources[*leaf.resource].push_back(
                             {.window = target, .caret = leaf.caret});
                     }
                 }
@@ -2230,10 +2250,10 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
             workbench.set_active_window(leaves[source.active_leaf]);
             for (const std::string& resource : source.mru_resources) {
                 if (!runtime_.buffers().find_by_resource(resource)) {
-                    (void)restore->resources[resource];
+                    (void)resources[resource];
                 }
             }
-            restore->mru.emplace_back(id, source.mru_resources);
+            mru.push_back({.workbench = id, .resources = source.mru_resources, .windows = leaves});
         }
     } catch (const std::exception& exception) {
         (void)workbenches_.activate(previous_active);
@@ -2273,123 +2293,12 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
     }
     reveal_caret_ = true;
     sync_keymaps();
-
-    const auto finish_one = [this, restore] noexcept {
-        try {
-            if (restore->pending == 0) {
-                return;
-            }
-            --restore->pending;
-            if (restore->pending != 0 || restore->generation != workbench_restore_generation_) {
-                return;
-            }
-            for (const auto& [workbench_id, resources] : restore->mru) {
-                Workbench* workbench = workbenches_.try_get(workbench_id);
-                if (workbench == nullptr) {
-                    continue;
-                }
-                std::vector<BufferId> buffers;
-                for (const std::string& resource : resources) {
-                    if (const std::optional<BufferId> buffer =
-                            runtime_.buffers().find_by_resource(resource)) {
-                        buffers.push_back(*buffer);
-                    }
-                }
-                for (const WindowId window : workbench->layout().leaves()) {
-                    const BufferId displayed = buffer_id(window);
-                    if (std::ranges::find(buffers, displayed) == buffers.end()) {
-                        buffers.push_back(displayed);
-                    }
-                }
-                workbench->replace_mru(buffers);
-            }
-            message_ = restore->missing == 0
-                           ? "workbench session restored"
-                           : std::format("workbench session restored · {} resources unavailable",
-                                         restore->missing);
-        } catch (...) {
-            message_.swap(restore->finalization_failure);
-        }
-    };
-    restore->pending = restore->resources.size();
-    if (restore->pending == 0) {
-        restore->pending = 1;
-        finish_one();
-        return {};
+    GuileWorkbenchRestorePlan plan{.resources = {}, .mru = std::move(mru)};
+    plan.resources.reserve(resources.size());
+    for (auto& [resource, targets] : resources) {
+        plan.resources.push_back({.resource = resource, .targets = std::move(targets)});
     }
-    for (const auto& resource_entry : restore->resources) {
-        const std::string& resource = resource_entry.first;
-        const std::expected<std::uint64_t, std::string> task = script_async_.start(
-            ScriptFileReadRequest{.path = resource},
-            {.completed =
-                 [this, restore, resource_entry = &resource_entry,
-                  finish_one](std::uint64_t, ScriptAsyncResult result) noexcept {
-                     try {
-                         if (restore->generation == workbench_restore_generation_) {
-                             const std::string& completed_resource = resource_entry->first;
-                             const auto& read = std::get<ScriptFileReadResult>(result);
-                             if (!read.exists) {
-                                 ++restore->missing;
-                                 finish_one();
-                                 return;
-                             }
-                             BufferId buffer;
-                             if (const std::optional<BufferId> existing =
-                                     runtime_.buffers().find_by_resource(completed_resource)) {
-                                 buffer = *existing;
-                             } else {
-                                 const std::optional<ModeId> mode =
-                                     runtime_.resource_policies().mode_for(completed_resource);
-                                 buffer = create_buffer(
-                                     {.name = std::filesystem::path(completed_resource)
-                                                  .filename()
-                                                  .string(),
-                                      .initial_text = read.contents,
-                                      .kind = BufferKind::File,
-                                      .resource_uri = completed_resource,
-                                      .read_only = false},
-                                     CppIndentStyle{}, "session restore", mode);
-                                 runtime_.projects().assign(
-                                     buffer,
-                                     runtime_.projects().find_for_resource(completed_resource));
-                             }
-                             for (const PendingTarget& target : resource_entry->second) {
-                                 if (runtime_.windows().try_get(target.window) != nullptr &&
-                                     show_buffer(target.window, buffer)) {
-                                     const TextOffset end = runtime_.buffers()
-                                                                .get(buffer)
-                                                                .snapshot()
-                                                                .content()
-                                                                .end_offset();
-                                     runtime_.views().set_caret(
-                                         runtime_.windows().get(target.window).view_id(),
-                                         TextOffset{std::min(target.caret, end.value)});
-                                 }
-                             }
-                         }
-                     } catch (...) {
-                         if (restore->generation == workbench_restore_generation_) {
-                             ++restore->missing;
-                         }
-                     }
-                     finish_one();
-                 },
-             .cancelled =
-                 [restore, finish_one](std::uint64_t) noexcept {
-                     ++restore->missing;
-                     finish_one();
-                 },
-             .failed =
-                 [restore, finish_one](std::uint64_t, const std::string&) noexcept {
-                     ++restore->missing;
-                     finish_one();
-                 }});
-        if (!task) {
-            ++restore->missing;
-            finish_one();
-        }
-    }
-    return {};
+    return plan;
 }
 
 std::expected<void, std::string> EditorApplication::release_buffer(BufferId buffer,

@@ -84,16 +84,19 @@ The session format stores stable values rather than runtime IDs:
 - each leaf's resource path, caret byte offset, role, pinned state and policy provenance;
 - the active leaf in each workbench.
 
-Session file reads and writes use the asynchronous runtime. Restoration first validates the entire
-serialized structure, constructs replacement layouts beside the current state, then atomically
-selects the restored registry. Resource-backed Buffers are loaded asynchronously and deduplicated
-by stable resource identity. Missing files leave a usable fallback Buffer in their Window and
-do not prevent other workbench state from being restored. MRU-only visitors are loaded even when
-no restored Window displays them.
+Session file reads and writes use the asynchronous runtime. The native preparation mechanism
+validates the entire serialized structure, constructs replacement layouts beside the current
+state, then atomically selects the restored registry. It returns a resource-loading plan containing
+stable paths, target Windows and MRU membership. The Guile policy owns the plan's task set,
+replacement cancellation, unavailable-resource count, Buffer creation, exact Window placement,
+MRU finalization and user feedback. Resource-backed Buffers are deduplicated by stable resource
+identity. Missing files leave a usable fallback Buffer in their Window and do not prevent other
+workbench state from being restored. MRU-only visitors are loaded even when no restored Window
+displays them.
 
-`workbench-session-state` exposes serialization to Guile, and
-`restore-workbench-session!` submits validated restoration. The bundled save and restore commands
-own path selection, asynchronous file requests, cancellation and user feedback.
+`workbench-session-state` exposes serialization to Guile, and the `(cind core)`
+`restore-workbench-session!` policy composes native topology preparation with asynchronous resource
+loading. The bundled save and restore commands own path selection and session-file I/O.
 
 ## Inspector state
 

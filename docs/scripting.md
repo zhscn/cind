@@ -130,7 +130,9 @@ The native module exports:
 (adopt-project! host workbench-id project-id)
 (expel-buffer! host workbench-id buffer-id)
 (workbench-session-state host)
-(restore-workbench-session! host serialized-state)
+(prepare-workbench-session-restore! host serialized-state)
+(show-buffer-in-window! host window-id buffer-id caret-byte)
+(replace-workbench-mru! host workbench-id buffer-ids)
 (owned-user-modules host)
 (project-root host project-id)
 (project-files host project-id)
@@ -142,6 +144,7 @@ The native module exports:
 (path-filename host path)
 (directory-path? host path)
 (path-as-directory host path)
+(window-buffer-id host window-id)
 (view-caret host view-id)
 (view-mark host view-id)
 (view-selection host view-id)
@@ -852,13 +855,16 @@ Buffer pool. Lifecycle mutations validate names and registry membership in nativ
 bundled commands own picker interaction and feedback. Window roles, pinning, policy provenance and
 named slots are explicit mechanisms used by the Scheme display policy.
 
-`workbench-session-state` returns the versioned serialization of every workbench, and
-`restore-workbench-session!` validates and installs serialized state before resource loading
-continues through the asynchronous runtime. The bundled `workbench.save-session` and
-`workbench.restore-session` commands select a path through the minibuffer, compose
-`async-file-write` or `async-file-read`, cancel a superseded restore request, and report completion
-through the ordinary message area. Session state contains stable Project roots and Buffer resource
-paths rather than runtime IDs.
+`workbench-session-state` returns the versioned serialization of every workbench.
+`prepare-workbench-session-restore!` validates and atomically installs the serialized topology,
+then returns a plan of resource paths, Window/caret targets and workbench MRU inputs.
+`show-buffer-in-window!`, `window-buffer-id` and `replace-workbench-mru!` are exact data-plane
+mechanisms used to apply that plan. The `(cind core)` `restore-workbench-session!` policy retains
+the plan and task IDs, cancels superseded restores, loads resources through the asynchronous
+runtime, creates and attaches Buffers, finalizes MRU state and reports completion. The bundled
+`workbench.save-session` and `workbench.restore-session` commands select a path through the
+minibuffer and compose session-file I/O with this policy. Session state contains stable Project
+roots and Buffer resource paths rather than runtime IDs.
 
 `project-id-by-root` and `create-project!` expose registry identity and validated construction;
 `set-buffer-project!` applies the chosen attachment. `project-index-state` returns

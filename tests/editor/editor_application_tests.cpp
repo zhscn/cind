@@ -2420,7 +2420,8 @@ TEST_CASE("workbench session validation preserves current state on invalid durab
     const std::expected<void, std::string> restored =
         application.restore_workbench_session(serialize_workbench_session(state));
     REQUIRE_FALSE(restored.has_value());
-    CHECK(restored.error() == "workbench session contains an invalid or duplicate window role");
+    CHECK(restored.error().find("workbench session contains an invalid or duplicate window role") !=
+          std::string::npos);
     CHECK(application.workbench_id() == original_workbench);
     CHECK(application.window_id() == original_window);
     CHECK(application.runtime().windows().try_get(original_window) != nullptr);

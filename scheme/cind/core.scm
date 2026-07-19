@@ -37,6 +37,7 @@
             lsp-locations-completed!
             open-resource!
             open-resource-with-intent!
+            restore-workbench-session!
             project-search-running?
             project-index-updated!))
 
@@ -1113,7 +1114,150 @@
   (set-message! host "buffer expelled from workbench")
   (command-completed))
 
+(define-record-type <pending-workbench-restore>
+  (make-pending-workbench-restore tasks mru missing)
+  pending-workbench-restore?
+  (tasks pending-workbench-restore-tasks set-pending-workbench-restore-tasks!)
+  (mru pending-workbench-restore-mru set-pending-workbench-restore-mru!)
+  (missing pending-workbench-restore-missing set-pending-workbench-restore-missing!))
+
 (define pending-workbench-session-restores (make-weak-key-hash-table))
+
+(define (workbench-session-restore-live? host restore)
+  (eq? (hashq-ref pending-workbench-session-restores host) restore))
+
+(define (remove-workbench-session-restore-task! restore task)
+  (set-pending-workbench-restore-tasks!
+   restore (delv task (pending-workbench-restore-tasks restore))))
+
+(define (cancel-workbench-session-restore! host)
+  (let ((restore (hashq-ref pending-workbench-session-restores host)))
+    (when restore
+      (hashq-remove! pending-workbench-session-restores host)
+      (for-each (lambda (task) (cancel-async-task! host task))
+                (pending-workbench-restore-tasks restore))
+      (set-pending-workbench-restore-tasks! restore '()))))
+
+(define (replace-workbench-session-restore! host restore)
+  (cancel-workbench-session-restore! host)
+  (hashq-set! pending-workbench-session-restores host restore))
+
+(define (append-unique value values)
+  (if (member value values) values (append values (list value))))
+
+(define (restore-workbench-session-mru! host entries)
+  (for-each
+   (lambda (entry)
+     (let* ((resources (vector->list (vector-ref entry 2)))
+            (windows (vector->list (vector-ref entry 3)))
+            (buffers
+             (fold (lambda (resource result)
+                     (let ((buffer (buffer-id-by-resource host resource)))
+                       (if buffer (append-unique buffer result) result)))
+                   '() resources))
+            (displayed
+             (fold (lambda (window result)
+                     (append-unique (window-buffer-id host window) result))
+                   buffers windows)))
+       (replace-workbench-mru! host (vector-ref entry 1)
+                               (list->vector displayed))))
+   (vector->list entries)))
+
+(define (finish-workbench-session-restore! host restore)
+  (when (and (workbench-session-restore-live? host restore)
+             (null? (pending-workbench-restore-tasks restore)))
+    (hashq-remove! pending-workbench-session-restores host)
+    (catch #t
+      (lambda ()
+        (restore-workbench-session-mru!
+         host (pending-workbench-restore-mru restore))
+        (let ((missing (pending-workbench-restore-missing restore)))
+          (set-message!
+           host
+           (if (= missing 0)
+               "workbench session restored"
+               (format #f "workbench session restored · ~a resources unavailable"
+                       missing)))))
+      (lambda (key . arguments)
+        (set-message! host "workbench session finalization failed")))))
+
+(define (mark-workbench-session-resource-missing! restore)
+  (set-pending-workbench-restore-missing!
+   restore (+ 1 (pending-workbench-restore-missing restore))))
+
+(define (restore-workbench-session-resource! host resource result)
+  (if (not (vector-ref result 2))
+      #f
+      (let* ((path (vector-ref resource 1))
+             (buffer
+              (or (buffer-id-by-resource host path)
+                  (let* ((mode (or (resource-mode host path) 'fundamental-mode))
+                         (created
+                          (create-buffer! host (path-filename host path)
+                                          (vector-ref result 3) 'file path #f mode #f
+                                          "session restore")))
+                    (set-buffer-project! host created (project-for-resource host path))
+                    created))))
+        (for-each
+         (lambda (target)
+           (show-buffer-in-window! host (vector-ref target 1) buffer
+                                   (vector-ref target 2)))
+         (vector->list (vector-ref resource 2)))
+        #t)))
+
+(define (start-workbench-session-resource! host restore resource)
+  (let ((task #f))
+    (catch #t
+      (lambda ()
+        (set! task
+              (start-async-task!
+               host (async-file-read (vector-ref resource 1))
+               (lambda (completed result)
+                 (when (workbench-session-restore-live? host restore)
+                   (remove-workbench-session-restore-task! restore completed)
+                   (catch #t
+                     (lambda ()
+                       (unless (restore-workbench-session-resource! host resource result)
+                         (mark-workbench-session-resource-missing! restore)))
+                     (lambda (key . arguments)
+                       (mark-workbench-session-resource-missing! restore)))
+                   (finish-workbench-session-restore! host restore)))
+               #:failed
+               (lambda (failed message)
+                 (when (workbench-session-restore-live? host restore)
+                   (remove-workbench-session-restore-task! restore failed)
+                   (mark-workbench-session-resource-missing! restore)
+                   (finish-workbench-session-restore! host restore)))
+               #:cancelled
+               (lambda (cancelled)
+                 (when (workbench-session-restore-live? host restore)
+                   (remove-workbench-session-restore-task! restore cancelled)
+                   (mark-workbench-session-resource-missing! restore)
+                   (finish-workbench-session-restore! host restore)))))
+        (set-pending-workbench-restore-tasks!
+         restore (cons task (pending-workbench-restore-tasks restore))))
+      (lambda (key . arguments)
+        (mark-workbench-session-resource-missing! restore)))))
+
+(define (begin-workbench-session-restore! host restore serialized)
+  (let* ((plan (prepare-workbench-session-restore! host serialized))
+         (resources (vector-ref plan 1)))
+    (set-pending-workbench-restore-mru! restore (vector-ref plan 2))
+    (for-each
+     (lambda (resource)
+       (start-workbench-session-resource! host restore resource))
+     (vector->list resources))
+    (finish-workbench-session-restore! host restore)))
+
+(define (restore-workbench-session! host serialized)
+  (let ((restore (make-pending-workbench-restore '() #() 0)))
+    (replace-workbench-session-restore! host restore)
+    (catch #t
+      (lambda () (begin-workbench-session-restore! host restore serialized))
+      (lambda (key . arguments)
+        (when (workbench-session-restore-live? host restore)
+          (hashq-remove! pending-workbench-session-restores host))
+        (apply throw key arguments)))))
 
 (define (workbench-save-session context invocation)
   (read-from-minibuffer "Save workbench session: "
@@ -1145,54 +1289,50 @@
                         "workbench.restore-session.accept"
                         #:history "workbench-sessions"))
 
-(define (workbench-session-restore-live? host task)
-  (eqv? (hashq-ref pending-workbench-session-restores host) task))
-
-(define (finish-workbench-session-restore! host task)
-  (when (workbench-session-restore-live? host task)
-    (hashq-remove! pending-workbench-session-restores host)))
-
 (define (workbench-restore-session-accept host context invocation)
   (let ((path (last-string-argument invocation)))
     (if (or (not path) (zero? (string-length path)))
         (command-error "workbench session path is empty")
         (let* ((resource (normalize-resource-path host path))
-               (previous (hashq-ref pending-workbench-session-restores host))
+               (restore (make-pending-workbench-restore '() #() 0))
                (task #f))
-          (when previous
-            (hashq-remove! pending-workbench-session-restores host)
-            (cancel-async-task! host previous))
+          (replace-workbench-session-restore! host restore)
           (set! task
                 (start-async-task!
                  host (async-file-read resource)
                  (lambda (completed result)
-                   (when (workbench-session-restore-live? host completed)
-                     (finish-workbench-session-restore! host completed)
+                   (when (workbench-session-restore-live? host restore)
+                     (remove-workbench-session-restore-task! restore completed)
                      (if (vector-ref result 2)
                          (catch #t
                            (lambda ()
                              (set-message! host "restoring workbench session…")
-                             (restore-workbench-session! host (vector-ref result 3)))
+                             (begin-workbench-session-restore!
+                              host restore (vector-ref result 3)))
                            (lambda (key . arguments)
+                             (hashq-remove! pending-workbench-session-restores host)
                              (set-message!
                               host
                               (string-append
                                "workbench session restore failed: "
                                (format #f "~S: ~S" key arguments)))))
-                         (set-message! host "workbench session file does not exist"))))
+                         (begin
+                           (hashq-remove! pending-workbench-session-restores host)
+                           (set-message! host
+                                         "workbench session file does not exist")))))
                  #:failed
                  (lambda (failed message)
-                   (when (workbench-session-restore-live? host failed)
-                     (finish-workbench-session-restore! host failed)
+                   (when (workbench-session-restore-live? host restore)
+                     (hashq-remove! pending-workbench-session-restores host)
                      (set-message! host
                                    (string-append
                                     "workbench session restore failed: " message))))
                  #:cancelled
                  (lambda (cancelled)
-                   (when (workbench-session-restore-live? host cancelled)
-                     (finish-workbench-session-restore! host cancelled)
+                   (when (workbench-session-restore-live? host restore)
+                     (hashq-remove! pending-workbench-session-restores host)
                      (set-message! host "workbench session restore cancelled")))))
-          (hashq-set! pending-workbench-session-restores host task)
+          (set-pending-workbench-restore-tasks! restore (list task))
           (set-message! host "reading workbench session…")
           (command-completed)))))
 
