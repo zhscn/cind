@@ -179,7 +179,7 @@
            (display-split active 'rows 0.72 intent))
           ((eq? intent 'pop)
            (display-split active 'columns 0.5 #f))
-          ((and (eq? intent 'jump)
+          ((and (or (eq? intent 'jump) (eq? intent 'list))
                 (or (display-window-pinned? facts active)
                     (memq (display-window-role facts active) '(tools doc))))
            (let ((adjacent (display-adjacent-window facts active)))
@@ -696,12 +696,13 @@
                                  (pending-open-resource open)))))
 
 (define (display-open-buffer! host open buffer)
-  (let ((target (display-buffer! host (pending-open-window open) buffer
-                                 (pending-open-intent open))))
-    (when (pending-open-line open)
-      (move-caret-to-line! host (window-view-id host target)
-                           (pending-open-line open)
-                           (or (pending-open-column open) 0)))))
+  (if (pending-open-line open)
+      (display-buffer-at! host (pending-open-window open) buffer
+                          (pending-open-intent open)
+                          (pending-open-line open)
+                          (or (pending-open-column open) 0))
+      (display-buffer! host (pending-open-window open) buffer
+                       (pending-open-intent open))))
 
 (define (project-from-discovery! host discovery)
   (and discovery
@@ -1863,7 +1864,7 @@
                                       (vector-ref location 2)
                                       (vector-ref location 3)
                                       (vector-ref location 4)
-                                      'jump)
+                                      'list)
           (command-completed/preserve)))))
 
 (define (location-at-point locations caret)
@@ -1976,6 +1977,25 @@
                     (command-error (if (> direction 0)
                                        "end of location list"
                                        "beginning of location list")))))))))
+
+(define (jump-move host context invocation direction)
+  (let* ((count (or (invocation-repeat-count invocation) 1))
+         (delta (* direction count)))
+    (if (navigate-jump! host (context-window context) delta)
+        (begin
+          (request-redraw! host)
+          (command-completed/preserve))
+        (command-error (if (< direction 0)
+                           "beginning of jump history"
+                           "end of jump history")))))
+
+(define (jump-mark host context)
+  (let ((node (mark-jump! host (context-window context))))
+    (if node
+        (begin
+          (set-message! host (format #f "jump node ~a" node))
+          (command-completed/preserve))
+        (command-error "current position cannot be marked"))))
 
 (define kill-ring-limit 60)
 
@@ -2404,6 +2424,18 @@
                  (location-navigate host context -1))
                (lambda (context)
                  (location-navigation-available? host context)))
+         (list "jump.back"
+               (lambda (context invocation)
+                 (jump-move host context invocation -1))
+               #f)
+         (list "jump.forward"
+               (lambda (context invocation)
+                 (jump-move host context invocation 1))
+               #f)
+         (list "jump.mark"
+               (lambda (context invocation)
+                 (jump-mark host context))
+               #f)
          (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
         (list "file.open.accept"
@@ -2829,6 +2861,8 @@
     ("M-g g" . "cursor.goto-line")
     ("M-g n" . "location.next-error")
     ("M-g p" . "location.previous-error")
+    ("M-," . "jump.back")
+    ("C-M-," . "jump.forward")
     ("M-%" . "search.replace")
     ("C-h b" . "help.describe-bindings")
     ("C-h k" . "help.describe-key")

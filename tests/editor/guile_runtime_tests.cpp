@@ -1025,8 +1025,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string interaction_provider;
     GuileRuntime guile(
         runtime,
-        {.display_buffer = [&](WindowId target_window, BufferId target_buffer,
-                               std::string_view) -> std::expected<WindowId, std::string> {
+        {.display_buffer =
+             [&](WindowId target_window, BufferId target_buffer, std::string_view,
+                 std::optional<GuileDisplayPosition>) -> std::expected<WindowId, std::string> {
              displayed = std::pair{target_window, target_buffer};
              buffer_displayed = true;
              return target_window;
@@ -1041,6 +1042,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              help_style_origin = std::move(style_origin);
              return target_window;
          },
+         .navigate_jump = {},
+         .mark_jump = {},
+         .visit_jump = {},
+         .link_jump = {},
+         .jump_branches = {},
          .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
                                    std::uint32_t column) -> std::expected<void, std::string> {
              moved = std::tuple{target_view, line, column};
@@ -1323,7 +1329,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 213);
+    CHECK(*installed == 216);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 11);
@@ -2023,7 +2029,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 213);
+    CHECK(snapshot.scripted_commands == 216);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 11);
     CHECK_FALSE(snapshot.last_error.has_value());

@@ -158,8 +158,15 @@ public:
     void reset_preferred_column();
 
     std::expected<void, std::string> open_file(std::string_view path);
-    std::expected<WindowId, std::string> display_buffer(BufferId buffer, std::string_view intent,
-                                                        WindowId origin);
+    std::expected<WindowId, std::string>
+    display_buffer(BufferId buffer, std::string_view intent, WindowId origin,
+                   std::optional<LinePosition> position = std::nullopt);
+    bool navigate_jump(WindowId window, std::int64_t delta);
+    std::vector<JumpEdge> jump_branches(WindowId window, bool incoming = false) const;
+    bool visit_jump(WindowId window, JumpNodeId node);
+    std::optional<JumpNodeId> mark_jump(WindowId window);
+    bool link_jump(WindowId window, JumpNodeId from, JumpNodeId to, std::string kind,
+                   bool persistent = false);
     bool switch_buffer(BufferId buffer);
     bool focus_window(WindowId window);
     bool split_window(WindowSplitAxis axis);
@@ -303,6 +310,9 @@ private:
     bool delete_other_windows(WindowId retained);
     void destroy_window(WindowId window);
     void apply_position(WindowId window, LinePosition position);
+    std::optional<JumpNodeId> capture_jump(Workbench& workbench, WindowId window);
+    bool restore_jump(Workbench& workbench, WindowId window, JumpNodeId node);
+    void release_jump_anchors(Workbench& workbench);
     void register_commands();
     void register_input_states();
     void register_modes();

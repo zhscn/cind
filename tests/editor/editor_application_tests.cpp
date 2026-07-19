@@ -2494,6 +2494,48 @@ TEST_CASE("display intents reuse named slots and route jumps around pinned windo
     CHECK(application.buffer_id(jump_window) == help_buffer);
 }
 
+TEST_CASE("display navigation records a window walk with exact landing positions") {
+    EditorApplication application = make_application("sample.cc", "zero\none\ntwo\n");
+    const WindowId origin = application.window_id();
+    const BufferId source = application.buffer_id();
+
+    send_keys(application, "C-h b");
+    const WindowId navigation_window = application.window_id();
+    const BufferId help = application.buffer_id();
+    REQUIRE(navigation_window != origin);
+
+    REQUIRE(application.navigate_jump(navigation_window, -1));
+    CHECK(application.buffer_id(navigation_window) == source);
+    CHECK(application.session(navigation_window)
+              .snapshot()
+              .content()
+              .position(application.session(navigation_window).caret())
+              .line == 0);
+    REQUIRE(application.navigate_jump(navigation_window, 1));
+    CHECK(application.buffer_id(navigation_window) == help);
+
+    const std::expected<WindowId, std::string> displayed = application.display_buffer(
+        source, "definition", navigation_window, LinePosition{.line = 2, .byte_column = 1});
+    REQUIRE(displayed == std::expected<WindowId, std::string>{navigation_window});
+    CHECK(application.session(navigation_window)
+              .snapshot()
+              .content()
+              .position(application.session(navigation_window).caret()) ==
+          LinePosition{.line = 2, .byte_column = 1});
+    REQUIRE(application.navigate_jump(navigation_window, -1));
+    CHECK(application.buffer_id(navigation_window) == help);
+    REQUIRE(application.navigate_jump(navigation_window, 1));
+    CHECK(application.session(navigation_window)
+              .snapshot()
+              .content()
+              .position(application.session(navigation_window).caret()) ==
+          LinePosition{.line = 2, .byte_column = 1});
+    send_keys(application, "M-,");
+    CHECK(application.buffer_id(navigation_window) == help);
+    send_keys(application, "C-M-,");
+    CHECK(application.buffer_id(navigation_window) == source);
+}
+
 TEST_CASE("invalid scripted display plans fall back to the built-in policy") {
     TemporaryFile init(std::format("cind-display-fallback-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-display-policy!

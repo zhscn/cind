@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ids.hpp"
+#include "editor/jump.hpp"
 #include "editor/window.hpp"
 
 #include <cstdint>
@@ -53,6 +54,9 @@ public:
     void clear_slot(std::string_view role);
     void clear_window_slots(WindowId window);
 
+    JumpGraph& jumps() { return jumps_; }
+    const JumpGraph& jumps() const { return jumps_; }
+
 private:
     friend class WorkbenchRegistry;
 
@@ -65,6 +69,7 @@ private:
     WindowId active_window_;
     std::vector<BufferId> mru_;
     std::unordered_map<std::string, WindowId> slots_;
+    JumpGraph jumps_;
 };
 
 // Generational application-local ownership for workbenches. Exactly one

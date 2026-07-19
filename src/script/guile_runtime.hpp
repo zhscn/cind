@@ -139,12 +139,31 @@ enum class GuileDeleteOutcome : std::uint8_t {
     MovedOverLiteral,
 };
 
+struct GuileJumpEdge {
+    std::uint64_t from = 0;
+    std::uint64_t to = 0;
+    std::string kind;
+    std::uint64_t at = 0;
+    bool persistent = false;
+};
+
+struct GuileDisplayPosition {
+    std::uint32_t line = 0;
+    std::uint32_t display_column = 0;
+};
+
 struct GuileHostServices {
-    std::function<std::expected<WindowId, std::string>(WindowId, BufferId, std::string_view)>
+    std::function<std::expected<WindowId, std::string>(WindowId, BufferId, std::string_view,
+                                                       std::optional<GuileDisplayPosition>)>
         display_buffer;
     std::function<std::expected<WindowId, std::string>(WindowId, std::string, std::string, ModeId,
                                                        std::string, std::string_view)>
         display_generated_buffer;
+    std::function<bool(WindowId, std::int64_t)> navigate_jump;
+    std::function<std::optional<std::uint64_t>(WindowId)> mark_jump;
+    std::function<bool(WindowId, std::uint64_t)> visit_jump;
+    std::function<bool(WindowId, std::uint64_t, std::uint64_t, std::string_view, bool)> link_jump;
+    std::function<std::vector<GuileJumpEdge>(WindowId, bool)> jump_branches;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
     std::function<bool(ViewId)> undo;

@@ -178,14 +178,50 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     : guile_(
           runtime_,
           {.display_buffer =
-               [this](WindowId origin, BufferId buffer, std::string_view intent) {
-                   return display_buffer(buffer, intent, origin);
+               [this](WindowId origin, BufferId buffer, std::string_view intent,
+                      std::optional<GuileDisplayPosition> position) {
+                   std::optional<LinePosition> target;
+                   if (position) {
+                       const Buffer& target_buffer = runtime_.buffers().get(buffer);
+                       const Text& text = target_buffer.snapshot().content();
+                       const std::uint32_t line = std::min(position->line, text.line_count() - 1);
+                       target = text.position(ui::offset_at_display_column(
+                           text,
+                           {.line = line,
+                            .column = static_cast<int>(std::min<std::uint32_t>(
+                                position->display_column,
+                                static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
+                           state_for(buffer).style->tab_width));
+                   }
+                   return display_buffer(buffer, intent, origin, target);
                },
            .display_generated_buffer =
                [this](WindowId window, std::string name, std::string text, ModeId mode,
                       std::string style_origin, std::string_view intent) {
                    return display_generated_buffer(window, std::move(name), std::move(text), mode,
                                                    std::move(style_origin), intent);
+               },
+           .navigate_jump = [this](WindowId window,
+                                   std::int64_t delta) { return navigate_jump(window, delta); },
+           .mark_jump = [this](WindowId window) { return mark_jump(window); },
+           .visit_jump = [this](WindowId window,
+                                std::uint64_t node) { return visit_jump(window, node); },
+           .link_jump =
+               [this](WindowId window, std::uint64_t from, std::uint64_t to, std::string_view kind,
+                      bool persistent) {
+                   return link_jump(window, from, to, std::string(kind), persistent);
+               },
+           .jump_branches =
+               [this](WindowId window, bool incoming) {
+                   std::vector<GuileJumpEdge> result;
+                   for (const JumpEdge& edge : jump_branches(window, incoming)) {
+                       result.push_back({.from = edge.from,
+                                         .to = edge.to,
+                                         .kind = edge.kind,
+                                         .at = edge.at,
+                                         .persistent = edge.persistent});
+                   }
+                   return result;
                },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
@@ -1210,7 +1246,8 @@ std::expected<void, std::string> EditorApplication::open_file(std::string_view i
 }
 
 std::expected<WindowId, std::string>
-EditorApplication::display_buffer(BufferId buffer, std::string_view intent, WindowId origin) {
+EditorApplication::display_buffer(BufferId buffer, std::string_view intent, WindowId origin,
+                                  std::optional<LinePosition> position) {
     if (intent.empty()) {
         return std::unexpected("display intent must not be empty");
     }
@@ -1223,6 +1260,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     if (!workbench.layout().contains(origin) || runtime_.windows().try_get(origin) == nullptr) {
         origin = workbench.active_window();
     }
+    const std::optional<JumpNodeId> from = capture_jump(workbench, origin);
     GuileDisplayFacts facts{.intent = std::string(intent),
                             .origin = origin,
                             .active = workbench.active_window(),
@@ -1266,37 +1304,117 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
         }
     }
     const GuileDisplayPlan& plan = *resolved;
+    WindowId target;
     if (plan.action == GuileDisplayPlan::Action::Reuse) {
         if (!show_buffer(plan.target, buffer) || !focus_window(workbench_id, plan.target)) {
             return std::unexpected("display policy target cannot show the buffer");
         }
-        return plan.target;
-    }
-
-    const ViewId view = create_view({}, buffer);
-    const WindowId window = runtime_.windows().create(view);
-    view_state_for(view).window = window;
-    if (!workbench.layout().split({.target = plan.target,
-                                   .new_window = window,
-                                   .axis = plan.axis,
-                                   .ratio = plan.ratio})) {
-        destroy_window(window);
-        return std::unexpected("display policy split cannot be applied");
-    }
-    runtime_.windows().get(window).set_created_by_policy(true);
-    if (plan.role) {
-        if (std::expected<void, std::string> assigned = set_window_role(window, plan.role);
-            !assigned) {
-            (void)workbench.layout().erase(window);
+        target = plan.target;
+    } else {
+        const ViewId view = create_view({}, buffer);
+        const WindowId window = runtime_.windows().create(view);
+        view_state_for(view).window = window;
+        if (!workbench.layout().split({.target = plan.target,
+                                       .new_window = window,
+                                       .axis = plan.axis,
+                                       .ratio = plan.ratio})) {
             destroy_window(window);
-            return std::unexpected(assigned.error());
+            return std::unexpected("display policy split cannot be applied");
+        }
+        runtime_.windows().get(window).set_created_by_policy(true);
+        if (plan.role) {
+            if (std::expected<void, std::string> assigned = set_window_role(window, plan.role);
+                !assigned) {
+                (void)workbench.layout().erase(window);
+                destroy_window(window);
+                return std::unexpected(assigned.error());
+            }
+        }
+        workbench.visit_buffer(buffer);
+        if (!focus_window(workbench_id, window)) {
+            return std::unexpected("display policy window cannot receive focus");
+        }
+        target = window;
+    }
+    if (position) {
+        apply_position(target, *position);
+    }
+    const std::optional<JumpNodeId> to = capture_jump(workbench, target);
+    if (from && to) {
+        Window& target_window = runtime_.windows().get(target);
+        (void)target_window.jump_walk().record(*from);
+        (void)target_window.jump_walk().record(*to);
+        if (*from != *to) {
+            (void)workbench.jumps().link(*from, *to, jump_edge_kind(intent));
         }
     }
-    workbench.visit_buffer(buffer);
-    if (!focus_window(workbench_id, window)) {
-        return std::unexpected("display policy window cannot receive focus");
+    return target;
+}
+
+bool EditorApplication::navigate_jump(WindowId window, std::int64_t delta) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    Window* target_window = runtime_.windows().try_get(window);
+    if (!owner || target_window == nullptr) {
+        return false;
     }
-    return window;
+    JumpWalk& walk = target_window->jump_walk();
+    const std::optional<std::size_t> previous = walk.cursor();
+    const std::optional<JumpNodeId> target = walk.move(delta);
+    if (!target) {
+        return false;
+    }
+    if (restore_jump(workbenches_.get(*owner), window, *target)) {
+        return true;
+    }
+    const std::optional<std::size_t> current = walk.cursor();
+    if (previous && current) {
+        const std::int64_t rollback =
+            static_cast<std::int64_t>(*previous) - static_cast<std::int64_t>(*current);
+        (void)walk.move(rollback);
+    }
+    return false;
+}
+
+std::vector<JumpEdge> EditorApplication::jump_branches(WindowId window, bool incoming) const {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    const Window* target = runtime_.windows().try_get(window);
+    if (!owner || target == nullptr) {
+        return {};
+    }
+    const std::optional<JumpNodeId> current = target->jump_walk().current();
+    if (!current) {
+        return {};
+    }
+    const JumpGraph& graph = workbenches_.get(*owner).jumps();
+    return incoming ? graph.incoming(*current) : graph.outgoing(*current);
+}
+
+bool EditorApplication::visit_jump(WindowId window, JumpNodeId node) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    Window* target = runtime_.windows().try_get(window);
+    if (!owner || target == nullptr || !restore_jump(workbenches_.get(*owner), window, node)) {
+        return false;
+    }
+    (void)target->jump_walk().record(node);
+    return true;
+}
+
+std::optional<JumpNodeId> EditorApplication::mark_jump(WindowId window) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    if (!owner) {
+        return std::nullopt;
+    }
+    std::optional<JumpNodeId> node = capture_jump(workbenches_.get(*owner), window);
+    if (node) {
+        (void)runtime_.windows().get(window).jump_walk().record(*node);
+    }
+    return node;
+}
+
+bool EditorApplication::link_jump(WindowId window, JumpNodeId from, JumpNodeId to, std::string kind,
+                                  bool persistent) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    return owner && workbenches_.get(*owner).jumps().link(from, to, std::move(kind), persistent);
 }
 
 bool EditorApplication::switch_buffer(BufferId buffer) {
@@ -1349,6 +1467,9 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
     if (!workbench.layout().split({.target = target, .new_window = window, .axis = axis})) {
         destroy_window(window);
         return false;
+    }
+    if (const std::optional<JumpNodeId> start = capture_jump(workbench, window)) {
+        (void)runtime_.windows().get(window).jump_walk().record(*start);
     }
     reveal_caret_ = true;
     return true;
@@ -1526,6 +1647,7 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
             return false;
         }
     }
+    release_jump_anchors(*closing);
     if (!workbenches_.erase(workbench)) {
         return false;
     }
@@ -2046,6 +2168,17 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         return std::unexpected("replacement buffer is not open");
     }
 
+    Buffer& closing_buffer = runtime_.buffers().get(buffer);
+    const Text closing_text = closing_buffer.snapshot().content();
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        workbenches_.get(workbench).jumps().detach_buffer(
+            buffer,
+            [&](AnchorId anchor) {
+                return closing_text.position(closing_buffer.navigation_anchor_offset(anchor));
+            },
+            [&](AnchorId anchor) { closing_buffer.remove_navigation_anchor(anchor); });
+    }
+
     if (location_navigation_ && location_navigation_->buffer == buffer) {
         location_navigation_.reset();
     }
@@ -2507,7 +2640,7 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
                                    CppIndentStyle{}, std::move(style_origin), mode);
         }
         const std::expected<WindowId, std::string> displayed =
-            display_buffer(buffer, intent, origin);
+            display_buffer(buffer, intent, origin, LinePosition{});
         if (!displayed) {
             return std::unexpected(displayed.error());
         }
@@ -2516,7 +2649,6 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
             return std::unexpected("generated buffer view was not created");
         }
         runtime_.views().clear_selection(view->view);
-        runtime_.views().set_caret(view->view, TextOffset{});
         runtime_.views().get(view->view).viewport() = {};
         editing_mechanisms_.reset_preferred_column(view->view);
         return *displayed;
@@ -2575,6 +2707,60 @@ void EditorApplication::apply_position(WindowId window, LinePosition position) {
     target.set_caret(text.offset(position));
     editing_mechanisms_.reset_preferred_column(target.view_id());
     reveal_caret_ = true;
+}
+
+std::optional<JumpNodeId> EditorApplication::capture_jump(Workbench& workbench, WindowId window) {
+    Window* target_window = runtime_.windows().try_get(window);
+    if (target_window == nullptr || !workbench.layout().contains(window)) {
+        return std::nullopt;
+    }
+    const ViewId view = target_window->view_id();
+    const BufferId buffer_id = runtime_.views().get(view).buffer_id();
+    Buffer& buffer = runtime_.buffers().get(buffer_id);
+    const EditSession& target = session_for(view);
+    const DocumentSnapshot snapshot = target.snapshot();
+    const TextOffset caret = target.caret();
+    const LinePosition fallback = snapshot.content().position(caret);
+    const AnchorId anchor = buffer.create_navigation_anchor(caret);
+    JumpInternResult result =
+        workbench.jumps().intern({.buffer = buffer_id,
+                                  .resource = buffer.resource_uri().value_or(std::string()),
+                                  .anchor = anchor,
+                                  .fallback = fallback,
+                                  .excerpt = snapshot.content().substring(
+                                      snapshot.content().line_content_range(fallback.line))});
+    if (!result.retained_position) {
+        buffer.remove_navigation_anchor(anchor);
+    }
+    return result.node;
+}
+
+bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, JumpNodeId node) {
+    JumpNode* target = workbench.jumps().find(node);
+    if (target == nullptr || !target->position.buffer ||
+        runtime_.buffers().try_get(target->position.buffer) == nullptr) {
+        return false;
+    }
+    Buffer& buffer = runtime_.buffers().get(target->position.buffer);
+    LinePosition position = target->position.fallback;
+    if (target->position.anchor != 0) {
+        position = buffer.snapshot().content().position(
+            buffer.navigation_anchor_offset(target->position.anchor));
+        target->position.fallback = position;
+    }
+    if (!show_buffer(window, target->position.buffer) || !focus_window(workbench.id(), window)) {
+        return false;
+    }
+    apply_position(window, position);
+    return true;
+}
+
+void EditorApplication::release_jump_anchors(Workbench& workbench) {
+    workbench.jumps().release_anchors([&](BufferId buffer, AnchorId anchor) {
+        if (Buffer* target = runtime_.buffers().try_get(buffer)) {
+            target->remove_navigation_anchor(anchor);
+        }
+    });
 }
 
 void EditorApplication::destroy_window(WindowId window) {

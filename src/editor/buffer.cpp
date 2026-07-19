@@ -64,6 +64,18 @@ std::optional<DocumentChange> Buffer::redo() {
     return document_.redo();
 }
 
+AnchorId Buffer::create_navigation_anchor(TextOffset offset) {
+    return document_.create_anchor(offset, AnchorAffinity::AfterInsertion);
+}
+
+void Buffer::remove_navigation_anchor(AnchorId anchor) {
+    document_.remove_anchor(anchor);
+}
+
+TextOffset Buffer::navigation_anchor_offset(AnchorId anchor) const {
+    return document_.anchor_offset(anchor);
+}
+
 std::string BufferRegistry::fallback_name(const BufferSpec& spec) {
     if (spec.resource_uri && !spec.resource_uri->empty()) {
         const std::filesystem::path path(*spec.resource_uri);

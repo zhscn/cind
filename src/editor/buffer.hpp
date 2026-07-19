@@ -65,6 +65,9 @@ public:
     EditTransaction begin_transaction();
     std::optional<DocumentChange> undo();
     std::optional<DocumentChange> redo();
+    AnchorId create_navigation_anchor(TextOffset offset);
+    void remove_navigation_anchor(AnchorId anchor);
+    TextOffset navigation_anchor_offset(AnchorId anchor) const;
 
     SettingsLayer& settings() { return settings_; }
     const SettingsLayer& settings() const { return settings_; }

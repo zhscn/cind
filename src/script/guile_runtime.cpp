@@ -3562,7 +3562,7 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value, SCM inte
     }
     try {
         const std::expected<WindowId, std::string> displayed =
-            host.services.display_buffer(window, buffer, intent);
+            host.services.display_buffer(window, buffer, intent, std::nullopt);
         if (!displayed) {
             raise_host_error("display-buffer!", displayed.error());
         }
@@ -3573,6 +3573,114 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value, SCM inte
         scm_misc_error("display-buffer!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
+}
+
+SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM intent_value,
+                      SCM line_value, SCM column_value) {
+    HostLease& host = require_host(host_object, "display-buffer-at!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "display-buffer-at!", 2);
+    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "display-buffer-at!", 3);
+    const std::string intent = scheme_name(intent_value, "display-buffer-at!", 4);
+    if (scm_is_unsigned_integer(line_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("display-buffer-at!", 5, line_value, "unsigned 32-bit integer");
+    }
+    if (scm_is_unsigned_integer(column_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("display-buffer-at!", 6, column_value, "unsigned 32-bit integer");
+    }
+    if (!host.services.display_buffer) {
+        scm_misc_error("display-buffer-at!", "display-buffer capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<WindowId, std::string> displayed = host.services.display_buffer(
+            window, buffer, intent,
+            GuileDisplayPosition{.line = scm_to_uint32(line_value),
+                                 .display_column = scm_to_uint32(column_value)});
+        if (!displayed) {
+            raise_host_error("display-buffer-at!", displayed.error());
+        }
+        return entity_id(displayed->slot, displayed->generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("display-buffer-at!", exception.what());
+    } catch (...) {
+        scm_misc_error("display-buffer-at!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM navigate_jump(SCM host_object, SCM window_value, SCM delta_value) {
+    HostLease& host = require_host(host_object, "navigate-jump!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "navigate-jump!", 2);
+    if (scm_is_signed_integer(delta_value, std::numeric_limits<std::int64_t>::min(),
+                              std::numeric_limits<std::int64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("navigate-jump!", 3, delta_value, "signed 64-bit integer");
+    }
+    if (!host.services.navigate_jump) {
+        scm_misc_error("navigate-jump!", "jump navigation capability is unavailable", SCM_EOL);
+    }
+    return scm_from_bool(host.services.navigate_jump(window, scm_to_int64(delta_value)));
+}
+
+SCM mark_jump(SCM host_object, SCM window_value) {
+    HostLease& host = require_host(host_object, "mark-jump!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "mark-jump!", 2);
+    if (!host.services.mark_jump) {
+        scm_misc_error("mark-jump!", "jump mark capability is unavailable", SCM_EOL);
+    }
+    const std::optional<std::uint64_t> node = host.services.mark_jump(window);
+    return node ? scm_from_uint64(*node) : SCM_BOOL_F;
+}
+
+SCM visit_jump(SCM host_object, SCM window_value, SCM node_value) {
+    HostLease& host = require_host(host_object, "visit-jump!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "visit-jump!", 2);
+    if (scm_is_unsigned_integer(node_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("visit-jump!", 3, node_value, "positive 64-bit integer");
+    }
+    if (!host.services.visit_jump) {
+        scm_misc_error("visit-jump!", "jump visit capability is unavailable", SCM_EOL);
+    }
+    return scm_from_bool(host.services.visit_jump(window, scm_to_uint64(node_value)));
+}
+
+SCM link_jump(SCM host_object, SCM window_value, SCM from_value, SCM to_value, SCM kind_value,
+              SCM persistent_value) {
+    HostLease& host = require_host(host_object, "link-jump!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "link-jump!", 2);
+    if (scm_is_unsigned_integer(from_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("link-jump!", 3, from_value, "positive 64-bit integer");
+    }
+    if (scm_is_unsigned_integer(to_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("link-jump!", 4, to_value, "positive 64-bit integer");
+    }
+    const std::string kind = scheme_name(kind_value, "link-jump!", 5);
+    if (!host.services.link_jump) {
+        scm_misc_error("link-jump!", "jump link capability is unavailable", SCM_EOL);
+    }
+    return scm_from_bool(host.services.link_jump(window, scm_to_uint64(from_value),
+                                                 scm_to_uint64(to_value), kind,
+                                                 scm_to_bool(persistent_value) != 0));
+}
+
+SCM jump_branches(SCM host_object, SCM window_value, SCM incoming_value) {
+    HostLease& host = require_host(host_object, "jump-branches");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "jump-branches", 2);
+    if (!host.services.jump_branches) {
+        scm_misc_error("jump-branches", "jump query capability is unavailable", SCM_EOL);
+    }
+    const std::vector<GuileJumpEdge> edges =
+        host.services.jump_branches(window, scm_to_bool(incoming_value) != 0);
+    SCM result = scm_c_make_vector(edges.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < edges.size(); ++index) {
+        const GuileJumpEdge& edge = edges[index];
+        SCM value = scm_c_make_vector(5, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(value, 0, scm_from_uint64(edge.from));
+        scm_c_vector_set_x(value, 1, scm_from_uint64(edge.to));
+        scm_c_vector_set_x(value, 2, name_symbol(edge.kind));
+        scm_c_vector_set_x(value, 3, scm_from_uint64(edge.at));
+        scm_c_vector_set_x(value, 4, scm_from_bool(edge.persistent));
+        scm_c_vector_set_x(result, index, value);
+    }
+    return result;
 }
 
 SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value,
@@ -5316,6 +5424,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(path_as_directory));
     (void)scm_c_define_gsubr("display-buffer!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer));
+    (void)scm_c_define_gsubr("display-buffer-at!", 6, 0, 0,
+                             reinterpret_cast<scm_t_subr>(display_buffer_at));
+    (void)scm_c_define_gsubr("navigate-jump!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(navigate_jump));
+    (void)scm_c_define_gsubr("mark-jump!", 2, 0, 0, reinterpret_cast<scm_t_subr>(mark_jump));
+    (void)scm_c_define_gsubr("visit-jump!", 3, 0, 0, reinterpret_cast<scm_t_subr>(visit_jump));
+    (void)scm_c_define_gsubr("link-jump!", 6, 0, 0, reinterpret_cast<scm_t_subr>(link_jump));
+    (void)scm_c_define_gsubr("jump-branches", 3, 0, 0, reinterpret_cast<scm_t_subr>(jump_branches));
     (void)scm_c_define_gsubr("display-generated-buffer!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_generated_buffer));
     (void)scm_c_define_gsubr("evaluate-scheme!", 3, 0, 0,
@@ -5470,10 +5586,11 @@ void initialize_host_module(void*) {
         "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
         "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
         "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-generated-buffer!",
-        "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "set-caret-reveal!",
-        "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!",
-        "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
+        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
+        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
+        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
+        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
         "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
         "refresh-interaction!", "submit-interaction!", "interaction-history",
         "set-interaction-history!", "select-interaction-candidate!",

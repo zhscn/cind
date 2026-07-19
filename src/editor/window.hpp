@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ids.hpp"
+#include "editor/jump.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -101,6 +102,8 @@ public:
     void set_pinned(bool pinned) { pinned_ = pinned; }
     bool created_by_policy() const { return created_by_policy_; }
     void set_created_by_policy(bool created) { created_by_policy_ = created; }
+    JumpWalk& jump_walk() { return jump_walk_; }
+    const JumpWalk& jump_walk() const { return jump_walk_; }
 
 private:
     friend class WindowRegistry;
@@ -113,6 +116,7 @@ private:
     std::optional<std::string> role_;
     bool pinned_ = false;
     bool created_by_policy_ = false;
+    JumpWalk jump_walk_;
 };
 
 class WindowRegistry {
