@@ -642,7 +642,7 @@
     (file-open-interaction (path-as-directory host directory))))
 
 (define-record-type <pending-open>
-  (make-pending-open resource window intent line column mode contents style style-origin
+  (make-pending-open resource window intent line column encoding mode contents style style-origin
                      discovery file-ready? style-ready? project-ready? tasks)
   pending-open?
   (resource pending-open-resource)
@@ -650,6 +650,7 @@
   (intent pending-open-intent set-pending-open-intent!)
   (line pending-open-line set-pending-open-line!)
   (column pending-open-column set-pending-open-column!)
+  (encoding pending-open-encoding set-pending-open-encoding!)
   (mode pending-open-mode)
   (contents pending-open-contents set-pending-open-contents!)
   (style pending-open-style set-pending-open-style!)
@@ -706,10 +707,11 @@
 
 (define (display-open-buffer! host open buffer)
   (if (pending-open-line open)
-      (display-buffer-at! host (pending-open-window open) buffer
-                          (pending-open-intent open)
-                          (pending-open-line open)
-                          (or (pending-open-column open) 0))
+      (display-buffer-position-at! host (pending-open-window open) buffer
+                                   (pending-open-intent open)
+                                   (pending-open-line open)
+                                   (or (pending-open-column open) 0)
+                                   (pending-open-encoding open))
       (display-buffer! host (pending-open-window open) buffer
                        (pending-open-intent open))))
 
@@ -823,17 +825,19 @@
                           (vector-ref result 4))))
        (set-pending-open-project-ready! open #t)))))
 
-(define (open-resource-with-intent! host window path line column intent)
+(define (open-resource-position-with-intent! host window path line column encoding intent)
   (unless (string? path)
     (error "resource path must be a string" path))
   (unless (or (not line) (and (integer? line) (>= line 0)))
     (error "resource line must be a non-negative integer or #f" line))
   (unless (or (not column) (and (integer? column) (>= column 0)))
     (error "resource column must be a non-negative integer or #f" column))
+  (unless (memq encoding '(bytes utf-16))
+    (error "resource position encoding must be bytes or utf-16" encoding))
   (let* ((resource (normalize-resource-path host path))
          (buffer (buffer-id-by-resource host resource)))
     (cond (buffer
-           (let ((open (make-pending-open resource window intent line column #f "" #f ""
+           (let ((open (make-pending-open resource window intent line column encoding #f "" #f ""
                                           #f #t #t #t '())))
              (display-open-buffer! host open buffer)))
           ((find-pending-open host resource)
@@ -842,13 +846,14 @@
                 (set-pending-open-intent! open intent)
                 (set-pending-open-line! open line)
                 (set-pending-open-column! open column)
+                (set-pending-open-encoding! open encoding)
                 (set-message! host (string-append "opening " resource "…"))))
           (else
            (let* ((mode (or (resource-mode host resource) 'fundamental-mode))
                   (providers (project-provider-definitions host))
                   (style-ready? (not (cpp-style-mode? host mode)))
                   (open (make-pending-open
-                         resource window intent line column mode "" #f
+                         resource window intent line column encoding mode "" #f
                          (if style-ready? "plain text" "llvm (fallback)")
                          #f #f style-ready? (= (vector-length providers) 0) '())))
              (set-host-pending-opens! host (cons open (host-pending-opens host)))
@@ -858,6 +863,9 @@
                  (fail-open! host open (format #f "~S: ~S" key arguments))
                  (apply throw key arguments)))
              (set-message! host (string-append "opening " resource "…")))))))
+
+(define (open-resource-with-intent! host window path line column intent)
+  (open-resource-position-with-intent! host window path line column 'bytes intent))
 
 (define (open-resource! host window path line column)
   (open-resource-with-intent! host window path line column 'edit))
@@ -1874,11 +1882,12 @@
           (when (and list source-offset)
             (position-buffer-view! host (context-window context) list source-offset))
           (location-message host index count)
-          (open-resource-with-intent! host (context-window context)
-                                      (vector-ref target 0)
-                                      (vector-ref target 1)
-                                      (vector-ref target 2)
-                                      'list)
+          (open-resource-position-with-intent! host (context-window context)
+                                               (vector-ref target 0)
+                                               (vector-ref target 1)
+                                               (vector-ref target 2)
+                                               (vector-ref target 4)
+                                               'list)
           (command-completed/preserve)))))
 
 (define (location-visit-index host context list index)
@@ -2025,7 +2034,8 @@
                              (vector-ref location 0)
                              (vector-ref location 1)
                              (vector-ref location 2)
-                             "")))
+                             ""
+                             (vector-ref location 5))))
           (loop (+ index 1)
                 (+ offset line-bytes 1)
                 (cons line lines)
@@ -2038,11 +2048,12 @@
       (set-message! host (string-append "no LSP " (symbol->string source) " found")))
      ((and (= count 1) (not (eq? source 'references)))
       (let ((location (vector-ref locations 0)))
-        (open-resource-with-intent! host window
-                                    (vector-ref location 0)
-                                    (vector-ref location 1)
-                                    (vector-ref location 2)
-                                    source)
+        (open-resource-position-with-intent! host window
+                                             (vector-ref location 0)
+                                             (vector-ref location 1)
+                                             (vector-ref location 2)
+                                             (vector-ref location 5)
+                                             source)
         (set-message! host (string-append "LSP " (symbol->string source)))))
      (else
       (let* ((data (lsp-location-buffer-data locations))

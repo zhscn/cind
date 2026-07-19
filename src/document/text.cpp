@@ -415,6 +415,30 @@ TextOffset Text::offset_at_utf16(std::uint32_t utf16) const {
     return TextOffset{result};
 }
 
+std::optional<LinePosition> resolve_line_position(const Text& text, EncodedLinePosition position) {
+    if (position.line >= text.line_count()) {
+        return std::nullopt;
+    }
+    const TextRange line = text.line_content_range(position.line);
+    if (position.encoding == PositionEncoding::Bytes) {
+        if (position.column > line.length()) {
+            return std::nullopt;
+        }
+        return LinePosition{.line = position.line, .byte_column = position.column};
+    }
+    const std::uint32_t line_utf16 = text.utf16_offset(line.start);
+    const std::uint32_t line_end_utf16 = text.utf16_offset(line.end);
+    const std::uint64_t absolute = static_cast<std::uint64_t>(line_utf16) + position.column;
+    if (absolute > line_end_utf16) {
+        return std::nullopt;
+    }
+    const TextOffset offset = text.offset_at_utf16(static_cast<std::uint32_t>(absolute));
+    if (text.utf16_offset(offset) != absolute || offset < line.start || offset > line.end) {
+        return std::nullopt;
+    }
+    return text.position(offset);
+}
+
 char Text::byte_at(TextOffset offset) const {
     if (offset.value >= size_bytes()) {
         throw std::out_of_range("Text: offset out of range");

@@ -187,11 +187,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    if (position) {
                        const Buffer& target_buffer = runtime_.buffers().get(buffer);
                        const Text& text = target_buffer.snapshot().content();
-                       const std::uint32_t line = std::min(position->line, text.line_count() - 1);
-                       target = LinePosition{.line = line,
-                                             .byte_column =
-                                                 std::min(position->byte_column,
-                                                          text.line_content_range(line).length())};
+                       EncodedLinePosition requested = position->position;
+                       requested.line = std::min(requested.line, text.line_count() - 1);
+                       target = resolve_line_position(text, requested);
+                       if (!target) {
+                           target = LinePosition{
+                               .line = requested.line,
+                               .byte_column = text.line_content_range(requested.line).length()};
+                       }
                    }
                    return display_buffer(buffer, intent, origin, target);
                },
@@ -435,13 +438,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                if (!item) {
                    return std::nullopt;
                }
-               LinePosition position = item->range.start;
+               EncodedLinePosition position = item->range.start;
                bool stale = false;
                if (item->resolved) {
                    const Buffer* target = runtime_.buffers().try_get(item->resolved->buffer);
                    if (target != nullptr) {
-                       position = target->snapshot().content().position(
-                           target->navigation_anchor_offset(item->resolved->start));
+                       position =
+                           EncodedLinePosition::from_bytes(target->snapshot().content().position(
+                               target->navigation_anchor_offset(item->resolved->start)));
                        stale = item->resolved->stale;
                    }
                }
@@ -3090,10 +3094,12 @@ ResolvedLocation EditorApplication::resolve_location(Buffer& buffer, const Locat
             stale = true;
         }
     }
-    const LinePosition position{
-        .line = target_line,
-        .byte_column =
-            std::min(item.range.start.byte_column, text.line_content_range(target_line).length())};
+    EncodedLinePosition encoded = item.range.start;
+    encoded.line = target_line;
+    const LinePosition position =
+        resolve_line_position(text, encoded)
+            .value_or(LinePosition{.line = target_line,
+                                   .byte_column = text.line_content_range(target_line).length()});
     const AnchorId anchor = buffer.create_navigation_anchor(text.offset(position));
     return {.buffer = buffer.id(), .start = anchor, .end = anchor, .stale = stale};
 }
@@ -3498,9 +3504,11 @@ EditorApplication::start_lsp_navigation(CommandTarget target, std::string_view k
             for (LspLocation& location : locations) {
                 values.push_back({.resource = std::move(location.resource),
                                   .start = {.line = location.range.start.line,
-                                            .byte_column = location.range.start.character},
+                                            .column = location.range.start.character,
+                                            .encoding = PositionEncoding::Utf16},
                                   .end = {.line = location.range.end.line,
-                                          .byte_column = location.range.end.character}});
+                                          .column = location.range.end.character,
+                                          .encoding = PositionEncoding::Utf16}});
             }
             const std::expected<void, std::string> completed =
                 guile_.lsp_locations_completed(target.window, lsp_navigation_name(kind), values);

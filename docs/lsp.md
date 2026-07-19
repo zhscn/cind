@@ -98,8 +98,10 @@ overlay when the viewport has room, without changing document or completion-menu
 
 `LspNavigationFeature` implements definition, declaration, implementation, and references requests.
 It synchronizes the origin snapshot, encodes the caret as UTF-16, accepts both `Location` and
-`LocationLink` responses, and normalizes local file URIs and ranges before returning them to the
-editor. The shared LSP session contributes all navigation capability fragments together with
+`LocationLink` responses, and normalizes local file URIs while retaining the declared UTF-16 range
+encoding. Location lists and pending file opens preserve that encoding until the target Buffer is
+loaded, then resolve it to the editor's UTF-8 byte coordinates. The shared LSP session contributes
+all navigation capability fragments together with
 completion capabilities, so one project and language retain one server process.
 
 Scheme commands own result presentation. A single definition, declaration, or implementation opens

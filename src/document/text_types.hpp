@@ -45,6 +45,28 @@ struct LinePosition {
     friend constexpr auto operator<=>(LinePosition, LinePosition) = default;
 };
 
+enum class PositionEncoding : std::uint8_t {
+    Bytes,
+    Utf16,
+};
+
+// A durable line/column position whose column encoding remains explicit until
+// the target document is available. Editor-local carets use LinePosition;
+// protocol and tool results use this type at asynchronous resource boundaries.
+struct EncodedLinePosition {
+    std::uint32_t line = 0;
+    std::uint32_t column = 0;
+    PositionEncoding encoding = PositionEncoding::Bytes;
+
+    static constexpr EncodedLinePosition from_bytes(LinePosition position) {
+        return {.line = position.line,
+                .column = position.byte_column,
+                .encoding = PositionEncoding::Bytes};
+    }
+
+    friend constexpr auto operator<=>(EncodedLinePosition, EncodedLinePosition) = default;
+};
+
 struct TextEdit {
     TextRange old_range;
     std::string new_text;

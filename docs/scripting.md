@@ -167,7 +167,9 @@ The native module exports:
 (expand-node-selection host view-id selection)
 (write-clipboard! host text)
 (read-clipboard host)
-(display-buffer! host window-id buffer-id)
+(display-buffer! host window-id buffer-id intent)
+(display-buffer-at! host window-id buffer-id intent line byte-column)
+(display-buffer-position-at! host window-id buffer-id intent line column encoding)
 (display-generated-buffer! host window-id buffer-name text major-mode style-origin)
 (evaluate-scheme! host source source-name)
 (move-caret-to-line! host view-id zero-based-line zero-based-display-column)
@@ -585,7 +587,11 @@ commands and their bindings in the active keymap policy. Mutating capabilities e
 synchronously on the owning editor thread and raise a Scheme condition when the ID or requested
 transition is invalid.
 
-`buffer-locations` exposes the semantic location vector attached to a generated buffer.
+`buffer-locations` exposes the semantic location vector attached to a generated buffer. Each entry
+uses `#(source-start source-end resource target-line target-column excerpt encoding)`, where
+`encoding` is `bytes` or `utf-16`. `display-buffer-position-at!` consumes the same position
+contract and resolves it after the destination Buffer is available; `display-buffer-at!` is the
+byte-column convenience form.
 `set-buffer-locations!` validates ordered source ranges against the current document and atomically
 replaces that vector. Location-list navigation remains a native presentation mechanism; Scheme
 chooses when a generated buffer becomes the current navigation source.

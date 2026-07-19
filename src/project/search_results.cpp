@@ -81,7 +81,9 @@ parse_rg_search_results(RgSearchResultInput input) {
             {.source_range = make_range(static_cast<std::uint32_t>(source_start),
                                         static_cast<std::uint32_t>(result.text.size())),
              .resource = resource.string(),
-             .target = {.line = *line - 1, .byte_column = *column - 1},
+             .target = {.line = *line - 1,
+                        .column = *column - 1,
+                        .encoding = PositionEncoding::Bytes},
              .excerpt = std::string(content)});
         offset = record_end + 1;
     }

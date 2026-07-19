@@ -219,7 +219,8 @@ TEST_CASE("script async host parses ripgrep output into location data") {
     CHECK(parse_result.text == "src/main.cpp:12:7: needle: value\n");
     REQUIRE(parse_result.locations.size() == 1);
     CHECK(parse_result.locations[0].resource == "/work/project/src/main.cpp");
-    CHECK(parse_result.locations[0].target == LinePosition{.line = 11, .byte_column = 6});
+    CHECK(parse_result.locations[0].target ==
+          EncodedLinePosition{.line = 11, .column = 6, .encoding = PositionEncoding::Bytes});
 }
 
 TEST_CASE("script async host unifies process completion and cancellation") {

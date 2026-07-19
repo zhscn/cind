@@ -173,7 +173,7 @@ struct LocationStateSnapshot {
     bool present = false;
     TextRange source_range;
     std::string resource;
-    LinePosition target;
+    EncodedLinePosition target;
 };
 
 struct LocationNavigationStateSnapshot {

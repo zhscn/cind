@@ -87,16 +87,18 @@ int main() {
             } else if (method == "test/clientCapabilities") {
                 send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", client_capabilities}});
             } else if (method == "textDocument/definition") {
+                const std::string target_uri =
+                    message["params"]["textDocument"]["uri"].get<std::string>() + ".definition";
                 send({{"jsonrpc", "2.0"},
                       {"id", message["id"]},
                       {"result",
-                       {{"targetUri", "file:///tmp/cind%20definition.cpp"},
+                       {{"targetUri", target_uri},
                         {"targetRange",
-                         {{"start", {{"line", 7}, {"character", 2}}},
-                          {"end", {{"line", 7}, {"character", 8}}}}},
+                         {{"start", {{"line", 0}, {"character", 0}}},
+                          {"end", {{"line", 0}, {"character", 5}}}}},
                         {"targetSelectionRange",
-                         {{"start", {{"line", 7}, {"character", 4}}},
-                          {"end", {{"line", 7}, {"character", 8}}}}}}}});
+                         {{"start", {{"line", 0}, {"character", 3}}},
+                          {"end", {{"line", 0}, {"character", 5}}}}}}}});
             } else if (method == "textDocument/references") {
                 send({{"jsonrpc", "2.0"},
                       {"id", message["id"]},

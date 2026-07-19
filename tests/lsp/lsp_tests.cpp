@@ -281,9 +281,9 @@ TEST_CASE("LSP navigation decodes locations and location links") {
     CHECK(error.empty());
     REQUIRE(definitions.has_value());
     REQUIRE(definitions->size() == 1);
-    CHECK((*definitions)[0].resource == "/tmp/cind definition.cpp");
-    CHECK((*definitions)[0].range.start.line == 7);
-    CHECK((*definitions)[0].range.start.character == 4);
+    CHECK((*definitions)[0].resource == "/tmp/origin.cpp.definition");
+    CHECK((*definitions)[0].range.start.line == 0);
+    CHECK((*definitions)[0].range.start.character == 3);
     CHECK(LspNavigationFeature::supported(session, LspNavigationKind::Definition));
 
     std::optional<std::vector<LspLocation>> references;

@@ -19,8 +19,8 @@ using LocationListId = std::uint64_t;
 inline constexpr LocationListId kInvalidLocationList = 0;
 
 struct LocationRange {
-    LinePosition start;
-    LinePosition end;
+    EncodedLinePosition start;
+    EncodedLinePosition end;
 
     friend bool operator==(const LocationRange&, const LocationRange&) = default;
 };

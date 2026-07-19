@@ -14,7 +14,8 @@ TEST_CASE("ripgrep results preserve colon paths and create semantic locations") 
     CHECK(parsed->text == "src/a:b.cpp:12:7: needle: value\nsrc/other.cpp:2:1: needle\n");
     REQUIRE(parsed->locations.size() == 2);
     CHECK(parsed->locations[0].resource == "/work/project/src/a:b.cpp");
-    CHECK(parsed->locations[0].target == LinePosition{.line = 11, .byte_column = 6});
+    CHECK(parsed->locations[0].target ==
+          EncodedLinePosition{.line = 11, .column = 6, .encoding = PositionEncoding::Bytes});
     CHECK(parsed->locations[0].excerpt == "needle: value");
     CHECK(parsed->locations[1].source_range.start == parsed->locations[0].source_range.end);
 }

@@ -1824,7 +1824,8 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         }
         CHECK(application.session().buffer().resource_uri() == second.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
-              second.target);
+              resolve_line_position(application.session().snapshot().content(), second.target)
+                  .value());
         CHECK(application.location_navigation().selected_index == 1);
         CHECK(application.buffer_id(tools_window->window) == result_buffer);
         CHECK(application.session(tools_window->window).caret() == second.source_range.start);
@@ -1839,14 +1840,14 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         }
         CHECK(application.session().buffer().resource_uri() == third.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
-              third.target);
+              resolve_line_position(application.session().snapshot().content(), third.target)
+                  .value());
         CHECK(application.location_navigation().selected_index == 2);
 
         send_keys(application, "M-g p");
         CHECK(application.session().buffer().resource_uri() == second.resource);
-        CHECK(
-            application.session().snapshot().content().position(application.session().caret()) ==
-            LinePosition{.line = second.target.line + 1, .byte_column = second.target.byte_column});
+        CHECK(application.session().snapshot().content().position(application.session().caret()) ==
+              LinePosition{.line = second.target.line + 1, .byte_column = second.target.column});
         CHECK(application.location_navigation().selected_index == 1);
         REQUIRE(application.switch_buffer(result_buffer));
         CHECK(application.session().caret() == second.source_range.start);
@@ -3464,15 +3465,16 @@ TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
     std::filesystem::create_symlink(CIND_LSP_TEST_SERVER, commands.path() / "clangd");
     ScopedPath path_scope(commands.path());
     TemporaryDirectory project("cind-lsp-navigation-project");
-    const std::filesystem::path source = project.write("main.cc", "int value;\n");
+    const std::filesystem::path source = project.write("main.cc", "a😀bc\n");
+    const std::filesystem::path definition = project.write("main.cc.definition", "a😀bc\n");
     WakeSignal wake;
     EditorApplication application =
-        make_application(source.string(), "int value;\n",
+        make_application(source.string(), "a😀bc\n",
                          {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
                               wake.notify();
                           }});
     const BufferId origin = application.buffer_id();
-    application.session().set_caret(TextOffset{4});
+    application.session().set_caret(TextOffset{5});
 
     REQUIRE(application.execute_command("lsp.references"));
     for (int iteration = 0;
@@ -3506,14 +3508,15 @@ TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
                               [](const JumpEdge& edge) { return edge.kind == "list"; }));
 
     REQUIRE(application.switch_buffer(origin));
-    application.session().set_caret(TextOffset{4});
+    application.session().set_caret(TextOffset{});
     REQUIRE(application.execute_command("lsp.definition"));
-    for (int iteration = 0; application.path() != "/tmp/cind definition.cpp" && iteration < 20;
+    for (int iteration = 0; application.session().caret() != TextOffset{5} && iteration < 20;
          ++iteration) {
         REQUIRE(wake.wait());
         (void)application.poll_background_work();
     }
-    CHECK(application.path() == "/tmp/cind definition.cpp");
+    CHECK(application.path() == definition.string());
+    CHECK(application.session().caret() == TextOffset{5});
     CHECK(std::ranges::any_of(application.jump_graphs().front().edges,
                               [](const JumpEdge& edge) { return edge.kind == "def"; }));
 }

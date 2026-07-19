@@ -652,8 +652,12 @@ void append_location(std::string& output, const LocationStateSnapshot& location)
     output += std::format("{{\"source_range\":{{\"start\":{},\"end\":{}}},\"resource\":",
                           location.source_range.start.value, location.source_range.end.value);
     append_json_string(output, location.resource);
-    output += std::format(",\"target\":{{\"line\":{},\"byte_column\":{}}}}}", location.target.line,
-                          location.target.byte_column);
+    output +=
+        std::format(",\"target\":{{\"line\":{},\"column\":{},\"encoding\":", location.target.line,
+                    location.target.column);
+    append_json_string(output,
+                       location.target.encoding == PositionEncoding::Utf16 ? "utf-16" : "bytes");
+    output += "}}";
 }
 
 void append_location_navigation(std::string& output,

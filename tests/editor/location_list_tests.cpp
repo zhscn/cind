@@ -12,8 +12,8 @@ namespace {
 
 LocationItem item(std::string resource, std::uint32_t line) {
     return {.resource = std::move(resource),
-            .range = {.start = {.line = line, .byte_column = 2},
-                      .end = {.line = line, .byte_column = 2}},
+            .range = {.start = {.line = line, .column = 2, .encoding = PositionEncoding::Bytes},
+                      .end = {.line = line, .column = 2, .encoding = PositionEncoding::Bytes}},
             .excerpt = "needle",
             .metadata = {{"severity", "error"}},
             .resolved = std::nullopt};

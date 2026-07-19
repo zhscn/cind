@@ -176,6 +176,22 @@ SCM name_symbol(std::string_view name) {
     return scm_from_utf8_symbol(std::string(name).c_str());
 }
 
+SCM position_encoding_value(PositionEncoding encoding) {
+    return name_symbol(encoding == PositionEncoding::Utf16 ? "utf-16" : "bytes");
+}
+
+PositionEncoding position_encoding_from_scheme(SCM value, const char* caller, int position) {
+    const std::string name = scheme_name(value, caller, position);
+    if (name == "bytes") {
+        return PositionEncoding::Bytes;
+    }
+    if (name == "utf-16") {
+        return PositionEncoding::Utf16;
+    }
+    scm_wrong_type_arg_msg(caller, position, value, "'bytes or 'utf-16");
+    return PositionEncoding::Bytes;
+}
+
 bool scheme_false(SCM value) {
     return scm_to_bool(scm_eq_p(value, SCM_BOOL_F)) != 0;
 }
@@ -3423,7 +3439,7 @@ SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
-// Returns #(source-start source-end resource target-line target-byte-column excerpt) entries.
+// Returns #(source-start source-end resource target-line target-column excerpt encoding) entries.
 SCM buffer_locations(SCM host_object, SCM buffer_value) {
     try {
         HostLease& host = require_host(host_object, "buffer-locations");
@@ -3434,14 +3450,15 @@ SCM buffer_locations(SCM host_object, SCM buffer_value) {
         SCM result = scm_c_make_vector(locations.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < locations.size(); ++index) {
             const BufferLocation& location = locations[index];
-            SCM entry = scm_c_make_vector(6, SCM_UNSPECIFIED);
+            SCM entry = scm_c_make_vector(7, SCM_UNSPECIFIED);
             scm_c_vector_set_x(entry, 0, scm_from_uint32(location.source_range.start.value));
             scm_c_vector_set_x(entry, 1, scm_from_uint32(location.source_range.end.value));
             scm_c_vector_set_x(entry, 2, scm_from_utf8_string(location.resource.c_str()));
             scm_c_vector_set_x(entry, 3, scm_from_uint32(location.target.line));
-            scm_c_vector_set_x(entry, 4, scm_from_uint32(location.target.byte_column));
+            scm_c_vector_set_x(entry, 4, scm_from_uint32(location.target.column));
             scm_c_vector_set_x(
                 entry, 5, scm_from_utf8_stringn(location.excerpt.data(), location.excerpt.size()));
+            scm_c_vector_set_x(entry, 6, position_encoding_value(location.target.encoding));
             scm_c_vector_set_x(result, index, entry);
         }
         return result;
@@ -3464,7 +3481,7 @@ std::vector<BufferLocation> locations_from_scheme(SCM locations_value, const cha
     for (std::size_t index = 0; index < count; ++index) {
         const SCM location = scm_c_vector_ref(locations_value, index);
         const std::size_t fields = scm_is_vector(location) ? scm_c_vector_length(location) : 0;
-        if ((fields != 5 && fields != 6) ||
+        if ((fields != 5 && fields != 6 && fields != 7) ||
             scm_is_unsigned_integer(scm_c_vector_ref(location, 0), 0,
                                     std::numeric_limits<std::uint32_t>::max()) == 0 ||
             scm_is_unsigned_integer(scm_c_vector_ref(location, 1), 0,
@@ -3474,9 +3491,10 @@ std::vector<BufferLocation> locations_from_scheme(SCM locations_value, const cha
                                     std::numeric_limits<std::uint32_t>::max()) == 0 ||
             scm_is_unsigned_integer(scm_c_vector_ref(location, 4), 0,
                                     std::numeric_limits<std::uint32_t>::max()) == 0 ||
-            (fields == 6 && !scm_is_string(scm_c_vector_ref(location, 5)))) {
-            scm_wrong_type_arg_msg(caller, position, location,
-                                   "#(source-start source-end resource line column [excerpt])");
+            (fields >= 6 && !scm_is_string(scm_c_vector_ref(location, 5)))) {
+            scm_wrong_type_arg_msg(
+                caller, position, location,
+                "#(source-start source-end resource line column [excerpt [encoding]])");
         }
         const TextRange source{
             TextOffset{scm_to_uint32(scm_c_vector_ref(location, 0))},
@@ -3489,8 +3507,12 @@ std::vector<BufferLocation> locations_from_scheme(SCM locations_value, const cha
             {.source_range = source,
              .resource = scheme_string(scm_c_vector_ref(location, 2)),
              .target = {.line = scm_to_uint32(scm_c_vector_ref(location, 3)),
-                        .byte_column = scm_to_uint32(scm_c_vector_ref(location, 4))},
-             .excerpt = fields == 6 ? scheme_string_with_nuls(scm_c_vector_ref(location, 5))
+                        .column = scm_to_uint32(scm_c_vector_ref(location, 4)),
+                        .encoding = fields == 7
+                                        ? position_encoding_from_scheme(
+                                              scm_c_vector_ref(location, 6), caller, position)
+                                        : PositionEncoding::Bytes},
+             .excerpt = fields >= 6 ? scheme_string_with_nuls(scm_c_vector_ref(location, 5))
                                     : std::string()});
     }
     return locations;
@@ -3657,8 +3679,9 @@ SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM i
     try {
         const std::expected<WindowId, std::string> displayed = host.services.display_buffer(
             window, buffer, intent,
-            GuileDisplayPosition{.line = scm_to_uint32(line_value),
-                                 .byte_column = scm_to_uint32(column_value)});
+            GuileDisplayPosition{.position = {.line = scm_to_uint32(line_value),
+                                              .column = scm_to_uint32(column_value),
+                                              .encoding = PositionEncoding::Bytes}});
         if (!displayed) {
             raise_host_error("display-buffer-at!", displayed.error());
         }
@@ -3667,6 +3690,47 @@ SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM i
         raise_host_error("display-buffer-at!", exception.what());
     } catch (...) {
         scm_misc_error("display-buffer-at!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM display_buffer_position_at(SCM host_object, SCM window_value, SCM buffer_value,
+                               SCM intent_value, SCM line_value, SCM column_value,
+                               SCM encoding_value) {
+    HostLease& host = require_host(host_object, "display-buffer-position-at!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "display-buffer-position-at!", 2);
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "display-buffer-position-at!", 3);
+    const std::string intent = scheme_name(intent_value, "display-buffer-position-at!", 4);
+    if (scm_is_unsigned_integer(line_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("display-buffer-position-at!", 5, line_value,
+                               "unsigned 32-bit integer");
+    }
+    if (scm_is_unsigned_integer(column_value, 0, std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("display-buffer-position-at!", 6, column_value,
+                               "unsigned 32-bit integer");
+    }
+    if (!host.services.display_buffer) {
+        scm_misc_error("display-buffer-position-at!", "display-buffer capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<WindowId, std::string> displayed = host.services.display_buffer(
+            window, buffer, intent,
+            GuileDisplayPosition{
+                .position = {.line = scm_to_uint32(line_value),
+                             .column = scm_to_uint32(column_value),
+                             .encoding = position_encoding_from_scheme(
+                                 encoding_value, "display-buffer-position-at!", 7)}});
+        if (!displayed) {
+            raise_host_error("display-buffer-position-at!", displayed.error());
+        }
+        return entity_id(displayed->slot, displayed->generation);
+    } catch (const std::exception& exception) {
+        raise_host_error("display-buffer-position-at!", exception.what());
+    } catch (...) {
+        scm_misc_error("display-buffer-position-at!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -5367,11 +5431,12 @@ SCM location_list_target(SCM host_object, SCM buffer_value, SCM index_value) {
         if (!target) {
             return SCM_BOOL_F;
         }
-        SCM result = scm_c_make_vector(4, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_string(target->resource.c_str()));
         scm_c_vector_set_x(result, 1, scm_from_uint32(target->position.line));
-        scm_c_vector_set_x(result, 2, scm_from_uint32(target->position.byte_column));
+        scm_c_vector_set_x(result, 2, scm_from_uint32(target->position.column));
         scm_c_vector_set_x(result, 3, scm_from_bool(target->stale));
+        scm_c_vector_set_x(result, 4, position_encoding_value(target->position.encoding));
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("location-list-target", exception.what());
@@ -5605,6 +5670,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(display_buffer));
     (void)scm_c_define_gsubr("display-buffer-at!", 6, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_buffer_at));
+    (void)scm_c_define_gsubr("display-buffer-position-at!", 7, 0, 0,
+                             reinterpret_cast<scm_t_subr>(display_buffer_position_at));
     (void)scm_c_define_gsubr("navigate-jump!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(navigate_jump));
     (void)scm_c_define_gsubr("mark-jump!", 2, 0, 0, reinterpret_cast<scm_t_subr>(mark_jump));
@@ -5774,20 +5841,21 @@ void initialize_host_module(void*) {
         "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
         "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-buffer-at!", "display-generated-buffer!", "navigate-jump!",
-        "mark-jump!", "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!",
-        "move-caret-to-line!", "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!",
-        "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!",
-        "type-text!", "page-rows", "interaction-status", "interaction-provider",
-        "set-interaction-provider!", "interaction-origin-project", "refresh-interaction!",
-        "submit-interaction!", "interaction-history", "set-interaction-history!",
-        "select-interaction-candidate!", "set-interaction-history-position!", "cancel-interaction!",
-        "cancel-pending-input!", "completion-active?", "start-completion!",
-        "request-lsp-navigation!", "move-completion!", "apply-completion!", "cancel-completion!",
-        "view-position", "location-navigation", "set-location-navigation!", "location-list-target",
-        "move-location-list!", "position-buffer-view!", "set-message!", "project-index-state",
-        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
-        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
+        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
+        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
+        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
+        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
+        "refresh-interaction!", "submit-interaction!", "interaction-history",
+        "set-interaction-history!", "select-interaction-candidate!",
+        "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
+        "completion-active?", "start-completion!", "request-lsp-navigation!", "move-completion!",
+        "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
+        "set-location-navigation!", "location-list-target", "move-location-list!",
+        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
         "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
@@ -6675,12 +6743,13 @@ SCM lsp_locations_value(const std::vector<GuileLspLocation>& locations) {
     SCM result = scm_c_make_vector(locations.size(), SCM_UNSPECIFIED);
     for (std::size_t index = 0; index < locations.size(); ++index) {
         const GuileLspLocation& location = locations[index];
-        SCM entry = scm_c_make_vector(5, SCM_UNSPECIFIED);
+        SCM entry = scm_c_make_vector(6, SCM_UNSPECIFIED);
         scm_c_vector_set_x(entry, 0, scm_from_utf8_string(location.resource.c_str()));
         scm_c_vector_set_x(entry, 1, scm_from_uint32(location.start.line));
-        scm_c_vector_set_x(entry, 2, scm_from_uint32(location.start.byte_column));
+        scm_c_vector_set_x(entry, 2, scm_from_uint32(location.start.column));
         scm_c_vector_set_x(entry, 3, scm_from_uint32(location.end.line));
-        scm_c_vector_set_x(entry, 4, scm_from_uint32(location.end.byte_column));
+        scm_c_vector_set_x(entry, 4, scm_from_uint32(location.end.column));
+        scm_c_vector_set_x(entry, 5, position_encoding_value(location.start.encoding));
         scm_c_vector_set_x(result, index, entry);
     }
     return result;

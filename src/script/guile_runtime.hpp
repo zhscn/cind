@@ -85,14 +85,14 @@ struct GuileLocationNavigation {
 
 struct GuileLocationTarget {
     std::string resource;
-    LinePosition position;
+    EncodedLinePosition position;
     bool stale = false;
 };
 
 struct GuileLspLocation {
     std::string resource;
-    LinePosition start;
-    LinePosition end;
+    EncodedLinePosition start;
+    EncodedLinePosition end;
 };
 
 struct GuileBufferCreation {
@@ -169,8 +169,7 @@ struct GuileJumpNode {
 };
 
 struct GuileDisplayPosition {
-    std::uint32_t line = 0;
-    std::uint32_t byte_column = 0;
+    EncodedLinePosition position;
 };
 
 struct GuileHostServices {

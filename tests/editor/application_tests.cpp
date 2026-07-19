@@ -308,14 +308,15 @@ TEST_CASE("buffers expose validated semantic source locations") {
                                                       .kind = BufferKind::Generated,
                                                       .resource_uri = std::nullopt,
                                                       .read_only = true});
-    runtime.buffers().set_locations(buffer, {{.source_range = make_range(0, 6),
-                                              .resource = "/work/first.cpp",
-                                              .target = {.line = 4, .byte_column = 2},
-                                              .excerpt = {}},
-                                             {.source_range = make_range(6, 13),
-                                              .resource = "/work/second.cpp",
-                                              .target = {.line = 8, .byte_column = 1},
-                                              .excerpt = {}}});
+    runtime.buffers().set_locations(
+        buffer, {{.source_range = make_range(0, 6),
+                  .resource = "/work/first.cpp",
+                  .target = {.line = 4, .column = 2, .encoding = PositionEncoding::Bytes},
+                  .excerpt = {}},
+                 {.source_range = make_range(6, 13),
+                  .resource = "/work/second.cpp",
+                  .target = {.line = 8, .column = 1, .encoding = PositionEncoding::Bytes},
+                  .excerpt = {}}});
 
     const Buffer& result = runtime.buffers().get(buffer);
     REQUIRE(result.location_at(TextOffset{2}) != nullptr);

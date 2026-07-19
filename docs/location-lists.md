@@ -7,7 +7,9 @@ without teaching frontends or the command loop about a particular producer.
 ## Buffer contract
 
 `BufferLocation` maps a non-empty `source_range` in the generated document to a normalized resource
-and zero-based `LinePosition`. `BufferRegistry::set_locations` validates that source ranges are
+and zero-based `EncodedLinePosition`. The column declares either UTF-8 byte or UTF-16 code-unit
+encoding, so producers can retain protocol coordinates while the target resource is unopened.
+`BufferRegistry::set_locations` validates that source ranges are
 ordered, non-overlapping and contained in the current document. The buffer exposes immutable
 locations and a point lookup; navigation commands consume these semantic records rather than
 reparsing display text.
@@ -37,8 +39,8 @@ because it is displayed by an editor window. Global and application keymaps rema
 through the normal layered keymap pipeline.
 
 Opening a location uses the same asynchronous file workflow as ordinary file opening. Existing
-buffers are reused, pending opens retain the latest requested destination, and the final caret is
-placed at the clamped byte line and column after the buffer becomes visible.
+buffers are reused, pending opens retain the latest requested destination and its encoding, and the
+final caret is converted to a UTF-8 byte position only after the target Buffer is available.
 
 The current-list reference and selected index are application navigation state rather than Buffer
 or View state. Killing the referenced buffer clears that state; creating a new search result makes

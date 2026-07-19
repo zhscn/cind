@@ -139,4 +139,9 @@ private:
     std::uint32_t skip_ = 0;                 // bytes skipped at the front of the current leaf
 };
 
+// Converts a validated external position into the editor's UTF-8 byte
+// coordinates. Returns nullopt for an absent line, an out-of-range column, or
+// a UTF-16 column that lands inside a surrogate pair.
+std::optional<LinePosition> resolve_line_position(const Text& text, EncodedLinePosition position);
+
 } // namespace cind

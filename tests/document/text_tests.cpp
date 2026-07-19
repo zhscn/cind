@@ -300,6 +300,23 @@ TEST_CASE("text: diff_spans agrees with diff_edit without materializing") {
     }
 }
 
+TEST_CASE("text: external line positions retain their declared column encoding") {
+    const Text text("a😀bc\n");
+    CHECK(resolve_line_position(text,
+                                {.line = 0, .column = 5, .encoding = PositionEncoding::Utf16}) ==
+          LinePosition{.line = 0, .byte_column = 7});
+    CHECK(resolve_line_position(text,
+                                {.line = 0, .column = 5, .encoding = PositionEncoding::Bytes}) ==
+          LinePosition{.line = 0, .byte_column = 5});
+    CHECK(resolve_line_position(text,
+                                {.line = 0, .column = 3, .encoding = PositionEncoding::Utf16}) ==
+          LinePosition{.line = 0, .byte_column = 5});
+    CHECK_FALSE(
+        resolve_line_position(text, {.line = 0, .column = 2, .encoding = PositionEncoding::Utf16}));
+    CHECK_FALSE(
+        resolve_line_position(text, {.line = 1, .column = 1, .encoding = PositionEncoding::Bytes}));
+}
+
 TEST_CASE("text: randomized edits match std::string model") {
     std::mt19937 rng(20260714);
     std::string model;

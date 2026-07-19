@@ -124,8 +124,9 @@ void LocationListStack::detach_buffer(BufferId buffer,
             if (!item.resolved || item.resolved->buffer != buffer) {
                 continue;
             }
-            item.range = {.start = resolve_position(item.resolved->start),
-                          .end = resolve_position(item.resolved->end)};
+            item.range = {
+                .start = EncodedLinePosition::from_bytes(resolve_position(item.resolved->start)),
+                .end = EncodedLinePosition::from_bytes(resolve_position(item.resolved->end))};
             remove_anchor(item.resolved->start);
             if (item.resolved->end != item.resolved->start) {
                 remove_anchor(item.resolved->end);
