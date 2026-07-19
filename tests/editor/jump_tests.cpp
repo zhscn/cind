@@ -130,16 +130,11 @@ TEST_CASE("jump graph restores durable closed positions and preserves its clock"
                                  .excerpt = "target"},
                     .created_at = 9,
                     .last_visit = 13}},
-                  {{.from = 4,
-                    .to = 9,
-                    .kind = "manual",
-                    .at = 14,
-                    .persistent = true}});
+                  {{.from = 4, .to = 9, .kind = "manual", .at = 14, .persistent = true}});
 
     CHECK(graph.find(4) != nullptr);
     REQUIRE(graph.outgoing(4).size() == 1);
     CHECK(graph.outgoing(4)[0].to == 9);
-    const JumpInternResult next =
-        graph.intern(position(BufferId{0, 1}, 1, 5, "/next.cc"));
+    const JumpInternResult next = graph.intern(position(BufferId{0, 1}, 1, 5, "/next.cc"));
     CHECK(next.node == 10);
 }

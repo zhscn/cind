@@ -669,24 +669,22 @@ EditorStateSnapshot EditorModel::inspect() {
     std::vector<WorkbenchJumpStateSnapshot> jumps;
     for (const WorkbenchJumpSnapshot& graph : application_.jump_graphs()) {
         WorkbenchJumpStateSnapshot inspected{
-            .workbench = {.slot = graph.workbench.slot,
-                          .generation = graph.workbench.generation},
+            .workbench = {.slot = graph.workbench.slot, .generation = graph.workbench.generation},
             .nodes = {},
             .edges = {},
             .walks = {}};
         inspected.nodes.reserve(graph.nodes.size());
         for (const JumpNode& node : graph.nodes) {
-            inspected.nodes.push_back(
-                {.id = node.id,
-                 .attached = node.position.buffer.valid(),
-                 .buffer = {.slot = node.position.buffer.slot,
-                            .generation = node.position.buffer.generation},
-                 .anchor = node.position.anchor,
-                 .resource = node.position.resource,
-                 .fallback = node.position.fallback,
-                 .excerpt = node.position.excerpt,
-                 .created_at = node.created_at,
-                 .last_visit = node.last_visit});
+            inspected.nodes.push_back({.id = node.id,
+                                       .attached = node.position.buffer.valid(),
+                                       .buffer = {.slot = node.position.buffer.slot,
+                                                  .generation = node.position.buffer.generation},
+                                       .anchor = node.position.anchor,
+                                       .resource = node.position.resource,
+                                       .fallback = node.position.fallback,
+                                       .excerpt = node.position.excerpt,
+                                       .created_at = node.created_at,
+                                       .last_visit = node.last_visit});
         }
         inspected.edges.reserve(graph.edges.size());
         for (const JumpEdge& edge : graph.edges) {

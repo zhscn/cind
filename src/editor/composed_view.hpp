@@ -40,8 +40,7 @@ struct ComposedSnapshot {
 // rebuilt on demand, while edits map immediately back to the borrowed buffers.
 class ComposedViewModel {
 public:
-    ComposedViewModel(BufferRegistry& buffers,
-                      const std::vector<ComposedExcerptSpec>& excerpts);
+    ComposedViewModel(BufferRegistry& buffers, const std::vector<ComposedExcerptSpec>& excerpts);
     ~ComposedViewModel();
 
     ComposedViewModel(const ComposedViewModel&) = delete;

@@ -2588,14 +2588,15 @@ TEST_CASE("display navigation records a window walk with exact landing positions
 }
 
 TEST_CASE("jump replay asynchronously reopens a released buffer without recording itself") {
-    TemporaryDirectory directory(
-        std::format("cind-jump-reopen-{}", static_cast<long>(::getpid())));
+    TemporaryDirectory directory(std::format("cind-jump-reopen-{}", static_cast<long>(::getpid())));
     const std::filesystem::path source_path = directory.write("source.cc", "source\n");
     const std::filesystem::path target_path = directory.write("target.cc", "target\n");
     WakeSignal wake;
-    EditorApplication application = make_application(
-        source_path.string(), "source\n",
-        {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] { wake.notify(); }});
+    EditorApplication application =
+        make_application(source_path.string(), "source\n",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
     const WindowId window = application.window_id();
     const BufferId source = application.buffer_id();
 

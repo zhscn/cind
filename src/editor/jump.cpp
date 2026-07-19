@@ -288,8 +288,7 @@ void JumpWalk::forget(std::span<const JumpNodeId> nodes) {
 
 void JumpWalk::restore(std::vector<JumpNodeId> entries, std::optional<std::size_t> cursor) {
     if ((entries.empty() && cursor) || (cursor && *cursor >= entries.size()) ||
-        std::ranges::any_of(entries,
-                            [](JumpNodeId node) { return node == kInvalidJumpNode; })) {
+        std::ranges::any_of(entries, [](JumpNodeId node) { return node == kInvalidJumpNode; })) {
         throw std::invalid_argument("restored jump walk is invalid");
     }
     entries_ = std::move(entries);

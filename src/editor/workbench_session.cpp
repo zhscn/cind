@@ -168,8 +168,8 @@ std::string serialize_workbench_session(const WorkbenchSessionState& state) {
         }
         output << "jump-edges " << workbench.jump_edges.size() << '\n';
         for (const WorkbenchJumpEdgeSessionState& edge : workbench.jump_edges) {
-            output << "jump-edge " << edge.from << ' ' << edge.to << ' '
-                   << std::quoted(edge.kind) << ' ' << edge.at << ' ' << edge.persistent << '\n';
+            output << "jump-edge " << edge.from << ' ' << edge.to << ' ' << std::quoted(edge.kind)
+                   << ' ' << edge.at << ' ' << edge.persistent << '\n';
         }
     }
     return output.str();

@@ -672,8 +672,7 @@ void append_location_navigation(std::string& output,
     output += std::format(",\"location_count\":{}}}", navigation.location_count);
 }
 
-void append_jumps(std::string& output,
-                  const std::vector<WorkbenchJumpStateSnapshot>& graphs) {
+void append_jumps(std::string& output, const std::vector<WorkbenchJumpStateSnapshot>& graphs) {
     output.push_back('[');
     for (std::size_t graph_index = 0; graph_index < graphs.size(); ++graph_index) {
         if (graph_index != 0) {
@@ -692,12 +691,10 @@ void append_jumps(std::string& output,
             append_bool(output, node.attached);
             output += ",\"buffer\":";
             append_entity(output, node.buffer);
-            output += std::format(
-                ",\"anchor\":{},\"resource\":", node.anchor);
+            output += std::format(",\"anchor\":{},\"resource\":", node.anchor);
             append_json_string(output, node.resource);
-            output += std::format(
-                ",\"fallback\":{{\"line\":{},\"byte_column\":{}}},\"excerpt\":",
-                node.fallback.line, node.fallback.byte_column);
+            output += std::format(",\"fallback\":{{\"line\":{},\"byte_column\":{}}},\"excerpt\":",
+                                  node.fallback.line, node.fallback.byte_column);
             append_json_string(output, node.excerpt);
             output += std::format(",\"created_at\":{},\"last_visit\":{}}}", node.created_at,
                                   node.last_visit);

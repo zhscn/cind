@@ -357,11 +357,9 @@ public:
                                                     bool pending_key_sequence) const;
     std::expected<bool, std::string> handle_scroll(const CommandContext& context,
                                                    ScrollInput input) const;
-    std::expected<void, std::string>
-    open_resource(WindowId window, std::string_view path,
-                  std::optional<std::uint32_t> line = std::nullopt,
-                  std::optional<std::uint32_t> column = std::nullopt,
-                  std::string_view intent = "edit");
+    std::expected<void, std::string> open_resource(
+        WindowId window, std::string_view path, std::optional<std::uint32_t> line = std::nullopt,
+        std::optional<std::uint32_t> column = std::nullopt, std::string_view intent = "edit");
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
     std::expected<GuileKeymapPolicy, std::string>

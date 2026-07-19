@@ -6539,8 +6539,8 @@ struct GuileCall {
     BufferId buffer;
     ProjectId project;
     std::optional<std::uint32_t> line;
-        std::optional<std::uint32_t> column;
-        std::string intent;
+    std::optional<std::uint32_t> column;
+    std::string intent;
     KeyStroke key;
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
@@ -7002,13 +7002,12 @@ SCM call_body(void* data) {
             call.enabled = scheme_true(call.result);
             break;
         case GuileCall::Operation::OpenResource:
-            call.result = scm_call_6(
-                scm_c_public_ref("cind core", "open-resource-with-intent!"), call.host,
-                entity_id(call.window.slot, call.window.generation),
-                scm_from_utf8_string(call.path.c_str()),
-                call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
-                call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F,
-                name_symbol(call.intent));
+            call.result = scm_call_6(scm_c_public_ref("cind core", "open-resource-with-intent!"),
+                                     call.host, entity_id(call.window.slot, call.window.generation),
+                                     scm_from_utf8_string(call.path.c_str()),
+                                     call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
+                                     call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F,
+                                     name_symbol(call.intent));
             break;
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
