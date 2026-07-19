@@ -826,6 +826,8 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     CHECK(runtime.modes().definition(prog).things ==
           std::vector<ModeThingBinding>{{.name = "word", .definition = "cind.word"},
                                         {.name = "symbol", .definition = "cind.symbol"}});
+    CHECK(runtime.modes().definition(fundamental).completion_providers ==
+          std::optional<std::vector<std::string>>{{"word", "path"}});
     CHECK(runtime.things().find("cind.angle").has_value());
     CHECK(runtime.things().find("cind.defun").has_value());
     CHECK(runtime.motions().find("cind.forward-word").has_value());
@@ -847,6 +849,8 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
                     .has_value());
     CHECK(runtime.modes().definition(scheme).keymaps ==
           std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
+    CHECK(runtime.modes().definition(scheme).completion_providers ==
+          std::optional<std::vector<std::string>>{{"ares", "word"}});
     CHECK(runtime.modes().definition(location_list).parent == special);
     CHECK_FALSE(runtime.modes().definition(location_list).language.has_value());
     CHECK(runtime.modes().definition(location_list).keymaps ==
@@ -868,6 +872,8 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
           std::vector<ModeThingBinding>{{.name = "angle", .definition = "cind.angle"},
                                         {.name = "defun", .definition = "cind.defun"},
                                         {.name = "string", .definition = "cind.string"}});
+    CHECK(runtime.modes().definition(cpp).completion_providers ==
+          std::optional<std::vector<std::string>>{{"lsp:cpp:clangd", "word", "path"}});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
@@ -1388,7 +1394,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(*installed == 223);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 13);
+    CHECK(*providers == 14);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -2109,6 +2115,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(snapshot.command_revision == 1);
     CHECK(snapshot.scripted_commands == 223);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 13);
+    CHECK(snapshot.scripted_providers == 14);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

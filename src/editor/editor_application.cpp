@@ -2482,6 +2482,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
                                         : std::string();
                  }(),
              .things = mode_policy.things,
+             .completion_providers = mode_policy.completion_providers,
              .location_count = buffer.locations().size(),
              .diagnostic_count = diagnostics.size(),
              .diagnostic_errors = static_cast<std::size_t>(
@@ -3649,6 +3650,14 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
         throw std::runtime_error("completion provider received a stale request");
     }
     const DocumentSnapshot snapshot = buffer->snapshot();
+    if (provider.kind == CompletionProviderKind::Scripted) {
+        std::expected<CompletionProviderResponse, std::string> response =
+            guile_.complete(provider, request);
+        if (!response) {
+            throw std::runtime_error(response.error());
+        }
+        return std::move(*response);
+    }
     if (provider.kind == CompletionProviderKind::Lsp) {
         LspSession* session = lsp_sessions_->find(LspSessionId{provider.session});
         if (session == nullptr) {

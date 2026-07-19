@@ -507,6 +507,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     const ModeId fundamental = runtime.modes().define("fundamental", ModeKind::Major);
     runtime.modes().set_interaction_class(fundamental, InteractionClass::Editing);
     runtime.modes().set_things(fundamental, {{.name = "word", .definition = "character"}});
+    runtime.modes().set_completion_providers(fundamental, std::vector<std::string>{"word", "path"});
     runtime.modes().add_keymap(fundamental, parent_map);
 
     const KeymapId child_map = runtime.keymaps().define("test.child.map");
@@ -522,8 +523,12 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
 
     const ModeId editable = runtime.modes().define("editable", ModeKind::Minor);
     runtime.modes().set_interaction_class(editable, InteractionClass::Editing);
+    runtime.modes().set_completion_providers(editable,
+                                             std::vector<std::string>{"semantic", "word"});
     const ModeId forced = runtime.modes().define("forced", ModeKind::Minor);
     runtime.modes().set_initial_state(forced, transient);
+    const ModeId completion_muted = runtime.modes().define("completion-muted", ModeKind::Minor);
+    runtime.modes().set_completion_providers(completion_muted, std::vector<std::string>{});
     CHECK_THROWS_AS(runtime.modes().set_parent(editable, special), std::invalid_argument);
     CHECK_THROWS_AS(runtime.modes().set_parent(fundamental, special), std::invalid_argument);
 
@@ -540,6 +545,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     CHECK(initial.things ==
           std::vector<ModeThingBinding>{{.name = "word", .definition = "interface"},
                                         {.name = "item", .definition = "line"}});
+    CHECK(initial.completion_providers == std::vector<std::string>{"word", "path"});
 
     const ViewId first = runtime.views().create(buffer);
     const ViewId second = runtime.views().create(buffer);
@@ -557,15 +563,26 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     REQUIRE(changes.size() == 1);
     CHECK(changes.back().before.interaction_class == InteractionClass::Interface);
     CHECK(changes.back().after.interaction_class == InteractionClass::Editing);
+    CHECK(changes.back().after.completion_providers ==
+          std::vector<std::string>{"semantic", "word"});
     CHECK(runtime.views().get(first).input_states().base() == normal);
     CHECK(runtime.views().get(second).input_states().base() == normal);
 
     runtime.views().push_input_state(first, transient);
     REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(editable));
+    CHECK(runtime.modes()
+              .effective_policy(runtime.buffers().get(buffer).modes())
+              .completion_providers == std::vector<std::string>{"word", "path"});
     CHECK(runtime.views().get(first).input_states().base() == transient);
     CHECK(runtime.views().get(first).input_states().top() == transient);
     CHECK(runtime.views().get(second).input_states().base() == motion);
     runtime.views().reset_input_states(first);
+
+    REQUIRE(runtime.buffers().get(buffer).modes().enable_minor(runtime.modes(), completion_muted));
+    CHECK(runtime.modes()
+              .effective_policy(runtime.buffers().get(buffer).modes())
+              .completion_providers.empty());
+    REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(completion_muted));
 
     REQUIRE(runtime.buffers().get(buffer).modes().enable_minor(runtime.modes(), forced));
     CHECK(runtime.views().get(first).input_states().base() == transient);

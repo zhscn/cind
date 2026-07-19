@@ -12,6 +12,14 @@
             interaction
             interaction-candidate
             interaction-provider-task
+            completion-item
+            completion-result
+            completion-request-query
+            completion-request-anchor
+            completion-request-caret
+            completion-request-line
+            completion-request-trigger
+            completion-request-trigger-character
             context-window
             context-buffer
             context-view
@@ -108,6 +116,40 @@
   (unless (procedure? transform)
     (error "interaction provider transform must be a procedure" transform))
   (vector 'async-provider request transform))
+
+(define* (completion-item label
+                          #:key
+                          (kind "")
+                          (detail "")
+                          (filter-text label)
+                          (sort-text label)
+                          (insert-text label)
+                          (documentation "")
+                          (start #f)
+                          (end #f))
+  (vector 'completion-item label kind detail filter-text sort-text insert-text documentation
+          start end))
+
+(define* (completion-result candidates #:key (incomplete? #f))
+  (vector 'completion-result
+          (cond ((vector? candidates) candidates)
+                ((list? candidates) (list->vector candidates))
+                (else (error "completion candidates must be a list or vector" candidates)))
+          (and incomplete? #t)))
+
+(define (completion-request-field request index)
+  (unless (and (vector? request)
+               (= (vector-length request) 7)
+               (eq? (vector-ref request 0) 'completion-request))
+    (error "invalid completion request" request))
+  (vector-ref request index))
+
+(define (completion-request-query request) (completion-request-field request 1))
+(define (completion-request-anchor request) (completion-request-field request 2))
+(define (completion-request-caret request) (completion-request-field request 3))
+(define (completion-request-line request) (completion-request-field request 4))
+(define (completion-request-trigger request) (completion-request-field request 5))
+(define (completion-request-trigger-character request) (completion-request-field request 6))
 
 (define (context-value context key)
   (let ((entry (assq key context)))

@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 namespace cind {
@@ -39,6 +40,11 @@ struct ScriptCommand {
 };
 
 struct ScriptProvider {
+    SCM complete = SCM_UNDEFINED;
+};
+
+struct ScriptCompletionProvider {
+    std::string name;
     SCM complete = SCM_UNDEFINED;
 };
 
@@ -75,6 +81,8 @@ struct GuileState {
     bool active = true;
     std::vector<ScriptCommand> commands;
     std::vector<ScriptProvider> providers;
+    std::vector<ScriptCompletionProvider> completion_providers;
+    std::unordered_map<std::string, std::size_t> completion_providers_by_name;
     std::vector<ScriptInputState> input_states;
     std::vector<ScriptPositionHintProvider> position_hint_providers;
     std::vector<ScriptInputStateLifecycle> input_state_lifecycles;
@@ -116,6 +124,7 @@ std::expected<GuileEvaluationResult, std::string> evaluate_source(HostLease& hos
 SCM setting_value(const SettingValue& value);
 bool setting_value_p(SCM value);
 SettingValue setting_from_scheme(SCM value);
+SCM string_vector_value(const std::vector<std::string>& values);
 
 SCM host_type = SCM_UNDEFINED;
 std::once_flag guile_once;
@@ -568,6 +577,45 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
         scm_misc_error("define-interaction-provider!", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("define-interaction-provider!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_value) {
+    if (!scm_is_string(name_value)) {
+        scm_wrong_type_arg_msg("define-completion-provider!", 2, name_value, "string");
+    }
+    if (!scheme_true(scm_procedure_p(complete_value))) {
+        scm_wrong_type_arg_msg("define-completion-provider!", 3, complete_value, "procedure");
+    }
+    HostLease& host = require_host(host_object, "define-completion-provider!");
+    const std::shared_ptr<GuileState> state = host.state;
+    if (!state || !state->active) {
+        scm_misc_error("define-completion-provider!", "Guile runtime has expired", SCM_EOL);
+    }
+
+    try {
+        const std::string name = scheme_string(name_value);
+        const std::size_t provider_index = state->completion_providers.size();
+        (void)scm_gc_protect_object(complete_value);
+        bool appended = false;
+        try {
+            state->completion_providers.push_back({.name = name, .complete = complete_value});
+            appended = true;
+            state->completion_providers_by_name.insert_or_assign(name, provider_index);
+            ++host.providers_installed;
+            return scm_from_size_t(provider_index);
+        } catch (...) {
+            if (appended) {
+                state->completion_providers.pop_back();
+            }
+            (void)scm_gc_unprotect_object(complete_value);
+            throw;
+        }
+    } catch (const std::exception& exception) {
+        scm_misc_error("define-completion-provider!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("define-completion-provider!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1474,13 +1522,14 @@ SCM mode_things_value(const std::vector<ModeThingBinding>& things) {
 }
 
 SCM mode_policy_value(const EffectiveModePolicy& policy, const EditorRuntime& runtime) {
-    SCM result = scm_c_make_vector(3, SCM_BOOL_F);
+    SCM result = scm_c_make_vector(4, SCM_BOOL_F);
     scm_c_vector_set_x(result, 0, interaction_class_symbol(policy.interaction_class));
     if (policy.initial_state) {
         scm_c_vector_set_x(
             result, 1, name_symbol(runtime.input_states().definition(*policy.initial_state).name));
     }
     scm_c_vector_set_x(result, 2, mode_things_value(policy.things));
+    scm_c_vector_set_x(result, 3, string_vector_value(policy.completion_providers));
     return result;
 }
 
@@ -1675,11 +1724,11 @@ SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value
     return SCM_BOOL_F;
 }
 
-// The Guile ABI fixes nine adjacent SCM arguments; the public Scheme wrappers
+// The Guile ABI fixes ten adjacent SCM arguments; the public Scheme wrappers
 // provide keyword arguments and preserve this normalized host boundary.
 SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value,
                 SCM language_value, SCM keymap_value, SCM interaction_class_value,
-                SCM initial_state_value, SCM things_value) {
+                SCM initial_state_value, SCM things_value, SCM completion_providers_value) {
     try {
         HostLease& host = require_host(host_object, "%define-mode!");
         const std::string name = scheme_name(name_value, "%define-mode!", 2);
@@ -1711,6 +1760,11 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
         }
         std::vector<ModeThingBinding> things =
             mode_things_from_scheme(things_value, "%define-mode!", 9);
+        std::optional<std::vector<std::string>> completion_providers;
+        if (!scheme_false(completion_providers_value)) {
+            completion_providers =
+                string_sequence_from_scheme(completion_providers_value, "%define-mode!", 10);
+        }
 
         const std::optional<ModeId> existing = host.runtime->modes().find(name);
         const ModeId mode =
@@ -1725,6 +1779,7 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
         host.runtime->modes().set_interaction_class(mode, interaction_class);
         host.runtime->modes().set_initial_state(mode, initial_state);
         host.runtime->modes().set_things(mode, std::move(things));
+        host.runtime->modes().set_completion_providers(mode, std::move(completion_providers));
         host.runtime->modes().clear_keymaps(mode);
         if (keymap) {
             host.runtime->modes().add_keymap(mode, *keymap);
@@ -1789,7 +1844,7 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
         HostLease& host = require_host(host_object, "mode-properties");
         const ModeId mode = require_mode(host, mode_value, "mode-properties", 2);
         const ModeRegistry::Definition& definition = host.runtime->modes().definition(mode);
-        SCM result = scm_c_make_vector(8, SCM_BOOL_F);
+        SCM result = scm_c_make_vector(9, SCM_BOOL_F);
         scm_c_vector_set_x(result, 0, name_symbol(definition.name));
         scm_c_vector_set_x(
             result, 1,
@@ -1820,6 +1875,9 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
             scm_c_vector_set_x(
                 result, 7,
                 name_symbol(host.runtime->languages().profile(*definition.language).name));
+        }
+        if (definition.completion_providers) {
+            scm_c_vector_set_x(result, 8, string_vector_value(*definition.completion_providers));
         }
         return result;
     } catch (const std::exception& exception) {
@@ -5249,6 +5307,9 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
                 providers.push_back(CompletionProvider::path());
             } else if (name == "snippet") {
                 providers.push_back(CompletionProvider::snippet());
+            } else if (const auto provider = host.state->completion_providers_by_name.find(name);
+                       provider != host.state->completion_providers_by_name.end()) {
+                providers.push_back(CompletionProvider::scripted(provider->second));
             } else if (host.services.resolve_completion_provider) {
                 const CommandTarget target{.window = context.window_id(),
                                            .buffer = context.buffer_id(),
@@ -5545,6 +5606,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_command_documentation));
     (void)scm_c_define_gsubr("define-interaction-provider!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_interaction_provider));
+    (void)scm_c_define_gsubr("define-completion-provider!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(define_completion_provider));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
     (void)scm_c_define_gsubr("define-keymap!", 3, 0, 0,
@@ -5594,7 +5657,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(define_motion));
     (void)scm_c_define_gsubr("define-language-profile!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_language_profile));
-    (void)scm_c_define_gsubr("%define-mode!", 9, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
+    (void)scm_c_define_gsubr("%define-mode!", 10, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
     (void)scm_c_define_gsubr("define-file-mode-rule!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_file_mode_rule));
     (void)scm_c_define_gsubr("define-project-provider!", 3, 0, 0,
@@ -5868,14 +5931,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export(
         "define-command!", "set-command-documentation!", "define-interaction-provider!",
-        "define-keymap!", "bind-key!", "bind-key-if-command!", "bind-remap!", "keymap-bindings",
-        "resolve-key-sequence", "keymap-context-snapshot", "key-sequence-completions",
-        "set-input-feedback!", "clear-input-feedback!", "%define-input-state!",
-        "set-input-state-lifecycle!", "set-input-state-position-hints!", "define-input-strategy!",
-        "set-default-input-strategy!", "set-view-input-strategy!", "view-input-strategy",
-        "set-base-input-state!", "push-input-state!", "pop-input-state!", "reset-input-states!",
-        "view-input-states", "observe-input-state-changes!", "define-thing!", "define-motion!",
-        "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
+        "define-completion-provider!", "define-keymap!", "bind-key!", "bind-key-if-command!",
+        "bind-remap!", "keymap-bindings", "resolve-key-sequence", "keymap-context-snapshot",
+        "key-sequence-completions", "set-input-feedback!", "clear-input-feedback!",
+        "%define-input-state!", "set-input-state-lifecycle!", "set-input-state-position-hints!",
+        "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
+        "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
+        "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
+        "define-motion!", "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
         "define-project-provider!", "mode-properties", "buffer-language-facet?",
         "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
         "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
@@ -6676,6 +6739,7 @@ struct GuileCall {
         ProjectIndexUpdated,
         InvokeCommand,
         InvokeProvider,
+        InvokeCompletionProvider,
         TransformProviderResult,
         InvokeInputHandler,
         InvokePositionHints,
@@ -6692,6 +6756,7 @@ struct GuileCall {
     std::size_t count = 0;
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
+    const CompletionRequest* completion_request = nullptr;
     const InputStateChange* input_state_change = nullptr;
     const BufferModePolicyChange* mode_policy_change = nullptr;
     EditorRuntime* runtime = nullptr;
@@ -6709,6 +6774,8 @@ struct GuileCall {
     std::string source_name;
     std::string query;
     std::vector<InteractionCandidate> provider_candidates;
+    CompletionProvider completion_provider;
+    CompletionProviderResponse completion_response;
     std::vector<PositionHint> position_hints;
     ModelineContent modeline_content;
     std::string error;
@@ -6766,6 +6833,10 @@ void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
     while (state.providers.size() > checkpoint.providers.size()) {
         (void)scm_gc_unprotect_object(state.providers.back().complete);
         state.providers.pop_back();
+    }
+    while (state.completion_providers.size() > checkpoint.completion_providers.size()) {
+        (void)scm_gc_unprotect_object(state.completion_providers.back().complete);
+        state.completion_providers.pop_back();
     }
     while (state.commands.size() > checkpoint.commands.size()) {
         const ScriptCommand& command = state.commands.back();
@@ -7084,6 +7155,99 @@ std::vector<InteractionCandidate> provider_candidates_from_scheme(SCM value) {
     return result;
 }
 
+SCM completion_request_value(const CompletionRequest& request) {
+    const char* trigger = "manual";
+    switch (request.trigger.kind) {
+    case CompletionTriggerKind::Manual:
+        break;
+    case CompletionTriggerKind::Character:
+        trigger = "character";
+        break;
+    case CompletionTriggerKind::Automatic:
+        trigger = "automatic";
+        break;
+    case CompletionTriggerKind::Incomplete:
+        trigger = "incomplete";
+        break;
+    }
+    SCM result = scm_c_make_vector(7, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("completion-request"));
+    scm_c_vector_set_x(result, 1,
+                       scm_from_utf8_stringn(request.query.data(), request.query.size()));
+    scm_c_vector_set_x(result, 2, scm_from_uint32(request.anchor.value));
+    scm_c_vector_set_x(result, 3, scm_from_uint32(request.caret.value));
+    scm_c_vector_set_x(result, 4, scm_from_uint32(request.line));
+    scm_c_vector_set_x(result, 5, scm_from_utf8_symbol(trigger));
+    scm_c_vector_set_x(
+        result, 6,
+        scm_from_utf8_stringn(request.trigger.character.data(), request.trigger.character.size()));
+    return result;
+}
+
+CompletionProviderResponse completion_response_from_scheme(SCM value, CompletionProvider provider,
+                                                           const CompletionRequest& request) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 3 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "completion-result") ||
+        !scm_is_vector(scm_c_vector_ref(value, 1)) || !scheme_boolean(scm_c_vector_ref(value, 2))) {
+        throw std::invalid_argument(
+            "Guile completion provider must return #(completion-result candidates incomplete?)");
+    }
+    const SCM candidates = scm_c_vector_ref(value, 1);
+    const std::size_t count = scm_c_vector_length(candidates);
+    std::vector<CompletionItem> items;
+    items.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const SCM candidate = scm_c_vector_ref(candidates, index);
+        if (!scm_is_vector(candidate) || scm_c_vector_length(candidate) != 10 ||
+            !symbol_is(scm_c_vector_ref(candidate, 0), "completion-item")) {
+            throw std::invalid_argument(
+                "Guile completion candidate must be a completion-item vector");
+        }
+        for (std::size_t field = 1; field <= 7; ++field) {
+            if (!scm_is_string(scm_c_vector_ref(candidate, field))) {
+                throw std::invalid_argument(
+                    "Guile completion candidate text fields must be strings");
+            }
+        }
+        const SCM start_value = scm_c_vector_ref(candidate, 8);
+        const SCM end_value = scm_c_vector_ref(candidate, 9);
+        if (scheme_false(start_value) != scheme_false(end_value) ||
+            (!scheme_false(start_value) &&
+             (scm_is_unsigned_integer(start_value, 0, std::numeric_limits<std::uint32_t>::max()) ==
+                  0 ||
+              scm_is_unsigned_integer(end_value, 0, std::numeric_limits<std::uint32_t>::max()) ==
+                  0))) {
+            throw std::invalid_argument(
+                "Guile completion candidate range must contain two byte offsets or two #f values");
+        }
+        TextRange replacement{request.anchor, request.caret};
+        if (!scheme_false(start_value)) {
+            replacement = {TextOffset{scm_to_uint32(start_value)},
+                           TextOffset{scm_to_uint32(end_value)}};
+        }
+        items.push_back(
+            {.provider = provider,
+             .filter_text = scheme_string(scm_c_vector_ref(candidate, 4)),
+             .label = scheme_string(scm_c_vector_ref(candidate, 1)),
+             .kind = scheme_string(scm_c_vector_ref(candidate, 2)),
+             .detail = scheme_string(scm_c_vector_ref(candidate, 3)),
+             .edit = CompletionEdit{.insert_range = replacement,
+                                    .replace_range = replacement,
+                                    .new_text = scheme_string(scm_c_vector_ref(candidate, 6))},
+             .sort_text = scheme_string(scm_c_vector_ref(candidate, 5)),
+             .is_snippet = false,
+             .resolved = true,
+             .resolving = false,
+             .resolve_error = {},
+             .documentation = scheme_string(scm_c_vector_ref(candidate, 7)),
+             .additional_edits = {},
+             .raw = {}});
+    }
+    return {.provider = provider,
+            .items = std::move(items),
+            .is_incomplete = scheme_true(scm_c_vector_ref(value, 2))};
+}
+
 SCM call_body(void* data) {
     auto& call = *static_cast<GuileCall*>(data);
     try {
@@ -7270,6 +7434,12 @@ SCM call_body(void* data) {
         case GuileCall::Operation::InvokeProvider:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      scm_from_utf8_string(call.query.c_str()));
+            break;
+        case GuileCall::Operation::InvokeCompletionProvider:
+            call.result = scm_call_2(call.procedure, command_context_value(*call.context),
+                                     completion_request_value(*call.completion_request));
+            call.completion_response = completion_response_from_scheme(
+                call.result, call.completion_provider, *call.completion_request);
             break;
         case GuileCall::Operation::TransformProviderResult:
             call.result = scm_call_1(call.procedure, call.argument);
@@ -7870,6 +8040,11 @@ public:
             (void)scm_gc_unprotect_object(provider.complete);
         }
         state_->providers.clear();
+        for (const ScriptCompletionProvider& provider : state_->completion_providers) {
+            (void)scm_gc_unprotect_object(provider.complete);
+        }
+        state_->completion_providers.clear();
+        state_->completion_providers_by_name.clear();
         for (const ScriptInputState& input_state : state_->input_states) {
             if (!scheme_false(input_state.handler)) {
                 (void)scm_gc_unprotect_object(input_state.handler);
@@ -7938,7 +8113,8 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        if (call.count != lease_->providers_installed || call.count != state_->providers.size()) {
+        if (call.count != lease_->providers_installed ||
+            call.count != state_->providers.size() + state_->completion_providers.size()) {
             state_->last_error = "Guile provider policy returned an inconsistent provider count";
             return std::unexpected(*state_->last_error);
         }
@@ -8423,6 +8599,30 @@ public:
         return evaluate_source(*lease_, request);
     }
 
+    std::expected<CompletionProviderResponse, std::string>
+    complete(const CompletionProvider& provider, const CompletionRequest& request) {
+        require_owner_thread();
+        if (provider.kind != CompletionProviderKind::Scripted ||
+            provider.session >= state_->completion_providers.size()) {
+            return std::unexpected("unknown scripted completion provider");
+        }
+        CommandContext context(*lease_->runtime, request.target.window, request.target.buffer,
+                               request.target.view);
+        GuileCall call;
+        call.operation = GuileCall::Operation::InvokeCompletionProvider;
+        call.procedure = state_->completion_providers[provider.session].complete;
+        call.context = &context;
+        call.completion_request = &request;
+        call.completion_provider = provider;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(
+                std::format("Guile completion provider failed: {}", result.error()));
+        }
+        state_->last_error.reset();
+        return std::move(call.completion_response);
+    }
+
     GuileRuntimeSnapshot snapshot() const {
         return {.engine = "guile",
                 .version = version_,
@@ -8447,7 +8647,8 @@ public:
                 .command_revision = state_->command_revision,
                 .scripted_commands = state_->commands.size(),
                 .provider_revision = state_->provider_revision,
-                .scripted_providers = state_->providers.size(),
+                .scripted_providers =
+                    state_->providers.size() + state_->completion_providers.size(),
                 .binding_revision = state_->binding_revision,
                 .input_state_revision = state_->input_state_revision,
                 .scripted_input_states = state_->input_state_definitions,
@@ -8617,6 +8818,11 @@ std::expected<void, std::string> GuileRuntime::load_extension(const std::string&
 std::expected<GuileEvaluationResult, std::string>
 GuileRuntime::evaluate(GuileEvaluationRequest request) {
     return impl_->evaluate(request);
+}
+
+std::expected<CompletionProviderResponse, std::string>
+GuileRuntime::complete(const CompletionProvider& provider, const CompletionRequest& request) {
+    return impl_->complete(provider, request);
 }
 
 GuileRuntimeSnapshot GuileRuntime::snapshot() const {

@@ -118,6 +118,23 @@ void ModeRegistry::set_things(ModeId mode, std::vector<ModeThingBinding> things)
     definition_for_configuration(mode).things = std::move(things);
 }
 
+void ModeRegistry::set_completion_providers(ModeId mode,
+                                            std::optional<std::vector<std::string>> providers) {
+    if (providers) {
+        std::unordered_set<std::string> names;
+        for (const std::string& provider : *providers) {
+            if (provider.empty()) {
+                throw std::invalid_argument("completion provider name must not be empty");
+            }
+            if (!names.insert(provider).second) {
+                throw std::invalid_argument(
+                    std::format("duplicate completion provider '{}'", provider));
+            }
+        }
+    }
+    definition_for_configuration(mode).completion_providers = std::move(providers);
+}
+
 void ModeRegistry::add_keymap(ModeId mode, KeymapId keymap) {
     Definition& definition = definition_for_configuration(mode);
     (void)keymaps_->definition(keymap);
@@ -190,6 +207,18 @@ std::optional<InputStateId> ModeRegistry::inherited_initial_state(ModeId mode) c
     return std::nullopt;
 }
 
+std::optional<std::vector<std::string>>
+ModeRegistry::inherited_completion_providers(ModeId mode) const {
+    const Definition* current = &definition(mode);
+    while (current != nullptr) {
+        if (current->completion_providers) {
+            return current->completion_providers;
+        }
+        current = current->parent ? &definition(*current->parent) : nullptr;
+    }
+    return std::nullopt;
+}
+
 void ModeRegistry::append_inherited_things(ModeId mode,
                                            std::vector<ModeThingBinding>& things) const {
     const Definition* current = &definition(mode);
@@ -234,6 +263,19 @@ EffectiveModePolicy ModeRegistry::effective_policy(const BufferModes& modes) con
     if (!result.initial_state && modes.major()) {
         result.initial_state = inherited_initial_state(*modes.major());
     }
+    std::optional<std::vector<std::string>> completion_providers;
+    for (auto mode = modes.minors().rbegin(); mode != modes.minors().rend(); ++mode) {
+        if (std::optional<std::vector<std::string>> providers =
+                inherited_completion_providers(*mode)) {
+            completion_providers = std::move(providers);
+            break;
+        }
+    }
+    if (!completion_providers && modes.major()) {
+        completion_providers = inherited_completion_providers(*modes.major());
+    }
+    result.completion_providers =
+        completion_providers ? std::move(*completion_providers) : std::vector<std::string>{};
     for (auto mode = modes.minors().rbegin(); mode != modes.minors().rend(); ++mode) {
         append_inherited_things(*mode, result.things);
     }

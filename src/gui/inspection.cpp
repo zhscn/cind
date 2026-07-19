@@ -510,6 +510,8 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
             output.push_back('}');
         }
         output.push_back(']');
+        output += ",\"completion_providers\":";
+        append_strings(output, buffer.completion_providers);
         output += std::format(",\"location_count\":{},\"diagnostics\":{{\"count\":{},\"errors\":{},"
                               "\"warnings\":{}}}",
                               buffer.location_count, buffer.diagnostic_count,
@@ -3116,7 +3118,15 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                << (buffer.active ? " active" : "") << (buffer.modified ? " modified" : "")
                << " name=\"" << printable(buffer.name) << "\" resource=\""
                << printable(buffer.resource) << "\" class=" << printable(buffer.interaction_class)
-               << " initial-state=" << printable(buffer.initial_input_state) << "\n";
+               << " initial-state=" << printable(buffer.initial_input_state)
+               << " completion-providers=";
+        for (std::size_t index = 0; index < buffer.completion_providers.size(); ++index) {
+            if (index != 0) {
+                output << ',';
+            }
+            output << printable(buffer.completion_providers[index]);
+        }
+        output << '\n';
     }
     output << "    windows=" << frame.editor.windows.size() << '\n';
     for (const OpenWindowStateSnapshot& window : frame.editor.windows) {

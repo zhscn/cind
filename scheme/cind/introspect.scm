@@ -144,13 +144,18 @@
          (initial-state (vector-ref properties 4))
          (things (vector-ref properties 5))
          (keymaps (vector-ref properties 6))
-         (language (vector-ref properties 7)))
+         (language (vector-ref properties 7))
+         (completion-providers (vector-ref properties 8)))
     (string-append
      (format #f "~a (~a mode)\n" (vector-ref properties 0) (vector-ref properties 1))
      (format #f "  parent: ~a\n" (if parent parent "none"))
      (format #f "  language profile: ~a\n" (if language language "none"))
      (format #f "  interaction class: ~a\n" (if interaction interaction "inherited"))
      (format #f "  initial input state: ~a\n" (if initial-state initial-state "inherited"))
+     "  completion providers:\n"
+     (if completion-providers
+         (indented-lines (vector->strings completion-providers) "none")
+         "    inherited\n")
      "  keymaps:\n" (indented-lines (vector->strings keymaps) "none")
      "  semantic things:\n"
      (if (null? things)
@@ -180,6 +185,8 @@
       (format #f "  interaction class: ~a\n" (vector-ref policy 0))
       (format #f "  initial input state: ~a\n"
               (if (vector-ref policy 1) (vector-ref policy 1) "none"))
+      "  completion providers:\n"
+      (indented-lines (vector->strings (vector-ref policy 3)) "none")
       "  semantic things:\n"
       (if (null? (vector-ref policy 2))
           "    none\n"

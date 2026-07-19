@@ -1,8 +1,12 @@
 (define-module (cind ares)
   #:use-module (ares completion)
   #:use-module (ares repl)
+  #:use-module (rnrs bytevectors)
+  #:use-module (cind command)
   #:use-module (cind development)
-  #:export (ares-provider-definitions))
+  #:use-module (cind host)
+  #:export (ares-provider-definitions
+            ares-completion-provider-definitions))
 
 (define (scheme-delimiter? character)
   (or (char-whitespace? character)
@@ -43,3 +47,54 @@
    (cons "scheme-repl"
          (lambda (context query)
            (scheme-repl-candidates host query)))))
+
+(define (scheme-byte-delimiter? byte)
+  (or (memv byte '(9 10 11 12 13 32))
+      (memv byte '(34 39 40 41 44 59 91 93 96 123 124 125))))
+
+(define (scheme-symbol-prefix text caret)
+  (let* ((bytes (string->utf8 text))
+         (limit (min caret (bytevector-length bytes))))
+    (let loop ((start limit))
+      (if (or (zero? start)
+              (scheme-byte-delimiter? (bytevector-u8-ref bytes (- start 1))))
+          (let* ((length (- limit start))
+                 (prefix (make-bytevector length)))
+            (bytevector-copy! bytes start prefix 0 length)
+            (values (utf8->string prefix) start))
+          (loop (- start 1))))))
+
+(define (completion-documentation candidate)
+  (or (completion-candidate-documentation candidate) ""))
+
+(define (ares-document-completions host context request)
+  (call-with-values
+      (lambda ()
+        (scheme-symbol-prefix (buffer-text host (context-buffer context))
+                              (completion-request-caret request)))
+    (lambda (prefix start)
+      (let ((candidates
+             (if (zero? (string-length prefix))
+                 #()
+                 (repl-complete (make-repl (make-evaluation-module host)) prefix))))
+        (let loop ((index 0)
+                   (result '()))
+          (if (= index (vector-length candidates))
+              (completion-result (reverse result) #:incomplete? #t)
+              (let* ((candidate (vector-ref candidates index))
+                     (name (completion-candidate-name candidate)))
+                (loop (+ index 1)
+                      (cons (completion-item
+                             name
+                             #:kind (completion-candidate-type candidate)
+                             #:detail (completion-candidate-namespace candidate)
+                             #:documentation (completion-documentation candidate)
+                             #:start start
+                             #:end (completion-request-caret request))
+                            result)))))))))
+
+(define (ares-completion-provider-definitions host)
+  (list
+   (cons "ares"
+         (lambda (context request)
+           (ares-document-completions host context request)))))

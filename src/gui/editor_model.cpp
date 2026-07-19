@@ -559,6 +559,7 @@ EditorStateSnapshot EditorModel::inspect() {
                            .interaction_class = buffer.interaction_class,
                            .initial_input_state = buffer.initial_input_state,
                            .things = std::move(things),
+                           .completion_providers = buffer.completion_providers,
                            .location_count = buffer.location_count,
                            .diagnostic_count = buffer.diagnostic_count,
                            .diagnostic_errors = buffer.diagnostic_errors,

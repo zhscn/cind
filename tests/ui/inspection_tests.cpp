@@ -170,6 +170,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .interaction_class = "editing",
                      .initial_input_state = "emacs",
                      .things = {{.name = "defun", .definition = "cind.defun"}},
+                     .completion_providers = {"lsp:cpp:clangd", "word", "path"},
                      .location_count = 0,
                      .diagnostic_count = 3,
                      .diagnostic_errors = 1,
@@ -628,6 +629,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     REQUIRE(buffers.ok);
     CHECK(buffers.payload.find("\"name\":\"sample.cc\"") != std::string::npos);
     CHECK(buffers.payload.find("\"major_mode\":\"cind.cpp\"") != std::string::npos);
+    CHECK(buffers.payload.find("\"completion_providers\":[\"lsp:cpp:clangd\",\"word\",\"path\"]") !=
+          std::string::npos);
     CHECK(buffers.payload.find("\"location_count\":0") != std::string::npos);
     CHECK(buffers.payload.find("\"diagnostics\":{\"count\":3,\"errors\":1,\"warnings\":2}") !=
           std::string::npos);

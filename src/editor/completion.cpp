@@ -82,6 +82,8 @@ std::string completion_provider_name(CompletionProvider provider) {
         return "word";
     case CompletionProviderKind::Snippet:
         return "snippet";
+    case CompletionProviderKind::Scripted:
+        return std::format("scripted:{}", provider.session);
     }
     throw std::logic_error("unknown completion provider kind");
 }

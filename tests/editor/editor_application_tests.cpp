@@ -469,7 +469,7 @@ TEST_CASE("Scheme mode navigates datums without inheriting C-family editing") {
 TEST_CASE("user initialization overrides file mode policy before the first buffer") {
     TemporaryFile init(std::format("cind-mode-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((%define-mode! host 'user-notes 'major 'fundamental-mode #f #f
-                 'editing #f '())
+                 'editing #f '() #f)
 (define-file-mode-rule! host 'user-notes-rule 'user-notes '(".notes") '())
 )");
     EditorApplication application({.path = "sample.notes",
@@ -3434,6 +3434,46 @@ TEST_CASE("completion commands use the completion-active keymap and apply buffer
     CHECK_FALSE(application.completion().active());
     const std::string text = application.session().snapshot().content().to_string();
     CHECK((text == "foo foobar foo" || text == "foo foobar foobar"));
+}
+
+TEST_CASE("Scheme buffer completion uses Ares bindings and Scheme symbol ranges") {
+    EditorApplication application = make_application("sample.scm", "(cind-live-bin");
+    EditorRuntime& runtime = application.runtime();
+    CommandContext context(runtime, application.window_id(), application.buffer_id(),
+                           application.view_id());
+    const CommandResult evaluated = runtime.commands().invoke(
+        require_command(runtime, "scheme.eval-expression.accept"), context,
+        CommandInvocation{.arguments = {"(begin (define (cind-live-binding value) value) 42)"},
+                          .prefix = {}});
+    REQUIRE(evaluated.has_value());
+    application.session().set_caret(TextOffset{14});
+
+    send_keys(application, "C-M-i");
+    const CompletionState* state = application.completion().state();
+    REQUIRE(state != nullptr);
+    const auto provider =
+        std::ranges::find_if(state->providers, [](const CompletionProviderState& candidate) {
+            return candidate.provider.kind == CompletionProviderKind::Scripted;
+        });
+    REQUIRE(provider != state->providers.end());
+    CAPTURE(provider->error);
+    CHECK(provider->error.empty());
+    CHECK(std::ranges::any_of(provider->items, [](const CompletionItem& item) {
+        return item.label == "cind-live-binding";
+    }));
+    const auto match = std::ranges::find_if(state->matches, [](const CompletionMatch& candidate) {
+        return candidate.item.provider.kind == CompletionProviderKind::Scripted &&
+               candidate.item.label == "cind-live-binding";
+    });
+    REQUIRE(match != state->matches.end());
+    REQUIRE(match->item.edit.has_value());
+    CHECK(match->item.edit->insert_range == make_range(1, 14));
+    CHECK(match->item.kind == "function");
+
+    REQUIRE(
+        application.completion().select(static_cast<std::size_t>(match - state->matches.begin())));
+    send_keys(application, "RET");
+    CHECK(application.session().snapshot().content().to_string() == "(cind-live-binding");
 }
 
 TEST_CASE("include completion selects the asynchronous path provider") {

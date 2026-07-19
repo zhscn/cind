@@ -77,6 +77,7 @@ The native module exports:
 (define-command! host command-name execute enabled)
 (set-command-documentation! host command-name documentation)
 (define-interaction-provider! host provider-name complete)
+(define-completion-provider! host provider-name complete)
 (define-keymap! host keymap-name parent-or-#f)
 (bind-key! host keymap-name key-sequence command-or-prefix)
 (bind-key-if-command! host keymap-name key-sequence command-name)
@@ -103,7 +104,7 @@ The native module exports:
 (define-thing! host name pattern)
 (define-motion! host name mechanism)
 (define-language-profile! host name providers defaults)
-(%define-mode! host name kind parent language-profile keymap interaction-class initial-state things)
+(%define-mode! host name kind parent language-profile keymap interaction-class initial-state things completion-providers)
 (define-file-mode-rule! host rule-name mode-name suffixes filenames)
 (define-project-provider! host provider-name markers)
 (mode-properties host mode-name)
@@ -522,21 +523,26 @@ the C-family provider inventory and the dialect setting consumed by the Scheme p
 
 `(cind core)` wraps `%define-mode!` as keyword procedures `define-major-mode!` and
 `define-minor-mode!`. A major-mode definition accepts `#:parent`, `#:language`, `#:keymap`,
-`#:interaction-class`, `#:initial-state`, and `#:things`; thing bindings are an association list of
-semantic names to named Thing definitions. Parent modes have the same major/minor kind. When a
-child keymap has no explicit parent, mode inheritance assigns the nearest parent mode keymap.
-`mode-properties` returns the declared metadata, language profile, and effective keymap names.
+`#:interaction-class`, `#:initial-state`, `#:things`, and `#:completion-providers`; thing bindings
+are an association list of semantic names to named Thing definitions, while completion providers
+are ordered registry names. Parent modes have the same major/minor kind. When a child keymap has no
+explicit parent, mode inheritance assigns the nearest parent mode keymap. `mode-properties` returns
+the declared metadata, language profile, effective keymap names, and local completion-provider
+policy.
 `buffer-language-facet?` reports whether the active major-mode language profile binds a provider
 for the requested facet.
 
 `set-buffer-major-mode!` and `set-buffer-minor-mode!` mutate buffer-scoped mode state.
-`buffer-mode-policy` returns `#(interaction-class initial-state things)`. Effective policy changes
+`buffer-mode-policy` returns
+`#(interaction-class initial-state things completion-providers)`. Effective policy changes
 notify procedures registered through `observe-mode-policy-changes!` with
 `#(kind buffer-id mode-name-or-#f before-policy after-policy)`. A mode's explicit initial state
 precedes the class mapping, and the most recently enabled minor-mode declaration precedes the major
-mode. A change to the effective interaction class or initial state rederives every View of the
-Buffer through that View's selected strategy while preserving its transient stack. Changes confined
-to semantic thing bindings preserve the View's durable and transient input states.
+mode. Completion-provider policy follows the same minor-mode precedence and inherits through mode
+parents; an explicit empty list disables completion for that mode layer. A change to the effective
+interaction class or initial state rederives every View of the Buffer through that View's selected
+strategy while preserving its transient stack. Changes confined to semantic thing bindings or
+completion providers preserve the View's durable and transient input states.
 
 `define-file-mode-rule!` registers a named declarative matcher containing a major mode, filename
 suffixes and exact filenames. Matching is case-sensitive and the most recently defined matching
@@ -567,6 +573,16 @@ picker should display them. The runtime
 protects the procedure from collection, validates the complete result and invalidates the callback
 with its application. Scheme conditions and malformed candidates become interaction errors and are
 retained in the scripting inspection snapshot.
+
+`define-completion-provider!` registers an editor-thread document-completion procedure. The
+procedure receives an immutable command context and a request value whose accessors are exported by
+`(cind command)`: query, generic anchor, caret, logical line, trigger kind, and trigger character.
+It returns `completion-result` containing `completion-item` values. Each item supplies display,
+filter, ordering, insertion, detail, kind, and documentation text, plus either two byte offsets for
+its replacement range or two `#f` values to use the generic query range. The completion pipeline
+validates ranges against the request snapshot, merges all mode-selected providers, ranks candidates,
+and applies the selected edit atomically. A scripted provider may mark a result incomplete so input
+changes request a fresh result instead of only filtering its previous candidates.
 
 `enabled-command-names`, `open-buffer-summaries`, `project-root`, `project-files` and
 `active-key-bindings` expose immutable registry and application snapshots. Path operations provide
@@ -1021,7 +1037,8 @@ Ares values map onto existing editor mechanisms:
 
 | Ares value | cind mechanism |
 | --- | --- |
-| completion candidates | interaction provider |
+| REPL expression candidates | interaction provider |
+| Scheme buffer candidates | scripted document-completion provider |
 | evaluation values and captured output | echo area or generated result buffer |
 
 `M-:` requests a normal picker interaction from the command loop. The `scheme-repl` provider
@@ -1032,6 +1049,12 @@ loaded policy modules and definitions created by earlier evaluations share one l
 The result crosses the scripting boundary as status, rendered values, standard output and error
 output. The command policy chooses the echo area for a compact value and the reusable
 `*Scheme Evaluation*` buffer for structured output.
+
+`scheme-mode` selects the `ares` document provider before local word completion. The provider scans
+the Scheme symbol preceding the caret as UTF-8 bytes, queries Ares in the persistent evaluation
+module, and returns an explicit byte replacement range. Scheme punctuation such as hyphens remains
+part of the symbol even when the generic word provider uses a narrower anchor. Candidate type,
+namespace, and documentation metadata flow through the shared completion UI and inspector.
 
 The embedded REPL runs as part of the editor command loop. Native mechanisms keep their
 editor-thread checks, and blocking editor work remains expressed through typed `AsyncRuntime`

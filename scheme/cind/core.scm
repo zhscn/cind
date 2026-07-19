@@ -1802,11 +1802,9 @@
   (command-completed/preserve))
 
 (define (completion-start host context invocation)
-  (let ((major (vector-ref (buffer-mode-summary host (context-buffer context)) 0)))
-    (start-completion! host context
-                       (if (eq? major 'cind.cpp)
-                           '("lsp:cpp:clangd" "word" "path")
-                           '("word" "path"))))
+  (let* ((summary (buffer-mode-summary host (context-buffer context)))
+         (policy (vector-ref summary 2)))
+    (start-completion! host context (vector-ref policy 3)))
   (request-redraw! host)
   (command-completed/preserve))
 
@@ -2971,14 +2969,18 @@
    (ares-provider-definitions host)))
 
 (define (install-core-providers! host)
-  (let ((providers (core-providers host)))
+  (let ((providers (core-providers host))
+        (completion-providers (ares-completion-provider-definitions host)))
     (for-each (lambda (provider)
                 (define-interaction-provider!
                  host (car provider)
                  (lambda (context query)
                    (rank-provider-result ((cdr provider) context query) query))))
               providers)
-    (length providers)))
+    (for-each (lambda (provider)
+                (define-completion-provider! host (car provider) (cdr provider)))
+              completion-providers)
+    (+ (length providers) (length completion-providers))))
 
 (define (install-input-states! host)
   (+ (install-read-key-input-state! host)
@@ -2996,8 +2998,10 @@
                             (keymap #f)
                             (interaction-class #f)
                             (initial-state #f)
-                            (things '()))
-  (%define-mode! host name 'major parent language keymap interaction-class initial-state things))
+                            (things '())
+                            (completion-providers #f))
+  (%define-mode! host name 'major parent language keymap interaction-class initial-state things
+                 completion-providers))
 
 (define* (define-minor-mode! host name
                             #:key
@@ -3005,8 +3009,10 @@
                             (keymap #f)
                             (interaction-class #f)
                             (initial-state #f)
-                            (things '()))
-  (%define-mode! host name 'minor parent #f keymap interaction-class initial-state things))
+                            (things '())
+                            (completion-providers #f))
+  (%define-mode! host name 'minor parent #f keymap interaction-class initial-state things
+                 completion-providers))
 
 (define (install-core-modes! host)
   (define-thing! host 'cind.angle '(pair "<" ">"))
@@ -3040,7 +3046,8 @@
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
-    #:interaction-class 'editing)
+    #:interaction-class 'editing
+    #:completion-providers '("word" "path"))
   (define-major-mode! host 'prog-mode
     #:parent 'fundamental-mode
     #:interaction-class 'editing
@@ -3053,11 +3060,13 @@
     #:parent 'prog-mode
     #:language 'cind.scheme
     #:keymap 'scheme-mode-map
-    #:interaction-class 'editing)
+    #:interaction-class 'editing
+    #:completion-providers '("ares" "word"))
   (define-major-mode! host 'cind.cpp
     #:parent 'prog-mode
     #:language 'cind.cpp
     #:interaction-class 'editing
+    #:completion-providers '("lsp:cpp:clangd" "word" "path")
     #:things '((angle . cind.angle)
                (defun . cind.defun)
                (string . cind.string)))

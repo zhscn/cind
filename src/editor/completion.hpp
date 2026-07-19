@@ -22,6 +22,7 @@ enum class CompletionProviderKind : std::uint8_t {
     Path,
     Word,
     Snippet,
+    Scripted,
 };
 
 struct CompletionProvider {
@@ -33,6 +34,9 @@ struct CompletionProvider {
     static constexpr CompletionProvider snippet() { return {CompletionProviderKind::Snippet, 0}; }
     static constexpr CompletionProvider lsp(std::uint64_t session) {
         return {CompletionProviderKind::Lsp, session};
+    }
+    static constexpr CompletionProvider scripted(std::uint64_t provider) {
+        return {CompletionProviderKind::Scripted, provider};
     }
 
     friend constexpr auto operator<=>(CompletionProvider, CompletionProvider) = default;
@@ -84,7 +88,7 @@ struct CompletionItem {
     std::string resolve_error;
     std::string documentation;
     std::vector<TextEdit> additional_edits;
-    // Type-erased provider payload. The owning fixed provider interprets it
+    // Type-erased provider payload. The owning provider interprets it
     // when resolve and provider-specific application are implemented.
     std::string raw;
 };
@@ -135,9 +139,9 @@ struct CompletionApplyOptions {
     bool replace = false;
 };
 
-// Fixed-provider completion pipeline. It owns request generations, source
-// replacement, unified filtering/sorting, and atomic edit application. The
-// dispatcher is a compiled mechanism switch, not a dynamic plugin registry.
+// Frontend-independent completion pipeline. It owns request generations,
+// provider replacement, unified filtering/sorting, and atomic edit
+// application. Provider registration and dispatch remain outside the pipeline.
 class CompletionPipeline {
 public:
     using Dispatch =

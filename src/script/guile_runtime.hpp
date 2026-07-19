@@ -384,6 +384,8 @@ public:
     std::expected<GuileDisplayPlan, std::string> display_plan(const GuileDisplayFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
+    std::expected<CompletionProviderResponse, std::string>
+    complete(const CompletionProvider& provider, const CompletionRequest& request);
     GuileRuntimeSnapshot snapshot() const;
 
     // Releases task callbacks while the application's async service is still

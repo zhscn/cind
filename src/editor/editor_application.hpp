@@ -65,6 +65,7 @@ struct OpenBufferSnapshot {
     std::string interaction_class;
     std::string initial_input_state;
     std::vector<ModeThingBinding> things;
+    std::vector<std::string> completion_providers;
     std::size_t location_count = 0;
     std::size_t diagnostic_count = 0;
     std::size_t diagnostic_errors = 0;
