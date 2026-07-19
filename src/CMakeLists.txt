@@ -24,13 +24,14 @@ add_library(cind_lsp STATIC
   lsp/json_rpc.cpp
   lsp/navigation.cpp
   lsp/protocol.cpp
+  lsp/refactor.cpp
   lsp/registry.cpp
   lsp/session.cpp
 )
 target_include_directories(cind_lsp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cind_lsp
   PUBLIC cind_async cind_document
-  PRIVATE PkgConfig::NlohmannJson
+  PRIVATE glaze::glaze
 )
 
 add_library(cind_lexer STATIC

@@ -137,3 +137,20 @@ The editor gutter shows the highest-severity diagnostic for each visible line in
 column. The `diagnostic.list` Scheme command builds a `cind.location-list` buffer from the active
 diagnostics; `C-c l e` opens it and normal location-list navigation visits the source range. The GUI
 inspector exposes diagnostic totals and error/warning counts for every entry in `editor.buffers`.
+
+## Refactoring protocol
+
+`LspRefactorFeature` owns rename, code-action, and code-action resolve requests. Rename results and
+code-action edits normalize both `changes` and versioned `documentChanges` into resource-keyed
+UTF-16 text edits. Command payloads and unresolved code actions retain their protocol data for the
+Scheme feature layer to present, resolve, and apply.
+
+The adapter preserves document versions and reports resource operations separately from text
+edits. Editor policy resolves resources to Buffers, converts ranges against matching snapshots, and
+submits the result to the shared workspace-edit executor. This keeps protocol decoding independent
+from buffer loading, user confirmation, display policy, and cross-Buffer undo grouping.
+
+Position, range, and text-edit JSON use one internal codec shared by completion, diagnostics,
+navigation, and refactoring. The codec uses the fetched Glaze dependency and preserves unsigned
+64-bit request IDs and document versions. Public feature headers continue to expose native protocol
+values rather than the JSON library.

@@ -1,10 +1,8 @@
 #include "lsp/navigation.hpp"
-
-#include <nlohmann/json.hpp>
+#include "lsp/protocol_json.hpp"
 
 #include <exception>
 #include <format>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -13,34 +11,7 @@ namespace cind {
 
 namespace {
 
-using Json = nlohmann::json;
-
-Json position_json(LspPosition position) {
-    return {{"line", position.line}, {"character", position.character}};
-}
-
-std::optional<LspPosition> parse_position(const Json& value) {
-    if (!value.is_object() || !value.contains("line") || !value.contains("character") ||
-        !value["line"].is_number_unsigned() || !value["character"].is_number_unsigned()) {
-        return std::nullopt;
-    }
-    const auto line = value["line"].get<std::uint64_t>();
-    const auto character = value["character"].get<std::uint64_t>();
-    if (line > std::numeric_limits<std::uint32_t>::max() ||
-        character > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-    }
-    return LspPosition{static_cast<std::uint32_t>(line), static_cast<std::uint32_t>(character)};
-}
-
-std::optional<LspRange> parse_range(const Json& value) {
-    if (!value.is_object() || !value.contains("start") || !value.contains("end")) {
-        return std::nullopt;
-    }
-    const std::optional<LspPosition> start = parse_position(value["start"]);
-    const std::optional<LspPosition> end = parse_position(value["end"]);
-    return start && end ? std::optional(LspRange{*start, *end}) : std::nullopt;
-}
+using Json = lsp_json::Json;
 
 std::optional<LspLocation> parse_location(const Json& value) {
     if (!value.is_object()) {
@@ -48,26 +19,23 @@ std::optional<LspLocation> parse_location(const Json& value) {
     }
     const Json* uri = nullptr;
     const Json* range = nullptr;
-    if (const auto found = value.find("uri"); found != value.end()) {
-        uri = &*found;
-        const auto found_range = value.find("range");
-        if (found_range != value.end()) {
-            range = &*found_range;
+    if (const Json* found = lsp_json::find(value, "uri")) {
+        uri = found;
+        if (const Json* found_range = lsp_json::find(value, "range")) {
+            range = found_range;
         }
-    } else if (const auto target_uri = value.find("targetUri"); target_uri != value.end()) {
-        uri = &*target_uri;
-        const auto selection = value.find("targetSelectionRange");
-        const auto target = value.find("targetRange");
-        if (selection != value.end()) {
-            range = &*selection;
-        } else if (target != value.end()) {
-            range = &*target;
+    } else if (const Json* target_uri = lsp_json::find(value, "targetUri")) {
+        uri = target_uri;
+        if (const Json* selection = lsp_json::find(value, "targetSelectionRange")) {
+            range = selection;
+        } else if (const Json* target = lsp_json::find(value, "targetRange")) {
+            range = target;
         }
     }
     if (uri == nullptr || range == nullptr || !uri->is_string()) {
         return std::nullopt;
     }
-    const std::optional<LspRange> parsed_range = parse_range(*range);
+    const std::optional<LspRange> parsed_range = lsp_json::parse_range(*range);
     const std::expected<std::string, std::string> resource =
         file_uri_to_path(uri->get<std::string>());
     if (!parsed_range || !resource) {
@@ -88,7 +56,7 @@ std::vector<LspLocation> parse_locations(const Json& result) {
     };
     if (result.is_array()) {
         locations.reserve(result.size());
-        for (const Json& value : result) {
+        for (const Json& value : result.get_array()) {
             append(value);
         }
     } else if (result.is_object()) {
@@ -147,17 +115,17 @@ LspNavigationFeature::request(LspSession& session, LspNavigationKind kind,
         return std::unexpected(std::move(synchronized.error()));
     }
     Json params{{"textDocument", {{"uri", request.uri}}},
-                {"position", position_json(lsp_position(request.text, request.caret))}};
+                {"position", lsp_json::position(lsp_position(request.text, request.caret))}};
     if (kind == LspNavigationKind::References) {
-        params["context"] = {{"includeDeclaration", request.include_declaration}};
+        params["context"] = Json::object_t{{"includeDeclaration", request.include_declaration}};
     }
     Failed parse_failed = failed;
     return session.request(
-        {.method = method(kind), .params = params.dump()},
+        {.method = method(kind), .params = lsp_json::dump(params)},
         [completed = std::move(completed),
          failed = std::move(parse_failed)](const LspResponse& response) mutable {
             try {
-                completed(parse_locations(Json::parse(response.result)));
+                completed(parse_locations(lsp_json::parse_or_throw(response.result)));
             } catch (const std::exception& exception) {
                 report_failure(failed, std::format("cannot decode LSP navigation response: {}",
                                                    exception.what()));
@@ -176,12 +144,11 @@ bool LspNavigationFeature::supported(const LspSession& session, LspNavigationKin
 }
 
 std::string LspNavigationFeature::client_capabilities() {
-    return Json{{"textDocument",
-                 {{"definition", {{"linkSupport", true}}},
-                  {"declaration", {{"linkSupport", true}}},
-                  {"implementation", {{"linkSupport", true}}},
-                  {"references", Json::object()}}}}
-        .dump();
+    return lsp_json::dump(Json{{"textDocument",
+                                {{"definition", {{"linkSupport", true}}},
+                                 {"declaration", {{"linkSupport", true}}},
+                                 {"implementation", {{"linkSupport", true}}},
+                                 {"references", Json::object_t{}}}}});
 }
 
 } // namespace cind

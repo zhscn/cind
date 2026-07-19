@@ -1,11 +1,9 @@
 #include "lsp/completion.hpp"
-
-#include <nlohmann/json.hpp>
+#include "lsp/protocol_json.hpp"
 
 #include <cstdint>
 #include <exception>
 #include <format>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -15,37 +13,7 @@ namespace cind {
 
 namespace {
 
-using Json = nlohmann::json;
-
-Json position_json(LspPosition position) {
-    return {{"line", position.line}, {"character", position.character}};
-}
-
-std::optional<LspPosition> parse_position(const Json& value) {
-    if (!value.is_object() || !value.contains("line") || !value.contains("character") ||
-        !value["line"].is_number_unsigned() || !value["character"].is_number_unsigned()) {
-        return std::nullopt;
-    }
-    const auto line = value["line"].get<std::uint64_t>();
-    const auto character = value["character"].get<std::uint64_t>();
-    if (line > std::numeric_limits<std::uint32_t>::max() ||
-        character > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-    }
-    return LspPosition{static_cast<std::uint32_t>(line), static_cast<std::uint32_t>(character)};
-}
-
-std::optional<LspRange> parse_range(const Json& value) {
-    if (!value.is_object() || !value.contains("start") || !value.contains("end")) {
-        return std::nullopt;
-    }
-    const std::optional<LspPosition> start = parse_position(value["start"]);
-    const std::optional<LspPosition> end = parse_position(value["end"]);
-    if (!start || !end) {
-        return std::nullopt;
-    }
-    return LspRange{*start, *end};
-}
+using Json = lsp_json::Json;
 
 std::string completion_kind(const Json& value) {
     static constexpr std::string_view names[] = {
@@ -54,10 +22,11 @@ std::string completion_kind(const Json& value) {
         "keyword",  "snippet",   "color",  "file",     "reference",      "folder", "enum member",
         "constant", "struct",    "event",  "operator", "type parameter",
     };
-    if (!value.is_number_integer()) {
+    const std::optional<std::int64_t> parsed = lsp_json::int64(value);
+    if (!parsed) {
         return {};
     }
-    const std::int64_t kind = value.get<std::int64_t>();
+    const std::int64_t kind = *parsed;
     return kind > 0 && static_cast<std::size_t>(kind) < std::size(names)
                ? std::string(names[static_cast<std::size_t>(kind)])
                : std::string{};
@@ -68,24 +37,12 @@ std::string documentation_text(const Json& value) {
         return value.get<std::string>();
     }
     if (value.is_object()) {
-        const auto found = value.find("value");
-        if (found != value.end() && found->is_string()) {
+        const Json* found = lsp_json::find(value, "value");
+        if (found != nullptr && found->is_string()) {
             return found->get<std::string>();
         }
     }
     return {};
-}
-
-std::optional<LspTextEdit> parse_text_edit(const Json& value) {
-    if (!value.is_object() || !value.contains("range") || !value.contains("newText") ||
-        !value["newText"].is_string()) {
-        return std::nullopt;
-    }
-    const std::optional<LspRange> range = parse_range(value["range"]);
-    if (!range) {
-        return std::nullopt;
-    }
-    return LspTextEdit{.range = *range, .new_text = value["newText"].get<std::string>()};
 }
 
 LspCompletionItem parse_completion_item(const Json& value, bool resolved) {
@@ -95,45 +52,46 @@ LspCompletionItem parse_completion_item(const Json& value, bool resolved) {
     LspCompletionItem item{
         .label = value["label"].get<std::string>(),
         .insert_text = {},
-        .filter_text = value.value("filterText", std::string{}),
-        .sort_text = value.value("sortText", std::string{}),
+        .filter_text = lsp_json::value_or(value, "filterText", std::string{}),
+        .sort_text = lsp_json::value_or(value, "sortText", std::string{}),
         .kind = value.contains("kind") ? completion_kind(value["kind"]) : std::string{},
-        .detail = value.value("detail", std::string{}),
+        .detail = lsp_json::value_or(value, "detail", std::string{}),
         .edit = std::nullopt,
-        .is_snippet = value.value("insertTextFormat", 1) == 2,
+        .is_snippet = lsp_json::value_or(value, "insertTextFormat", 1) == 2,
         .resolved = resolved,
         .documentation = value.contains("documentation")
                              ? documentation_text(value["documentation"])
                              : std::string{},
         .additional_edits = {},
-        .raw = value.dump(),
+        .raw = lsp_json::dump(value),
     };
-    std::string insertion = value.value("textEditText", std::string{});
+    std::string insertion = lsp_json::value_or(value, "textEditText", std::string{});
     if (insertion.empty()) {
-        insertion = value.value("insertText", item.label);
+        insertion = lsp_json::value_or(value, "insertText", item.label);
     }
-    if (const auto edit = value.find("textEdit"); edit != value.end() && edit->is_object()) {
-        const std::string new_text = edit->value("newText", insertion);
+    if (const Json* edit = lsp_json::find(value, "textEdit");
+        edit != nullptr && edit->is_object()) {
+        const std::string new_text = lsp_json::value_or(*edit, "newText", insertion);
         if (edit->contains("insert") && edit->contains("replace")) {
-            const std::optional<LspRange> insert = parse_range((*edit)["insert"]);
-            const std::optional<LspRange> replace = parse_range((*edit)["replace"]);
+            const std::optional<LspRange> insert = lsp_json::parse_range((*edit)["insert"]);
+            const std::optional<LspRange> replace = lsp_json::parse_range((*edit)["replace"]);
             if (insert && replace) {
                 item.edit = LspCompletionEdit{*insert, *replace, new_text};
             }
         } else if (edit->contains("range")) {
-            if (const std::optional<LspRange> range = parse_range((*edit)["range"])) {
+            if (const std::optional<LspRange> range = lsp_json::parse_range((*edit)["range"])) {
                 item.edit = LspCompletionEdit{*range, *range, new_text};
             }
         }
     }
     if (!item.edit) {
-        insertion = value.value("insertText", item.label);
+        insertion = lsp_json::value_or(value, "insertText", item.label);
     }
     item.insert_text = std::move(insertion);
-    if (const auto edits = value.find("additionalTextEdits");
-        edits != value.end() && edits->is_array()) {
-        for (const Json& edit : *edits) {
-            if (std::optional<LspTextEdit> parsed = parse_text_edit(edit)) {
+    if (const Json* edits = lsp_json::find(value, "additionalTextEdits");
+        edits != nullptr && edits->is_array()) {
+        for (const Json& edit : edits->get_array()) {
+            if (std::optional<LspTextEdit> parsed = lsp_json::parse_text_edit(edit)) {
                 item.additional_edits.push_back(std::move(*parsed));
             }
         }
@@ -148,18 +106,18 @@ LspCompletionResponse parse_completion_response(const Json& result, bool resolve
         return response;
     }
     if (result.is_object()) {
-        response.is_incomplete = result.value("isIncomplete", false);
-        const auto found = result.find("items");
-        if (found == result.end()) {
+        response.is_incomplete = lsp_json::value_or(result, "isIncomplete", false);
+        const Json* found = lsp_json::find(result, "items");
+        if (found == nullptr) {
             throw std::runtime_error("LSP completion list has no items");
         }
-        items = &*found;
+        items = found;
     }
     if (!items->is_array()) {
         throw std::runtime_error("LSP completion result is not an array or completion list");
     }
     response.items.reserve(items->size());
-    for (const Json& value : *items) {
+    for (const Json& value : items->get_array()) {
         if (!value.is_object() || !value.contains("label") || !value["label"].is_string()) {
             continue;
         }
@@ -197,15 +155,15 @@ LspCompletionFeature::request(LspSession& session, LspCompletionRequest request,
         context["triggerCharacter"] = request.trigger_character;
     }
     const Json params{{"textDocument", {{"uri", request.uri}}},
-                      {"position", position_json(lsp_position(request.text, request.caret))},
+                      {"position", lsp_json::position(lsp_position(request.text, request.caret))},
                       {"context", std::move(context)}};
     Failed parse_failed = failed;
     return session.request(
-        {.method = "textDocument/completion", .params = params.dump()},
+        {.method = "textDocument/completion", .params = lsp_json::dump(params)},
         [&session, completed = std::move(completed),
          failed = std::move(parse_failed)](const LspResponse& response) mutable {
             try {
-                completed(parse_completion_response(Json::parse(response.result),
+                completed(parse_completion_response(lsp_json::parse_or_throw(response.result),
                                                     !supports_resolve(session)));
             } catch (const std::exception& exception) {
                 report_failure(failed, std::format("cannot decode LSP completion response: {}",
@@ -231,7 +189,7 @@ LspCompletionFeature::resolve(LspSession& session, const std::string& item,
     }
     Json payload;
     try {
-        payload = Json::parse(item);
+        payload = lsp_json::parse_or_throw(item);
     } catch (const std::exception& exception) {
         return std::unexpected(
             std::format("invalid LSP completion resolve payload: {}", exception.what()));
@@ -241,11 +199,11 @@ LspCompletionFeature::resolve(LspSession& session, const std::string& item,
     }
     Failed parse_failed = failed;
     return session.request(
-        {.method = "completionItem/resolve", .params = payload.dump()},
+        {.method = "completionItem/resolve", .params = lsp_json::dump(payload)},
         [completed = std::move(completed),
          failed = std::move(parse_failed)](const LspResponse& response) mutable {
             try {
-                completed(parse_completion_item(Json::parse(response.result), true));
+                completed(parse_completion_item(lsp_json::parse_or_throw(response.result), true));
             } catch (const std::exception& exception) {
                 report_failure(failed,
                                std::format("cannot decode LSP completion resolve response: {}",
@@ -265,14 +223,17 @@ bool LspCompletionFeature::supports_resolve(const LspSession& session) {
 }
 
 std::string LspCompletionFeature::client_capabilities() {
-    Json completion_item{
+    Json completion_item = Json::object_t{
         {"snippetSupport", false},
-        {"documentationFormat", Json::array({"plaintext", "markdown"})},
-        {"resolveSupport",
-         {{"properties", Json::array({"documentation", "detail", "additionalTextEdits"})}}}};
-    return Json{
-        {"textDocument", {{"completion", {{"completionItem", std::move(completion_item)}}}}}}
-        .dump();
+        {"documentationFormat", Json::array_t{"plaintext", "markdown"}},
+        {"resolveSupport", Json::object_t{{"properties", Json::array_t{"documentation", "detail",
+                                                                       "additionalTextEdits"}}}},
+    };
+    return lsp_json::dump(Json::object_t{
+        {"textDocument",
+         Json::object_t{
+             {"completion", Json::object_t{{"completionItem", std::move(completion_item)}}}}},
+    });
 }
 
 } // namespace cind

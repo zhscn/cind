@@ -1,11 +1,9 @@
 #include "lsp/diagnostics.hpp"
-
-#include <nlohmann/json.hpp>
+#include "lsp/protocol_json.hpp"
 
 #include <cstdint>
 #include <exception>
 #include <format>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -14,40 +12,22 @@ namespace cind {
 
 namespace {
 
-using Json = nlohmann::json;
-
-std::optional<LspPosition> parse_position(const Json& value) {
-    if (!value.is_object() || !value.contains("line") || !value.contains("character") ||
-        !value["line"].is_number_unsigned() || !value["character"].is_number_unsigned()) {
-        return std::nullopt;
-    }
-    const auto line = value["line"].get<std::uint64_t>();
-    const auto character = value["character"].get<std::uint64_t>();
-    if (line > std::numeric_limits<std::uint32_t>::max() ||
-        character > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-    }
-    return LspPosition{.line = static_cast<std::uint32_t>(line),
-                       .character = static_cast<std::uint32_t>(character)};
-}
+using Json = lsp_json::Json;
 
 LspRange parse_range(const Json& value) {
-    if (!value.is_object() || !value.contains("start") || !value.contains("end")) {
-        throw std::runtime_error("diagnostic range is missing start or end");
-    }
-    const std::optional<LspPosition> start = parse_position(value["start"]);
-    const std::optional<LspPosition> end = parse_position(value["end"]);
-    if (!start || !end) {
+    const std::optional<LspRange> range = lsp_json::parse_range(value);
+    if (!range) {
         throw std::runtime_error("diagnostic range contains an invalid position");
     }
-    return {.start = *start, .end = *end};
+    return *range;
 }
 
 DiagnosticSeverity parse_severity(const Json& value) {
-    if (!value.is_number_integer()) {
+    const std::optional<std::int64_t> parsed = lsp_json::int64(value);
+    if (!parsed) {
         return DiagnosticSeverity::Error;
     }
-    switch (value.get<int>()) {
+    switch (*parsed) {
     case 1:
         return DiagnosticSeverity::Error;
     case 2:
@@ -65,30 +45,30 @@ std::string parse_code(const Json& value) {
     if (value.is_string()) {
         return value.get<std::string>();
     }
-    if (value.is_number_integer()) {
-        return std::to_string(value.get<std::int64_t>());
+    if (const std::optional<std::int64_t> parsed = lsp_json::int64(value)) {
+        return std::to_string(*parsed);
     }
     return {};
 }
 
 LspPublishedDiagnostics parse_publish(std::string_view payload) {
-    const Json params = Json::parse(payload);
+    const Json params = lsp_json::parse_or_throw(payload, "publishDiagnostics payload");
     if (!params.is_object() || !params.contains("uri") || !params["uri"].is_string() ||
         !params.contains("diagnostics") || !params["diagnostics"].is_array()) {
         throw std::runtime_error("publishDiagnostics has an invalid payload");
     }
-    LspPublishedDiagnostics published{.uri = params["uri"].get<std::string>(),
-                                       .version = std::nullopt,
-                                       .diagnostics = {}};
-    if (const auto version = params.find("version");
-        version != params.end() && !version->is_null()) {
-        if (!version->is_number_unsigned()) {
+    LspPublishedDiagnostics published{
+        .uri = params["uri"].get<std::string>(), .version = std::nullopt, .diagnostics = {}};
+    if (const Json* version = lsp_json::find(params, "version");
+        version != nullptr && !version->is_null()) {
+        const std::optional<std::uint64_t> parsed = lsp_json::uint64(*version);
+        if (!parsed) {
             throw std::runtime_error("publishDiagnostics version is invalid");
         }
-        published.version = version->get<RevisionId>();
+        published.version = static_cast<RevisionId>(*parsed);
     }
     published.diagnostics.reserve(params["diagnostics"].size());
-    for (const Json& value : params["diagnostics"]) {
+    for (const Json& value : params["diagnostics"].get_array()) {
         if (!value.is_object() || !value.contains("range") || !value.contains("message") ||
             !value["message"].is_string()) {
             throw std::runtime_error("publishDiagnostics contains an invalid diagnostic");
@@ -96,7 +76,7 @@ LspPublishedDiagnostics parse_publish(std::string_view payload) {
         published.diagnostics.push_back(
             {.range = parse_range(value["range"]),
              .severity = value.contains("severity") ? parse_severity(value["severity"])
-                                                     : DiagnosticSeverity::Error,
+                                                    : DiagnosticSeverity::Error,
              .message = value["message"].get<std::string>(),
              .source = value.contains("source") && value["source"].is_string()
                            ? value["source"].get<std::string>()
@@ -122,8 +102,8 @@ void LspDiagnosticsFeature::attach(LspSession& session, Published published, Fai
     }
     session.set_notification_handler(
         "textDocument/publishDiagnostics",
-        [published = std::move(published), failed = std::move(failed)](
-            LspNotification notification) mutable {
+        [published = std::move(published),
+         failed = std::move(failed)](const LspNotification& notification) mutable {
             try {
                 published(parse_publish(notification.params));
             } catch (const std::exception& exception) {
@@ -136,12 +116,11 @@ void LspDiagnosticsFeature::attach(LspSession& session, Published published, Fai
 }
 
 std::string LspDiagnosticsFeature::client_capabilities() {
-    return Json{{"textDocument",
-                 {{"publishDiagnostics",
-                   {{"relatedInformation", true},
-                    {"versionSupport", true},
-                    {"tagSupport", {{"valueSet", Json::array({1, 2})}}}}}}}}
-        .dump();
+    return lsp_json::dump(Json{{"textDocument",
+                                {{"publishDiagnostics",
+                                  {{"relatedInformation", true},
+                                   {"versionSupport", true},
+                                   {"tagSupport", {{"valueSet", Json::array_t{1U, 2U}}}}}}}}});
 }
 
 } // namespace cind
