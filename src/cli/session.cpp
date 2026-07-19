@@ -430,6 +430,17 @@ bool EditSession::redo() {
     return true;
 }
 
+bool EditSession::undo_to(UndoNodeId position) {
+    Buffer& target = buffer();
+    if (target.undo_position() == position) {
+        return true;
+    }
+    const DocumentChange change = target.undo_to(position);
+    apply_language_change(change, target.snapshot());
+    clamp_caret();
+    return true;
+}
+
 void EditSession::clamp_caret() {
     TextOffset position = caret();
     position.value = std::min(position.value, snapshot().size_bytes());

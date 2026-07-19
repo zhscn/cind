@@ -2353,6 +2353,35 @@ bool EditorApplication::move_location_list(int delta) {
     return active_workbench().location_lists().move(delta);
 }
 
+TransactionGroupId
+EditorApplication::record_transaction_group(std::string source,
+                                            std::vector<TransactionGroupEntry> entries) {
+    return active_workbench().transaction_groups().record(std::move(source), std::move(entries));
+}
+
+std::optional<TransactionGroupResult>
+EditorApplication::move_transaction_group(TransactionGroupId group, bool redo) {
+    auto current = [&](BufferId buffer) -> std::optional<UndoNodeId> {
+        const Buffer* target = runtime_.buffers().try_get(buffer);
+        return target != nullptr ? std::optional(target->undo_position()) : std::nullopt;
+    };
+    auto navigate = [&](BufferId buffer, UndoNodeId position) {
+        auto found = std::ranges::find_if(views_, [buffer](const std::unique_ptr<ViewState>& view) {
+            return view->buffer == buffer;
+        });
+        if (found == views_.end()) {
+            const ViewId view = create_view({}, buffer);
+            found =
+                std::ranges::find_if(views_, [view](const std::unique_ptr<ViewState>& candidate) {
+                    return candidate->view == view;
+                });
+        }
+        return found != views_.end() && (*found)->session->undo_to(position);
+    };
+    TransactionGroupRegistry& groups = active_workbench().transaction_groups();
+    return redo ? groups.redo(group, current, navigate) : groups.undo(group, current, navigate);
+}
+
 const InputFeedback* EditorApplication::active_input_feedback() const {
     if (interaction_.active()) {
         return nullptr;

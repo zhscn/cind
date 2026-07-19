@@ -66,7 +66,10 @@ public:
     EditTransaction begin_transaction();
     std::optional<DocumentChange> undo();
     std::optional<DocumentChange> redo();
-    AnchorId create_navigation_anchor(TextOffset offset);
+    UndoNodeId undo_position() const { return document_.undo_position(); }
+    DocumentChange undo_to(UndoNodeId position);
+    AnchorId create_navigation_anchor(TextOffset offset,
+                                      AnchorAffinity affinity = AnchorAffinity::AfterInsertion);
     void remove_navigation_anchor(AnchorId anchor);
     TextOffset navigation_anchor_offset(AnchorId anchor) const;
 

@@ -83,11 +83,13 @@ add_library(cind_application STATIC
   editor/command.cpp
   editor/command_loop.cpp
   editor/completion.cpp
+  editor/composed_view.cpp
   editor/input_state.cpp
   editor/input_strategy.cpp
   editor/interaction.cpp
   editor/jump.cpp
   editor/location_list.cpp
+  editor/transaction_group.cpp
   editor/keymap.cpp
   editor/language.cpp
   editor/language_mechanism.cpp

@@ -203,6 +203,10 @@ public:
     LocationNavigationSnapshot location_navigation() const;
     std::vector<LocationListSnapshot> location_lists(WorkbenchId workbench) const;
     bool move_location_list(int delta);
+    TransactionGroupId record_transaction_group(std::string source,
+                                                std::vector<TransactionGroupEntry> entries);
+    std::optional<TransactionGroupResult> move_transaction_group(TransactionGroupId group,
+                                                                 bool redo = false);
     std::span<const KeymapLayer> active_keymap_layers() const {
         return command_loop_.keymap_layers();
     }

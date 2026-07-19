@@ -90,6 +90,8 @@ public:
     std::vector<std::string> selection_texts(const ViewSelection& selection) const;
     bool undo();
     bool redo();
+    UndoNodeId undo_position() const { return buffer().undo_position(); }
+    bool undo_to(UndoNodeId position);
 
     // Pure query: explain the indent of the caret's line.
     IndentDecision explain() const;

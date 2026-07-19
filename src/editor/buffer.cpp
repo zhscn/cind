@@ -64,8 +64,13 @@ std::optional<DocumentChange> Buffer::redo() {
     return document_.redo();
 }
 
-AnchorId Buffer::create_navigation_anchor(TextOffset offset) {
-    return document_.create_anchor(offset, AnchorAffinity::AfterInsertion);
+DocumentChange Buffer::undo_to(UndoNodeId position) {
+    require_writable();
+    return document_.undo_to(position);
+}
+
+AnchorId Buffer::create_navigation_anchor(TextOffset offset, AnchorAffinity affinity) {
+    return document_.create_anchor(offset, affinity);
 }
 
 void Buffer::remove_navigation_anchor(AnchorId anchor) {
