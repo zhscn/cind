@@ -341,7 +341,7 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 SCM locations = scm_c_make_vector(value.locations.size(), SCM_UNSPECIFIED);
                 for (std::size_t index = 0; index < value.locations.size(); ++index) {
                     const BufferLocation& location = value.locations[index];
-                    SCM converted_location = scm_c_make_vector(5, SCM_UNSPECIFIED);
+                    SCM converted_location = scm_c_make_vector(6, SCM_UNSPECIFIED);
                     scm_c_vector_set_x(converted_location, 0,
                                        scm_from_uint32(location.source_range.start.value));
                     scm_c_vector_set_x(converted_location, 1,
@@ -352,6 +352,9 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                                        scm_from_uint32(location.target.line));
                     scm_c_vector_set_x(converted_location, 4,
                                        scm_from_uint32(location.target.byte_column));
+                    scm_c_vector_set_x(
+                        converted_location, 5,
+                        scm_from_utf8_stringn(location.excerpt.data(), location.excerpt.size()));
                     scm_c_vector_set_x(locations, index, converted_location);
                 }
                 SCM converted = scm_c_make_vector(3, SCM_UNSPECIFIED);

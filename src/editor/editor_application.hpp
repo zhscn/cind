@@ -100,6 +100,16 @@ struct LocationNavigationSnapshot {
     std::size_t location_count = 0;
 };
 
+struct LocationListSnapshot {
+    LocationListId list = kInvalidLocationList;
+    std::string source;
+    std::optional<BufferId> materialized_buffer;
+    std::optional<std::size_t> selected_index;
+    std::size_t item_count = 0;
+    std::uint64_t version = 0;
+    bool current = false;
+};
+
 using KeyBindingHint = InputHint;
 
 // Frontend-independent state and command controller for one editor
@@ -191,6 +201,8 @@ public:
     std::vector<OpenBufferSnapshot> open_buffers() const;
     std::vector<OpenWindowSnapshot> open_windows() const;
     LocationNavigationSnapshot location_navigation() const;
+    std::vector<LocationListSnapshot> location_lists(WorkbenchId workbench) const;
+    bool move_location_list(int delta);
     std::span<const KeymapLayer> active_keymap_layers() const {
         return command_loop_.keymap_layers();
     }
@@ -258,11 +270,6 @@ private:
         std::optional<PendingSave> pending_save;
     };
 
-    struct LocationNavigationState {
-        BufferId buffer;
-        std::optional<std::size_t> selected_index;
-    };
-
     struct ViewState {
         struct PositionHintCache {
             InputStateId input_state;
@@ -304,6 +311,14 @@ private:
                                                                   std::string_view intent);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
+    std::expected<void, std::string> publish_location_list(WindowId window, BufferId buffer,
+                                                           std::string source,
+                                                           std::vector<BufferLocation> locations);
+    std::optional<LocationItem> location_item(std::optional<BufferId> materialized,
+                                              std::size_t index) const;
+    void resolve_location_lists(BufferId buffer);
+    ResolvedLocation resolve_location(Buffer& buffer, const LocationItem& item);
+    void release_location_anchors(Workbench& workbench);
     void scroll_view_lines(ViewId view, double lines);
     bool split_window(WindowId target, WindowSplitAxis axis);
     bool delete_window(WindowId target);
@@ -348,7 +363,6 @@ private:
     std::vector<std::unique_ptr<BufferState>> buffers_;
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
-    std::optional<LocationNavigationState> location_navigation_;
     WorkbenchRegistry workbenches_;
     InteractionController interaction_;
     std::unique_ptr<EditSession> interaction_session_;

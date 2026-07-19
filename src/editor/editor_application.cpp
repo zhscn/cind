@@ -185,13 +185,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        const Buffer& target_buffer = runtime_.buffers().get(buffer);
                        const Text& text = target_buffer.snapshot().content();
                        const std::uint32_t line = std::min(position->line, text.line_count() - 1);
-                       target = text.position(ui::offset_at_display_column(
-                           text,
-                           {.line = line,
-                            .column = static_cast<int>(std::min<std::uint32_t>(
-                                position->display_column,
-                                static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
-                           state_for(buffer).style->tab_width));
+                       target = LinePosition{.line = line,
+                                             .byte_column =
+                                                 std::min(position->byte_column,
+                                                          text.line_content_range(line).length())};
                    }
                    return display_buffer(buffer, intent, origin, target);
                },
@@ -366,6 +363,12 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .byte = caret.value,
                        .byte_count = text.size_bytes()};
                },
+           .publish_location_list =
+               [this](WindowId window, BufferId buffer, std::string source,
+                      std::vector<BufferLocation> locations) {
+                   return publish_location_list(window, buffer, std::move(source),
+                                                std::move(locations));
+               },
            .location_navigation =
                [this] {
                    const LocationNavigationSnapshot navigation = location_navigation();
@@ -377,20 +380,50 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](std::optional<BufferId> buffer,
                       std::optional<std::size_t> selected) -> std::expected<void, std::string> {
                if (!buffer) {
-                   location_navigation_.reset();
-                   return {};
+                   if (active_workbench().location_lists().current() == nullptr && !selected) {
+                       return {};
+                   }
+                   return active_workbench().location_lists().select(selected)
+                              ? std::expected<void, std::string>{}
+                              : std::unexpected("location index is out of range");
                }
-               const Buffer* list = runtime_.buffers().try_get(*buffer);
-               if (list == nullptr) {
+               Workbench* owner = nullptr;
+               for (const WorkbenchId workbench : workbenches_.all()) {
+                   Workbench& candidate = workbenches_.get(workbench);
+                   if (candidate.location_lists().find_by_buffer(*buffer) != nullptr) {
+                       owner = &candidate;
+                       break;
+                   }
+               }
+               if (owner == nullptr || !owner->location_lists().set_current_by_buffer(*buffer)) {
                    return std::unexpected("location list is no longer available");
                }
-               if (selected && *selected >= list->locations().size()) {
+               if (!owner->location_lists().select(selected)) {
                    return std::unexpected("location index is out of range");
                }
-               location_navigation_ =
-                   LocationNavigationState{.buffer = *buffer, .selected_index = selected};
                return {};
            },
+           .location_target = [this](std::optional<BufferId> buffer,
+                                     std::size_t index) -> std::optional<GuileLocationTarget> {
+               const std::optional<LocationItem> item = location_item(buffer, index);
+               if (!item) {
+                   return std::nullopt;
+               }
+               LinePosition position = item->range.start;
+               bool stale = false;
+               if (item->resolved) {
+                   const Buffer* target = runtime_.buffers().try_get(item->resolved->buffer);
+                   if (target != nullptr) {
+                       position = target->snapshot().content().position(
+                           target->navigation_anchor_offset(item->resolved->start));
+                       stale = item->resolved->stale;
+                   }
+               }
+               return GuileLocationTarget{
+                   .resource = item->resource, .position = position, .stale = stale};
+           },
+           .move_location_list =
+               [this](int delta) { return active_workbench().location_lists().move(delta); },
            .position_buffer_view = [this](WindowId window, BufferId buffer, std::uint32_t offset)
                -> std::expected<void, std::string> {
                try {
@@ -1648,6 +1681,7 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
         }
     }
     release_jump_anchors(*closing);
+    release_location_anchors(*closing);
     if (!workbenches_.erase(workbench)) {
         return false;
     }
@@ -2179,8 +2213,13 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
             [&](AnchorId anchor) { closing_buffer.remove_navigation_anchor(anchor); });
     }
 
-    if (location_navigation_ && location_navigation_->buffer == buffer) {
-        location_navigation_.reset();
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        workbenches_.get(workbench).location_lists().detach_buffer(
+            buffer,
+            [&](AnchorId anchor) {
+                return closing_text.position(closing_buffer.navigation_anchor_offset(anchor));
+            },
+            [&](AnchorId anchor) { closing_buffer.remove_navigation_anchor(anchor); });
     }
 
     std::vector<WindowId> affected_windows;
@@ -2277,21 +2316,41 @@ std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
 }
 
 LocationNavigationSnapshot EditorApplication::location_navigation() const {
-    if (!location_navigation_) {
+    const LocationList* list = active_workbench().location_lists().current();
+    if (list == nullptr) {
         return {};
     }
-    const Buffer* buffer = runtime_.buffers().try_get(location_navigation_->buffer);
-    if (buffer == nullptr) {
-        return {};
-    }
-    const std::size_t location_count = buffer->locations().size();
-    std::optional<std::size_t> selected_index = location_navigation_->selected_index;
-    if (selected_index && *selected_index >= location_count) {
+    std::optional<std::size_t> selected_index = list->selected;
+    if (selected_index && *selected_index >= list->items.size()) {
         selected_index.reset();
     }
-    return {.buffer = location_navigation_->buffer,
+    return {.buffer = list->materialized_buffer,
             .selected_index = selected_index,
-            .location_count = location_count};
+            .location_count = list->items.size()};
+}
+
+std::vector<LocationListSnapshot> EditorApplication::location_lists(WorkbenchId workbench) const {
+    const Workbench* target = workbenches_.try_get(workbench);
+    if (target == nullptr) {
+        return {};
+    }
+    const LocationList* current = target->location_lists().current();
+    std::vector<LocationListSnapshot> result;
+    result.reserve(target->location_lists().lists().size());
+    for (const LocationList& list : target->location_lists().lists()) {
+        result.push_back({.list = list.id,
+                          .source = list.source,
+                          .materialized_buffer = list.materialized_buffer,
+                          .selected_index = list.selected,
+                          .item_count = list.items.size(),
+                          .version = list.version,
+                          .current = current != nullptr && current->id == list.id});
+    }
+    return result;
+}
+
+bool EditorApplication::move_location_list(int delta) {
+    return active_workbench().location_lists().move(delta);
 }
 
 const InputFeedback* EditorApplication::active_input_feedback() const {
@@ -2524,6 +2583,7 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
         state->style = std::make_shared<CppIndentStyle>(style);
         state->style_origin = std::move(style_origin);
         buffers_.push_back(std::move(state));
+        resolve_location_lists(buffer);
     } catch (...) {
         (void)runtime_.buffers().erase(buffer);
         throw;
@@ -2676,6 +2736,120 @@ EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
     }
+}
+
+std::expected<void, std::string>
+EditorApplication::publish_location_list(WindowId window, BufferId buffer, std::string source,
+                                         std::vector<BufferLocation> locations) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    if (!owner || runtime_.buffers().try_get(buffer) == nullptr) {
+        return std::unexpected("location list display target is unavailable");
+    }
+    try {
+        runtime_.buffers().set_locations(buffer, locations);
+        std::vector<LocationItem> items;
+        items.reserve(locations.size());
+        for (BufferLocation& location : locations) {
+            items.push_back({.resource = std::move(location.resource),
+                             .range = {.start = location.target, .end = location.target},
+                             .excerpt = std::move(location.excerpt),
+                             .metadata = {},
+                             .resolved = std::nullopt});
+        }
+        Workbench& workbench = workbenches_.get(*owner);
+        (void)workbench.location_lists().publish(std::move(source), std::move(items), buffer);
+        for (const std::unique_ptr<BufferState>& state : buffers_) {
+            const Buffer& candidate = runtime_.buffers().get(state->buffer);
+            if (candidate.resource_uri()) {
+                resolve_location_lists(state->buffer);
+            }
+        }
+        return {};
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
+    }
+}
+
+std::optional<LocationItem> EditorApplication::location_item(std::optional<BufferId> materialized,
+                                                             std::size_t index) const {
+    if (!materialized) {
+        const LocationList* list = active_workbench().location_lists().current();
+        return list != nullptr && index < list->items.size()
+                   ? std::optional<LocationItem>{list->items[index]}
+                   : std::nullopt;
+    }
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        const LocationList* list =
+            workbenches_.get(workbench).location_lists().find_by_buffer(*materialized);
+        if (list == nullptr || index >= list->items.size()) {
+            continue;
+        }
+        return list->items[index];
+    }
+    return std::nullopt;
+}
+
+void EditorApplication::resolve_location_lists(BufferId buffer_id) {
+    Buffer& buffer = runtime_.buffers().get(buffer_id);
+    if (!buffer.resource_uri()) {
+        return;
+    }
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        workbenches_.get(workbench).location_lists().resolve_resource(
+            *buffer.resource_uri(),
+            [&](const LocationItem& item) { return resolve_location(buffer, item); });
+    }
+}
+
+ResolvedLocation EditorApplication::resolve_location(Buffer& buffer, const LocationItem& item) {
+    const Text& text = buffer.snapshot().content();
+    const std::uint32_t fallback_line = std::min(item.range.start.line, text.line_count() - 1);
+    std::uint32_t target_line = fallback_line;
+    bool stale = false;
+    const auto line_matches = [&](std::uint32_t line) {
+        return item.excerpt.empty() ||
+               text.substring(text.line_content_range(line)) == item.excerpt;
+    };
+    if (!line_matches(target_line)) {
+        std::vector<std::uint32_t> matches;
+        const std::uint32_t begin = target_line > 20 ? target_line - 20 : 0;
+        const std::uint32_t end = std::min(text.line_count() - 1, target_line + 20);
+        for (std::uint32_t line = begin; line <= end; ++line) {
+            if (line_matches(line)) {
+                matches.push_back(line);
+            }
+        }
+        if (matches.size() != 1) {
+            matches.clear();
+            for (std::uint32_t line = 0; line < text.line_count(); ++line) {
+                if (line_matches(line)) {
+                    matches.push_back(line);
+                    if (matches.size() > 1) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (matches.size() == 1) {
+            target_line = matches.front();
+        } else {
+            stale = true;
+        }
+    }
+    const LinePosition position{
+        .line = target_line,
+        .byte_column =
+            std::min(item.range.start.byte_column, text.line_content_range(target_line).length())};
+    const AnchorId anchor = buffer.create_navigation_anchor(text.offset(position));
+    return {.buffer = buffer.id(), .start = anchor, .end = anchor, .stale = stale};
+}
+
+void EditorApplication::release_location_anchors(Workbench& workbench) {
+    workbench.location_lists().release_anchors([&](BufferId buffer, AnchorId anchor) {
+        if (Buffer* target = runtime_.buffers().try_get(buffer)) {
+            target->remove_navigation_anchor(anchor);
+        }
+    });
 }
 
 void EditorApplication::scroll_view_lines(ViewId view, double lines) {

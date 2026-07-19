@@ -282,20 +282,26 @@ TEST_CASE("buffers expose validated semantic source locations") {
                                                       .read_only = true});
     runtime.buffers().set_locations(buffer, {{.source_range = make_range(0, 6),
                                               .resource = "/work/first.cpp",
-                                              .target = {.line = 4, .byte_column = 2}},
+                                              .target = {.line = 4, .byte_column = 2},
+                                              .excerpt = {}},
                                              {.source_range = make_range(6, 13),
                                               .resource = "/work/second.cpp",
-                                              .target = {.line = 8, .byte_column = 1}}});
+                                              .target = {.line = 8, .byte_column = 1},
+                                              .excerpt = {}}});
 
     const Buffer& result = runtime.buffers().get(buffer);
     REQUIRE(result.location_at(TextOffset{2}) != nullptr);
     CHECK(result.location_at(TextOffset{2})->resource == "/work/first.cpp");
     REQUIRE(result.location_at(result.snapshot().content().end_offset()) != nullptr);
-    CHECK_THROWS_AS(
-        runtime.buffers().set_locations(
-            buffer, {{.source_range = make_range(0, 7), .resource = "/work/a.cpp", .target = {}},
-                     {.source_range = make_range(6, 8), .resource = "/work/b.cpp", .target = {}}}),
-        std::invalid_argument);
+    CHECK_THROWS_AS(runtime.buffers().set_locations(buffer, {{.source_range = make_range(0, 7),
+                                                              .resource = "/work/a.cpp",
+                                                              .target = {},
+                                                              .excerpt = {}},
+                                                             {.source_range = make_range(6, 8),
+                                                              .resource = "/work/b.cpp",
+                                                              .target = {},
+                                                              .excerpt = {}}}),
+                    std::invalid_argument);
     Buffer& mutable_result = runtime.buffers().get(buffer);
     mutable_result.set_read_only(false);
     auto transaction = mutable_result.begin_transaction();

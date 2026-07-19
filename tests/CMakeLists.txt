@@ -41,6 +41,10 @@ add_executable(jump_tests editor/jump_tests.cpp)
 target_link_libraries(jump_tests PRIVATE cind_application doctest::doctest)
 add_test(NAME jump_tests COMMAND jump_tests)
 
+add_executable(location_list_tests editor/location_list_tests.cpp)
+target_link_libraries(location_list_tests PRIVATE cind_application doctest::doctest)
+add_test(NAME location_list_tests COMMAND location_list_tests)
+
 add_executable(guile_runtime_tests editor/guile_runtime_tests.cpp)
 target_link_libraries(guile_runtime_tests PRIVATE cind_guile doctest::doctest)
 add_test(NAME guile_runtime_tests COMMAND guile_runtime_tests)

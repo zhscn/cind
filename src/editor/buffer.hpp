@@ -42,6 +42,7 @@ struct BufferLocation {
     TextRange source_range;
     std::string resource;
     LinePosition target;
+    std::string excerpt;
 
     friend bool operator==(const BufferLocation&, const BufferLocation&) = default;
 };

@@ -83,6 +83,12 @@ struct GuileLocationNavigation {
     std::size_t location_count = 0;
 };
 
+struct GuileLocationTarget {
+    std::string resource;
+    LinePosition position;
+    bool stale = false;
+};
+
 struct GuileBufferCreation {
     std::string name;
     std::string initial_text;
@@ -149,7 +155,7 @@ struct GuileJumpEdge {
 
 struct GuileDisplayPosition {
     std::uint32_t line = 0;
-    std::uint32_t display_column = 0;
+    std::uint32_t byte_column = 0;
 };
 
 struct GuileHostServices {
@@ -199,10 +205,16 @@ struct GuileHostServices {
     std::function<bool()> cancel_completion;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
+    std::function<std::expected<void, std::string>(WindowId, BufferId, std::string,
+                                                   std::vector<BufferLocation>)>
+        publish_location_list;
     std::function<GuileLocationNavigation()> location_navigation;
     std::function<std::expected<void, std::string>(std::optional<BufferId>,
                                                    std::optional<std::size_t>)>
         set_location_navigation;
+    std::function<std::optional<GuileLocationTarget>(std::optional<BufferId>, std::size_t)>
+        location_target;
+    std::function<bool(int)> move_location_list;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
     std::function<void(std::string)> set_message;

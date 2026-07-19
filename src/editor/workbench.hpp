@@ -2,6 +2,7 @@
 
 #include "editor/ids.hpp"
 #include "editor/jump.hpp"
+#include "editor/location_list.hpp"
 #include "editor/window.hpp"
 
 #include <cstdint>
@@ -56,6 +57,8 @@ public:
 
     JumpGraph& jumps() { return jumps_; }
     const JumpGraph& jumps() const { return jumps_; }
+    LocationListStack& location_lists() { return location_lists_; }
+    const LocationListStack& location_lists() const { return location_lists_; }
 
 private:
     friend class WorkbenchRegistry;
@@ -70,6 +73,7 @@ private:
     std::vector<BufferId> mru_;
     std::unordered_map<std::string, WindowId> slots_;
     JumpGraph jumps_;
+    LocationListStack location_lists_;
 };
 
 // Generational application-local ownership for workbenches. Exactly one

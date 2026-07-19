@@ -87,6 +87,7 @@ add_library(cind_application STATIC
   editor/input_strategy.cpp
   editor/interaction.cpp
   editor/jump.cpp
+  editor/location_list.cpp
   editor/keymap.cpp
   editor/language.cpp
   editor/language_mechanism.cpp

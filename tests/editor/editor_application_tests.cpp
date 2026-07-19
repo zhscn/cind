@@ -1775,6 +1775,13 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         const BufferLocation first = results.locations()[0];
         const BufferLocation second = results.locations()[1];
         const BufferLocation third = results.locations()[2];
+        const std::vector<LocationListSnapshot> lists =
+            application.location_lists(application.workbench_id());
+        REQUIRE(lists.size() == 1);
+        CHECK(lists[0].source == "search");
+        CHECK(lists[0].materialized_buffer == result_buffer);
+        CHECK(lists[0].item_count == 3);
+        CHECK(lists[0].current);
         CHECK(application.location_navigation().buffer == result_buffer);
         CHECK_FALSE(application.location_navigation().selected_index.has_value());
         send_keys(application, "M-n");
@@ -1802,6 +1809,9 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK(application.buffer_id(tools_window->window) == result_buffer);
         CHECK(application.session(tools_window->window).caret() == second.source_range.start);
 
+        application.session().set_caret(TextOffset{});
+        application.session().insert_text("prefix\n");
+
         send_keys(application, "M-g n");
         while (application.has_background_work()) {
             REQUIRE(wake.wait());
@@ -1814,6 +1824,9 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
 
         send_keys(application, "M-g p");
         CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(
+            application.session().snapshot().content().position(application.session().caret()) ==
+            LinePosition{.line = second.target.line + 1, .byte_column = second.target.byte_column});
         CHECK(application.location_navigation().selected_index == 1);
         REQUIRE(application.switch_buffer(result_buffer));
         CHECK(application.session().caret() == second.source_range.start);
@@ -1828,6 +1841,10 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         REQUIRE(
             application.runtime().commands().invoke(force_kill_results, kill_results).has_value());
         CHECK_FALSE(application.location_navigation().buffer.has_value());
+        CHECK(application.location_navigation().location_count == 3);
+        send_keys(application, "M-g p");
+        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.location_navigation().selected_index == 1);
     }
     std::filesystem::remove_all(root);
 }

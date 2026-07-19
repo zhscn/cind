@@ -1086,8 +1086,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .cancel_completion = {},
          .cancel_pending_input = {},
          .view_position = {},
+         .publish_location_list = {},
          .location_navigation = {},
          .set_location_navigation = {},
+         .location_target = {},
+         .move_location_list = {},
          .position_buffer_view = {},
          .set_message = [&](std::string value) { message = std::move(value); },
          .request_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
@@ -1329,7 +1332,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 216);
+    CHECK(*installed == 218);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 11);
@@ -2029,7 +2032,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 216);
+    CHECK(snapshot.scripted_commands == 218);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 11);
     CHECK_FALSE(snapshot.last_error.has_value());

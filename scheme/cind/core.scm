@@ -1429,7 +1429,8 @@
                 (create-buffer! host (string-append "*project grep: " query "*")
                                 contents 'process #f #t 'cind.location-list #f
                                 "location-list")))
-          (set-buffer-locations! host buffer (vector-ref result 2))
+          (set-location-list! host (pending-project-search-window search)
+                              buffer 'search (vector-ref result 2))
           (set-location-navigation! host buffer #f)
           (let ((projects (pending-project-search-projects search)))
             (set-buffer-project! host buffer
@@ -1851,21 +1852,28 @@
                 (string-append "location " (number->string (+ index 1))
                                "/" (number->string count))))
 
+(define (location-open-index host context list index count source-offset)
+  (let ((target (location-list-target host list index)))
+    (if (not target)
+        (command-error "location is no longer available")
+        (begin
+          (set-location-navigation! host list index)
+          (when (and list source-offset)
+            (position-buffer-view! host (context-window context) list source-offset))
+          (location-message host index count)
+          (open-resource-with-intent! host (context-window context)
+                                      (vector-ref target 0)
+                                      (vector-ref target 1)
+                                      (vector-ref target 2)
+                                      'list)
+          (command-completed/preserve)))))
+
 (define (location-visit-index host context list index)
   (let ((locations (buffer-locations host list)))
     (if (or (< index 0) (>= index (vector-length locations)))
         (command-error "location list is no longer available")
-        (let ((location (vector-ref locations index)))
-          (set-location-navigation! host list index)
-          (position-buffer-view! host (context-window context) list
-                                 (vector-ref location 0))
-          (location-message host index (vector-length locations))
-          (open-resource-with-intent! host (context-window context)
-                                      (vector-ref location 2)
-                                      (vector-ref location 3)
-                                      (vector-ref location 4)
-                                      'list)
-          (command-completed/preserve)))))
+        (location-open-index host context list index (vector-length locations)
+                             (vector-ref (vector-ref locations index) 0)))))
 
 (define (location-at-point locations caret)
   (let loop ((index 0))
@@ -1938,18 +1946,20 @@
          (navigation (location-navigation host))
          (navigation-buffer (vector-ref navigation 0))
          (list (if at-list? (context-buffer context) navigation-buffer)))
-    (if (not list)
+    (if (and (not list) (= (vector-ref navigation 2) 0))
         (command-error "no current location list")
         (let* ((locations (if at-list?
                               context-locations
-                              (buffer-locations host list)))
-               (count (vector-length locations)))
+                              (if list (buffer-locations host list) #())))
+               (count (if list (vector-length locations)
+                          (vector-ref navigation 2))))
           (if (= count 0)
               (begin
                 (set-location-navigation! host #f #f)
                 (command-error "no current location list"))
-              (let* ((same-list? (and navigation-buffer
-                                      (equal? navigation-buffer list)))
+              (let* ((same-list? (or (and navigation-buffer list
+                                           (equal? navigation-buffer list))
+                                      (and (not navigation-buffer) (not list))))
                      (current (and same-list? (vector-ref navigation 1)))
                      (valid? (and current (< current count)))
                      (caret (view-caret host (context-view context)))
@@ -1973,7 +1983,9 @@
                        ((> direction 0) 0)
                        (else (- count 1)))))
                 (if selected
-                    (location-visit-index host context list selected)
+                    (if list
+                        (location-visit-index host context list selected)
+                        (location-open-index host context #f selected count #f))
                     (command-error (if (> direction 0)
                                        "end of location list"
                                        "beginning of location list")))))))))
@@ -1996,6 +2008,17 @@
           (set-message! host (format #f "jump node ~a" node))
           (command-completed/preserve))
         (command-error "current position cannot be marked"))))
+
+(define (location-list-move host direction)
+  (if (move-location-list! host direction)
+      (begin
+        (set-message! host (if (< direction 0)
+                               "previous location list"
+                               "next location list"))
+        (command-completed/preserve))
+      (command-error (if (< direction 0)
+                         "oldest location list"
+                         "newest location list"))))
 
 (define kill-ring-limit 60)
 
@@ -2435,6 +2458,14 @@
          (list "jump.mark"
                (lambda (context invocation)
                  (jump-mark host context))
+               #f)
+         (list "location.previous-list"
+               (lambda (context invocation)
+                 (location-list-move host -1))
+               #f)
+         (list "location.next-list"
+               (lambda (context invocation)
+                 (location-list-move host 1))
                #f)
          (list "command.palette.accept" command-palette-accept #f)
         (list "command.palette" command-palette #f)
