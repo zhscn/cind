@@ -88,7 +88,7 @@ struct LspSessionStateSnapshot {
     std::string root;
     std::size_t pending_requests = 0;
     std::size_t open_documents = 0;
-    bool completion_resolve = false;
+    std::string server_capabilities = "{}";
     std::string error;
 };
 

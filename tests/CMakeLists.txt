@@ -2,8 +2,15 @@ add_executable(async_runtime_tests async/runtime_tests.cpp)
 target_link_libraries(async_runtime_tests PRIVATE cind_async doctest::doctest)
 add_test(NAME async_runtime_tests COMMAND async_runtime_tests)
 
+add_executable(lsp_test_server lsp/test_server.cpp)
+target_link_libraries(lsp_test_server PRIVATE cind_lsp PkgConfig::NlohmannJson)
+
 add_executable(lsp_tests lsp/lsp_tests.cpp)
-target_link_libraries(lsp_tests PRIVATE cind_lsp doctest::doctest)
+target_link_libraries(lsp_tests PRIVATE cind_lsp doctest::doctest PkgConfig::NlohmannJson)
+target_compile_definitions(lsp_tests PRIVATE
+  CIND_LSP_TEST_SERVER="$<TARGET_FILE:lsp_test_server>"
+)
+add_dependencies(lsp_tests lsp_test_server)
 add_test(NAME lsp_tests COMMAND lsp_tests)
 
 add_executable(script_async_tests script/async_host_tests.cpp)

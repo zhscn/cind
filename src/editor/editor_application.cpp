@@ -2,6 +2,7 @@
 
 #include "editor/noun_evaluator.hpp"
 #include "editor/resource_policy.hpp"
+#include "lsp/completion.hpp"
 #include "syntax/structure.hpp"
 #include "ui/char_width.hpp"
 #include "ui/text_position.hpp"
@@ -2771,7 +2772,11 @@ EditorApplication::resolve_completion_provider(CommandTarget target, std::string
     }
     std::expected<LspSessionId, std::string> session = lsp_sessions_->ensure(
         buffer->project_id(),
-        {.command = command, .arguments = {}, .root = std::move(root), .language_id = language});
+        {.command = command,
+         .arguments = {},
+         .root = std::move(root),
+         .language_id = language,
+         .client_capabilities = {LspCompletionFeature::client_capabilities()}});
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }
@@ -2818,8 +2823,8 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                 try {
                     const Text response_text = bridge->lsp_request.text;
                     CompletionProviderAsync::Failed conversion_failed = failed;
-                    return session->request_completion(
-                        std::move(bridge->lsp_request),
+                    return LspCompletionFeature::request(
+                        *session, std::move(bridge->lsp_request),
                         [bridge, response_text, completed = std::move(completed),
                          failed = std::move(conversion_failed)](
                             LspCompletionResponse response) mutable noexcept {
@@ -2976,8 +2981,8 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
     auto response_request = std::make_shared<CompletionRequest>(request);
     const CompletionProvider provider = item.provider;
     CompletionProviderAsync::Failed conversion_failed = failed;
-    return session->request_completion_resolve(
-        item.raw,
+    return LspCompletionFeature::resolve(
+        *session, item.raw,
         [provider, request = std::move(response_request), text = std::move(response_text),
          completed = std::move(completed),
          failed = std::move(conversion_failed)](LspCompletionItem resolved) mutable noexcept {

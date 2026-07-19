@@ -1,0 +1,90 @@
+#include "lsp/json_rpc.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <array>
+#include <cstddef>
+#include <iostream>
+#include <string>
+#include <unistd.h>
+
+namespace {
+
+using Json = nlohmann::json;
+
+void send(const Json& message) {
+    std::cout << cind::frame_json_rpc(message.dump()) << std::flush;
+}
+
+} // namespace
+
+int main() {
+    cind::JsonRpcFramer framer;
+    std::array<char, 4096> bytes{};
+    std::size_t opens = 0;
+    std::size_t changes = 0;
+    std::size_t closes = 0;
+    Json client_capabilities = Json::object();
+    while (true) {
+        const ssize_t count = ::read(STDIN_FILENO, bytes.data(), bytes.size());
+        if (count <= 0) {
+            return 0;
+        }
+        const auto messages =
+            framer.push(std::string_view(bytes.data(), static_cast<std::size_t>(count)));
+        if (!messages) {
+            return 2;
+        }
+        for (const std::string& payload : *messages) {
+            const Json message = Json::parse(payload);
+            const std::string method = message.value("method", std::string{});
+            if (method == "initialize") {
+                client_capabilities = message["params"]["capabilities"];
+                const Json capabilities{
+                    {"completionProvider", {{"resolveProvider", true}}},
+                    {"testProvider", {{"enabled", true}}},
+                };
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"result", {{"capabilities", capabilities}}}});
+            } else if (method == "initialized") {
+                send({{"jsonrpc", "2.0"},
+                      {"method", "test/initialized"},
+                      {"params", {{"ready", true}}}});
+                send({{"jsonrpc", "2.0"},
+                      {"id", "server-request"},
+                      {"method", "test/serverRequest"},
+                      {"params", {{"question", 42}}}});
+            } else if (method == "test/echo") {
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"result", message.value("params", Json(nullptr))}});
+            } else if (method == "test/fail") {
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"error",
+                       {{"code", -32042},
+                        {"message", "controlled failure"},
+                        {"data", {{"retry", false}}}}}});
+            } else if (method == "$/cancelRequest") {
+                send({{"jsonrpc", "2.0"},
+                      {"method", "test/cancelled"},
+                      {"params", message["params"]}});
+            } else if (method == "textDocument/didOpen") {
+                ++opens;
+            } else if (method == "textDocument/didChange") {
+                ++changes;
+            } else if (method == "textDocument/didClose") {
+                ++closes;
+            } else if (method == "test/documentCounts") {
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"result", {{"opens", opens}, {"changes", changes}, {"closes", closes}}}});
+            } else if (method == "test/clientCapabilities") {
+                send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", client_capabilities}});
+            } else if (method.empty() && message.value("id", Json()) == "server-request") {
+                send({{"jsonrpc", "2.0"}, {"method", "test/serverResponse"}, {"params", message}});
+            }
+        }
+    }
+}

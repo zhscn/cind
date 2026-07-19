@@ -14,7 +14,8 @@ LspSessionRegistry::ensure(std::optional<ProjectId> project, LspSessionConfig co
     };
     if (const auto found = std::ranges::find_if(sessions_, same_owner); found != sessions_.end()) {
         const LspSessionConfig& existing = found->session->config();
-        if (existing.command == config.command && existing.arguments == config.arguments) {
+        if (existing.command == config.command && existing.arguments == config.arguments &&
+            existing.client_capabilities == config.client_capabilities) {
             return found->session->id();
         }
         sessions_.erase(found);

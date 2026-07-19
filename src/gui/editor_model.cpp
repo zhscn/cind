@@ -531,7 +531,7 @@ EditorStateSnapshot EditorModel::inspect() {
                              .root = lsp_session.root,
                              .pending_requests = lsp_session.pending_requests,
                              .open_documents = lsp_session.open_documents,
-                             .completion_resolve = lsp_session.completion_resolve,
+                             .server_capabilities = lsp_session.server_capabilities,
                              .error = lsp_session.error});
     }
     std::vector<OpenBufferStateSnapshot> buffers;

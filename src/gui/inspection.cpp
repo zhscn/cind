@@ -458,8 +458,8 @@ void append_lsp(std::string& output, const std::vector<LspSessionStateSnapshot>&
         append_json_string(output, session.root);
         output += std::format(",\"pending_requests\":{},\"open_documents\":{}",
                               session.pending_requests, session.open_documents);
-        output += ",\"completion_resolve\":";
-        append_bool(output, session.completion_resolve);
+        output += ",\"server_capabilities\":";
+        output += session.server_capabilities;
         output += ",\"error\":";
         append_json_string(output, session.error);
         output.push_back('}');

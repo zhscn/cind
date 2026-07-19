@@ -1,15 +1,20 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "lsp/completion.hpp"
 #include "lsp/json_rpc.hpp"
 #include "lsp/protocol.hpp"
 #include "lsp/session.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <string_view>
+#include <vector>
 
 using namespace cind;
 
@@ -25,8 +30,8 @@ public:
 
     bool wait() {
         std::unique_lock lock(mutex_);
-        const bool ready = condition_.wait_for(lock, std::chrono::seconds(10),
-                                               [&] { return notified_; });
+        const bool ready =
+            condition_.wait_for(lock, std::chrono::seconds(10), [&] { return notified_; });
         notified_ = false;
         return ready;
     }
@@ -38,6 +43,171 @@ private:
 };
 
 } // namespace
+
+TEST_CASE("generic LSP session routes requests, errors, cancellation, and server messages") {
+    using Json = nlohmann::json;
+
+    WakeSignal wake;
+    AsyncRuntime runtime([&wake] { wake.notify(); });
+    LspSession session({1}, runtime,
+                       {.command = CIND_LSP_TEST_SERVER,
+                        .arguments = {},
+                        .root = std::filesystem::temp_directory_path().string(),
+                        .language_id = "test",
+                        .client_capabilities = {R"({"featureA":{"one":true,"formats":["a"]}})",
+                                                R"({"featureA":{"two":true,"formats":["b"]}})"}});
+    std::vector<LspNotification> notifications;
+    session.set_notification_handler("test/initialized", [&](LspNotification notification) {
+        notifications.push_back(std::move(notification));
+    });
+    session.set_notification_handler("test/serverResponse", [&](LspNotification notification) {
+        notifications.push_back(std::move(notification));
+    });
+    session.set_notification_handler("test/cancelled", [&](LspNotification notification) {
+        notifications.push_back(std::move(notification));
+    });
+    session.set_server_request_handler(
+        "test/serverRequest",
+        [](LspServerRequest request) -> std::expected<std::string, LspResponseError> {
+            if (request.method != "test/serverRequest") {
+                return std::unexpected(LspResponseError{
+                    .code = -32601, .message = "unsupported test request", .data = "null"});
+            }
+            return Json{{"answer", Json::parse(request.params).at("question")}}.dump();
+        });
+
+    std::optional<LspResponse> echo;
+    std::optional<LspResponseError> request_error;
+    const auto requested = session.request(
+        {.method = "test/echo", .params = R"({"value":42})"},
+        [&](LspResponse response) { echo = std::move(response); },
+        [&](LspResponseError error) { request_error = std::move(error); });
+    REQUIRE(requested.has_value());
+    while (!echo && !request_error) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    REQUIRE(echo.has_value());
+    CHECK(Json::parse(echo->result) == Json{{"value", 42}});
+    CHECK(session.capability_boolean({"testProvider", "enabled"}));
+    REQUIRE(session.capability({"completionProvider"}).has_value());
+
+    std::optional<LspResponse> client_capabilities;
+    const auto queried_capabilities = session.request(
+        {.method = "test/clientCapabilities", .params = "null"},
+        [&](LspResponse response) { client_capabilities = std::move(response); },
+        [](LspResponseError) {});
+    REQUIRE(queried_capabilities.has_value());
+    while (!client_capabilities) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    const Json advertised = Json::parse(client_capabilities->result);
+    CHECK(advertised["featureA"]["one"] == true);
+    CHECK(advertised["featureA"]["two"] == true);
+    CHECK(advertised["featureA"]["formats"] == Json::array({"a", "b"}));
+
+    const auto has_notification = [&](std::string_view method) {
+        return std::ranges::any_of(notifications, [method](const LspNotification& notification) {
+            return notification.method == method;
+        });
+    };
+    while (!has_notification("test/initialized") || !has_notification("test/serverResponse")) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    const auto server_response =
+        std::ranges::find_if(notifications, [](const LspNotification& notification) {
+            return notification.method == "test/serverResponse";
+        });
+    REQUIRE(server_response != notifications.end());
+    CHECK(Json::parse(server_response->params).at("result").at("answer") == 42);
+
+    std::optional<LspResponseError> controlled_error;
+    const auto failed = session.request(
+        {.method = "test/fail", .params = "null"}, [](LspResponse) {},
+        [&](LspResponseError error) { controlled_error = std::move(error); });
+    REQUIRE(failed.has_value());
+    while (!controlled_error) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    CHECK(controlled_error->code == -32042);
+    CHECK(controlled_error->message == "controlled failure");
+    CHECK(Json::parse(controlled_error->data).at("retry") == false);
+
+    bool cancelled = false;
+    const auto pending = session.request(
+        {.method = "test/never", .params = "null"}, [](LspResponse) {}, [](LspResponseError) {},
+        [&] { cancelled = true; });
+    REQUIRE(pending.has_value());
+    (*pending)();
+    CHECK(cancelled);
+    while (!has_notification("test/cancelled")) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+}
+
+TEST_CASE("generic LSP document synchronization publishes each revision once") {
+    using Json = nlohmann::json;
+
+    WakeSignal wake;
+    AsyncRuntime runtime([&wake] { wake.notify(); });
+    LspSession session({1}, runtime,
+                       {.command = CIND_LSP_TEST_SERVER,
+                        .arguments = {},
+                        .root = std::filesystem::temp_directory_path().string(),
+                        .language_id = "test",
+                        .client_capabilities = {}});
+    const LspDocumentSnapshot initial{.uri = "file:///tmp/cind-lsp-sync.test",
+                                      .language_id = "test",
+                                      .revision = 1,
+                                      .text = Text("one")};
+    REQUIRE(session.synchronize_document(initial).has_value());
+    REQUIRE(session.synchronize_document(initial).has_value());
+    std::optional<LspResponse> initial_counts;
+    const auto initialized = session.request(
+        {.method = "test/documentCounts", .params = "null"},
+        [&](LspResponse response) { initial_counts = std::move(response); },
+        [](LspResponseError) {});
+    REQUIRE(initialized.has_value());
+    while (!initial_counts) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    CHECK(Json::parse(initial_counts->result) == Json{{"opens", 1}, {"changes", 0}, {"closes", 0}});
+
+    REQUIRE(session.synchronize_document(initial).has_value());
+    REQUIRE(session
+                .synchronize_document({.uri = initial.uri,
+                                       .language_id = initial.language_id,
+                                       .revision = 2,
+                                       .text = Text("two")})
+                .has_value());
+    CHECK_FALSE(session
+                    .synchronize_document({.uri = initial.uri,
+                                           .language_id = initial.language_id,
+                                           .revision = 1,
+                                           .text = Text("stale")})
+                    .has_value());
+    REQUIRE(
+        session
+            .synchronize_document(
+                {.uri = initial.uri, .language_id = "other", .revision = 2, .text = Text("two")})
+            .has_value());
+
+    std::optional<LspResponse> counts;
+    const auto requested = session.request(
+        {.method = "test/documentCounts", .params = "null"},
+        [&](LspResponse response) { counts = std::move(response); }, [](LspResponseError) {});
+    REQUIRE(requested.has_value());
+    while (!counts) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    CHECK(Json::parse(counts->result) == Json{{"opens", 2}, {"changes", 1}, {"closes", 1}});
+}
 
 TEST_CASE("JSON-RPC framer accepts split and coalesced messages") {
     JsonRpcFramer framer;
@@ -73,17 +243,20 @@ TEST_CASE("clangd session initializes, synchronizes a document, and completes") 
     }
     WakeSignal wake;
     AsyncRuntime runtime([&wake] { wake.notify(); });
-    LspSession session({1}, runtime,
-                       {.command = "/usr/bin/clangd",
-                        .arguments = {"--background-index=false", "--clang-tidy=false", "--log=error"},
-                        .root = std::filesystem::temp_directory_path().string(),
-                        .language_id = "cpp"});
+    LspSession session(
+        {1}, runtime,
+        {.command = "/usr/bin/clangd",
+         .arguments = {"--background-index=false", "--clang-tidy=false", "--log=error"},
+         .root = std::filesystem::temp_directory_path().string(),
+         .language_id = "cpp",
+         .client_capabilities = {LspCompletionFeature::client_capabilities()}});
     const std::string source = "struct Foo { int bar; }; int main() { Foo value; value.ba }\n";
     const std::size_t caret_value = source.rfind("ba") + 2;
     std::optional<LspCompletionResponse> response;
     std::string error;
     bool cancelled = false;
-    const auto requested = session.request_completion(
+    const auto requested = LspCompletionFeature::request(
+        session,
         {.uri = path_to_file_uri("/tmp/cind-lsp-completion-test.cpp"),
          .language_id = "cpp",
          .revision = 1,

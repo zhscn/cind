@@ -15,155 +15,91 @@ namespace {
 
 using Json = nlohmann::json;
 
-Json position_json(LspPosition position) {
-    return {{"line", position.line}, {"character", position.character}};
+std::expected<Json, std::string> parse_payload(std::string_view payload,
+                                               std::string_view description) {
+    try {
+        return Json::parse(payload);
+    } catch (const std::exception& exception) {
+        return std::unexpected(
+            std::format("{} is not valid JSON: {}", description, exception.what()));
+    }
 }
 
-std::optional<LspPosition> parse_position(const Json& value) {
-    if (!value.is_object() || !value.contains("line") || !value.contains("character") ||
-        !value["line"].is_number_unsigned() || !value["character"].is_number_unsigned()) {
-        return std::nullopt;
+LspResponseError response_error(const Json& value, std::string_view fallback) {
+    LspResponseError error{.code = std::nullopt, .message = std::string(fallback), .data = "null"};
+    if (!value.is_object()) {
+        return error;
     }
-    const auto line = value["line"].get<std::uint64_t>();
-    const auto character = value["character"].get<std::uint64_t>();
-    if (line > std::numeric_limits<std::uint32_t>::max() ||
-        character > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
+    if (const auto code = value.find("code"); code != value.end() && code->is_number_integer()) {
+        error.code = code->get<std::int64_t>();
     }
-    return LspPosition{static_cast<std::uint32_t>(line), static_cast<std::uint32_t>(character)};
+    if (const auto message = value.find("message");
+        message != value.end() && message->is_string()) {
+        error.message = message->get<std::string>();
+    }
+    if (const auto data = value.find("data"); data != value.end()) {
+        error.data = data->dump();
+    }
+    return error;
 }
 
-std::optional<LspRange> parse_range(const Json& value) {
-    if (!value.is_object() || !value.contains("start") || !value.contains("end")) {
-        return std::nullopt;
+Json error_json(const LspResponseError& error) {
+    Json value{{"code", error.code.value_or(-32603)}, {"message", error.message}};
+    if (error.data != "null") {
+        if (std::expected<Json, std::string> data = parse_payload(error.data, "LSP error data")) {
+            value["data"] = std::move(*data);
+        }
     }
-    const std::optional<LspPosition> start = parse_position(value["start"]);
-    const std::optional<LspPosition> end = parse_position(value["end"]);
-    if (!start || !end) {
-        return std::nullopt;
-    }
-    return LspRange{*start, *end};
+    return value;
 }
 
-std::string completion_kind(const Json& value) {
-    static constexpr std::string_view names[] = {
-        "",         "text",      "method", "function", "constructor",    "field",  "variable",
-        "class",    "interface", "module", "property", "unit",           "value",  "enum",
-        "keyword",  "snippet",   "color",  "file",     "reference",      "folder", "enum member",
-        "constant", "struct",    "event",  "operator", "type parameter",
-    };
-    if (!value.is_number_integer()) {
-        return {};
+Json workspace_configuration_result(const Json& params) {
+    Json result = Json::array();
+    if (!params.is_object()) {
+        return result;
     }
-    const std::int64_t kind = value.get<std::int64_t>();
-    return kind > 0 && static_cast<std::size_t>(kind) < std::size(names)
-               ? std::string(names[static_cast<std::size_t>(kind)])
-               : std::string{};
+    const auto items = params.find("items");
+    if (items == params.end() || !items->is_array()) {
+        return result;
+    }
+    for (std::size_t index = 0; index < items->size(); ++index) {
+        result.push_back(nullptr);
+    }
+    return result;
 }
 
-std::string documentation_text(const Json& value) {
-    if (value.is_string()) {
-        return value.get<std::string>();
-    }
-    if (value.is_object()) {
-        const auto found = value.find("value");
-        if (found != value.end() && found->is_string()) {
-            return found->get<std::string>();
+std::expected<void, std::string> merge_capabilities(Json& target, const Json& source,
+                                                    std::string_view path = {}) {
+    for (auto member = source.begin(); member != source.end(); ++member) {
+        const std::string member_path =
+            path.empty() ? member.key() : std::format("{}.{}", path, member.key());
+        if (!target.contains(member.key())) {
+            target[member.key()] = member.value();
+            continue;
+        }
+        Json& existing = target[member.key()];
+        if (existing.is_object() && member->is_object()) {
+            if (std::expected<void, std::string> merged =
+                    merge_capabilities(existing, *member, member_path);
+                !merged) {
+                return merged;
+            }
+            continue;
+        }
+        if (existing.is_array() && member->is_array()) {
+            for (const Json& value : *member) {
+                if (std::ranges::find(existing, value) == existing.end()) {
+                    existing.push_back(value);
+                }
+            }
+            continue;
+        }
+        if (existing != *member) {
+            return std::unexpected(
+                std::format("conflicting LSP client capability {}", member_path));
         }
     }
     return {};
-}
-
-std::optional<LspTextEdit> parse_text_edit(const Json& value) {
-    if (!value.is_object() || !value.contains("range") || !value.contains("newText") ||
-        !value["newText"].is_string()) {
-        return std::nullopt;
-    }
-    const std::optional<LspRange> range = parse_range(value["range"]);
-    if (!range) {
-        return std::nullopt;
-    }
-    return LspTextEdit{.range = *range, .new_text = value["newText"].get<std::string>()};
-}
-
-LspCompletionItem parse_completion_item(const Json& value, bool resolved) {
-    if (!value.is_object() || !value.contains("label") || !value["label"].is_string()) {
-        throw std::runtime_error("LSP completion item has no label");
-    }
-    LspCompletionItem item{
-        .label = value["label"].get<std::string>(),
-        .insert_text = {},
-        .filter_text = value.value("filterText", std::string{}),
-        .sort_text = value.value("sortText", std::string{}),
-        .kind = value.contains("kind") ? completion_kind(value["kind"]) : std::string{},
-        .detail = value.value("detail", std::string{}),
-        .edit = std::nullopt,
-        .is_snippet = value.value("insertTextFormat", 1) == 2,
-        .resolved = resolved,
-        .documentation = value.contains("documentation")
-                             ? documentation_text(value["documentation"])
-                             : std::string{},
-        .additional_edits = {},
-        .raw = value.dump(),
-    };
-    std::string insertion = value.value("textEditText", std::string{});
-    if (insertion.empty()) {
-        insertion = value.value("insertText", item.label);
-    }
-    if (const auto edit = value.find("textEdit"); edit != value.end() && edit->is_object()) {
-        const std::string new_text = edit->value("newText", insertion);
-        if (edit->contains("insert") && edit->contains("replace")) {
-            const std::optional<LspRange> insert = parse_range((*edit)["insert"]);
-            const std::optional<LspRange> replace = parse_range((*edit)["replace"]);
-            if (insert && replace) {
-                item.edit = LspCompletionEdit{*insert, *replace, new_text};
-            }
-        } else if (edit->contains("range")) {
-            if (const std::optional<LspRange> range = parse_range((*edit)["range"])) {
-                item.edit = LspCompletionEdit{*range, *range, new_text};
-            }
-        }
-    }
-    if (!item.edit) {
-        insertion = value.value("insertText", item.label);
-    }
-    item.insert_text = std::move(insertion);
-    if (const auto edits = value.find("additionalTextEdits");
-        edits != value.end() && edits->is_array()) {
-        for (const Json& edit : *edits) {
-            if (std::optional<LspTextEdit> parsed = parse_text_edit(edit)) {
-                item.additional_edits.push_back(std::move(*parsed));
-            }
-        }
-    }
-    return item;
-}
-
-LspCompletionResponse parse_completion_response(const Json& result, bool resolved) {
-    LspCompletionResponse response;
-    const Json* items = &result;
-    if (result.is_null()) {
-        return response;
-    }
-    if (result.is_object()) {
-        response.is_incomplete = result.value("isIncomplete", false);
-        const auto found = result.find("items");
-        if (found == result.end()) {
-            throw std::runtime_error("LSP completion list has no items");
-        }
-        items = &*found;
-    }
-    if (!items->is_array()) {
-        throw std::runtime_error("LSP completion result is not an array or completion list");
-    }
-    response.items.reserve(items->size());
-    for (const Json& value : *items) {
-        if (!value.is_object() || !value.contains("label") || !value["label"].is_string()) {
-            continue;
-        }
-        response.items.push_back(parse_completion_item(value, resolved));
-    }
-    return response;
 }
 
 } // namespace
@@ -174,6 +110,20 @@ LspSession::LspSession(LspSessionId id, AsyncRuntime& runtime, LspSessionConfig 
         config_.language_id.empty()) {
         throw std::invalid_argument("LSP session requires an id, command, root, and language");
     }
+    Json capabilities = Json::object();
+    for (const std::string& fragment : config_.client_capabilities) {
+        const std::expected<Json, std::string> parsed =
+            parse_payload(fragment, "LSP client capability fragment");
+        if (!parsed || !parsed->is_object()) {
+            throw std::invalid_argument(parsed ? "LSP client capability fragment must be an object"
+                                               : parsed.error());
+        }
+        if (std::expected<void, std::string> merged = merge_capabilities(capabilities, *parsed);
+            !merged) {
+            throw std::invalid_argument(merged.error());
+        }
+    }
+    client_capabilities_ = capabilities.dump();
 }
 
 LspSession::~LspSession() {
@@ -185,17 +135,24 @@ LspSessionSnapshot LspSession::snapshot() const {
             .state = state_,
             .command = config_.command,
             .root = config_.root,
-            .pending_requests = pending_.size() + pending_resolves_.size(),
+            .pending_requests = pending_.size(),
             .open_documents = documents_.size(),
-            .completion_resolve = completion_resolve_,
+            .server_capabilities = server_capabilities_,
             .error = error_};
 }
 
 std::expected<LspSession::Cancel, std::string>
-LspSession::request_completion(LspCompletionRequest request, Completed completed, Failed failed,
-                               Cancelled cancelled) {
+LspSession::request(LspRequest request, Completed completed, Failed failed, Cancelled cancelled) {
+    if (request.method.empty()) {
+        return std::unexpected("LSP request method must not be empty");
+    }
     if (!completed || !failed) {
-        return std::unexpected("LSP completion requires completion and failure callbacks");
+        return std::unexpected("LSP request requires completion and failure callbacks");
+    }
+    if (std::expected<Json, std::string> params =
+            parse_payload(request.params, "LSP request params");
+        !params) {
+        return std::unexpected(std::move(params.error()));
     }
     if (state_ == LspSessionState::Failed) {
         return std::unexpected(error_.empty() ? "LSP session failed" : error_);
@@ -203,97 +160,184 @@ LspSession::request_completion(LspCompletionRequest request, Completed completed
     if (stopping_) {
         return std::unexpected("LSP session is stopping");
     }
+    if (state_ == LspSessionState::Stopped) {
+        start();
+    }
+    if (state_ == LspSessionState::Failed) {
+        return std::unexpected(error_.empty() ? "LSP session failed" : error_);
+    }
     const std::uint64_t id = ++next_request_;
-    auto [found, inserted] =
-        pending_.emplace(id, PendingCompletion{.id = id,
-                                               .request = std::move(request),
-                                               .completed = std::move(completed),
-                                               .failed = std::move(failed),
-                                               .cancelled = std::move(cancelled),
-                                               .sent = false});
+    auto [found, inserted] = pending_.emplace(id, PendingRequest{.id = id,
+                                                                 .request = std::move(request),
+                                                                 .completed = std::move(completed),
+                                                                 .failed = std::move(failed),
+                                                                 .cancelled = std::move(cancelled),
+                                                                 .sent = false});
     if (!inserted) {
         return std::unexpected("LSP request id collision");
+    }
+    if (state_ == LspSessionState::Ready && !send_pending(found->second)) {
+        const std::string error =
+            std::format("cannot write LSP request {}", found->second.request.method);
+        fail(error);
+    }
+    return Cancel{[this, id] { (void)cancel_request(id); }};
+}
+
+std::expected<void, std::string> LspSession::notify(LspNotification notification) {
+    if (notification.method.empty()) {
+        return std::unexpected("LSP notification method must not be empty");
+    }
+    std::expected<Json, std::string> params =
+        parse_payload(notification.params, "LSP notification params");
+    if (!params) {
+        return std::unexpected(std::move(params.error()));
+    }
+    if (state_ != LspSessionState::Ready || !process_.valid()) {
+        return std::unexpected(error_.empty() ? "LSP session is not ready" : error_);
+    }
+    if (!send_json(Json{{"jsonrpc", "2.0"},
+                        {"method", std::move(notification.method)},
+                        {"params", std::move(*params)}}
+                       .dump())) {
+        fail("cannot write LSP notification");
+        return std::unexpected(error_);
+    }
+    return {};
+}
+
+std::expected<void, std::string> LspSession::synchronize_document(LspDocumentSnapshot document) {
+    if (document.uri.empty() || document.language_id.empty()) {
+        return std::unexpected("LSP document requires a URI and language id");
+    }
+    if (state_ == LspSessionState::Failed) {
+        return std::unexpected(error_.empty() ? "LSP session failed" : error_);
+    }
+    if (stopping_) {
+        return std::unexpected("LSP session is stopping");
+    }
+    auto found = documents_.find(document.uri);
+    if (found == documents_.end()) {
+        found =
+            documents_
+                .emplace(document.uri, OpenDocument{.language_id = std::move(document.language_id),
+                                                    .revision = document.revision,
+                                                    .text = std::move(document.text),
+                                                    .published = false})
+                .first;
+    } else if (document.revision < found->second.revision) {
+        return std::unexpected("cannot synchronize a stale LSP document revision");
+    } else if (found->second.revision == document.revision &&
+               found->second.language_id == document.language_id) {
+        return {};
+    } else {
+        bool published = found->second.published;
+        if (published && found->second.language_id != document.language_id) {
+            std::expected<void, std::string> closed =
+                notify({.method = "textDocument/didClose",
+                        .params = Json{{"textDocument", {{"uri", document.uri}}}}.dump()});
+            if (!closed) {
+                return std::unexpected(std::move(closed.error()));
+            }
+            published = false;
+        }
+        found->second = {.language_id = std::move(document.language_id),
+                         .revision = document.revision,
+                         .text = std::move(document.text),
+                         .published = published};
     }
     if (state_ == LspSessionState::Stopped) {
         start();
     }
-    if (state_ == LspSessionState::Ready) {
-        if (!send_pending(found->second)) {
-            fail("cannot write LSP completion request");
-        }
+    if (state_ == LspSessionState::Failed) {
+        return std::unexpected(error_.empty() ? "LSP session failed" : error_);
     }
-    return Cancel{[this, id] { (void)cancel_request(id); }};
+    if (state_ == LspSessionState::Ready && !publish_document(found->first, found->second)) {
+        fail("cannot synchronize LSP document");
+        return std::unexpected(error_);
+    }
+    return {};
 }
 
-std::expected<LspSession::Cancel, std::string>
-LspSession::request_completion_resolve(std::string item, ResolveCompleted completed, Failed failed,
-                                       Cancelled cancelled) {
-    if (!completed || !failed) {
-        return std::unexpected("LSP completion resolve requires completion and failure callbacks");
+std::optional<std::string>
+LspSession::capability(std::initializer_list<std::string_view> path) const {
+    try {
+        const Json capabilities = Json::parse(server_capabilities_);
+        const Json* value = &capabilities;
+        for (const std::string_view segment : path) {
+            if (!value->is_object()) {
+                return std::nullopt;
+            }
+            const auto found = value->find(std::string(segment));
+            if (found == value->end()) {
+                return std::nullopt;
+            }
+            value = &*found;
+        }
+        return value->dump();
+    } catch (...) {
+        return std::nullopt;
     }
-    if (state_ != LspSessionState::Ready) {
-        return std::unexpected(error_.empty() ? "LSP session is not ready" : error_);
-    }
-    if (!completion_resolve_) {
-        return std::unexpected("LSP server does not support completion item resolve");
+}
+
+bool LspSession::capability_boolean(std::initializer_list<std::string_view> path,
+                                    bool fallback) const {
+    const std::optional<std::string> value = capability(path);
+    if (!value) {
+        return fallback;
     }
     try {
-        const Json value = Json::parse(item);
-        if (!value.is_object()) {
-            return std::unexpected("LSP completion resolve payload is not an object");
-        }
-    } catch (const std::exception& exception) {
-        return std::unexpected(
-            std::format("invalid LSP completion resolve payload: {}", exception.what()));
+        const Json parsed = Json::parse(*value);
+        return parsed.is_boolean() ? parsed.get<bool>() : fallback;
+    } catch (...) {
+        return fallback;
     }
-    const std::uint64_t id = ++next_request_;
-    auto [found, inserted] =
-        pending_resolves_.emplace(id, PendingResolve{.id = id,
-                                                     .item = std::move(item),
-                                                     .completed = std::move(completed),
-                                                     .failed = std::move(failed),
-                                                     .cancelled = std::move(cancelled),
-                                                     .sent = false});
-    if (!inserted) {
-        return std::unexpected("LSP request id collision");
+}
+
+void LspSession::set_notification_handler(std::string method, NotificationHandler handler) {
+    if (method.empty() || !handler) {
+        throw std::invalid_argument("LSP notification handler requires a method and callback");
     }
-    if (!send_pending(found->second)) {
-        PendingResolve pending = std::move(found->second);
-        pending_resolves_.erase(found);
-        fail_pending(pending, "cannot write LSP completion resolve request");
-        return std::unexpected("cannot write LSP completion resolve request");
+    notification_handlers_.insert_or_assign(std::move(method), std::move(handler));
+}
+
+bool LspSession::clear_notification_handler(std::string_view method) {
+    return notification_handlers_.erase(std::string(method)) != 0;
+}
+
+void LspSession::set_server_request_handler(std::string method, ServerRequestHandler handler) {
+    if (method.empty() || !handler) {
+        throw std::invalid_argument("LSP server request handler requires a method and callback");
     }
-    return Cancel{[this, id] { (void)cancel_request(id); }};
+    server_request_handlers_.insert_or_assign(std::move(method), std::move(handler));
+}
+
+bool LspSession::clear_server_request_handler(std::string_view method) {
+    return server_request_handlers_.erase(std::string(method)) != 0;
 }
 
 bool LspSession::cancel_request(std::uint64_t request) {
     const auto found = pending_.find(request);
-    if (found != pending_.end()) {
-        PendingCompletion pending = std::move(found->second);
-        pending_.erase(found);
-        if (pending.sent && state_ == LspSessionState::Ready) {
-            (void)send_json(Json{
-                {"jsonrpc", "2.0"}, {"method", "$/cancelRequest"}, {"params", {{"id", request}}}}
-                                .dump());
-        }
-        if (pending.cancelled) {
-            pending.cancelled();
-        }
-        return true;
-    }
-    const auto resolved = pending_resolves_.find(request);
-    if (resolved == pending_resolves_.end()) {
+    if (found == pending_.end()) {
         return false;
     }
-    PendingResolve pending = std::move(resolved->second);
-    pending_resolves_.erase(resolved);
+    PendingRequest pending = std::move(found->second);
+    pending_.erase(found);
     if (pending.sent && state_ == LspSessionState::Ready) {
-        (void)send_json(
-            Json{{"jsonrpc", "2.0"}, {"method", "$/cancelRequest"}, {"params", {{"id", request}}}}
-                .dump());
+        if (!send_json(Json{
+                {"jsonrpc", "2.0"}, {"method", "$/cancelRequest"}, {"params", {{"id", request}}}}
+                           .dump())) {
+            fail("cannot write LSP cancellation notification");
+        }
     }
     if (pending.cancelled) {
-        pending.cancelled();
+        try {
+            pending.cancelled();
+        } catch (const std::exception& exception) {
+            error_ = std::format("LSP cancellation callback failed: {}", exception.what());
+        } catch (...) {
+            error_ = "LSP cancellation callback failed";
+        }
     }
     return true;
 }
@@ -303,11 +347,14 @@ bool LspSession::close_document(std::string_view uri) {
     if (found == documents_.end()) {
         return false;
     }
-    if (state_ == LspSessionState::Ready) {
-        (void)send_json(Json{{"jsonrpc", "2.0"},
-                             {"method", "textDocument/didClose"},
-                             {"params", {{"textDocument", {{"uri", uri}}}}}}
-                            .dump());
+    if (found->second.published && state_ == LspSessionState::Ready) {
+        if (std::expected<void, std::string> sent =
+                notify({.method = "textDocument/didClose",
+                        .params = Json{{"textDocument", {{"uri", uri}}}}.dump()});
+            !sent) {
+            documents_.erase(found);
+            return true;
+        }
     }
     documents_.erase(found);
     return true;
@@ -329,17 +376,6 @@ void LspSession::stop() noexcept {
         }
     }
     pending_.clear();
-    for (auto& [id, pending] : pending_resolves_) {
-        (void)id;
-        if (pending.cancelled) {
-            try {
-                pending.cancelled();
-            } catch (...) {
-                continue;
-            }
-        }
-    }
-    pending_resolves_.clear();
     if (process_.valid()) {
         (void)runtime_->terminate(process_);
     }
@@ -381,7 +417,9 @@ void LspSession::process_started(AsyncProcessId process) {
     }
     state_ = LspSessionState::Initializing;
     initialize_request_ = ++next_request_;
-    Json initialize{
+    Json capabilities = Json::parse(client_capabilities_);
+    capabilities["general"]["positionEncodings"] = Json::array({"utf-16"});
+    const Json initialize{
         {"jsonrpc", "2.0"},
         {"id", initialize_request_},
         {"method", "initialize"},
@@ -389,16 +427,7 @@ void LspSession::process_started(AsyncProcessId process) {
          {{"processId", nullptr},
           {"clientInfo", {{"name", "cind"}}},
           {"rootUri", path_to_file_uri(config_.root)},
-          {"capabilities",
-           {{"general", {{"positionEncodings", Json::array({"utf-16"})}}},
-            {"textDocument",
-             {{"completion",
-               {{"completionItem",
-                 {{"snippetSupport", false},
-                  {"documentationFormat", Json::array({"plaintext", "markdown"})},
-                  {"resolveSupport",
-                   {{"properties",
-                     Json::array({"documentation", "detail", "additionalTextEdits"})}}}}}}}}}}},
+          {"capabilities", std::move(capabilities)},
           {"workspaceFolders",
            Json::array({{{"uri", path_to_file_uri(config_.root)}, {"name", config_.root}}})}}},
     };
@@ -418,6 +447,9 @@ void LspSession::process_output(const std::string& bytes) {
     }
     for (const std::string& message : *messages) {
         handle_message(message);
+        if (state_ == LspSessionState::Failed) {
+            return;
+        }
     }
 }
 
@@ -458,18 +490,13 @@ void LspSession::handle_message(std::string_view message) {
     if (!value.is_object()) {
         return;
     }
-    if (value.contains("method") && value.contains("id")) {
-        Json result = nullptr;
-        if (value["method"] == "workspace/configuration" && value.contains("params")) {
-            const auto items = value["params"].find("items");
-            if (items != value["params"].end() && items->is_array()) {
-                result = Json::array();
-                for (std::size_t index = 0; index < items->size(); ++index) {
-                    result.push_back(nullptr);
-                }
-            }
+    if (const auto method = value.find("method"); method != value.end() && method->is_string()) {
+        const std::string params = value.value("params", Json(nullptr)).dump();
+        if (const auto id = value.find("id"); id != value.end()) {
+            handle_server_request(id->dump(), method->get<std::string>(), params);
+        } else {
+            handle_notification(method->get<std::string>(), params);
         }
-        (void)send_json(Json{{"jsonrpc", "2.0"}, {"id", value["id"]}, {"result", result}}.dump());
         return;
     }
     if (!value.contains("id") || !value["id"].is_number_unsigned()) {
@@ -481,103 +508,134 @@ void LspSession::handle_message(std::string_view message) {
         return;
     }
     const auto found = pending_.find(id);
-    if (found != pending_.end()) {
-        PendingCompletion pending = std::move(found->second);
-        pending_.erase(found);
-        if (value.contains("error")) {
-            const std::string error = value["error"].value("message", "LSP completion failed");
-            fail_pending(pending, error);
-            return;
-        }
-        try {
-            pending.completed(
-                parse_completion_response(value.value("result", Json{}), !completion_resolve_));
-        } catch (const std::exception& exception) {
-            fail_pending(pending, exception.what());
-        }
+    if (found == pending_.end()) {
         return;
     }
-    const auto resolved = pending_resolves_.find(id);
-    if (resolved == pending_resolves_.end()) {
-        return;
-    }
-    PendingResolve pending = std::move(resolved->second);
-    pending_resolves_.erase(resolved);
-    if (value.contains("error")) {
-        const std::string error = value["error"].value("message", "LSP completion resolve failed");
-        fail_pending(pending, error);
+    PendingRequest pending = std::move(found->second);
+    pending_.erase(found);
+    if (const auto error = value.find("error"); error != value.end()) {
+        fail_pending(pending, response_error(*error, "LSP request failed"));
         return;
     }
     try {
-        pending.completed(parse_completion_item(value.value("result", Json{}), true));
+        pending.completed({.result = value.value("result", Json(nullptr)).dump()});
     } catch (const std::exception& exception) {
-        fail_pending(pending, exception.what());
+        error_ = std::format("LSP response callback failed: {}", exception.what());
+    } catch (...) {
+        error_ = "LSP response callback failed";
     }
 }
 
 void LspSession::initialize_completed(std::string_view message) {
     const Json value = Json::parse(message);
-    if (value.contains("error")) {
-        fail(value["error"].value("message", "LSP initialize failed"));
+    if (const auto error = value.find("error"); error != value.end()) {
+        fail(response_error(*error, "LSP initialize failed").message);
         return;
     }
-    completion_resolve_ = false;
-    if (const auto result = value.find("result"); result != value.end() && result->is_object()) {
-        if (const auto capabilities = result->find("capabilities");
-            capabilities != result->end() && capabilities->is_object()) {
-            if (const auto completion = capabilities->find("completionProvider");
-                completion != capabilities->end() && completion->is_object()) {
-                completion_resolve_ = completion->value("resolveProvider", false);
-            }
-        }
-    }
+    const Json result = value.value("result", Json::object());
+    server_capabilities_ = result.value("capabilities", Json::object()).dump();
     if (!send_json(Json{{"jsonrpc", "2.0"}, {"method", "initialized"}, {"params", Json::object()}}
                        .dump())) {
         fail("cannot write LSP initialized notification");
         return;
     }
     state_ = LspSessionState::Ready;
-    for (auto& [id, pending] : pending_) {
-        (void)id;
-        if (!send_pending(pending)) {
-            fail("cannot write LSP completion request");
-            break;
+    if (!flush_documents()) {
+        fail("cannot synchronize LSP documents after initialization");
+        return;
+    }
+    std::vector<std::uint64_t> requests;
+    requests.reserve(pending_.size());
+    for (const auto& [id, pending] : pending_) {
+        (void)pending;
+        requests.push_back(id);
+    }
+    for (const std::uint64_t id : requests) {
+        const auto pending = pending_.find(id);
+        if (pending != pending_.end() && !send_pending(pending->second)) {
+            fail(std::format("cannot write LSP request {}", pending->second.request.method));
+            return;
         }
     }
 }
 
-bool LspSession::send_pending(PendingCompletion& pending) {
-    if (pending.sent) {
-        return true;
-    }
-    sync_document(pending.request);
-    Json context{{"triggerKind", static_cast<int>(pending.request.trigger)}};
-    if (!pending.request.trigger_character.empty()) {
-        context["triggerCharacter"] = pending.request.trigger_character;
-    }
-    const Json request{
-        {"jsonrpc", "2.0"},
-        {"id", pending.id},
-        {"method", "textDocument/completion"},
-        {"params",
-         {{"textDocument", {{"uri", pending.request.uri}}},
-          {"position", position_json(lsp_position(pending.request.text, pending.request.caret))},
-          {"context", std::move(context)}}}};
-    if (!send_json(request.dump())) {
+void LspSession::handle_server_request(std::string_view id, std::string_view method,
+                                       std::string_view params) {
+    const Json response_id = Json::parse(id);
+    const auto reply = [this](const Json& response) {
+        if (send_json(response.dump())) {
+            return true;
+        }
+        fail("cannot write LSP server request response");
         return false;
+    };
+    const auto handler = server_request_handlers_.find(std::string(method));
+    if (method == "workspace/configuration" && handler == server_request_handlers_.end()) {
+        const Json request_params = Json::parse(params);
+        (void)reply(Json{{"jsonrpc", "2.0"},
+                         {"id", response_id},
+                         {"result", workspace_configuration_result(request_params)}});
+        return;
     }
-    pending.sent = true;
-    return true;
+    if (handler == server_request_handlers_.end()) {
+        const LspResponseError error{.code = -32601,
+                                     .message =
+                                         std::format("unsupported server request {}", method),
+                                     .data = "null"};
+        (void)reply(Json{{"jsonrpc", "2.0"}, {"id", response_id}, {"error", error_json(error)}});
+        return;
+    }
+    try {
+        ServerRequestHandler callback = handler->second;
+        std::expected<std::string, LspResponseError> response =
+            callback({.method = std::string(method), .params = std::string(params)});
+        if (!response) {
+            (void)reply(Json{
+                {"jsonrpc", "2.0"}, {"id", response_id}, {"error", error_json(response.error())}});
+            return;
+        }
+        std::expected<Json, std::string> result = parse_payload(*response, "LSP server result");
+        if (!result) {
+            const LspResponseError error{
+                .code = -32603, .message = std::move(result.error()), .data = "null"};
+            (void)reply(
+                Json{{"jsonrpc", "2.0"}, {"id", response_id}, {"error", error_json(error)}});
+            return;
+        }
+        (void)reply(Json{{"jsonrpc", "2.0"}, {"id", response_id}, {"result", std::move(*result)}});
+    } catch (const std::exception& exception) {
+        const LspResponseError error{.code = -32603, .message = exception.what(), .data = "null"};
+        (void)reply(Json{{"jsonrpc", "2.0"}, {"id", response_id}, {"error", error_json(error)}});
+    } catch (...) {
+        const LspResponseError error{
+            .code = -32603, .message = "server request handler failed", .data = "null"};
+        (void)reply(Json{{"jsonrpc", "2.0"}, {"id", response_id}, {"error", error_json(error)}});
+    }
 }
 
-bool LspSession::send_pending(PendingResolve& pending) {
+void LspSession::handle_notification(std::string_view method, std::string_view params) {
+    const auto handler = notification_handlers_.find(std::string(method));
+    if (handler == notification_handlers_.end()) {
+        return;
+    }
+    try {
+        NotificationHandler callback = handler->second;
+        callback({.method = std::string(method), .params = std::string(params)});
+    } catch (const std::exception& exception) {
+        error_ = std::format("LSP notification handler failed: {}", exception.what());
+    } catch (...) {
+        error_ = "LSP notification handler failed";
+    }
+}
+
+bool LspSession::send_pending(PendingRequest& pending) {
     if (pending.sent) {
         return true;
     }
     const Json request{{"jsonrpc", "2.0"},
                        {"id", pending.id},
-                       {"method", "completionItem/resolve"},
-                       {"params", Json::parse(pending.item)}};
+                       {"method", pending.request.method},
+                       {"params", Json::parse(pending.request.params)}};
     if (!send_json(request.dump())) {
         return false;
     }
@@ -585,34 +643,36 @@ bool LspSession::send_pending(PendingResolve& pending) {
     return true;
 }
 
-void LspSession::sync_document(const LspCompletionRequest& request) {
-    const auto found = documents_.find(request.uri);
+bool LspSession::publish_document(std::string_view uri, OpenDocument& document) {
     const std::int64_t version = static_cast<std::int64_t>(std::min<RevisionId>(
-        request.revision, static_cast<RevisionId>(std::numeric_limits<std::int64_t>::max())));
-    if (found == documents_.end()) {
-        (void)send_json(Json{{"jsonrpc", "2.0"},
-                             {"method", "textDocument/didOpen"},
-                             {"params",
-                              {{"textDocument",
-                                {{"uri", request.uri},
-                                 {"languageId", request.language_id},
-                                 {"version", version},
-                                 {"text", request.text.to_string()}}}}}}
-                            .dump());
-        documents_.emplace(request.uri, OpenDocument{request.revision});
-        return;
+        document.revision, static_cast<RevisionId>(std::numeric_limits<std::int64_t>::max())));
+    if (!document.published) {
+        const Json params{{"textDocument",
+                           {{"uri", uri},
+                            {"languageId", document.language_id},
+                            {"version", version},
+                            {"text", document.text.to_string()}}}};
+        if (!send_json(
+                Json{{"jsonrpc", "2.0"}, {"method", "textDocument/didOpen"}, {"params", params}}
+                    .dump())) {
+            return false;
+        }
+        document.published = true;
+        return true;
     }
-    if (found->second.revision == request.revision) {
-        return;
+    const Json params{{"textDocument", {{"uri", uri}, {"version", version}}},
+                      {"contentChanges", Json::array({{{"text", document.text.to_string()}}})}};
+    return send_json(
+        Json{{"jsonrpc", "2.0"}, {"method", "textDocument/didChange"}, {"params", params}}.dump());
+}
+
+bool LspSession::flush_documents() {
+    for (auto& [uri, document] : documents_) {
+        if (!publish_document(uri, document)) {
+            return false;
+        }
     }
-    (void)send_json(
-        Json{{"jsonrpc", "2.0"},
-             {"method", "textDocument/didChange"},
-             {"params",
-              {{"textDocument", {{"uri", request.uri}, {"version", version}}},
-               {"contentChanges", Json::array({{{"text", request.text.to_string()}}})}}}}
-            .dump());
-    found->second.revision = request.revision;
+    return true;
 }
 
 bool LspSession::send_json(const std::string& json) {
@@ -620,42 +680,39 @@ bool LspSession::send_json(const std::string& json) {
 }
 
 void LspSession::fail(std::string error) {
+    if (state_ == LspSessionState::Failed) {
+        return;
+    }
     error_ = std::move(error);
     state_ = LspSessionState::Failed;
-    std::vector<PendingCompletion> pending;
+    std::vector<PendingRequest> pending;
     pending.reserve(pending_.size());
     for (auto& [id, request] : pending_) {
         (void)id;
         pending.push_back(std::move(request));
     }
     pending_.clear();
-    for (PendingCompletion& request : pending) {
-        fail_pending(request, error_);
-    }
-    std::vector<PendingResolve> resolves;
-    resolves.reserve(pending_resolves_.size());
-    for (auto& [id, request] : pending_resolves_) {
-        (void)id;
-        resolves.push_back(std::move(request));
-    }
-    pending_resolves_.clear();
-    for (PendingResolve& request : resolves) {
-        fail_pending(request, error_);
+    for (PendingRequest& request : pending) {
+        fail_pending(request, {.code = std::nullopt, .message = error_, .data = "null"});
     }
     if (process_.valid()) {
         (void)runtime_->terminate(process_);
     }
 }
 
-void LspSession::fail_pending(const PendingCompletion& pending, std::string error) {
+void LspSession::fail_pending(const PendingRequest& pending, LspResponseError error) {
     if (pending.failed) {
-        pending.failed(std::move(error));
-    }
-}
-
-void LspSession::fail_pending(const PendingResolve& pending, std::string error) {
-    if (pending.failed) {
-        pending.failed(std::move(error));
+        try {
+            pending.failed(std::move(error));
+        } catch (const std::exception& exception) {
+            if (state_ != LspSessionState::Failed) {
+                error_ = std::format("LSP failure callback failed: {}", exception.what());
+            }
+        } catch (...) {
+            if (state_ != LspSessionState::Failed) {
+                error_ = "LSP failure callback failed";
+            }
+        }
     }
 }
 

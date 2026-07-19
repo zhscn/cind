@@ -154,6 +154,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                  .root = "/tmp/project",
                  .pending_requests = 1,
                  .open_documents = 2,
+                 .server_capabilities = R"({"completionProvider":{"resolveProvider":true}})",
                  .error = {}}},
         .buffers = {{.buffer_slot = 0,
                      .buffer_generation = 1,
@@ -574,6 +575,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(lsp.payload.find("\"state\":\"ready\"") != std::string::npos);
     CHECK(lsp.payload.find("\"command\":\"clangd\"") != std::string::npos);
     CHECK(lsp.payload.find("\"open_documents\":2") != std::string::npos);
+    CHECK(lsp.payload.find("\"server_capabilities\":{") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);

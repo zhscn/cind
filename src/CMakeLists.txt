@@ -19,6 +19,7 @@ target_include_directories(cind_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(cind_document PUBLIC cxx_std_23)
 
 add_library(cind_lsp STATIC
+  lsp/completion.cpp
   lsp/json_rpc.cpp
   lsp/protocol.cpp
   lsp/registry.cpp

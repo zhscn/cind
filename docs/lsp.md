@@ -1,13 +1,19 @@
-# LSP sessions and semantic completion
+# LSP sessions and features
 
-cind runs language servers as project-scoped services. The native layer owns process transport,
-JSON-RPC framing, request generations, document synchronization, protocol data conversion, and
-session lifetime. Scheme policy selects the language server source used by a mode. Completion
-candidates enter the same frontend-independent pipeline as local word and path candidates.
+cind runs language servers as project-scoped services. `LspSession` is the method-independent
+transport boundary: it owns the process, JSON-RPC lifecycle, pending requests, cancellation,
+capability exchange, document synchronization, and inbound message routing. Protocol features own
+their method names, parameter construction, response decoding, and editor-facing data types.
+
+The public feature boundary uses serialized JSON values rather than exposing the JSON library in
+public headers. `LspRequest`, `LspResponse`, `LspResponseError`, `LspNotification`, and
+`LspServerRequest` preserve protocol payloads while the session validates every outbound value.
+Feature adapters decode only the messages they own.
 
 ## Ownership
 
-`LspSessionRegistry` owns one session for each project/root, language, and server configuration.
+`LspSessionRegistry` owns one session for each project/root, language, server configuration, and
+set of client capability fragments.
 A session owns a long-running process in `AsyncRuntime`; the process exposes writable stdin and
 streams stdout and stderr back to the editor's owning thread. libuv callbacks never mutate editor
 state directly.
@@ -23,26 +29,53 @@ split across arbitrary stdout chunks and multiple messages delivered in one chun
 limits bound retained input.
 
 The session performs the LSP initialize/initialized handshake and advertises UTF-16 positions.
-Text offsets are converted through the document's persistent UTF-16 summaries, so protocol
-positions and editor byte offsets share the same revisioned snapshot without rescanning the file.
+Each enabled feature contributes a client capability JSON fragment. The session recursively merges
+objects, unions array members, and rejects conflicting scalar declarations before starting the
+server. Server capabilities remain available as serialized values through path lookup, with a
+boolean convenience query for capability flags.
+
+Inbound notifications and server requests are routed by method. A feature registers only the
+methods it owns, so diagnostics, progress, configuration, and future protocol extensions do not
+share a global switch. Unsupported server requests receive a method-not-found response. The
+session provides the empty `workspace/configuration` response required by servers when no feature
+owns that method.
 
 ## Documents and requests
 
-The first request for a file sends `textDocument/didOpen`. A later request at a new document
-revision sends a full-content `textDocument/didChange`; releasing the buffer sends
-`textDocument/didClose`. The synchronization table is session-local and records the last revision
-published for each URI.
+`synchronize_document` is independent of any feature request. The first snapshot for a URI sends
+`textDocument/didOpen`; a greater revision sends one full-content `textDocument/didChange`; closing
+the buffer sends `textDocument/didClose`. Equal revisions are idempotent and stale revisions are
+rejected. Changing the language identity closes and reopens the document. Snapshots queued during
+initialization are coalesced to the newest revision before publication.
 
-Completion requests use monotonically increasing JSON-RPC IDs. Cancellation removes the owning
-callback and sends `$/cancelRequest` after a request has reached the server. Responses are delivered
-only on the editor thread. Session failure completes every pending request with the same transport
-error and leaves local completion providers usable.
+All feature requests use one monotonically increasing ID space and one pending-request table. A
+request may be queued while the server initializes. Cancellation removes its callbacks and sends
+`$/cancelRequest` when the request has reached the server. Structured JSON-RPC errors preserve the
+numeric code, message, and optional data payload. Responses and inbound handlers run on the
+editor's owning thread. Session failure completes every pending request with the transport error.
 
-The initialize handshake records `completionProvider.resolveProvider`. Servers that advertise it
-produce unresolved completion items. `completionItem/resolve` uses the same request ownership and
-cancellation path as initial completion, including transport failure and session shutdown.
+Notifications are sent through the same validated transport once initialization is complete.
+Features that need a document synchronize its snapshot before issuing the associated request.
 
-## Completion integration
+## Feature adapters
+
+A feature adapter supplies three pieces:
+
+- client capability fragments for `LspSessionConfig`;
+- request and notification functions built on the generic session API;
+- method-specific conversion between serialized protocol values and native editor values.
+
+Adapters query server capabilities before using optional methods and register method-specific
+handlers for server-initiated traffic. Adding definition, references, rename, hover, diagnostics,
+or workspace symbols does not add pending maps or protocol branches to `LspSession`.
+
+## Completion feature
+
+`LspCompletionFeature` implements `textDocument/completion` and `completionItem/resolve` on the
+generic feature boundary. It contributes completion and resolve client capabilities, synchronizes
+the request snapshot, converts UTF-16 positions, and normalizes protocol items for the completion
+pipeline. The initialize handshake's `completionProvider.resolveProvider` flag determines whether
+items enter the pipeline as resolved.
 
 The default C++ policy requests the fixed `Word`, `Path`, and `Lsp` sources. Include syntax narrows
 the request to `Path`; other string and comment contexts remain suppressed by the syntax gate.
@@ -62,6 +95,7 @@ remain part of the same transaction. The selected item's documentation is presen
 overlay when the viewport has room, without changing document or completion-menu geometry.
 
 The GUI inspector exposes sessions at `editor.lsp`, including lifecycle state, command, project
-root, pending request count, synchronized document count, resolve capability, and transport errors.
+root, generic pending request count, synchronized document count, complete server capabilities, and
+transport errors.
 Completion state at `editor.completion` identifies LSP candidates by their fixed provider/session
 name and exposes resolve progress, resolve errors, and normalized documentation.
