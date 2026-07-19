@@ -19,7 +19,13 @@ void write_layout(std::ostream& output, const WorkbenchLayoutSessionState& node)
         output << "leaf " << window.resource.has_value() << ' '
                << std::quoted(window.resource.value_or(std::string{})) << ' ' << window.caret << ' '
                << window.role.has_value() << ' ' << std::quoted(window.role.value_or(std::string{}))
-               << ' ' << window.pinned << ' ' << window.created_by_policy << '\n';
+               << ' ' << window.pinned << ' ' << window.created_by_policy << ' '
+               << window.jump_walk.size() << ' ' << window.jump_cursor.has_value() << ' '
+               << window.jump_cursor.value_or(0);
+        for (const std::uint64_t jump : window.jump_walk) {
+            output << ' ' << jump;
+        }
+        output << '\n';
         return;
     }
     if (!node.first || !node.second || !std::isfinite(node.ratio) || node.ratio <= 0.0F ||
@@ -46,6 +52,14 @@ bool read_bool(std::istream& input, const char* field) {
         throw std::invalid_argument(std::format("invalid {}", field));
     }
     return value != 0;
+}
+
+std::uint64_t read_u64(std::istream& input, const char* field) {
+    std::uint64_t value = 0;
+    if (!(input >> value)) {
+        throw std::invalid_argument(std::format("invalid {}", field));
+    }
+    return value;
 }
 
 std::string read_quoted(std::istream& input, const char* field) {
@@ -75,8 +89,20 @@ WorkbenchLayoutSessionState read_layout(std::istream& input, std::size_t& nodes)
         std::string role = read_quoted(input, "leaf role");
         const bool pinned = read_bool(input, "leaf pinned state");
         const bool created = read_bool(input, "leaf policy provenance");
+        const std::size_t walk_count = read_size(input, "leaf jump walk count");
+        const bool has_jump_cursor = read_bool(input, "leaf jump cursor marker");
+        const std::size_t jump_cursor = read_size(input, "leaf jump cursor");
+        std::vector<std::uint64_t> jump_walk;
+        jump_walk.reserve(walk_count);
+        for (std::size_t index = 0; index < walk_count; ++index) {
+            jump_walk.push_back(read_u64(input, "leaf jump node"));
+        }
         if ((has_resource && resource.empty()) || (has_role && role.empty())) {
             throw std::invalid_argument("workbench leaf contains an empty stable identifier");
+        }
+        if ((has_jump_cursor && jump_cursor >= jump_walk.size()) ||
+            (!has_jump_cursor && !jump_walk.empty())) {
+            throw std::invalid_argument("workbench leaf contains an invalid jump cursor");
         }
         return {
             .window =
@@ -85,7 +111,9 @@ WorkbenchLayoutSessionState read_layout(std::istream& input, std::size_t& nodes)
                     .caret = static_cast<std::uint32_t>(caret),
                     .role = has_role ? std::optional(std::move(role)) : std::nullopt,
                     .pinned = pinned,
-                    .created_by_policy = created},
+                    .created_by_policy = created,
+                    .jump_walk = std::move(jump_walk),
+                    .jump_cursor = has_jump_cursor ? std::optional(jump_cursor) : std::nullopt},
             .axis = WindowSplitAxis::Rows,
             .ratio = 0.5F,
             .first = nullptr,
@@ -131,6 +159,18 @@ std::string serialize_workbench_session(const WorkbenchSessionState& state) {
         }
         output << ' ' << workbench.active_leaf << '\n';
         write_layout(output, workbench.layout);
+        output << "jump-nodes " << workbench.jump_nodes.size() << '\n';
+        for (const WorkbenchJumpNodeSessionState& node : workbench.jump_nodes) {
+            output << "jump-node " << node.id << ' ' << std::quoted(node.resource) << ' '
+                   << node.fallback.line << ' ' << node.fallback.byte_column << ' '
+                   << std::quoted(node.excerpt) << ' ' << node.created_at << ' ' << node.last_visit
+                   << '\n';
+        }
+        output << "jump-edges " << workbench.jump_edges.size() << '\n';
+        for (const WorkbenchJumpEdgeSessionState& edge : workbench.jump_edges) {
+            output << "jump-edge " << edge.from << ' ' << edge.to << ' '
+                   << std::quoted(edge.kind) << ' ' << edge.at << ' ' << edge.persistent << '\n';
+        }
     }
     return output.str();
 }
@@ -173,6 +213,48 @@ parse_workbench_session(std::string_view serialized) {
             }
             workbench.active_leaf = read_size(input, "active leaf index");
             workbench.layout = read_layout(input, nodes);
+            if (!(input >> marker) || marker != "jump-nodes") {
+                return std::unexpected("missing workbench jump nodes");
+            }
+            const std::size_t jump_node_count = read_size(input, "jump node count");
+            workbench.jump_nodes.reserve(jump_node_count);
+            for (std::size_t node = 0; node < jump_node_count; ++node) {
+                if (!(input >> marker) || marker != "jump-node") {
+                    return std::unexpected("missing workbench jump node");
+                }
+                WorkbenchJumpNodeSessionState jump;
+                jump.id = read_u64(input, "jump node id");
+                jump.resource = read_quoted(input, "jump node resource");
+                const std::uint64_t line = read_u64(input, "jump node line");
+                const std::uint64_t column = read_u64(input, "jump node column");
+                if (line > std::numeric_limits<std::uint32_t>::max() ||
+                    column > std::numeric_limits<std::uint32_t>::max()) {
+                    return std::unexpected("invalid workbench jump position");
+                }
+                jump.fallback = {.line = static_cast<std::uint32_t>(line),
+                                 .byte_column = static_cast<std::uint32_t>(column)};
+                jump.excerpt = read_quoted(input, "jump node excerpt");
+                jump.created_at = read_u64(input, "jump node creation time");
+                jump.last_visit = read_u64(input, "jump node visit time");
+                workbench.jump_nodes.push_back(std::move(jump));
+            }
+            if (!(input >> marker) || marker != "jump-edges") {
+                return std::unexpected("missing workbench jump edges");
+            }
+            const std::size_t jump_edge_count = read_size(input, "jump edge count");
+            workbench.jump_edges.reserve(jump_edge_count);
+            for (std::size_t edge = 0; edge < jump_edge_count; ++edge) {
+                if (!(input >> marker) || marker != "jump-edge") {
+                    return std::unexpected("missing workbench jump edge");
+                }
+                WorkbenchJumpEdgeSessionState jump;
+                jump.from = read_u64(input, "jump edge origin");
+                jump.to = read_u64(input, "jump edge target");
+                jump.kind = read_quoted(input, "jump edge kind");
+                jump.at = read_u64(input, "jump edge time");
+                jump.persistent = read_bool(input, "jump edge persistence");
+                workbench.jump_edges.push_back(std::move(jump));
+            }
             state.workbenches.push_back(std::move(workbench));
         }
         input >> std::ws;

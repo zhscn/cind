@@ -60,10 +60,14 @@ public:
     std::vector<JumpEdge> outgoing(JumpNodeId node) const;
     std::vector<JumpEdge> incoming(JumpNodeId node) const;
     std::vector<JumpNode> evict(std::size_t maximum_nodes);
+    void restore(std::vector<JumpNode> nodes, std::vector<JumpEdge> edges);
 
     void detach_buffer(BufferId buffer,
                        const std::function<LinePosition(AnchorId)>& resolve_position,
                        const std::function<void(AnchorId)>& remove_anchor);
+    void attach_buffer(
+        std::string_view resource, BufferId buffer,
+        const std::function<std::pair<AnchorId, LinePosition>(const JumpPosition&)>& resolve);
     void release_anchors(const std::function<void(BufferId, AnchorId)>& remove_anchor);
 
 private:
@@ -85,6 +89,7 @@ public:
     std::span<const JumpNodeId> entries() const { return entries_; }
     std::optional<std::size_t> cursor() const { return cursor_; }
     void forget(std::span<const JumpNodeId> nodes);
+    void restore(std::vector<JumpNodeId> entries, std::optional<std::size_t> cursor);
     void clear();
 
 private:

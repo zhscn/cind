@@ -138,7 +138,9 @@ TEST_CASE("workbench session codec preserves stable layout state and rejects cor
                                                   .caret = 17,
                                                   .role = std::nullopt,
                                                   .pinned = true,
-                                                  .created_by_policy = false},
+                                                  .created_by_policy = false,
+                                                  .jump_walk = {},
+                                                  .jump_cursor = std::nullopt},
             .axis = WindowSplitAxis::Rows,
             .ratio = 0.5F,
             .first = nullptr,
@@ -148,7 +150,9 @@ TEST_CASE("workbench session codec preserves stable layout state and rejects cor
                                                   .caret = 3,
                                                   .role = "tools",
                                                   .pinned = false,
-                                                  .created_by_policy = true},
+                                                  .created_by_policy = true,
+                                                  .jump_walk = {7, 8},
+                                                  .jump_cursor = 1},
             .axis = WindowSplitAxis::Rows,
             .ratio = 0.5F,
             .first = nullptr,
@@ -165,12 +169,31 @@ TEST_CASE("workbench session codec preserves stable layout state and rejects cor
                                                .ratio = 0.5F,
                                                .first = nullptr,
                                                .second = nullptr},
-         .active_leaf = 0});
+         .active_leaf = 0,
+         .jump_nodes = {},
+         .jump_edges = {}});
     state.workbenches.push_back({.name = "shop \"frontend\"",
                                  .scope_roots = {"/tmp/backend", "/tmp/frontend"},
                                  .mru_resources = {"/tmp/results", "/tmp/source.cc"},
                                  .layout = std::move(layout),
-                                 .active_leaf = 1});
+                                 .active_leaf = 1,
+                                 .jump_nodes = {{.id = 7,
+                                                 .resource = "/tmp/source.cc",
+                                                 .fallback = {.line = 3, .byte_column = 4},
+                                                 .excerpt = "source line",
+                                                 .created_at = 11,
+                                                 .last_visit = 17},
+                                                {.id = 8,
+                                                 .resource = "/tmp/results",
+                                                 .fallback = {.line = 9, .byte_column = 2},
+                                                 .excerpt = "result line",
+                                                 .created_at = 12,
+                                                 .last_visit = 18}},
+                                 .jump_edges = {{.from = 7,
+                                                 .to = 8,
+                                                 .kind = "manual",
+                                                 .at = 19,
+                                                 .persistent = true}}});
 
     const std::string serialized = serialize_workbench_session(state);
     const std::expected<WorkbenchSessionState, std::string> parsed =
@@ -193,6 +216,14 @@ TEST_CASE("workbench session codec preserves stable layout state and rejects cor
     REQUIRE(restored.layout.second->window.has_value());
     CHECK(restored.layout.second->window->role == std::optional<std::string>{"tools"});
     CHECK(restored.layout.second->window->created_by_policy);
+    CHECK(restored.layout.second->window->jump_walk == std::vector<std::uint64_t>{7, 8});
+    CHECK(restored.layout.second->window->jump_cursor == std::optional<std::size_t>{1});
+    REQUIRE(restored.jump_nodes.size() == 2);
+    CHECK(restored.jump_nodes[0].resource == "/tmp/source.cc");
+    CHECK(restored.jump_nodes[1].fallback == LinePosition{.line = 9, .byte_column = 2});
+    REQUIRE(restored.jump_edges.size() == 1);
+    CHECK(restored.jump_edges[0].kind == "manual");
+    CHECK(restored.jump_edges[0].persistent);
 
     CHECK_FALSE(parse_workbench_session("cind-workbench-session 2 0 1").has_value());
     CHECK_FALSE(parse_workbench_session(

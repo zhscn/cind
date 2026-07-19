@@ -2151,8 +2151,14 @@ TEST_CASE("workbench session capture uses stable resources and layout topology")
     const WorkbenchId first = application.workbench_id();
     const WindowId first_window = application.window_id();
     application.session().set_caret(TextOffset{4});
+    const std::optional<JumpNodeId> first_jump = application.mark_jump(first_window);
+    REQUIRE(first_jump.has_value());
     REQUIRE(application.split_window(WindowSplitAxis::Rows));
     const WindowId tool_window = application.window_layout().leaves().back();
+    application.session(tool_window).set_caret(TextOffset{0});
+    const std::optional<JumpNodeId> tool_jump = application.mark_jump(tool_window);
+    REQUIRE(tool_jump.has_value());
+    REQUIRE(application.link_jump(tool_window, *first_jump, *tool_jump, "manual", true));
     REQUIRE(application.set_window_role(tool_window, "tools").has_value());
     REQUIRE(application.set_window_pinned(first_window, true).has_value());
     const ProjectId project =
@@ -2178,6 +2184,13 @@ TEST_CASE("workbench session capture uses stable resources and layout topology")
     REQUIRE(captured->workbenches[0].layout.second->window.has_value());
     CHECK(captured->workbenches[0].layout.second->window->role ==
           std::optional<std::string>{"tools"});
+    REQUIRE(captured->workbenches[0].jump_nodes.size() == 2);
+    REQUIRE(captured->workbenches[0].jump_edges.size() == 1);
+    CHECK(captured->workbenches[0].jump_edges[0].persistent);
+    CHECK(captured->workbenches[0].layout.first->window->jump_walk ==
+          std::vector<JumpNodeId>{*first_jump});
+    CHECK(captured->workbenches[0].layout.second->window->jump_walk ==
+          std::vector<JumpNodeId>{*first_jump, *tool_jump});
     CHECK(captured->workbenches[1].name == "notes");
     CHECK(application.workbench_id() == second);
 }
@@ -2217,6 +2230,22 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
                        leaf(main.string(), 5, std::nullopt, true)),
                    .second = std::make_unique<WorkbenchLayoutSessionState>(
                        leaf(missing.string(), 80, "tools", false, true))};
+    code.jump_nodes = {{.id = 10,
+                        .resource = main.string(),
+                        .fallback = {.line = 1, .byte_column = 0},
+                        .excerpt = "one",
+                        .created_at = 1,
+                        .last_visit = 3},
+                       {.id = 11,
+                        .resource = visitor.string(),
+                        .fallback = {.line = 0, .byte_column = 2},
+                        .excerpt = "visitor",
+                        .created_at = 2,
+                        .last_visit = 4}};
+    code.jump_edges = {
+        {.from = 10, .to = 11, .kind = "manual", .at = 5, .persistent = true}};
+    code.layout.first->window->jump_walk = {10, 11};
+    code.layout.first->window->jump_cursor = 0;
     WorkbenchSessionEntry notes;
     notes.name = "notes";
     notes.mru_resources = {visitor.string()};
@@ -2279,6 +2308,12 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
         std::optional{main.string()});
     CHECK(application.session(source_window).caret() == TextOffset{5});
     CHECK(application.runtime().windows().get(source_window).pinned());
+    const std::optional<JumpNode> restored_jump = application.jump_node(source_window, 10);
+    REQUIRE(restored_jump.has_value());
+    CHECK(restored_jump->position.buffer == application.buffer_id(source_window));
+    CHECK(restored_jump->position.anchor != 0);
+    REQUIRE(application.jump_branches(source_window).size() == 1);
+    CHECK(application.jump_branches(source_window)[0].to == 11);
     CHECK(application.window_id() == tool_window);
     CHECK(application.runtime().windows().get(tool_window).role() ==
           std::optional<std::string>{"tools"});

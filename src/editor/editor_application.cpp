@@ -222,19 +222,19 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
-           .jump_node =
-               [this](WindowId window, std::uint64_t node) -> std::optional<GuileJumpNode> {
-                   const std::optional<JumpNode> found = jump_node(window, node);
-                   if (!found) {
-                       return std::nullopt;
-                   }
-                   return GuileJumpNode{.id = found->id,
-                                        .resource = found->position.resource,
-                                        .line = found->position.fallback.line,
-                                        .byte_column = found->position.fallback.byte_column,
-                                        .excerpt = found->position.excerpt,
-                                        .last_visit = found->last_visit};
-               },
+           .jump_node = [this](WindowId window,
+                               std::uint64_t node) -> std::optional<GuileJumpNode> {
+               const std::optional<JumpNode> found = jump_node(window, node);
+               if (!found) {
+                   return std::nullopt;
+               }
+               return GuileJumpNode{.id = found->id,
+                                    .resource = found->position.resource,
+                                    .line = found->position.fallback.line,
+                                    .byte_column = found->position.fallback.byte_column,
+                                    .excerpt = found->position.excerpt,
+                                    .last_visit = found->last_visit};
+           },
            .evict_jumps = [this](WindowId window,
                                  std::size_t maximum) { return evict_jumps(window, maximum); },
            .move_caret_to_line =
@@ -1814,6 +1814,22 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                                 .workbenches = {}};
     const std::vector<WorkbenchId> ids = workbenches_.all();
     state.workbenches.reserve(ids.size());
+    const auto capture_walk = [](const JumpWalk& walk) {
+        constexpr std::size_t maximum_entries = 128;
+        std::vector<JumpNodeId> entries(walk.entries().begin(), walk.entries().end());
+        std::optional<std::size_t> cursor = walk.cursor();
+        if (entries.size() > maximum_entries && cursor) {
+            const std::size_t half = maximum_entries / 2;
+            const std::size_t first =
+                std::min(std::max<std::size_t>(*cursor, half) - half,
+                         entries.size() - maximum_entries);
+            entries = std::vector(entries.begin() + static_cast<std::ptrdiff_t>(first),
+                                  entries.begin() +
+                                      static_cast<std::ptrdiff_t>(first + maximum_entries));
+            cursor = *cursor - first;
+        }
+        return std::pair{std::move(entries), cursor};
+    };
     const auto capture_layout = [&](this const auto& self,
                                     const WindowLayoutNode& node) -> WorkbenchLayoutSessionState {
         if (!node.leaf()) {
@@ -1826,13 +1842,16 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
         const Window& window = runtime_.windows().get(node.window);
         const Buffer& buffer =
             runtime_.buffers().get(runtime_.views().get(window.view_id()).buffer_id());
+        auto [jump_walk, jump_cursor] = capture_walk(window.jump_walk());
         return {
             .window =
                 WorkbenchWindowSessionState{.resource = buffer.resource_uri(),
                                             .caret = runtime_.views().caret(window.view_id()).value,
                                             .role = window.role(),
                                             .pinned = window.pinned(),
-                                            .created_by_policy = window.created_by_policy()},
+                                            .created_by_policy = window.created_by_policy(),
+                                            .jump_walk = std::move(jump_walk),
+                                            .jump_cursor = jump_cursor},
             .axis = WindowSplitAxis::Rows,
             .ratio = 0.5F,
             .first = nullptr,
@@ -1844,7 +1863,9 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                                     .scope_roots = {},
                                     .mru_resources = {},
                                     .layout = capture_layout(*workbench.layout().root()),
-                                    .active_leaf = 0};
+                                    .active_leaf = 0,
+                                    .jump_nodes = {},
+                                    .jump_edges = {}};
         for (const ProjectId project : workbench.scope()) {
             const Project& definition = runtime_.projects().get(project);
             if (!definition.roots().empty()) {
@@ -1861,6 +1882,52 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
             std::ranges::find(workbench.layout().leaves(), workbench.active_window());
         entry.active_leaf =
             static_cast<std::size_t>(std::distance(workbench.layout().leaves().begin(), active));
+        std::set<JumpNodeId> durable_nodes;
+        for (const JumpNode& node : workbench.jumps().nodes()) {
+            if (node.position.resource.empty() ||
+                !std::filesystem::path(node.position.resource).is_absolute()) {
+                continue;
+            }
+            durable_nodes.insert(node.id);
+            entry.jump_nodes.push_back({.id = node.id,
+                                        .resource = node.position.resource,
+                                        .fallback = node.position.fallback,
+                                        .excerpt = node.position.excerpt,
+                                        .created_at = node.created_at,
+                                        .last_visit = node.last_visit});
+        }
+        for (const JumpEdge& edge : workbench.jumps().edges()) {
+            if (durable_nodes.contains(edge.from) && durable_nodes.contains(edge.to)) {
+                entry.jump_edges.push_back({.from = edge.from,
+                                            .to = edge.to,
+                                            .kind = edge.kind,
+                                            .at = edge.at,
+                                            .persistent = edge.persistent});
+            }
+        }
+        const auto filter_walk = [&](this const auto& self,
+                                     WorkbenchLayoutSessionState& node) -> void {
+            if (!node.leaf()) {
+                self(*node.first);
+                self(*node.second);
+                return;
+            }
+            WorkbenchWindowSessionState& window = *node.window;
+            JumpWalk filtered;
+            if (window.jump_cursor) {
+                filtered.restore(std::move(window.jump_walk), window.jump_cursor);
+                std::vector<JumpNodeId> transient;
+                for (const JumpNodeId jump : filtered.entries()) {
+                    if (!durable_nodes.contains(jump)) {
+                        transient.push_back(jump);
+                    }
+                }
+                filtered.forget(transient);
+            }
+            window.jump_walk.assign(filtered.entries().begin(), filtered.entries().end());
+            window.jump_cursor = filtered.cursor();
+        };
+        filter_walk(entry.layout);
         if (ids[index] == workbenches_.active_id()) {
             state.active_workbench = index;
         }
@@ -1910,6 +1977,19 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
             return std::unexpected("workbench session contains an invalid buffer MRU");
         }
         names.push_back(entry.name);
+        std::set<JumpNodeId> jump_nodes;
+        for (const WorkbenchJumpNodeSessionState& node : entry.jump_nodes) {
+            if (node.id == kInvalidJumpNode || !stable_path(node.resource) ||
+                !jump_nodes.insert(node.id).second) {
+                return std::unexpected("workbench session contains an invalid jump node");
+            }
+        }
+        if (std::ranges::any_of(entry.jump_edges, [&](const WorkbenchJumpEdgeSessionState& edge) {
+                return edge.kind.empty() || !jump_nodes.contains(edge.from) ||
+                       !jump_nodes.contains(edge.to);
+            })) {
+            return std::unexpected("workbench session contains an invalid jump edge");
+        }
         std::vector<std::string> roles;
         const auto validate_layout = [&](this const auto& self,
                                          const WorkbenchLayoutSessionState& node)
@@ -1926,6 +2006,14 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                             "workbench session contains an invalid or duplicate window role");
                     }
                     roles.push_back(*window.role);
+                }
+                if ((window.jump_walk.empty() && window.jump_cursor) ||
+                    (!window.jump_walk.empty() && !window.jump_cursor) ||
+                    (window.jump_cursor && *window.jump_cursor >= window.jump_walk.size()) ||
+                    std::ranges::any_of(window.jump_walk, [&](JumpNodeId jump) {
+                        return !jump_nodes.contains(jump);
+                    })) {
+                    return std::unexpected("workbench session contains an invalid jump walk");
                 }
                 return 1;
             }
@@ -2005,6 +2093,31 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                                                         .scope = std::move(scope)});
             created.push_back(id);
             Workbench& workbench = workbenches_.get(id);
+            std::vector<JumpNode> restored_nodes;
+            restored_nodes.reserve(source.jump_nodes.size());
+            for (const WorkbenchJumpNodeSessionState& node : source.jump_nodes) {
+                restored_nodes.push_back({.id = node.id,
+                                          .position = {.buffer = {},
+                                                       .resource = node.resource,
+                                                       .anchor = 0,
+                                                       .fallback = node.fallback,
+                                                       .excerpt = node.excerpt},
+                                          .created_at = node.created_at,
+                                          .last_visit = node.last_visit});
+            }
+            std::vector<JumpEdge> restored_edges;
+            restored_edges.reserve(source.jump_edges.size());
+            for (const WorkbenchJumpEdgeSessionState& edge : source.jump_edges) {
+                restored_edges.push_back({.from = edge.from,
+                                          .to = edge.to,
+                                          .kind = edge.kind,
+                                          .at = edge.at,
+                                          .persistent = edge.persistent});
+            }
+            workbench.jumps().restore(std::move(restored_nodes), std::move(restored_edges));
+            for (const std::unique_ptr<BufferState>& buffer : buffers_) {
+                resolve_jump_nodes(buffer->buffer);
+            }
             const auto apply_node = [&](this const auto& self,
                                         const WorkbenchLayoutSessionState& node,
                                         WindowId target) -> void {
@@ -2047,6 +2160,8 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                 }
                 runtime_.windows().get(target).set_pinned(leaf.pinned);
                 runtime_.windows().get(target).set_created_by_policy(leaf.created_by_policy);
+                runtime_.windows().get(target).jump_walk().restore(leaf.jump_walk,
+                                                                  leaf.jump_cursor);
             };
             apply_node(source.layout, root_window);
             const std::vector<WindowId> leaves(workbench.layout().leaves().begin(),
@@ -2065,6 +2180,7 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
             if (Workbench* workbench = workbenches_.try_get(id)) {
                 const std::vector<WindowId> windows(workbench->layout().leaves().begin(),
                                                     workbench->layout().leaves().end());
+                release_jump_anchors(*workbench);
                 (void)workbenches_.erase(id);
                 for (const WindowId window : windows) {
                     destroy_window(window);
@@ -2083,6 +2199,7 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
         Workbench& old = workbenches_.get(id);
         const std::vector<WindowId> windows(old.layout().leaves().begin(),
                                             old.layout().leaves().end());
+        release_jump_anchors(old);
         (void)workbenches_.erase(id);
         for (const WindowId window : windows) {
             destroy_window(window);
@@ -2645,6 +2762,7 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
         state->style_origin = std::move(style_origin);
         buffers_.push_back(std::move(state));
         resolve_location_lists(buffer);
+        resolve_jump_nodes(buffer);
     } catch (...) {
         (void)runtime_.buffers().erase(buffer);
         throw;
@@ -2862,6 +2980,49 @@ void EditorApplication::resolve_location_lists(BufferId buffer_id) {
     }
 }
 
+void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
+    Buffer& buffer = runtime_.buffers().get(buffer_id);
+    if (!buffer.resource_uri()) {
+        return;
+    }
+    const Text& text = buffer.snapshot().content();
+    for (const WorkbenchId workbench : workbenches_.all()) {
+        workbenches_.get(workbench).jumps().attach_buffer(
+            *buffer.resource_uri(), buffer_id, [&](const JumpPosition& position) {
+                std::uint32_t line = std::min(position.fallback.line, text.line_count() - 1);
+                const auto matches = [&](std::uint32_t candidate) {
+                    return position.excerpt.empty() ||
+                           text.substring(text.line_content_range(candidate)) == position.excerpt;
+                };
+                if (!matches(line) && !position.excerpt.empty()) {
+                    constexpr std::uint32_t radius = 64;
+                    const std::uint32_t first = line > radius ? line - radius : 0;
+                    const std::uint32_t last =
+                        std::min(text.line_count() - 1, line + radius);
+                    std::optional<std::uint32_t> nearby;
+                    for (std::uint32_t candidate = first; candidate <= last; ++candidate) {
+                        if (!matches(candidate)) {
+                            continue;
+                        }
+                        if (nearby) {
+                            nearby.reset();
+                            break;
+                        }
+                        nearby = candidate;
+                    }
+                    if (nearby) {
+                        line = *nearby;
+                    }
+                }
+                LinePosition fallback{.line = line,
+                                      .byte_column = std::min(
+                                          position.fallback.byte_column,
+                                          text.line_content_range(line).length())};
+                return std::pair{buffer.create_navigation_anchor(text.offset(fallback)), fallback};
+            });
+    }
+}
+
 ResolvedLocation EditorApplication::resolve_location(Buffer& buffer, const LocationItem& item) {
     const Text& text = buffer.snapshot().content();
     const std::uint32_t fallback_line = std::min(item.range.start.line, text.line_count() - 1);
@@ -2991,8 +3152,7 @@ bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, Jump
     return true;
 }
 
-std::size_t EditorApplication::evict_jump_graph(Workbench& workbench,
-                                                std::size_t maximum_nodes) {
+std::size_t EditorApplication::evict_jump_graph(Workbench& workbench, std::size_t maximum_nodes) {
     std::vector<JumpNode> removed = workbench.jumps().evict(maximum_nodes);
     if (removed.empty()) {
         return 0;

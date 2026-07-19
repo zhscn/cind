@@ -323,6 +323,7 @@ private:
     std::optional<LocationItem> location_item(std::optional<BufferId> materialized,
                                               std::size_t index) const;
     void resolve_location_lists(BufferId buffer);
+    void resolve_jump_nodes(BufferId buffer);
     ResolvedLocation resolve_location(Buffer& buffer, const LocationItem& item);
     void release_location_anchors(Workbench& workbench);
     void scroll_view_lines(ViewId view, double lines);

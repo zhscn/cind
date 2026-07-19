@@ -129,13 +129,43 @@ std::vector<JumpNode> JumpGraph::evict(std::size_t maximum_nodes) {
     std::erase_if(edges_, [&](const JumpEdge& edge) {
         return removed_ids.contains(edge.from) || removed_ids.contains(edge.to);
     });
-    std::erase_if(nodes_,
-                  [&](const JumpNode& node) { return removed_ids.contains(node.id); });
+    std::erase_if(nodes_, [&](const JumpNode& node) { return removed_ids.contains(node.id); });
     node_index_.clear();
     for (std::size_t index = 0; index < nodes_.size(); ++index) {
         node_index_.emplace(nodes_[index].id, index);
     }
     return removed;
+}
+
+void JumpGraph::restore(std::vector<JumpNode> nodes, std::vector<JumpEdge> edges) {
+    if (!nodes_.empty() || !edges_.empty()) {
+        throw std::logic_error("jump graph restore requires an empty graph");
+    }
+    std::unordered_set<JumpNodeId> ids;
+    JumpNodeId next = 0;
+    std::uint64_t clock = 0;
+    for (const JumpNode& node : nodes) {
+        if (node.id == kInvalidJumpNode || node.position.resource.empty() || node.position.buffer ||
+            node.position.anchor != 0 || !ids.insert(node.id).second) {
+            throw std::invalid_argument("restored jump node is invalid");
+        }
+        next = std::max(next, node.id);
+        clock = std::max({clock, node.created_at, node.last_visit});
+    }
+    for (const JumpEdge& edge : edges) {
+        if (!ids.contains(edge.from) || !ids.contains(edge.to) || edge.kind.empty()) {
+            throw std::invalid_argument("restored jump edge is invalid");
+        }
+        clock = std::max(clock, edge.at);
+    }
+    nodes_ = std::move(nodes);
+    edges_ = std::move(edges);
+    node_index_.clear();
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        node_index_.emplace(nodes_[index].id, index);
+    }
+    next_node_ = next;
+    clock_ = clock;
 }
 
 void JumpGraph::detach_buffer(BufferId buffer,
@@ -149,6 +179,26 @@ void JumpGraph::detach_buffer(BufferId buffer,
         remove_anchor(node.position.anchor);
         node.position.buffer = {};
         node.position.anchor = 0;
+    }
+}
+
+void JumpGraph::attach_buffer(
+    std::string_view resource, BufferId buffer,
+    const std::function<std::pair<AnchorId, LinePosition>(const JumpPosition&)>& resolve) {
+    if (!buffer || resource.empty()) {
+        throw std::invalid_argument("jump buffer attachment requires a resource and buffer");
+    }
+    for (JumpNode& node : nodes_) {
+        if (node.position.buffer || node.position.resource != resource) {
+            continue;
+        }
+        auto [anchor, fallback] = resolve(node.position);
+        if (anchor == 0) {
+            throw std::logic_error("jump buffer attachment produced an invalid anchor");
+        }
+        node.position.buffer = buffer;
+        node.position.anchor = anchor;
+        node.position.fallback = fallback;
     }
 }
 
@@ -234,6 +284,16 @@ void JumpWalk::forget(std::span<const JumpNodeId> nodes) {
     } else {
         cursor_ = retained_cursor.value_or(0);
     }
+}
+
+void JumpWalk::restore(std::vector<JumpNodeId> entries, std::optional<std::size_t> cursor) {
+    if ((entries.empty() && cursor) || (cursor && *cursor >= entries.size()) ||
+        std::ranges::any_of(entries,
+                            [](JumpNodeId node) { return node == kInvalidJumpNode; })) {
+        throw std::invalid_argument("restored jump walk is invalid");
+    }
+    entries_ = std::move(entries);
+    cursor_ = cursor;
 }
 
 void JumpWalk::clear() {
