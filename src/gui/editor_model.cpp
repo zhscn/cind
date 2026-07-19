@@ -839,7 +839,8 @@ const ui::DiagnosticLineSigns& EditorModel::diagnostic_signs(WindowId window) {
     if (found->diagnostics_revision != revision ||
         found->diagnostics_generation != buffer.diagnostics_generation()) {
         ui::DiagnosticLineSigns signs;
-        const Text& text = buffer.snapshot().content();
+        const DocumentSnapshot snapshot = buffer.snapshot();
+        const Text& text = snapshot.content();
         for (const Diagnostic& diagnostic : buffer.diagnostics()) {
             const ui::DiagnosticSignKind kind = [&] {
                 switch (diagnostic.severity) {

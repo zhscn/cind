@@ -4,6 +4,7 @@
 #include "document/text_types.hpp"
 
 #include <string>
+#include <utility>
 
 namespace cind {
 
@@ -16,7 +17,10 @@ public:
     RevisionId revision() const { return revision_; }
 
     // The text value at this revision; line and UTF-16 queries live on it.
-    const Text& content() const { return text_; }
+    // Moving content out of a temporary snapshot keeps expressions such as
+    // buffer.snapshot().content() from producing a dangling reference.
+    const Text& content() const& { return text_; }
+    Text content() && { return std::move(text_); }
     std::string substring(TextRange range) const { return text_.substring(range); }
     std::uint32_t size_bytes() const { return text_.size_bytes(); }
     TextOffset end_offset() const { return text_.end_offset(); }

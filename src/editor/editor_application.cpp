@@ -187,7 +187,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    std::optional<LinePosition> target;
                    if (position) {
                        const Buffer& target_buffer = runtime_.buffers().get(buffer);
-                       const Text& text = target_buffer.snapshot().content();
+                       const DocumentSnapshot snapshot = target_buffer.snapshot();
+                       const Text& text = snapshot.content();
                        EncodedLinePosition requested = position->position;
                        requested.line = std::min(requested.line, text.line_count() - 1);
                        target = resolve_line_position(text, requested);
@@ -3053,7 +3054,8 @@ void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
     if (!buffer.resource_uri()) {
         return;
     }
-    const Text& text = buffer.snapshot().content();
+    const DocumentSnapshot snapshot = buffer.snapshot();
+    const Text& text = snapshot.content();
     for (const WorkbenchId workbench : workbenches_.all()) {
         workbenches_.get(workbench).jumps().attach_buffer(
             *buffer.resource_uri(), buffer_id, [&](const JumpPosition& position) {
@@ -3091,7 +3093,8 @@ void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
 }
 
 ResolvedLocation EditorApplication::resolve_location(Buffer& buffer, const LocationItem& item) {
-    const Text& text = buffer.snapshot().content();
+    const DocumentSnapshot snapshot = buffer.snapshot();
+    const Text& text = snapshot.content();
     const std::uint32_t fallback_line = std::min(item.range.start.line, text.line_count() - 1);
     std::uint32_t target_line = fallback_line;
     bool stale = false;

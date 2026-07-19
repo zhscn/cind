@@ -3689,7 +3689,8 @@ SCM buffer_diagnostics(SCM host_object, SCM buffer_value) {
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-diagnostics", 2);
         const Buffer& source = host.runtime->buffers().get(buffer);
-        const Text& text = source.snapshot().content();
+        const DocumentSnapshot snapshot = source.snapshot();
+        const Text& text = snapshot.content();
         const std::vector<Diagnostic> diagnostics = source.diagnostics();
         SCM result = scm_c_make_vector(diagnostics.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < diagnostics.size(); ++index) {
