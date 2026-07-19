@@ -578,6 +578,31 @@ TEST_CASE("window splits compose pane-owned regions with active theme state") {
           })->id == first_active);
 }
 
+TEST_CASE("split completion belongs to the active pane and never covers its caret row") {
+    EditorModel model("sample.scm", "", 1);
+
+    send_keys(model, "C-c C-z");
+    model.insert_text("(d");
+    REQUIRE(model.inspect().completion.active);
+
+    const ui::Scene scene = compose_frame(model, 40, 100);
+    const auto completions = std::ranges::count_if(scene.regions, [](const ui::Region& region) {
+        return region.role == ui::RegionRole::Popup && region.popup() != nullptr &&
+               region.popup()->presentation == ui::Region::PopupPresentation::Completion;
+    });
+    CHECK(completions == 1);
+    const auto completion = std::ranges::find_if(scene.regions, [](const ui::Region& region) {
+        return region.role == ui::RegionRole::Popup && region.popup() != nullptr &&
+               region.popup()->presentation == ui::Region::PopupPresentation::Completion;
+    });
+    REQUIRE(completion != scene.regions.end());
+    CHECK_FALSE(completion->pane_id.empty());
+    CHECK(completion->active);
+    const int caret_row = scene.cursor_row - 1;
+    CHECK((caret_row < completion->rect.row ||
+           caret_row >= completion->rect.row + completion->rect.rows));
+}
+
 TEST_CASE("command palette retains a global selection and stable list viewport") {
     EditorModel model("sample.cc", "text", 1);
 

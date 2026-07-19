@@ -46,6 +46,29 @@ int scene_popup_rows(SceneGeometry geometry, std::size_t requested_capacity) {
     return capacity == 0 ? 0 : static_cast<int>(capacity) + 1;
 }
 
+struct CompletionPlacement {
+    std::size_t capacity = 0;
+    int row = 0;
+};
+
+CompletionPlacement completion_placement(int text_rows, int anchor_row, std::size_t item_count) {
+    if (item_count == 0 || anchor_row < 0 || anchor_row >= text_rows) {
+        return {};
+    }
+    const std::size_t desired = std::min<std::size_t>(8, item_count);
+    const int above = anchor_row;
+    const int below = text_rows - anchor_row - 1;
+    const bool place_below = below >= static_cast<int>(desired) || below >= above;
+    const int available = place_below ? below : above;
+    const std::size_t capacity =
+        std::min(desired, static_cast<std::size_t>(std::max(0, available)));
+    if (capacity == 0) {
+        return {};
+    }
+    return {.capacity = capacity,
+            .row = place_below ? anchor_row + 1 : anchor_row - static_cast<int>(capacity)};
+}
+
 } // namespace
 
 EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
@@ -103,8 +126,14 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
     current.popup.reveal(
         input.popup_selection, input.popup_item_count,
         scene_popup_capacity({.rows = input.rows, .cols = input.cols}, popup_capacity));
+    std::size_t completion_capacity = 0;
+    if (caret_position.line >= current.viewport.top_line) {
+        const auto caret_row = static_cast<int>(caret_position.line - current.viewport.top_line);
+        completion_capacity =
+            completion_placement(text_rows, caret_row, input.completion_item_count).capacity;
+    }
     current.completion.reveal(input.completion_selection, input.completion_item_count,
-                              std::min<std::size_t>(8, input.completion_item_count));
+                              completion_capacity);
     return current;
 }
 
@@ -340,88 +369,91 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                 display_column(input.text, *input.completion_anchor, input.tab_width) -
                 viewport.left_column;
             if (anchor_row >= 0 && anchor_row < text_rows && anchor_column < input.cols) {
-                const std::size_t capacity =
-                    std::min<std::size_t>(8, input.completion_items.size());
-                const std::size_t visible_count = capacity;
-                const std::size_t maximum_first = input.completion_items.size() - visible_count;
-                const std::size_t first = std::min(view.completion.first_item(), maximum_first);
-                std::size_t content_width = 12;
-                for (std::size_t offset = 0; offset < visible_count; ++offset) {
-                    const ChromeItem& item = input.completion_items[first + offset];
-                    const std::string_view metadata = item.detail.empty()
-                                                          ? std::string_view(item.kind)
-                                                          : std::string_view(item.detail);
-                    content_width = std::max(content_width,
-                                             static_cast<std::size_t>(display_width(item.label) +
-                                                                      display_width(metadata) + 7));
-                }
-                const int column = std::clamp(anchor_column, 0, std::max(0, input.cols - 1));
-                const int width = std::max(
-                    1, std::min<int>(static_cast<int>(content_width), input.cols - column));
-                const int height = static_cast<int>(visible_count);
-                const int below = anchor_row + 1;
-                const int row =
-                    below + height <= text_rows ? below : std::max(0, anchor_row - height);
-                completion.emplace(RegionRole::Popup, Rect{row, column, height, width},
-                                   std::vector<Prim>{}, SurfaceClass::Status,
-                                   VerticalAnchor::Overlay, "editor/completion", input.revision);
-                completion->set_popup({});
-                Region::PopupContent& content = *completion->popup();
-                content.presentation = Region::PopupPresentation::Completion;
-                content.first_item = first;
-                content.total_items = input.completion_items.size();
-                content.selected_item = completion_selection;
-                content.items.reserve(visible_count);
-                for (std::size_t offset = 0; offset < visible_count; ++offset) {
-                    const ChromeItem& item = input.completion_items[first + offset];
-                    content.items.push_back(
-                        {.label = item.label, .detail = item.detail, .kind = item.kind});
-                }
-                if (input.completion_documentation && !input.completion_documentation->empty()) {
-                    constexpr int preferred_width = 48;
-                    constexpr int minimum_width = 20;
-                    constexpr int gap = 1;
-                    const int right = completion->rect.col + completion->rect.cols + gap;
-                    const int right_space = input.cols - right;
-                    const int left_space = completion->rect.col - gap;
-                    int documentation_column = 0;
-                    int documentation_width = 0;
-                    if (right_space >= minimum_width) {
-                        documentation_column = right;
-                        documentation_width = std::min(preferred_width, right_space);
-                    } else if (left_space >= minimum_width) {
-                        documentation_width = std::min(preferred_width, left_space);
-                        documentation_column = completion->rect.col - gap - documentation_width;
+                const CompletionPlacement placement =
+                    completion_placement(text_rows, anchor_row, input.completion_items.size());
+                const std::size_t visible_count = placement.capacity;
+                if (visible_count > 0) {
+                    const std::size_t maximum_first = input.completion_items.size() - visible_count;
+                    const std::size_t first = std::min(view.completion.first_item(), maximum_first);
+                    std::size_t content_width = 12;
+                    for (std::size_t offset = 0; offset < visible_count; ++offset) {
+                        const ChromeItem& item = input.completion_items[first + offset];
+                        const std::string_view metadata = item.detail.empty()
+                                                              ? std::string_view(item.kind)
+                                                              : std::string_view(item.detail);
+                        content_width = std::max(
+                            content_width, static_cast<std::size_t>(display_width(item.label) +
+                                                                    display_width(metadata) + 7));
                     }
-                    if (documentation_width > 0) {
-                        const int documentation_height =
-                            std::min(completion->rect.rows, text_rows - completion->rect.row);
-                        completion_documentation.emplace(
-                            RegionRole::Documentation,
-                            Rect{completion->rect.row, documentation_column, documentation_height,
-                                 documentation_width},
-                            std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
-                            "editor/completion-documentation", input.revision);
-                        std::vector<Prim>& primitives = completion_documentation->primitives();
-                        primitives.emplace_back(0, 0, "documentation", StyleClass::StatusKey, false,
-                                                PrimKind::Text, "completion-documentation:title");
-                        std::string_view remaining = *input.completion_documentation;
-                        for (int line = 1; line < documentation_height && !remaining.empty();) {
-                            const std::size_t newline = remaining.find('\n');
-                            const std::string_view source = remaining.substr(0, newline);
-                            const std::string_view clipped =
-                                clip_to_display_width(source, documentation_width);
-                            const int current_line = line++;
-                            primitives.emplace_back(
-                                current_line, 0, std::string(clipped), StyleClass::Popup, false,
-                                PrimKind::Text,
-                                std::format("completion-documentation:line:{}", current_line - 1));
-                            if (clipped.size() < source.size()) {
-                                remaining.remove_prefix(clipped.size());
-                            } else if (newline == std::string_view::npos) {
-                                break;
-                            } else {
-                                remaining.remove_prefix(newline + 1);
+                    const int column = std::clamp(anchor_column, 0, std::max(0, input.cols - 1));
+                    const int width = std::max(
+                        1, std::min<int>(static_cast<int>(content_width), input.cols - column));
+                    const int height = static_cast<int>(visible_count);
+                    completion.emplace(
+                        RegionRole::Popup, Rect{placement.row, column, height, width},
+                        std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
+                        "editor/completion", input.revision);
+                    completion->set_popup({});
+                    Region::PopupContent& content = *completion->popup();
+                    content.presentation = Region::PopupPresentation::Completion;
+                    content.first_item = first;
+                    content.total_items = input.completion_items.size();
+                    content.selected_item = completion_selection;
+                    content.items.reserve(visible_count);
+                    for (std::size_t offset = 0; offset < visible_count; ++offset) {
+                        const ChromeItem& item = input.completion_items[first + offset];
+                        content.items.push_back(
+                            {.label = item.label, .detail = item.detail, .kind = item.kind});
+                    }
+                    if (input.completion_documentation &&
+                        !input.completion_documentation->empty()) {
+                        constexpr int preferred_width = 48;
+                        constexpr int minimum_width = 20;
+                        constexpr int gap = 1;
+                        const int right = completion->rect.col + completion->rect.cols + gap;
+                        const int right_space = input.cols - right;
+                        const int left_space = completion->rect.col - gap;
+                        int documentation_column = 0;
+                        int documentation_width = 0;
+                        if (right_space >= minimum_width) {
+                            documentation_column = right;
+                            documentation_width = std::min(preferred_width, right_space);
+                        } else if (left_space >= minimum_width) {
+                            documentation_width = std::min(preferred_width, left_space);
+                            documentation_column = completion->rect.col - gap - documentation_width;
+                        }
+                        if (documentation_width > 0) {
+                            const int documentation_height =
+                                std::min(completion->rect.rows, text_rows - completion->rect.row);
+                            completion_documentation.emplace(
+                                RegionRole::Documentation,
+                                Rect{completion->rect.row, documentation_column,
+                                     documentation_height, documentation_width},
+                                std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
+                                "editor/completion-documentation", input.revision);
+                            std::vector<Prim>& primitives = completion_documentation->primitives();
+                            primitives.emplace_back(0, 0, "documentation", StyleClass::StatusKey,
+                                                    false, PrimKind::Text,
+                                                    "completion-documentation:title");
+                            std::string_view remaining = *input.completion_documentation;
+                            for (int line = 1; line < documentation_height && !remaining.empty();) {
+                                const std::size_t newline = remaining.find('\n');
+                                const std::string_view source = remaining.substr(0, newline);
+                                const std::string_view clipped =
+                                    clip_to_display_width(source, documentation_width);
+                                const int current_line = line++;
+                                primitives.emplace_back(
+                                    current_line, 0, std::string(clipped), StyleClass::Popup, false,
+                                    PrimKind::Text,
+                                    std::format("completion-documentation:line:{}",
+                                                current_line - 1));
+                                if (clipped.size() < source.size()) {
+                                    remaining.remove_prefix(clipped.size());
+                                } else if (newline == std::string_view::npos) {
+                                    break;
+                                } else {
+                                    remaining.remove_prefix(newline + 1);
+                                }
                             }
                         }
                     }
@@ -531,7 +563,9 @@ Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<Edi
                 region.echo()->cursor_byte.has_value());
     });
     for (Region& region : chrome.regions) {
-        if (region.role != RegionRole::EchoArea && region.role != RegionRole::Popup) {
+        const bool global_popup =
+            region.role == RegionRole::Popup && region.id == "editor/minibuffer";
+        if (region.role != RegionRole::EchoArea && !global_popup) {
             continue;
         }
         workspace.regions.push_back(std::move(region));
