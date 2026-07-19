@@ -1,5 +1,7 @@
 #include "editor/composed_view.hpp"
 
+#include "editor/workspace_edit.hpp"
+
 #include <algorithm>
 #include <format>
 #include <limits>
@@ -124,36 +126,15 @@ ComposedViewModel::apply_edits(std::span<const TextEdit> edits) {
              .new_text = edit.new_text});
     }
 
-    struct PendingTransaction {
-        BufferId buffer;
-        UndoNodeId before;
-        EditTransaction transaction;
-    };
-    std::vector<PendingTransaction> pending;
-    pending.reserve(by_buffer.size());
+    std::vector<WorkspaceBufferEdit> workspace_edit;
+    workspace_edit.reserve(by_buffer.size());
     for (auto& [buffer_id, buffer_edits] : by_buffer) {
         Buffer& buffer = buffers_->get(buffer_id);
-        std::ranges::sort(buffer_edits, std::greater{},
-                          [](const TextEdit& edit) { return edit.old_range.start; });
-        const UndoNodeId before = buffer.undo_position();
-        pending.push_back(
-            {.buffer = buffer_id, .before = before, .transaction = buffer.begin_transaction()});
+        workspace_edit.push_back({.buffer = buffer_id,
+                                  .revision = buffer.snapshot().revision(),
+                                  .edits = std::move(buffer_edits)});
     }
-    for (PendingTransaction& entry : pending) {
-        const std::vector<TextEdit>& buffer_edits = by_buffer.at(entry.buffer);
-        for (const TextEdit& edit : buffer_edits) {
-            entry.transaction.replace(edit.old_range, edit.new_text);
-        }
-    }
-    std::vector<TransactionGroupEntry> group;
-    for (PendingTransaction& entry : pending) {
-        (void)entry.transaction.commit();
-        const UndoNodeId after = buffers_->get(entry.buffer).undo_position();
-        if (entry.before != after) {
-            group.push_back({.buffer = entry.buffer, .before = entry.before, .after = after});
-        }
-    }
-    return group;
+    return apply_workspace_edit(*buffers_, workspace_edit);
 }
 
 void ComposedViewModel::release_anchors() noexcept {

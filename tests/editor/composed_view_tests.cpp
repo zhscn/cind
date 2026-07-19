@@ -4,6 +4,7 @@
 #include "editor/composed_view.hpp"
 #include "editor/runtime.hpp"
 #include "editor/transaction_group.hpp"
+#include "editor/workspace_edit.hpp"
 
 #include <optional>
 #include <string>
@@ -81,4 +82,64 @@ TEST_CASE("transaction groups skip members that moved past the recorded snapshot
     REQUIRE(result.has_value());
     CHECK(result->changed == std::vector<BufferId>{second});
     CHECK(result->skipped == std::vector<BufferId>{first});
+}
+
+TEST_CASE("workspace edits validate every buffer before publishing changes") {
+    EditorRuntime runtime;
+    const BufferId first = runtime.buffers().create({.name = "first.cc",
+                                                     .initial_text = "alpha",
+                                                     .kind = BufferKind::File,
+                                                     .resource_uri = "/work/first.cc",
+                                                     .read_only = false});
+    const BufferId second = runtime.buffers().create({.name = "second.cc",
+                                                      .initial_text = "beta",
+                                                      .kind = BufferKind::File,
+                                                      .resource_uri = "/work/second.cc",
+                                                      .read_only = false});
+    const RevisionId first_revision = runtime.buffers().get(first).snapshot().revision();
+    const RevisionId second_revision = runtime.buffers().get(second).snapshot().revision();
+
+    const std::vector<WorkspaceBufferEdit> valid{
+        {.buffer = first,
+         .revision = first_revision,
+         .edits = {{{TextOffset{0}, TextOffset{5}}, "one"}}},
+        {.buffer = second,
+         .revision = second_revision,
+         .edits = {{{TextOffset{0}, TextOffset{4}}, "two"}}}};
+    const auto applied = apply_workspace_edit(runtime.buffers(), valid);
+    REQUIRE(applied.has_value());
+    CHECK(applied->size() == 2);
+    CHECK(runtime.buffers().get(first).snapshot().content().to_string() == "one");
+    CHECK(runtime.buffers().get(second).snapshot().content().to_string() == "two");
+
+    const std::vector<WorkspaceBufferEdit> stale{
+        {.buffer = first,
+         .revision = runtime.buffers().get(first).snapshot().revision(),
+         .edits = {{{TextOffset{0}, TextOffset{3}}, "changed"}}},
+        {.buffer = second,
+         .revision = second_revision,
+         .edits = {{{TextOffset{0}, TextOffset{3}}, "stale"}}}};
+    const auto rejected = apply_workspace_edit(runtime.buffers(), stale);
+    REQUIRE_FALSE(rejected.has_value());
+    CHECK(runtime.buffers().get(first).snapshot().content().to_string() == "one");
+    CHECK(runtime.buffers().get(second).snapshot().content().to_string() == "two");
+}
+
+TEST_CASE("workspace edits reject overlapping ranges without changing undo history") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "overlap.cc",
+                                                      .initial_text = "abcdef",
+                                                      .kind = BufferKind::File,
+                                                      .resource_uri = "/work/overlap.cc",
+                                                      .read_only = false});
+    Buffer& source = runtime.buffers().get(buffer);
+    const UndoNodeId undo = source.undo_position();
+    const std::vector<WorkspaceBufferEdit> edit{
+        {.buffer = buffer,
+         .revision = source.snapshot().revision(),
+         .edits = {{{TextOffset{1}, TextOffset{4}}, "x"}, {{TextOffset{3}, TextOffset{5}}, "y"}}}};
+
+    CHECK_FALSE(apply_workspace_edit(runtime.buffers(), edit).has_value());
+    CHECK(source.snapshot().content().to_string() == "abcdef");
+    CHECK(source.undo_position() == undo);
 }
