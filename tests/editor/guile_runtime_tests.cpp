@@ -1073,6 +1073,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .set_interaction_history_position = {},
          .cancel_interaction = {},
          .completion_active = {},
+         .resolve_completion_provider = {},
          .start_completion = {},
          .move_completion = {},
          .apply_completion = {},

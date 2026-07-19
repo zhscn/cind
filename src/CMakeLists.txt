@@ -18,6 +18,18 @@ add_library(cind_document STATIC
 target_include_directories(cind_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(cind_document PUBLIC cxx_std_23)
 
+add_library(cind_lsp STATIC
+  lsp/json_rpc.cpp
+  lsp/protocol.cpp
+  lsp/registry.cpp
+  lsp/session.cpp
+)
+target_include_directories(cind_lsp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(cind_lsp
+  PUBLIC cind_async cind_document
+  PRIVATE PkgConfig::NlohmannJson
+)
+
 add_library(cind_lexer STATIC
   cpp_lexer/lexer.cpp
   cpp_lexer/token_buffer.cpp
@@ -241,7 +253,7 @@ add_library(cind_editor STATIC
 )
 target_link_libraries(cind_editor
   PUBLIC cind_async cind_indent cind_application cind_c_family cind_guile cind_project_io
-  PRIVATE cind_ui Threads::Threads
+  PRIVATE cind_lsp cind_ui Threads::Threads
 )
 
 add_library(cind_tui_terminal STATIC

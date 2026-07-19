@@ -67,7 +67,13 @@ already queued events inert and closes the native handle on the loop thread. Hig
 compose recursive monitoring by retaining one watch for each indexed directory.
 
 `spawn()` starts a child process without a shell, captures stdout and stderr independently, and
-returns an `AsyncProcessId`. A normal exit is a completed process even when its status is nonzero;
+returns an `AsyncProcessId`. Optional started and stream callbacks deliver process startup and
+stdout/stderr chunks on the editor thread. `write()` queues bytes for the child's stdin and
+`close_input()` publishes EOF after queued writes. These operations allow project services such as
+LSP sessions to retain one bidirectional process without creating another event loop.
+A stream callback consumes chunks without retaining a second full-output copy; streams without a
+callback are captured for the terminal process result.
+A normal exit is a completed process even when its status is nonzero;
 the caller owns tool-specific exit-code policy. `terminate()` requests process cancellation with
 `SIGTERM`. Runtime shutdown uses `SIGKILL` so an uncooperative child cannot retain the application
 lifetime. Captured output is bounded to 64 MiB per stream.

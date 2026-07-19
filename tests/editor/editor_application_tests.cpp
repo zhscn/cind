@@ -3306,3 +3306,44 @@ TEST_CASE("include completion selects the asynchronous path provider") {
     REQUIRE(application.completion().state()->matches.size() == 1);
     CHECK(application.completion().state()->matches.front().item.label == "foo.hpp");
 }
+
+TEST_CASE("C++ completion merges clangd semantic candidates with local providers") {
+    if (!std::filesystem::exists("/usr/bin/clangd")) {
+        return;
+    }
+    TemporaryDirectory directory("cind-lsp-completion-test");
+    const std::string source =
+        "struct Foo { int semantic_member; }; int main() { Foo value; value.semantic_ }\n";
+    const std::filesystem::path path = directory.write("main.cc", source);
+    WakeSignal wake;
+    EditorApplication application =
+        make_application(path.string(), source,
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    application.session().set_caret(
+        TextOffset{static_cast<std::uint32_t>(source.rfind("semantic_") + 9)});
+
+    send_keys(application, "C-M-i");
+    REQUIRE(application.completion().state() != nullptr);
+    const auto lsp_pending = [&] {
+        const CompletionState* state = application.completion().state();
+        if (state == nullptr) {
+            return false;
+        }
+        const auto provider = std::ranges::find_if(state->providers, [](const auto& candidate) {
+            return candidate.provider.kind == CompletionProviderKind::Lsp;
+        });
+        return provider != state->providers.end() && provider->pending;
+    };
+    while (lsp_pending()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    REQUIRE(application.completion().state() != nullptr);
+    CHECK(std::ranges::any_of(
+        application.completion().state()->matches, [](const CompletionMatch& match) {
+            return match.item.provider.kind == CompletionProviderKind::Lsp &&
+                   match.item.label.find("semantic_member") != std::string::npos;
+        }));
+}

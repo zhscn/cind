@@ -466,6 +466,9 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                         {.file = std::move(operation.file),
                          .arguments = std::move(operation.arguments),
                          .working_directory = std::move(operation.working_directory),
+                         .started = {},
+                         .standard_output = {},
+                         .standard_error = {},
                          .completed =
                              [weak_state, id, completed = callbacks.completed](
                                  AsyncProcessResult native_result) mutable {

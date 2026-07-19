@@ -171,6 +171,8 @@ struct GuileHostServices {
         set_interaction_history_position;
     std::function<bool()> cancel_interaction;
     std::function<bool()> completion_active;
+    std::function<std::expected<CompletionProvider, std::string>(CommandTarget, std::string_view)>
+        resolve_completion_provider;
     std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>)>
         start_completion;
     std::function<bool(std::int64_t)> move_completion;

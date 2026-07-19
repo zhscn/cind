@@ -148,6 +148,13 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
              .error = {},
              .candidates = {{.value = "file.save", .label = "file.save", .detail = "command"}}},
         .completion = {},
+        .lsp = {{.id = 3,
+                 .state = "ready",
+                 .command = "clangd",
+                 .root = "/tmp/project",
+                 .pending_requests = 1,
+                 .open_documents = 2,
+                 .error = {}}},
         .buffers = {{.buffer_slot = 0,
                      .buffer_generation = 1,
                      .view_present = true,
@@ -561,6 +568,12 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(scripting.payload.find("\"scripted_input_states\":2") != std::string::npos);
     CHECK(scripting.payload.find("\"scripted_input_strategies\":2") != std::string::npos);
     CHECK(scripting.payload.find("\"last_error\":null") != std::string::npos);
+
+    const InspectionResponse lsp = run_inspection_query(hub, "get editor.lsp");
+    REQUIRE(lsp.ok);
+    CHECK(lsp.payload.find("\"state\":\"ready\"") != std::string::npos);
+    CHECK(lsp.payload.find("\"command\":\"clangd\"") != std::string::npos);
+    CHECK(lsp.payload.find("\"open_documents\":2") != std::string::npos);
 
     const InspectionResponse interaction = run_inspection_query(hub, "get editor.interaction");
     REQUIRE(interaction.ok);

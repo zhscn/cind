@@ -237,6 +237,9 @@ TEST_CASE("process service captures output and exit status on the owning thread"
         .file = "/bin/sh",
         .arguments = {"-c", "printf stdout; printf stderr >&2; exit 7"},
         .working_directory = {},
+        .started = {},
+        .standard_output = {},
+        .standard_error = {},
         .completed =
             [&](AsyncProcessResult completed) {
                 callback_thread = std::this_thread::get_id();
@@ -259,6 +262,54 @@ TEST_CASE("process service captures output and exit status on the owning thread"
     CHECK_FALSE(runtime.has_work());
 }
 
+TEST_CASE("process service streams output and accepts input on the owning thread") {
+    WakeSignal wake;
+    AsyncRuntime runtime([&wake] { wake.notify(); });
+    const std::thread::id owner = std::this_thread::get_id();
+    std::vector<std::string> events;
+    std::thread::id callback_thread;
+    bool completed = false;
+    std::string captured_output;
+
+    const AsyncProcessId process = runtime.spawn({
+        .file = "/bin/sh",
+        .arguments = {"-c", "IFS= read -r line; printf 'reply:%s' \"$line\""},
+        .working_directory = {},
+        .started =
+            [&](AsyncProcessId started) {
+                events.push_back("started");
+                REQUIRE(started == process);
+                REQUIRE(runtime.write(started, "hello\n"));
+                REQUIRE(runtime.close_input(started));
+            },
+        .standard_output =
+            [&](AsyncProcessId streamed, std::string chunk) {
+                REQUIRE(streamed == process);
+                callback_thread = std::this_thread::get_id();
+                events.push_back(std::move(chunk));
+            },
+        .standard_error = {},
+        .completed =
+            [&](AsyncProcessResult result) {
+                captured_output = std::move(result.standard_output);
+                completed = true;
+            },
+        .cancelled = {},
+        .failed = {},
+    });
+
+    while (!completed) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    REQUIRE(events.size() == 2);
+    CHECK(events[0] == "started");
+    CHECK(events[1] == "reply:hello");
+    CHECK(captured_output.empty());
+    CHECK(callback_thread == owner);
+    CHECK_FALSE(runtime.has_work());
+}
+
 TEST_CASE("process service supports cancellation before a process starts") {
     WakeSignal wake;
     AsyncRuntime runtime([&wake] { wake.notify(); });
@@ -268,6 +319,9 @@ TEST_CASE("process service supports cancellation before a process starts") {
         .file = "/bin/sh",
         .arguments = {"-c", "sleep 30"},
         .working_directory = {},
+        .started = {},
+        .standard_output = {},
+        .standard_error = {},
         .completed = [&](AsyncProcessResult) { completed = true; },
         .cancelled = [&] { cancelled = true; },
         .failed = {},
@@ -289,6 +343,9 @@ TEST_CASE("process service reports spawn failures") {
         .file = "/cind/does/not/exist",
         .arguments = {},
         .working_directory = {},
+        .started = {},
+        .standard_output = {},
+        .standard_error = {},
         .completed = [](AsyncProcessResult) {},
         .cancelled = {},
         .failed =
@@ -319,6 +376,9 @@ TEST_CASE("runtime shutdown terminates a child process and suppresses delivery")
             .file = "/bin/sh",
             .arguments = {"-c", std::format("touch {}; sleep 30", marker.string())},
             .working_directory = {},
+            .started = {},
+            .standard_output = {},
+            .standard_error = {},
             .completed = [&](AsyncProcessResult) { delivered = true; },
             .cancelled = [&] { delivered = true; },
             .failed = [&](const std::exception_ptr&) { delivered = true; },

@@ -1775,7 +1775,11 @@
   (command-completed/preserve))
 
 (define (completion-start host context invocation)
-  (start-completion! host context '("word" "path"))
+  (let ((major (vector-ref (buffer-mode-summary host (context-buffer context)) 0)))
+    (start-completion! host context
+                       (if (eq? major 'cind.cpp)
+                           '("lsp:cpp:clangd" "word" "path")
+                           '("word" "path"))))
   (request-redraw! host)
   (command-completed/preserve))
 

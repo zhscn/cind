@@ -15,7 +15,7 @@ On Fedora, install the development dependencies with:
 sudo dnf install \
   cmake ninja-build gcc gcc-c++ make autoconf automake libtool gperf gettext-devel texinfo \
   pkgconf-pkg-config ripgrep gc-devel libffi-devel libunistring-devel gmp-devel \
-  libtool-ltdl-devel libxcrypt-devel utf8proc-devel libuv-devel SDL3-devel \
+  libtool-ltdl-devel libxcrypt-devel utf8proc-devel libuv-devel nlohmann-json-devel SDL3-devel \
   libepoxy-devel freetype-devel fontconfig-devel \
   libicu-devel libjpeg-turbo-devel libpng-devel harfbuzz-devel
 ```
@@ -26,11 +26,14 @@ CMake builds a project-private Guile runtime and Fibers dependency, and download
 tests are enabled. Their initial builds require network access. Ares Scheme sources are included in
 `third_party/guile-ares-rs`.
 
+C++ semantic completion uses `clangd` from `PATH`. Local word and path completion remain available
+when no language server is installed.
+
 On macOS with Homebrew, install the native dependencies with:
 
 ```sh
 brew install cmake ninja pkgconf autoconf automake libtool gperf gettext texinfo \
-  bdw-gc libffi libunistring gmp utf8proc libuv sdl3 freetype fontconfig \
+  bdw-gc libffi libunistring gmp utf8proc libuv nlohmann-json sdl3 freetype fontconfig \
   icu4c@78 jpeg-turbo libpng harfbuzz
 ```
 
@@ -157,6 +160,7 @@ preferred.
 - [Command and interaction architecture](docs/command-loop.md)
 - [Guile scripting architecture](docs/scripting.md)
 - [Asynchronous runtime](docs/async-runtime.md)
+- [LSP sessions and semantic completion](docs/lsp.md)
 - [Projects](docs/projects.md)
 - [Workbenches](docs/workbenches.md)
 - [Location lists](docs/location-lists.md)

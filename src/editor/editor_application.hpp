@@ -12,6 +12,7 @@
 #include "editor/workbench.hpp"
 #include "editor/workbench_session.hpp"
 #include "formatting/cpp_indent_style.hpp"
+#include "lsp/registry.hpp"
 #include "script/guile_runtime.hpp"
 
 #include <cstddef>
@@ -132,6 +133,7 @@ public:
     const InteractionController& interaction() const { return interaction_; }
     CompletionPipeline& completion() { return *completion_; }
     const CompletionPipeline& completion() const { return *completion_; }
+    std::vector<LspSessionSnapshot> lsp_sessions() const { return lsp_sessions_->snapshots(); }
     GuileRuntimeSnapshot scripting() const { return guile_.snapshot(); }
     void refresh_default_keymap();
 
@@ -315,6 +317,8 @@ private:
     void refresh_completion_after_command();
     CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,
                                                           const CompletionRequest& request);
+    std::expected<CompletionProvider, std::string>
+    resolve_completion_provider(CommandTarget target, std::string_view name);
     CommandContext command_context();
     void after_edit();
     std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
@@ -345,6 +349,7 @@ private:
     // then the native runtime joins before captured editor state is destroyed.
     AsyncRuntime async_runtime_;
     AsyncScriptHost script_async_;
+    std::unique_ptr<LspSessionRegistry> lsp_sessions_;
     std::unique_ptr<CompletionPipeline> completion_;
 };
 

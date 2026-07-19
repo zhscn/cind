@@ -103,6 +103,63 @@ bool completion_word_byte(char byte) {
     return std::isalnum(value) != 0 || byte == '_';
 }
 
+CompletionProviderResponse completion_response_from_lsp(CompletionProvider provider,
+                                                        const CompletionRequest& request,
+                                                        const Text& text,
+                                                        LspCompletionResponse response) {
+    std::vector<CompletionItem> items;
+    items.reserve(response.items.size());
+    for (LspCompletionItem& source : response.items) {
+        CompletionEdit edit{.insert_range = {request.anchor, request.caret},
+                            .replace_range = {request.anchor, request.caret},
+                            .new_text =
+                                source.insert_text.empty() ? source.label : source.insert_text};
+        if (source.edit) {
+            const std::optional<TextRange> insert =
+                text_range_from_lsp(text, source.edit->insert_range);
+            const std::optional<TextRange> replace =
+                text_range_from_lsp(text, source.edit->replace_range);
+            if (!insert || !replace) {
+                throw std::runtime_error("LSP completion returned an invalid text edit range");
+            }
+            edit = {.insert_range = *insert,
+                    .replace_range = *replace,
+                    .new_text = std::move(source.edit->new_text)};
+        }
+        std::vector<TextEdit> additional;
+        additional.reserve(source.additional_edits.size());
+        for (LspTextEdit& source_edit : source.additional_edits) {
+            const std::optional<TextRange> range = text_range_from_lsp(text, source_edit.range);
+            if (!range) {
+                throw std::runtime_error(
+                    "LSP completion returned an invalid additional edit range");
+            }
+            additional.push_back(
+                {.old_range = *range, .new_text = std::move(source_edit.new_text)});
+        }
+        items.push_back({.provider = provider,
+                         .filter_text = std::move(source.filter_text),
+                         .label = std::move(source.label),
+                         .kind = std::move(source.kind),
+                         .detail = std::move(source.detail),
+                         .edit = std::move(edit),
+                         .sort_text = std::move(source.sort_text),
+                         .is_snippet = source.is_snippet,
+                         .resolved = source.resolved,
+                         .documentation = std::move(source.documentation),
+                         .additional_edits = std::move(additional),
+                         .raw = std::move(source.raw)});
+    }
+    return {
+        .provider = provider, .items = std::move(items), .is_incomplete = response.is_incomplete};
+}
+
+struct LspCompletionBridge {
+    CompletionProvider provider;
+    CompletionRequest request;
+    LspCompletionRequest lsp_request;
+};
+
 } // namespace
 
 EditorApplication::EditorApplication(EditorApplicationSpec spec)
@@ -234,6 +291,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return interaction_.cancel();
                },
            .completion_active = [this] { return completion_ && completion_->active(); },
+           .resolve_completion_provider =
+               [this](CommandTarget target, std::string_view name) {
+                   return resolve_completion_provider(target, name);
+               },
            .start_completion =
                [this](CommandTarget target, std::vector<CompletionProvider> providers) {
                    return start_completion(target, std::move(providers));
@@ -644,6 +705,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)), script_async_(async_runtime_) {
     interaction_.attach_async_runtime(async_runtime_);
+    lsp_sessions_ = std::make_unique<LspSessionRegistry>(async_runtime_);
     completion_ = std::make_unique<CompletionPipeline>(
         runtime_, async_runtime_,
         [this](CompletionProvider provider, const CompletionRequest& request) {
@@ -1996,6 +2058,10 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         }
         it = views_.erase(it);
     }
+    if (const Buffer* released = runtime_.buffers().try_get(buffer);
+        released != nullptr && released->resource_uri()) {
+        (void)lsp_sessions_->close_document(path_to_file_uri(*released->resource_uri()));
+    }
     buffers_.erase(found);
     if (!runtime_.buffers().erase(buffer)) {
         throw std::logic_error("buffer lifecycle registry is inconsistent");
@@ -2661,6 +2727,39 @@ void EditorApplication::refresh_completion_after_command() {
     }
 }
 
+std::expected<CompletionProvider, std::string>
+EditorApplication::resolve_completion_provider(CommandTarget target, std::string_view name) {
+    constexpr std::string_view prefix = "lsp:";
+    if (!name.starts_with(prefix)) {
+        return std::unexpected(std::format("unknown completion provider '{}'", name));
+    }
+    name.remove_prefix(prefix.size());
+    const std::size_t separator = name.find(':');
+    if (separator == std::string_view::npos || separator == 0 || separator + 1 == name.size()) {
+        return std::unexpected("LSP completion provider must be lsp:<language>:<command>");
+    }
+    const std::string language(name.substr(0, separator));
+    const std::string command(name.substr(separator + 1));
+    const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
+    if (buffer == nullptr || !buffer->resource_uri()) {
+        return std::unexpected("LSP completion requires a file-backed buffer");
+    }
+    std::string root = std::filesystem::path(*buffer->resource_uri()).parent_path().string();
+    if (buffer->project_id()) {
+        const Project* project = runtime_.projects().try_get(*buffer->project_id());
+        if (project != nullptr && !project->roots().empty()) {
+            root = project->roots().front();
+        }
+    }
+    std::expected<LspSessionId, std::string> session = lsp_sessions_->ensure(
+        buffer->project_id(),
+        {.command = command, .arguments = {}, .root = std::move(root), .language_id = language});
+    if (!session) {
+        return std::unexpected(std::move(session.error()));
+    }
+    return CompletionProvider::lsp(session->value);
+}
+
 CompletionProviderResult
 EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                                                 const CompletionRequest& request) {
@@ -2669,6 +2768,69 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
         throw std::runtime_error("completion provider received a stale request");
     }
     const DocumentSnapshot snapshot = buffer->snapshot();
+    if (provider.kind == CompletionProviderKind::Lsp) {
+        LspSession* session = lsp_sessions_->find(LspSessionId{provider.session});
+        if (session == nullptr) {
+            throw std::runtime_error("completion references an unknown LSP session");
+        }
+        if (!buffer->resource_uri()) {
+            throw std::runtime_error("LSP completion requires a file-backed buffer");
+        }
+        LspCompletionTriggerKind trigger = LspCompletionTriggerKind::Invoked;
+        if (request.trigger.kind == CompletionTriggerKind::Character) {
+            trigger = LspCompletionTriggerKind::TriggerCharacter;
+        } else if (request.trigger.kind == CompletionTriggerKind::Incomplete) {
+            trigger = LspCompletionTriggerKind::TriggerForIncompleteCompletions;
+        }
+        LspCompletionRequest lsp_request{.uri = path_to_file_uri(*buffer->resource_uri()),
+                                         .language_id = session->config().language_id,
+                                         .revision = request.revision,
+                                         .text = snapshot.content(),
+                                         .caret = request.caret,
+                                         .trigger = trigger,
+                                         .trigger_character = request.trigger.character};
+        auto bridge = std::make_shared<LspCompletionBridge>(
+            LspCompletionBridge{provider, request, std::move(lsp_request)});
+        return CompletionProviderAsync{
+            .start = [session, bridge = std::move(bridge)](
+                         CompletionProviderAsync::Completed completed,
+                         CompletionProviderAsync::Failed failed,
+                         CompletionProviderAsync::Cancelled cancelled) mutable
+                -> std::expected<CompletionProviderAsync::Cancel, std::string> {
+                try {
+                    const Text response_text = bridge->lsp_request.text;
+                    CompletionProviderAsync::Failed conversion_failed = failed;
+                    return session->request_completion(
+                        std::move(bridge->lsp_request),
+                        [bridge, response_text, completed = std::move(completed),
+                         failed = std::move(conversion_failed)](
+                            LspCompletionResponse response) mutable noexcept {
+                            try {
+                                completed(completion_response_from_lsp(
+                                    bridge->provider, bridge->request, response_text,
+                                    std::move(response)));
+                            } catch (const std::exception& exception) {
+                                try {
+                                    failed(exception.what());
+                                } catch (...) {
+                                    return;
+                                }
+                            } catch (...) {
+                                try {
+                                    failed("unknown LSP completion conversion failure");
+                                } catch (...) {
+                                    return;
+                                }
+                            }
+                        },
+                        std::move(failed), std::move(cancelled));
+                } catch (const std::exception& exception) {
+                    return std::unexpected(exception.what());
+                } catch (...) {
+                    return std::unexpected("unknown LSP completion startup failure");
+                }
+            }};
+    }
     if (provider.kind == CompletionProviderKind::Word) {
         const TokenBuffer& tokens = syntax_tokens(request.target.window);
         std::set<std::string, std::less<>> words;

@@ -4927,6 +4927,16 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
                 providers.push_back(CompletionProvider::path());
             } else if (name == "snippet") {
                 providers.push_back(CompletionProvider::snippet());
+            } else if (host.services.resolve_completion_provider) {
+                const CommandTarget target{.window = context.window_id(),
+                                           .buffer = context.buffer_id(),
+                                           .view = context.view_id()};
+                std::expected<CompletionProvider, std::string> resolved =
+                    host.services.resolve_completion_provider(target, name);
+                if (!resolved) {
+                    raise_host_error("start-completion!", resolved.error());
+                }
+                providers.push_back(*resolved);
             } else {
                 raise_host_error("start-completion!",
                                  std::format("unknown completion provider '{}'", name));

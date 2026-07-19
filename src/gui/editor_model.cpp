@@ -489,6 +489,34 @@ EditorStateSnapshot EditorModel::inspect() {
                  .resolved = match.item.resolved});
         }
     }
+    std::vector<LspSessionStateSnapshot> lsp_state;
+    for (const LspSessionSnapshot& lsp_session : application_.lsp_sessions()) {
+        std::string state;
+        switch (lsp_session.state) {
+        case LspSessionState::Stopped:
+            state = "stopped";
+            break;
+        case LspSessionState::Starting:
+            state = "starting";
+            break;
+        case LspSessionState::Initializing:
+            state = "initializing";
+            break;
+        case LspSessionState::Ready:
+            state = "ready";
+            break;
+        case LspSessionState::Failed:
+            state = "failed";
+            break;
+        }
+        lsp_state.push_back({.id = lsp_session.id.value,
+                             .state = std::move(state),
+                             .command = lsp_session.command,
+                             .root = lsp_session.root,
+                             .pending_requests = lsp_session.pending_requests,
+                             .open_documents = lsp_session.open_documents,
+                             .error = lsp_session.error});
+    }
     std::vector<OpenBufferStateSnapshot> buffers;
     for (const OpenBufferSnapshot& buffer : application_.open_buffers()) {
         const ViewId buffer_view = buffer.view.value_or(ViewId{});
@@ -705,6 +733,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .scripting = std::move(scripting_state),
             .interaction = std::move(interaction_state),
             .completion = std::move(completion_state),
+            .lsp = std::move(lsp_state),
             .buffers = std::move(buffers),
             .windows = std::move(windows),
             .workbenches = std::move(workbenches),

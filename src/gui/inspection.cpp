@@ -437,6 +437,27 @@ void append_completion(std::string& output, const CompletionStateSnapshot& compl
     output += "]}";
 }
 
+void append_lsp(std::string& output, const std::vector<LspSessionStateSnapshot>& sessions) {
+    output.push_back('[');
+    for (std::size_t index = 0; index < sessions.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const LspSessionStateSnapshot& session = sessions[index];
+        output += std::format("{{\"id\":{},\"state\":", session.id);
+        append_json_string(output, session.state);
+        output += ",\"command\":";
+        append_json_string(output, session.command);
+        output += ",\"root\":";
+        append_json_string(output, session.root);
+        output += std::format(",\"pending_requests\":{},\"open_documents\":{},\"error\":",
+                              session.pending_requests, session.open_documents);
+        append_json_string(output, session.error);
+        output.push_back('}');
+    }
+    output.push_back(']');
+}
+
 void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapshot>& buffers) {
     output.push_back('[');
     for (std::size_t index = 0; index < buffers.size(); ++index) {
@@ -774,6 +795,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_interaction(output, editor.interaction);
     output += ",\"completion\":";
     append_completion(output, editor.completion);
+    output += ",\"lsp\":";
+    append_lsp(output, editor.lsp);
     output += ",\"buffers\":";
     append_buffers(output, editor.buffers);
     output += ",\"windows\":";
@@ -2377,6 +2400,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_interaction(output, frame.editor.interaction);
     } else if (path == "editor.completion") {
         append_completion(output, frame.editor.completion);
+    } else if (path == "editor.lsp") {
+        append_lsp(output, frame.editor.lsp);
     } else if (path == "editor.buffers") {
         append_buffers(output, frame.editor.buffers);
     } else if (path == "editor.windows") {

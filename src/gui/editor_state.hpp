@@ -78,6 +78,16 @@ struct CompletionStateSnapshot {
     std::vector<CompletionItemStateSnapshot> items;
 };
 
+struct LspSessionStateSnapshot {
+    std::uint64_t id = 0;
+    std::string state;
+    std::string command;
+    std::string root;
+    std::size_t pending_requests = 0;
+    std::size_t open_documents = 0;
+    std::string error;
+};
+
 struct OpenBufferStateSnapshot {
     std::uint32_t buffer_slot = 0;
     std::uint32_t buffer_generation = 0;
@@ -285,6 +295,7 @@ struct EditorStateSnapshot {
     ScriptingStateSnapshot scripting;
     InteractionStateSnapshot interaction;
     CompletionStateSnapshot completion;
+    std::vector<LspSessionStateSnapshot> lsp;
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;
     std::vector<WorkbenchStateSnapshot> workbenches;

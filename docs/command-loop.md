@@ -344,14 +344,16 @@ module loading, error containment, and the development-service boundary.
 ## Inspection
 
 The GUI inspector exposes `editor.command_loop`, `editor.input_state`, `editor.selection`, `editor.scripting`,
-`editor.interaction`, `editor.completion`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
+`editor.interaction`, `editor.completion`, `editor.lsp`, `editor.buffers`, `editor.windows`, `editor.location_navigation`, and
 `editor.focus`. Command-loop state includes
 keymap names with their scopes and parent chains, override maps, pending keys, the highest matching
 keymap, the input state owning handler feedback, pending count/register/extras, formatted prefix,
 and last command. Interaction state includes the minibuffer Window/View/Buffer identities, origin
 target, prompt kind, input caret, provider, selection, generation, errors, and candidates.
 Completion state reports the request generation, document revision, query anchor, pending fixed
-providers, stable candidate IDs, and resolve state. Buffer state includes resource and lifecycle
+providers, stable candidate IDs, and resolve state. LSP state exposes project-scoped session
+lifecycles, synchronized document counts, pending requests, and transport errors. Buffer state
+includes resource and lifecycle
 data; Window state identifies each Window's bound View and
 Buffer. Input-state inspection
 reports the active state name, text-input policy, selection-after-edit policy, cursor shape, and

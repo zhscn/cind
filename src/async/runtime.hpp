@@ -77,6 +77,9 @@ struct AsyncProcessSpec {
     std::string file;
     std::vector<std::string> arguments;
     std::string working_directory;
+    std::function<void(AsyncProcessId)> started;
+    std::function<void(AsyncProcessId, std::string)> standard_output;
+    std::function<void(AsyncProcessId, std::string)> standard_error;
     std::function<void(AsyncProcessResult)> completed;
     AsyncCompletion cancelled;
     AsyncFailure failed;
@@ -104,6 +107,8 @@ public:
     AsyncWatchId watch_directory(AsyncDirectoryWatchSpec spec);
     bool unwatch(AsyncWatchId watch) noexcept;
     AsyncProcessId spawn(AsyncProcessSpec spec);
+    bool write(AsyncProcessId process, std::string data);
+    bool close_input(AsyncProcessId process) noexcept;
     bool terminate(AsyncProcessId process) noexcept;
 
     // Runs ready callbacks on the caller. Editor state remains single-writer

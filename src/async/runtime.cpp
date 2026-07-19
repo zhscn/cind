@@ -43,6 +43,8 @@ struct AsyncRuntime::Impl {
         StartWatch,
         StopWatch,
         StartProcess,
+        WriteProcess,
+        CloseProcessInput,
         TerminateProcess,
     };
 
@@ -53,6 +55,9 @@ struct AsyncRuntime::Impl {
         WatchStarted,
         WatchChanged,
         WatchFailed,
+        ProcessStarted,
+        ProcessStandardOutput,
+        ProcessStandardError,
         ProcessCompleted,
         ProcessCancelled,
         ProcessFailed,
@@ -72,12 +77,14 @@ struct AsyncRuntime::Impl {
 
     struct Watch;
     struct Process;
+    struct ProcessWrite;
 
     struct Command {
         CommandKind kind = CommandKind::Submit;
         std::shared_ptr<Task> task;
         std::shared_ptr<Watch> watch;
         std::shared_ptr<Process> process;
+        std::unique_ptr<ProcessWrite> write;
     };
 
     struct Watch {
@@ -92,9 +99,15 @@ struct AsyncRuntime::Impl {
     };
 
     struct ProcessPipe {
+        enum class Kind : std::uint8_t {
+            Input,
+            Output,
+            Error,
+        };
+
         Process* process = nullptr;
         uv_pipe_t handle{};
-        bool standard_error = false;
+        Kind kind = Kind::Output;
         bool initialized = false;
         bool closing = false;
     };
@@ -104,6 +117,7 @@ struct AsyncRuntime::Impl {
         AsyncProcessId id;
         uv_process_t handle{};
         AsyncProcessSpec spec;
+        ProcessPipe standard_input;
         ProcessPipe standard_output;
         ProcessPipe standard_error;
         std::vector<std::string> arguments;
@@ -121,6 +135,12 @@ struct AsyncRuntime::Impl {
         bool suppress_delivery = false;
     };
 
+    struct ProcessWrite {
+        std::shared_ptr<Process> process;
+        uv_write_t request{};
+        std::string data;
+    };
+
     struct Ready {
         ReadyKind kind = ReadyKind::Completed;
         std::shared_ptr<Task> task;
@@ -128,6 +148,7 @@ struct AsyncRuntime::Impl {
         AsyncWatchEvent event;
         std::shared_ptr<Process> process;
         AsyncProcessResult process_result;
+        std::string process_chunk;
         std::exception_ptr exception;
     };
 
@@ -174,7 +195,9 @@ struct AsyncRuntime::Impl {
             std::scoped_lock lock(ready_mutex);
             discarded =
                 static_cast<std::size_t>(std::ranges::count_if(ready, [](const Ready& item) {
-                    return item.task != nullptr || item.process != nullptr;
+                    return item.task != nullptr || item.kind == ReadyKind::ProcessCompleted ||
+                           item.kind == ReadyKind::ProcessCancelled ||
+                           item.kind == ReadyKind::ProcessFailed;
                 }));
             ready.clear();
         }
@@ -202,7 +225,11 @@ struct AsyncRuntime::Impl {
         }
         outstanding.fetch_add(1, std::memory_order_relaxed);
         try {
-            enqueue({.kind = CommandKind::Submit, .task = task, .watch = {}, .process = {}});
+            enqueue({.kind = CommandKind::Submit,
+                     .task = task,
+                     .watch = {},
+                     .process = {},
+                     .write = {}});
         } catch (...) {
             {
                 std::scoped_lock lock(tasks_mutex);
@@ -229,8 +256,11 @@ struct AsyncRuntime::Impl {
         }
         (void)task->cancellation.request_stop();
         try {
-            enqueue(
-                {.kind = CommandKind::Cancel, .task = std::move(task), .watch = {}, .process = {}});
+            enqueue({.kind = CommandKind::Cancel,
+                     .task = std::move(task),
+                     .watch = {},
+                     .process = {},
+                     .write = {}});
         } catch (...) {
             // The stop request remains sufficient for cooperative
             // cancellation even if allocating the loop command fails.
@@ -262,7 +292,11 @@ struct AsyncRuntime::Impl {
             watches.emplace(id.value, watch);
         }
         try {
-            enqueue({.kind = CommandKind::StartWatch, .task = {}, .watch = watch, .process = {}});
+            enqueue({.kind = CommandKind::StartWatch,
+                     .task = {},
+                     .watch = watch,
+                     .process = {},
+                     .write = {}});
         } catch (...) {
             std::scoped_lock lock(watches_mutex);
             watches.erase(id.value);
@@ -291,7 +325,8 @@ struct AsyncRuntime::Impl {
             enqueue({.kind = CommandKind::StopWatch,
                      .task = {},
                      .watch = std::move(watch),
-                     .process = {}});
+                     .process = {},
+                     .write = {}});
         } catch (...) {
             return true;
         }
@@ -313,9 +348,11 @@ struct AsyncRuntime::Impl {
         process->id = AsyncProcessId{next_id.fetch_add(1, std::memory_order_relaxed)};
         const AsyncProcessId id = process->id;
         process->spec = std::move(spec);
+        process->standard_input.process = process.get();
+        process->standard_input.kind = ProcessPipe::Kind::Input;
         process->standard_output.process = process.get();
         process->standard_error.process = process.get();
-        process->standard_error.standard_error = true;
+        process->standard_error.kind = ProcessPipe::Kind::Error;
         {
             std::scoped_lock lock(processes_mutex);
             if (shutting_down.load(std::memory_order_acquire)) {
@@ -325,8 +362,11 @@ struct AsyncRuntime::Impl {
         }
         outstanding.fetch_add(1, std::memory_order_relaxed);
         try {
-            enqueue(
-                {.kind = CommandKind::StartProcess, .task = {}, .watch = {}, .process = process});
+            enqueue({.kind = CommandKind::StartProcess,
+                     .task = {},
+                     .watch = {},
+                     .process = process,
+                     .write = {}});
         } catch (...) {
             {
                 std::scoped_lock lock(processes_mutex);
@@ -336,6 +376,56 @@ struct AsyncRuntime::Impl {
             throw;
         }
         return id;
+    }
+
+    bool write(AsyncProcessId id, std::string data) {
+        if (!id.valid() || data.empty()) {
+            return false;
+        }
+        std::shared_ptr<Process> process;
+        {
+            std::scoped_lock lock(processes_mutex);
+            const auto found = processes.find(id.value);
+            if (found == processes.end() ||
+                found->second->stopped.load(std::memory_order_acquire)) {
+                return false;
+            }
+            process = found->second;
+        }
+        auto write = std::make_unique<ProcessWrite>();
+        write->process = process;
+        write->data = std::move(data);
+        enqueue({.kind = CommandKind::WriteProcess,
+                 .task = {},
+                 .watch = {},
+                 .process = std::move(process),
+                 .write = std::move(write)});
+        return true;
+    }
+
+    bool close_input(AsyncProcessId id) noexcept {
+        if (!id.valid()) {
+            return false;
+        }
+        std::shared_ptr<Process> process;
+        {
+            std::scoped_lock lock(processes_mutex);
+            const auto found = processes.find(id.value);
+            if (found == processes.end()) {
+                return false;
+            }
+            process = found->second;
+        }
+        try {
+            enqueue({.kind = CommandKind::CloseProcessInput,
+                     .task = {},
+                     .watch = {},
+                     .process = std::move(process),
+                     .write = {}});
+        } catch (...) {
+            return false;
+        }
+        return true;
     }
 
     bool terminate(AsyncProcessId id) noexcept {
@@ -358,7 +448,8 @@ struct AsyncRuntime::Impl {
             enqueue({.kind = CommandKind::TerminateProcess,
                      .task = {},
                      .watch = {},
-                     .process = std::move(process)});
+                     .process = std::move(process),
+                     .write = {}});
         } catch (...) {
             return true;
         }
@@ -408,6 +499,12 @@ struct AsyncRuntime::Impl {
                 break;
             case CommandKind::StartProcess:
                 start_process(command.process);
+                break;
+            case CommandKind::WriteProcess:
+                write_process(std::move(command.write));
+                break;
+            case CommandKind::CloseProcessInput:
+                close_process_pipe(command.process->standard_input);
                 break;
             case CommandKind::TerminateProcess:
                 terminate_process(command.process, SIGTERM);
@@ -476,6 +573,7 @@ struct AsyncRuntime::Impl {
                        .event = {},
                        .process = {},
                        .process_result = {},
+                       .process_chunk = {},
                        .exception = {}});
     }
 
@@ -518,7 +616,10 @@ struct AsyncRuntime::Impl {
             }
             process->argument_pointers.push_back(nullptr);
 
-            int status = initialize_process_pipe(process->standard_output);
+            int status = initialize_process_pipe(process->standard_input);
+            if (status >= 0) {
+                status = initialize_process_pipe(process->standard_output);
+            }
             if (status >= 0) {
                 status = initialize_process_pipe(process->standard_error);
             }
@@ -527,6 +628,7 @@ struct AsyncRuntime::Impl {
                     std::make_exception_ptr(uv_error(status, "cannot initialize process pipes"));
                 process->exited = true;
                 process->handle_closed = true;
+                close_process_pipe(process->standard_input);
                 close_process_pipe(process->standard_output);
                 close_process_pipe(process->standard_error);
                 maybe_finish_process(process);
@@ -534,7 +636,10 @@ struct AsyncRuntime::Impl {
             }
 
             uv_stdio_container_t stdio[3]{};
-            stdio[0].flags = UV_IGNORE;
+            // libuv describes these flags from the child process's perspective.
+            // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+            stdio[0].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_READABLE_PIPE);
+            stdio[0].data.stream = reinterpret_cast<uv_stream_t*>(&process->standard_input.handle);
             // libuv declares stdio flags as an enum but specifies these values as a bitmask.
             // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
             stdio[1].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
@@ -564,6 +669,7 @@ struct AsyncRuntime::Impl {
                 } else {
                     process->handle_closed = true;
                 }
+                close_process_pipe(process->standard_input);
                 close_process_pipe(process->standard_output);
                 close_process_pipe(process->standard_error);
                 maybe_finish_process(process);
@@ -577,9 +683,19 @@ struct AsyncRuntime::Impl {
             if (status < 0) {
                 process->exception =
                     std::make_exception_ptr(uv_error(status, "cannot read process output"));
+                close_process_pipe(process->standard_input);
                 close_process_pipe(process->standard_output);
                 close_process_pipe(process->standard_error);
                 (void)uv_process_kill(&process->handle, SIGTERM);
+            } else if (process->spec.started) {
+                publish_ready({.kind = ReadyKind::ProcessStarted,
+                               .task = {},
+                               .watch = {},
+                               .event = {},
+                               .process = process,
+                               .process_result = {},
+                               .process_chunk = {},
+                               .exception = {}});
             }
         } catch (...) {
             process->exception = std::current_exception();
@@ -588,6 +704,7 @@ struct AsyncRuntime::Impl {
             } else {
                 process->exited = true;
                 process->handle_closed = true;
+                close_process_pipe(process->standard_input);
                 close_process_pipe(process->standard_output);
                 close_process_pipe(process->standard_error);
                 maybe_finish_process(process);
@@ -626,12 +743,33 @@ struct AsyncRuntime::Impl {
         try {
             if (count > 0) {
                 constexpr std::size_t maximum_output = std::size_t{64} * 1024 * 1024;
-                std::string& output = pipe->standard_error ? process.error_output : process.output;
                 const std::size_t size = static_cast<std::size_t>(count);
-                if (size > maximum_output - std::min(output.size(), maximum_output)) {
-                    throw std::length_error("process output exceeds 64 MiB");
+                const bool streams = pipe->kind == ProcessPipe::Kind::Error
+                                         ? static_cast<bool>(process.spec.standard_error)
+                                         : static_cast<bool>(process.spec.standard_output);
+                if (streams) {
+                    const ReadyKind kind = pipe->kind == ProcessPipe::Kind::Error
+                                               ? ReadyKind::ProcessStandardError
+                                               : ReadyKind::ProcessStandardOutput;
+                    process.owner->publish_ready({
+                        .kind = kind,
+                        .task = {},
+                        .watch = {},
+                        .event = {},
+                        .process = process.owner->find_process(process.id),
+                        .process_result = {},
+                        .process_chunk = std::string(buffer->base, size),
+                        .exception = {},
+                    });
+                } else {
+                    std::string& output = pipe->kind == ProcessPipe::Kind::Error
+                                              ? process.error_output
+                                              : process.output;
+                    if (size > maximum_output - std::min(output.size(), maximum_output)) {
+                        throw std::length_error("process output exceeds 64 MiB");
+                    }
+                    output.append(buffer->base, size);
                 }
-                output.append(buffer->base, size);
             } else if (count < 0) {
                 if (count != UV_EOF && !process.exception) {
                     process.exception = std::make_exception_ptr(
@@ -650,6 +788,45 @@ struct AsyncRuntime::Impl {
             }
         }
         delete[] buffer->base;
+    }
+
+    void write_process(std::unique_ptr<ProcessWrite> write) {
+        if (!write || !write->process || write->process->finished ||
+            write->process->standard_input.closing || !write->process->standard_input.initialized) {
+            return;
+        }
+        ProcessWrite* raw = write.release();
+        raw->request.data = raw;
+        uv_buf_t buffer =
+            uv_buf_init(raw->data.data(), static_cast<unsigned int>(raw->data.size()));
+        const int status = uv_write(
+            &raw->request, reinterpret_cast<uv_stream_t*>(&raw->process->standard_input.handle),
+            &buffer, 1, on_process_write);
+        if (status < 0) {
+            fail_process_write(raw, status);
+        }
+    }
+
+    static void on_process_write(uv_write_t* request, int status) {
+        auto* write = static_cast<ProcessWrite*>(request->data);
+        if (status < 0) {
+            fail_process_write(write, status);
+            return;
+        }
+        delete write;
+    }
+
+    static void fail_process_write(ProcessWrite* write, int status) {
+        std::shared_ptr<Process> process = write->process;
+        if (!process->exception) {
+            process->exception =
+                std::make_exception_ptr(uv_error(status, "cannot write process input"));
+        }
+        process->owner->close_process_pipe(process->standard_input);
+        if (process->started && !process->exited) {
+            (void)uv_process_kill(&process->handle, SIGTERM);
+        }
+        delete write;
     }
 
     void close_process_pipe(ProcessPipe& pipe) {
@@ -678,6 +855,9 @@ struct AsyncRuntime::Impl {
         process->exited = true;
         process->exit_status = exit_status;
         process->term_signal = term_signal;
+        process->owner->close_process_pipe(process->standard_input);
+        process->owner->close_process_pipe(process->standard_output);
+        process->owner->close_process_pipe(process->standard_error);
         uv_close(reinterpret_cast<uv_handle_t*>(&process->handle), on_process_closed);
     }
 
@@ -718,7 +898,8 @@ struct AsyncRuntime::Impl {
 
     void maybe_finish_process(const std::shared_ptr<Process>& process) {
         if (!process || process->finished || !process->exited || !process->handle_closed ||
-            process->standard_output.initialized || process->standard_error.initialized) {
+            process->standard_input.initialized || process->standard_output.initialized ||
+            process->standard_error.initialized) {
             return;
         }
         process->finished = true;
@@ -746,6 +927,7 @@ struct AsyncRuntime::Impl {
                                             .term_signal = process->term_signal,
                                             .standard_output = std::move(process->output),
                                             .standard_error = std::move(process->error_output)},
+                         .process_chunk = {},
                          .exception = process->exception};
         publish_ready(std::move(ready_item));
     }
@@ -797,6 +979,7 @@ struct AsyncRuntime::Impl {
                                       .changed = (events & UV_CHANGE) != 0},
                             .process = {},
                             .process_result = {},
+                            .process_chunk = {},
                             .exception = {}});
     }
 
@@ -825,6 +1008,7 @@ struct AsyncRuntime::Impl {
                    .event = {},
                    .process = {},
                    .process_result = {},
+                   .process_chunk = {},
                    .exception = {}};
         item.exception = std::make_exception_ptr(uv_error(status, message));
         publish_ready(std::move(item));
@@ -895,6 +1079,7 @@ struct AsyncRuntime::Impl {
                              .event = {},
                              .process = {},
                              .process_result = {},
+                             .process_chunk = {},
                              .exception = {}});
         }
         if (wakeup) {
@@ -1029,6 +1214,23 @@ struct AsyncRuntime::Impl {
                         item.watch->spec.failed(item.exception);
                     }
                     break;
+                case ReadyKind::ProcessStarted:
+                    if (item.process->spec.started) {
+                        item.process->spec.started(item.process->id);
+                    }
+                    break;
+                case ReadyKind::ProcessStandardOutput:
+                    if (item.process->spec.standard_output) {
+                        item.process->spec.standard_output(item.process->id,
+                                                           std::move(item.process_chunk));
+                    }
+                    break;
+                case ReadyKind::ProcessStandardError:
+                    if (item.process->spec.standard_error) {
+                        item.process->spec.standard_error(item.process->id,
+                                                          std::move(item.process_chunk));
+                    }
+                    break;
                 case ReadyKind::ProcessCompleted:
                     if (item.process->spec.completed) {
                         item.process->spec.completed(std::move(item.process_result));
@@ -1050,7 +1252,10 @@ struct AsyncRuntime::Impl {
                     first_exception = std::current_exception();
                 }
             }
-            if (item.task || item.process) {
+            const bool terminal_process = item.kind == ReadyKind::ProcessCompleted ||
+                                          item.kind == ReadyKind::ProcessCancelled ||
+                                          item.kind == ReadyKind::ProcessFailed;
+            if (item.task || terminal_process) {
                 outstanding.fetch_sub(1, std::memory_order_relaxed);
             }
         }
@@ -1111,6 +1316,14 @@ bool AsyncRuntime::unwatch(AsyncWatchId watch) noexcept {
 
 AsyncProcessId AsyncRuntime::spawn(AsyncProcessSpec spec) {
     return impl_->spawn(std::move(spec));
+}
+
+bool AsyncRuntime::write(AsyncProcessId process, std::string data) {
+    return impl_->write(process, std::move(data));
+}
+
+bool AsyncRuntime::close_input(AsyncProcessId process) noexcept {
+    return impl_->close_input(process);
 }
 
 bool AsyncRuntime::terminate(AsyncProcessId process) noexcept {
