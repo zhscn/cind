@@ -58,6 +58,10 @@ set_tests_properties(guile_runtime_tests PROPERTIES
 
 add_executable(editor_application_tests editor/editor_application_tests.cpp)
 target_link_libraries(editor_application_tests PRIVATE cind_editor doctest::doctest)
+target_compile_definitions(editor_application_tests PRIVATE
+  CIND_LSP_TEST_SERVER="$<TARGET_FILE:lsp_test_server>"
+)
+add_dependencies(editor_application_tests lsp_test_server)
 add_test(NAME editor_application_tests COMMAND editor_application_tests)
 set_tests_properties(editor_application_tests PROPERTIES
   ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/cmake/lsan.supp"

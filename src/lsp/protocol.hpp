@@ -3,6 +3,7 @@
 #include "document/text.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <string>
@@ -68,6 +69,7 @@ struct LspCompletionRequest {
 };
 
 std::string path_to_file_uri(std::string_view path);
+std::expected<std::string, std::string> file_uri_to_path(std::string_view uri);
 LspPosition lsp_position(const Text& text, TextOffset offset);
 std::optional<TextRange> text_range_from_lsp(const Text& text, LspRange range);
 

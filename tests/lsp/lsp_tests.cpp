@@ -3,6 +3,7 @@
 
 #include "lsp/completion.hpp"
 #include "lsp/json_rpc.hpp"
+#include "lsp/navigation.hpp"
 #include "lsp/protocol.hpp"
 #include "lsp/session.hpp"
 
@@ -235,6 +236,72 @@ TEST_CASE("LSP positions use UTF-16 code units and round trip to text ranges") {
         text, {.start = {.line = 1, .character = 1}, .end = {.line = 1, .character = 3}});
     REQUIRE(range.has_value());
     CHECK(text.substring(*range) == "😀");
+}
+
+TEST_CASE("file URIs round trip escaped local paths and reject remote authorities") {
+    const std::string path = "/tmp/cind path#value.cpp";
+    const std::expected<std::string, std::string> decoded =
+        file_uri_to_path(path_to_file_uri(path));
+    REQUIRE(decoded.has_value());
+    CHECK(*decoded == path);
+    CHECK(file_uri_to_path("file://localhost/tmp/local.cpp") == "/tmp/local.cpp");
+    CHECK_FALSE(file_uri_to_path("file://remote/tmp/source.cpp").has_value());
+    CHECK_FALSE(file_uri_to_path("https://example.com/source.cpp").has_value());
+}
+
+TEST_CASE("LSP navigation decodes locations and location links") {
+    WakeSignal wake;
+    AsyncRuntime runtime([&wake] { wake.notify(); });
+    LspSession session({1}, runtime,
+                       {.command = CIND_LSP_TEST_SERVER,
+                        .arguments = {},
+                        .root = std::filesystem::temp_directory_path().string(),
+                        .language_id = "cpp",
+                        .client_capabilities = {LspNavigationFeature::client_capabilities()}});
+    const LspNavigationRequest request{
+        .uri = "file:///tmp/origin.cpp",
+        .language_id = "cpp",
+        .revision = 1,
+        .text = Text("int value;\n"),
+        .caret = TextOffset{4},
+        .include_declaration = true,
+    };
+
+    std::optional<std::vector<LspLocation>> definitions;
+    std::string error;
+    auto started = LspNavigationFeature::request(
+        session, LspNavigationKind::Definition, request,
+        [&](std::vector<LspLocation> locations) { definitions = std::move(locations); },
+        [&](std::string message) { error = std::move(message); });
+    REQUIRE(started.has_value());
+    while (!definitions && error.empty()) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    CHECK(error.empty());
+    REQUIRE(definitions.has_value());
+    REQUIRE(definitions->size() == 1);
+    CHECK((*definitions)[0].resource == "/tmp/cind definition.cpp");
+    CHECK((*definitions)[0].range.start.line == 7);
+    CHECK((*definitions)[0].range.start.character == 4);
+    CHECK(LspNavigationFeature::supported(session, LspNavigationKind::Definition));
+
+    std::optional<std::vector<LspLocation>> references;
+    started = LspNavigationFeature::request(
+        session, LspNavigationKind::References, request,
+        [&](std::vector<LspLocation> locations) { references = std::move(locations); },
+        [&](std::string message) { error = std::move(message); });
+    REQUIRE(started.has_value());
+    while (!references && error.empty()) {
+        REQUIRE(wake.wait());
+        (void)runtime.drain();
+    }
+    CHECK(error.empty());
+    REQUIRE(references.has_value());
+    REQUIRE(references->size() == 2);
+    CHECK((*references)[0].resource == "/tmp/first.cpp");
+    CHECK((*references)[1].resource == "/tmp/second.cpp");
+    CHECK((*references)[1].range.start.character == 1);
 }
 
 TEST_CASE("clangd session initializes, synchronizes a document, and completes") {

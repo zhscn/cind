@@ -89,6 +89,12 @@ struct GuileLocationTarget {
     bool stale = false;
 };
 
+struct GuileLspLocation {
+    std::string resource;
+    LinePosition start;
+    LinePosition end;
+};
+
 struct GuileBufferCreation {
     std::string name;
     std::string initial_text;
@@ -211,6 +217,8 @@ struct GuileHostServices {
         resolve_completion_provider;
     std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>)>
         start_completion;
+    std::function<std::expected<void, std::string>(CommandTarget, std::string, std::string)>
+        request_lsp_navigation;
     std::function<bool(std::int64_t)> move_completion;
     std::function<std::expected<void, std::string>(bool)> apply_completion;
     std::function<bool()> cancel_completion;
@@ -360,6 +368,9 @@ public:
     std::expected<void, std::string> open_resource(
         WindowId window, std::string_view path, std::optional<std::uint32_t> line = std::nullopt,
         std::optional<std::uint32_t> column = std::nullopt, std::string_view intent = "edit");
+    std::expected<void, std::string>
+    lsp_locations_completed(WindowId window, std::string_view source,
+                            const std::vector<GuileLspLocation>& locations);
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
     std::expected<GuileKeymapPolicy, std::string>

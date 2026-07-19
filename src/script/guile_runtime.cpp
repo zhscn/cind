@@ -5167,6 +5167,36 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
     return SCM_UNSPECIFIED;
 }
 
+SCM request_lsp_navigation(SCM host_object, SCM context_value, SCM kind_value, SCM provider_value) {
+    HostLease& host = require_host(host_object, "request-lsp-navigation!");
+    if (!scm_is_string(provider_value)) {
+        scm_wrong_type_arg_msg("request-lsp-navigation!", 4, provider_value, "string");
+    }
+    if (!host.services.request_lsp_navigation) {
+        scm_misc_error("request-lsp-navigation!", "LSP navigation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const CommandContext context =
+            command_context_from_scheme(host, context_value, "request-lsp-navigation!");
+        const CommandTarget target{.window = context.window_id(),
+                                   .buffer = context.buffer_id(),
+                                   .view = context.view_id()};
+        std::expected<void, std::string> started = host.services.request_lsp_navigation(
+            target, scheme_name(kind_value, "request-lsp-navigation!", 3),
+            scheme_string(provider_value));
+        if (!started) {
+            raise_host_error("request-lsp-navigation!", started.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("request-lsp-navigation!", exception.what());
+    } catch (...) {
+        scm_misc_error("request-lsp-navigation!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM move_completion(SCM host_object, SCM delta_value) {
     if (scm_is_integer(delta_value) == 0) {
         scm_wrong_type_arg_msg("move-completion!", 2, delta_value, "integer");
@@ -5631,6 +5661,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(completion_active));
     (void)scm_c_define_gsubr("start-completion!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
+    (void)scm_c_define_gsubr("request-lsp-navigation!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(request_lsp_navigation));
     (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_completion));
     (void)scm_c_define_gsubr("apply-completion!", 2, 0, 0,
@@ -5750,12 +5782,12 @@ void initialize_host_module(void*) {
         "set-interaction-provider!", "interaction-origin-project", "refresh-interaction!",
         "submit-interaction!", "interaction-history", "set-interaction-history!",
         "select-interaction-candidate!", "set-interaction-history-position!", "cancel-interaction!",
-        "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
-        "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
-        "set-location-navigation!", "location-list-target", "move-location-list!",
-        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
-        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
-        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "cancel-pending-input!", "completion-active?", "start-completion!",
+        "request-lsp-navigation!", "move-completion!", "apply-completion!", "cancel-completion!",
+        "view-position", "location-navigation", "set-location-navigation!", "location-list-target",
+        "move-location-list!", "position-buffer-view!", "set-message!", "project-index-state",
+        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
+        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
         "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
@@ -6513,6 +6545,7 @@ struct GuileCall {
         HandlePointer,
         HandleScroll,
         OpenResource,
+        LspLocationsCompleted,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
         ChromeContent,
@@ -6549,6 +6582,7 @@ struct GuileCall {
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
     const GuileDisplayFacts* display_facts = nullptr;
+    const std::vector<GuileLspLocation>* lsp_locations = nullptr;
     std::exception_ptr cpp_failure;
     ScrollInput scroll_input;
     std::string path;
@@ -6635,6 +6669,21 @@ SCM command_context_value(const CommandContext& context) {
                  entity_id(context.view_id().slot, context.view_id().generation)),
         scm_cons(scm_from_utf8_symbol("project"),
                  project ? entity_id(project->slot, project->generation) : SCM_BOOL_F));
+}
+
+SCM lsp_locations_value(const std::vector<GuileLspLocation>& locations) {
+    SCM result = scm_c_make_vector(locations.size(), SCM_UNSPECIFIED);
+    for (std::size_t index = 0; index < locations.size(); ++index) {
+        const GuileLspLocation& location = locations[index];
+        SCM entry = scm_c_make_vector(5, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(entry, 0, scm_from_utf8_string(location.resource.c_str()));
+        scm_c_vector_set_x(entry, 1, scm_from_uint32(location.start.line));
+        scm_c_vector_set_x(entry, 2, scm_from_uint32(location.start.byte_column));
+        scm_c_vector_set_x(entry, 3, scm_from_uint32(location.end.line));
+        scm_c_vector_set_x(entry, 4, scm_from_uint32(location.end.byte_column));
+        scm_c_vector_set_x(result, index, entry);
+    }
+    return result;
 }
 
 SCM setting_value(const SettingValue& value) {
@@ -7038,6 +7087,12 @@ SCM call_body(void* data) {
                                      call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
                                      call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F,
                                      name_symbol(call.intent));
+            break;
+        case GuileCall::Operation::LspLocationsCompleted:
+            call.result =
+                scm_call_4(scm_c_public_ref("cind core", "lsp-locations-completed!"), call.host,
+                           entity_id(call.window.slot, call.window.generation),
+                           name_symbol(call.source), lsp_locations_value(*call.lsp_locations));
             break;
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
@@ -8055,6 +8110,27 @@ public:
         return {};
     }
 
+    std::expected<void, std::string>
+    lsp_locations_completed(WindowId window, std::string_view source,
+                            const std::vector<GuileLspLocation>& locations) {
+        require_owner_thread();
+        if (source.empty()) {
+            return std::unexpected("LSP location source must not be empty");
+        }
+        GuileCall call;
+        call.operation = GuileCall::Operation::LspLocationsCompleted;
+        call.host = host_;
+        call.window = window;
+        call.source = source;
+        call.lsp_locations = &locations;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
     bool project_search_running() const {
         require_owner_thread();
         GuileCall call;
@@ -8385,6 +8461,12 @@ std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, st
                                                              std::optional<std::uint32_t> column,
                                                              std::string_view intent) {
     return impl_->open_resource(window, path, line, column, intent);
+}
+
+std::expected<void, std::string>
+GuileRuntime::lsp_locations_completed(WindowId window, std::string_view source,
+                                      const std::vector<GuileLspLocation>& locations) {
+    return impl_->lsp_locations_completed(window, source, locations);
 }
 
 bool GuileRuntime::project_search_running() const {

@@ -33,6 +33,7 @@
             install-default-keymaps!
             idle-echo-text
             modeline-content
+            lsp-locations-completed!
             open-resource!
             open-resource-with-intent!
             project-search-running?
@@ -2002,6 +2003,77 @@
                                        "end of location list"
                                        "beginning of location list")))))))))
 
+(define (lsp-location-label location)
+  (format #f "~a:~a:~a"
+          (vector-ref location 0)
+          (+ (vector-ref location 1) 1)
+          (+ (vector-ref location 2) 1)))
+
+(define (lsp-location-buffer-data locations)
+  (let loop ((index 0)
+             (offset 0)
+             (lines '())
+             (items '()))
+    (if (= index (vector-length locations))
+        (vector (apply string-append (reverse lines))
+                (list->vector (reverse items)))
+        (let* ((location (vector-ref locations index))
+               (label (lsp-location-label location))
+               (line (string-append label "\n"))
+               (line-bytes (string-utf8-length label))
+               (item (vector offset (+ offset line-bytes)
+                             (vector-ref location 0)
+                             (vector-ref location 1)
+                             (vector-ref location 2)
+                             "")))
+          (loop (+ index 1)
+                (+ offset line-bytes 1)
+                (cons line lines)
+                (cons item items))))))
+
+(define (lsp-locations-completed! host window source locations)
+  (let ((count (vector-length locations)))
+    (cond
+     ((= count 0)
+      (set-message! host (string-append "no LSP " (symbol->string source) " found")))
+     ((and (= count 1) (not (eq? source 'references)))
+      (let ((location (vector-ref locations 0)))
+        (open-resource-with-intent! host window
+                                    (vector-ref location 0)
+                                    (vector-ref location 1)
+                                    (vector-ref location 2)
+                                    source)
+        (set-message! host (string-append "LSP " (symbol->string source)))))
+     (else
+      (let* ((data (lsp-location-buffer-data locations))
+             (name (string-append "*LSP " (symbol->string source) "*"))
+             (buffer (create-buffer! host name (vector-ref data 0)
+                                     'process #f #t 'cind.location-list #f
+                                     "location-list")))
+        (set-location-list! host window buffer source (vector-ref data 1))
+        (set-location-navigation! host buffer #f)
+        (display-buffer! host window buffer 'tools)
+        (set-message! host
+                      (format #f "LSP ~a: ~a location~a"
+                              (symbol->string source) count
+                              (if (= count 1) "" "s"))))))))
+
+(define (lsp-navigation-provider host context)
+  (and (eq? (vector-ref (buffer-mode-summary host (context-buffer context)) 0)
+            'cind.cpp)
+       "lsp:cpp:clangd"))
+
+(define (lsp-navigation host context kind)
+  (let ((provider (lsp-navigation-provider host context)))
+    (if (not provider)
+        (command-error "LSP navigation is unavailable for the current mode")
+        (begin
+          (request-lsp-navigation! host context kind provider)
+          (set-message! host
+                        (string-append "requesting LSP "
+                                       (symbol->string kind) "…"))
+          (command-completed/preserve)))))
+
 (define (jump-move host context invocation direction)
   (let* ((count (or (invocation-repeat-count invocation) 1))
          (delta (* direction count)))
@@ -2531,6 +2603,22 @@
                  (location-navigate host context -1))
                (lambda (context)
                  (location-navigation-available? host context)))
+         (list "lsp.definition"
+               (lambda (context invocation)
+                 (lsp-navigation host context 'definition))
+               (lambda (context) (lsp-navigation-provider host context)))
+         (list "lsp.declaration"
+               (lambda (context invocation)
+                 (lsp-navigation host context 'declaration))
+               (lambda (context) (lsp-navigation-provider host context)))
+         (list "lsp.implementation"
+               (lambda (context invocation)
+                 (lsp-navigation host context 'implementation))
+               (lambda (context) (lsp-navigation-provider host context)))
+         (list "lsp.references"
+               (lambda (context invocation)
+                 (lsp-navigation host context 'references))
+               (lambda (context) (lsp-navigation-provider host context)))
          (list "jump.back"
                (lambda (context invocation)
                  (jump-move host context invocation -1))
@@ -2991,11 +3079,17 @@
     ("M-g g" . "cursor.goto-line")
     ("M-g n" . "location.next-error")
     ("M-g p" . "location.previous-error")
+    ("M-." . "lsp.definition")
+    ("M-?" . "lsp.references")
     ("M-," . "jump.back")
     ("C-M-," . "jump.forward")
     ("C-c j b" . "jump.branches")
     ("C-c j l" . "jump.link")
     ("C-c j m" . "jump.mark")
+    ("C-c l d" . "lsp.definition")
+    ("C-c l D" . "lsp.declaration")
+    ("C-c l i" . "lsp.implementation")
+    ("C-c l r" . "lsp.references")
     ("M-%" . "search.replace")
     ("C-h b" . "help.describe-bindings")
     ("C-h k" . "help.describe-key")

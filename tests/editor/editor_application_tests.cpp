@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -102,6 +103,25 @@ public:
 
 private:
     std::filesystem::path path_;
+};
+
+class ScopedPath {
+public:
+    explicit ScopedPath(const std::filesystem::path& directory)
+        : previous_(std::getenv("PATH") != nullptr ? std::getenv("PATH") : "") {
+        const std::string value = directory.string() + ":" + previous_;
+        if (::setenv("PATH", value.c_str(), 1) != 0) {
+            throw std::runtime_error("cannot set test PATH");
+        }
+    }
+
+    ~ScopedPath() { (void)::setenv("PATH", previous_.c_str(), 1); }
+
+    ScopedPath(const ScopedPath&) = delete;
+    ScopedPath& operator=(const ScopedPath&) = delete;
+
+private:
+    std::string previous_;
 };
 
 EditorApplication make_application(std::string path, std::string initial,
@@ -3437,6 +3457,65 @@ TEST_CASE("include completion selects the asynchronous path provider") {
     REQUIRE(application.completion().state() != nullptr);
     REQUIRE(application.completion().state()->matches.size() == 1);
     CHECK(application.completion().state()->matches.front().item.label == "foo.hpp");
+}
+
+TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
+    TemporaryDirectory commands("cind-lsp-navigation-path");
+    std::filesystem::create_symlink(CIND_LSP_TEST_SERVER, commands.path() / "clangd");
+    ScopedPath path_scope(commands.path());
+    TemporaryDirectory project("cind-lsp-navigation-project");
+    const std::filesystem::path source = project.write("main.cc", "int value;\n");
+    WakeSignal wake;
+    EditorApplication application =
+        make_application(source.string(), "int value;\n",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    const BufferId origin = application.buffer_id();
+    application.session().set_caret(TextOffset{4});
+
+    REQUIRE(application.execute_command("lsp.references"));
+    for (int iteration = 0;
+         application.location_lists(application.workbench_id()).empty() && iteration < 20;
+         ++iteration) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    const std::vector<LocationListSnapshot> lists =
+        application.location_lists(application.workbench_id());
+    REQUIRE(lists.size() == 1);
+    CHECK(lists.front().source == "references");
+    CHECK(lists.front().item_count == 2);
+    REQUIRE(lists.front().materialized_buffer.has_value());
+    CHECK(application.buffer_id() == *lists.front().materialized_buffer);
+    const std::vector<OpenBufferSnapshot> buffers = application.open_buffers();
+    const auto location_buffer =
+        std::ranges::find_if(buffers, [&](const OpenBufferSnapshot& buffer) {
+            return buffer.buffer == *lists.front().materialized_buffer;
+        });
+    REQUIRE(location_buffer != buffers.end());
+    CHECK(location_buffer->major_mode == "cind.location-list");
+
+    send_keys(application, "RET");
+    for (int iteration = 0; application.path() != "/tmp/first.cpp" && iteration < 20; ++iteration) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    CHECK(application.path() == "/tmp/first.cpp");
+    CHECK(std::ranges::any_of(application.jump_graphs().front().edges,
+                              [](const JumpEdge& edge) { return edge.kind == "list"; }));
+
+    REQUIRE(application.switch_buffer(origin));
+    application.session().set_caret(TextOffset{4});
+    REQUIRE(application.execute_command("lsp.definition"));
+    for (int iteration = 0; application.path() != "/tmp/cind definition.cpp" && iteration < 20;
+         ++iteration) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    CHECK(application.path() == "/tmp/cind definition.cpp");
+    CHECK(std::ranges::any_of(application.jump_graphs().front().edges,
+                              [](const JumpEdge& edge) { return edge.kind == "def"; }));
 }
 
 TEST_CASE("C++ completion merges clangd semantic candidates with local providers") {

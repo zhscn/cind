@@ -21,6 +21,7 @@ target_compile_features(cind_document PUBLIC cxx_std_23)
 add_library(cind_lsp STATIC
   lsp/completion.cpp
   lsp/json_rpc.cpp
+  lsp/navigation.cpp
   lsp/protocol.cpp
   lsp/registry.cpp
   lsp/session.cpp

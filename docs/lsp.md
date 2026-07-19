@@ -77,7 +77,7 @@ the request snapshot, converts UTF-16 positions, and normalizes protocol items f
 pipeline. The initialize handshake's `completionProvider.resolveProvider` flag determines whether
 items enter the pipeline as resolved.
 
-The default C++ policy requests the fixed `Word`, `Path`, and `Lsp` sources. Include syntax narrows
+The default Scheme policy requests the fixed `Word`, `Path`, and `Lsp` sources. Include syntax narrows
 the request to `Path`; other string and comment contexts remain suppressed by the syntax gate.
 Local candidates can open the menu immediately while the LSP request is pending. A semantic
 response replaces only its own provider source and participates in the common fuzzy ranking.
@@ -93,6 +93,25 @@ or selection. Query generations cancel outstanding resolves before reusing cache
 Accepting an unresolved item queues its application behind the resolve request so additional edits
 remain part of the same transaction. The selected item's documentation is presented in an adjacent
 overlay when the viewport has room, without changing document or completion-menu geometry.
+
+## Semantic navigation
+
+`LspNavigationFeature` implements definition, declaration, implementation, and references requests.
+It synchronizes the origin snapshot, encodes the caret as UTF-16, accepts both `Location` and
+`LocationLink` responses, and normalizes local file URIs and ranges before returning them to the
+editor. The shared LSP session contributes all navigation capability fragments together with
+completion capabilities, so one project and language retain one server process.
+
+Scheme commands own result presentation. A single definition, declaration, or implementation opens
+the target through the workbench display policy with the matching semantic intent. Multiple targets
+and every references result become a `cind.location-list` buffer and the current workbench location
+list. Visiting an entry uses the `list` intent. These display paths record `def`, `ref`, or `list`
+edges in the workbench jump graph without coupling the LSP adapter to window placement.
+
+`M-.` requests a definition, `M-?` requests references, and the `lsp.definition`,
+`lsp.declaration`, `lsp.implementation`, and `lsp.references` commands remain available to other
+keymaps and extensions. Starting another semantic navigation request cancels the pending request;
+the editor-wide quit command uses the same cancellation path.
 
 The GUI inspector exposes sessions at `editor.lsp`, including lifecycle state, command, project
 root, generic pending request count, synchronized document count, complete server capabilities, and

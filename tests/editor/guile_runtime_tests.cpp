@@ -990,6 +990,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     EditorRuntime runtime;
     const ModeId fundamental_mode = runtime.modes().define("fundamental-mode", ModeKind::Major);
     const ModeId special_mode = runtime.modes().define("special-mode", ModeKind::Major);
+    const ModeId cpp_mode = runtime.modes().define("cind.cpp", ModeKind::Major);
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = "abc\n",
@@ -1062,6 +1063,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const std::string workbench_session = "serialized workbench session";
     std::optional<std::string> restored_workbench_session;
     std::string interaction_provider;
+    std::optional<CommandTarget> lsp_navigation_target;
+    std::string lsp_navigation_kind;
+    std::string lsp_navigation_provider;
     GuileRuntime guile(
         runtime,
         {.display_buffer =
@@ -1122,6 +1126,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .completion_active = {},
          .resolve_completion_provider = {},
          .start_completion = {},
+         .request_lsp_navigation = [&](CommandTarget target, std::string kind,
+                                       std::string provider) -> std::expected<void, std::string> {
+             lsp_navigation_target = target;
+             lsp_navigation_kind = std::move(kind);
+             lsp_navigation_provider = std::move(provider);
+             return {};
+         },
          .move_completion = {},
          .apply_completion = {},
          .cancel_completion = {},
@@ -1373,12 +1384,24 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 221);
+    CHECK(*installed == 225);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 12);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
+
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp_mode);
+    const CommandResult definition =
+        runtime.commands().invoke(require_command(runtime, "lsp.definition"), context);
+    REQUIRE(definition.has_value());
+    REQUIRE(lsp_navigation_target.has_value());
+    CHECK(lsp_navigation_target->window == window);
+    CHECK(lsp_navigation_target->buffer == buffer);
+    CHECK(lsp_navigation_target->view == view);
+    CHECK(lsp_navigation_kind == "definition");
+    CHECK(lsp_navigation_provider == "lsp:cpp:clangd");
+    runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const CommandResult saved = runtime.commands().invoke(save, context);
     REQUIRE(saved.has_value());
@@ -2083,7 +2106,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 221);
+    CHECK(snapshot.scripted_commands == 225);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 12);
     CHECK_FALSE(snapshot.last_error.has_value());

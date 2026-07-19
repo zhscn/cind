@@ -374,6 +374,11 @@ private:
                                 CompletionProviderAsync::Cancelled cancelled);
     std::expected<CompletionProvider, std::string>
     resolve_completion_provider(CommandTarget target, std::string_view name);
+    std::expected<LspSessionId, std::string> resolve_lsp_session(CommandTarget target,
+                                                                 std::string_view name);
+    std::expected<void, std::string>
+    start_lsp_navigation(CommandTarget target, std::string_view kind, std::string_view provider);
+    bool cancel_lsp_navigation();
     CommandContext command_context();
     void after_edit();
     std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
@@ -405,6 +410,8 @@ private:
     AsyncScriptHost script_async_;
     std::unique_ptr<LspSessionRegistry> lsp_sessions_;
     std::unique_ptr<CompletionPipeline> completion_;
+    LspSession::Cancel cancel_lsp_navigation_;
+    std::uint64_t lsp_navigation_generation_ = 0;
 };
 
 } // namespace cind

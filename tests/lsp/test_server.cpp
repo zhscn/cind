@@ -42,6 +42,10 @@ int main() {
                 client_capabilities = message["params"]["capabilities"];
                 const Json capabilities{
                     {"completionProvider", {{"resolveProvider", true}}},
+                    {"definitionProvider", true},
+                    {"declarationProvider", true},
+                    {"implementationProvider", true},
+                    {"referencesProvider", true},
                     {"testProvider", {{"enabled", true}}},
                 };
                 send({{"jsonrpc", "2.0"},
@@ -82,6 +86,28 @@ int main() {
                       {"result", {{"opens", opens}, {"changes", changes}, {"closes", closes}}}});
             } else if (method == "test/clientCapabilities") {
                 send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", client_capabilities}});
+            } else if (method == "textDocument/definition") {
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"result",
+                       {{"targetUri", "file:///tmp/cind%20definition.cpp"},
+                        {"targetRange",
+                         {{"start", {{"line", 7}, {"character", 2}}},
+                          {"end", {{"line", 7}, {"character", 8}}}}},
+                        {"targetSelectionRange",
+                         {{"start", {{"line", 7}, {"character", 4}}},
+                          {"end", {{"line", 7}, {"character", 8}}}}}}}});
+            } else if (method == "textDocument/references") {
+                send({{"jsonrpc", "2.0"},
+                      {"id", message["id"]},
+                      {"result", Json::array({{{"uri", "file:///tmp/first.cpp"},
+                                               {"range",
+                                                {{"start", {{"line", 1}, {"character", 3}}},
+                                                 {"end", {{"line", 1}, {"character", 6}}}}}},
+                                              {{"uri", "file://localhost/tmp/second.cpp"},
+                                               {"range",
+                                                {{"start", {{"line", 4}, {"character", 1}}},
+                                                 {"end", {{"line", 4}, {"character", 2}}}}}}})}});
             } else if (method.empty() && message.value("id", Json()) == "server-request") {
                 send({{"jsonrpc", "2.0"}, {"method", "test/serverResponse"}, {"params", message}});
             }
