@@ -613,8 +613,8 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
           std::vector<std::string>{"cind command", "cind input", "cind async", "cind lifecycle",
                                    "cind pointer", "cind extension", "cind emacs", "cind toy-modal",
                                    "cind meow", "cind vim", "cind helix", "cind structural",
-                                   "cind minibuffer", "cind development", "cind ares",
-                                   "cind introspect", "cind core"});
+                                   "cind paredit", "cind minibuffer", "cind development",
+                                   "cind ares", "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -806,10 +806,12 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     const std::expected<std::size_t, std::string> first = guile.install_core_modes();
     const std::expected<std::size_t, std::string> second = guile.install_core_modes();
 
+    INFO((first ? std::string{} : first.error()));
+    INFO((second ? std::string{} : second.error()));
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 7);
-    CHECK(*second == 7);
+    CHECK(*first == 8);
+    CHECK(*second == 8);
     const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
     const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
     const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
@@ -843,10 +845,18 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
               .profile(*scheme_language)
               .provider(LanguageFacet::StructuralMotion)
               .has_value());
-    CHECK_FALSE(runtime.languages()
-                    .profile(*scheme_language)
-                    .provider(LanguageFacet::StructuralEditing)
-                    .has_value());
+    CHECK(runtime.languages()
+              .profile(*scheme_language)
+              .provider(LanguageFacet::StructuralEditing)
+              .has_value());
+    CHECK(runtime.languages()
+              .profile(*scheme_language)
+              .provider(LanguageFacet::Indentation)
+              .has_value());
+    CHECK(runtime.languages()
+              .profile(*scheme_language)
+              .provider(LanguageFacet::Highlighting)
+              .has_value());
     CHECK(runtime.modes().definition(scheme).keymaps ==
           std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
     CHECK(runtime.modes().definition(scheme).completion_providers ==
@@ -882,7 +892,7 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     REQUIRE(emacs_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
-    CHECK(guile.snapshot().scripted_modes == 7);
+    CHECK(guile.snapshot().scripted_modes == 8);
 }
 
 TEST_CASE("bundled Guile policy defines file modes and project discovery providers") {
@@ -1394,7 +1404,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 227);
+    CHECK(*installed == 233);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 14);
@@ -2116,7 +2126,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 227);
+    CHECK(snapshot.scripted_commands == 233);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 14);
     CHECK_FALSE(snapshot.last_error.has_value());

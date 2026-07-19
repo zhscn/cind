@@ -108,6 +108,20 @@ void EditingMechanisms::type_text(ViewId view, std::string_view text) {
     }
 }
 
+std::expected<void, std::string> EditingMechanisms::edit_structure(ViewId view,
+                                                                   StructuralEdit edit) {
+    EditSession& active = session_(view);
+    if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {
+        return std::unexpected("structural editing is unavailable for the current mode");
+    }
+    const RevisionId revision = active.snapshot().revision();
+    std::expected<void, std::string> result = active.edit_structure(edit);
+    if (result && active.snapshot().revision() != revision) {
+        notify_edited();
+    }
+    return result;
+}
+
 DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool forward) {
     EditSession& active = session_(view);
     if (!active.has_language_facet(LanguageFacet::StructuralEditing)) {

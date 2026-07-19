@@ -290,6 +290,22 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                editing_mechanisms_.type_text(view, text);
                return {};
            },
+           .structural_edit =
+               [this](ViewId view, std::string_view operation) {
+                   const auto edit =
+                       operation == "splice"          ? std::optional{StructuralEdit::Splice}
+                       : operation == "forward-slurp" ? std::optional{StructuralEdit::ForwardSlurp}
+                       : operation == "forward-barf"  ? std::optional{StructuralEdit::ForwardBarf}
+                       : operation == "backward-slurp"
+                           ? std::optional{StructuralEdit::BackwardSlurp}
+                       : operation == "backward-barf" ? std::optional{StructuralEdit::BackwardBarf}
+                                                      : std::nullopt;
+                   if (!edit) {
+                       return std::expected<void, std::string>{
+                           std::unexpected("unknown structural edit operation")};
+                   }
+                   return editing_mechanisms_.edit_structure(view, *edit);
+               },
            .page_rows = [this] { return command_page_rows_; },
            .interaction_status =
                [this] {

@@ -116,7 +116,10 @@ three commands remain available to later evaluations and to `describe-function` 
 Scheme source files use `scheme-mode`, with `C-c C-e`, `C-c C-r`, and `C-c C-b` bound to expression,
 region, and buffer evaluation. Typing a Scheme symbol opens Ares completion automatically;
 `C-M-i` remains available for an explicit request. Candidates include definitions created in the
-persistent user module by any of those evaluation commands.
+persistent user module by any of those evaluation commands. Scheme input pairs delimiters and
+quotes, provides structural deletion and form-aware indentation, and highlights Scheme tokens.
+`M-x paredit.mode` enables the `paredit-mode` minor mode; its bindings provide splice and
+forward/backward slurp and barf operations.
 
 ## Build without the GUI
 

@@ -166,6 +166,8 @@ The native module exports:
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)
 (soft-kill-range host view-id 'plain-or-structural)
+(structural-edit! host view-id
+                  'splice-or-forward-slurp-or-forward-barf-or-backward-slurp-or-backward-barf)
 (set-view-caret! host view-id offset)
 (reset-preferred-column! host view-id)
 (thing-selection host view-id selection thing-name inner-or-bounds)
@@ -563,10 +565,19 @@ rule wins. Redefining a name replaces that rule and moves it to the highest prec
 buffers resolve these rules when they are created or receive a resource; unmatched files and
 scratch buffers use `fundamental-mode`. The bundled policy maps C-family suffixes to `cind.cpp` and
 Scheme suffixes to `scheme-mode`. `scheme-mode` derives from `prog-mode` and adds `C-c C-e`,
-`C-c C-r`, and `C-c C-b` for expression, region, and buffer evaluation. It uses plain-text input,
-newline, deletion and rendering semantics until a Scheme language profile supplies corresponding
-syntax, indentation and structural-editing facets. Commands consult those facets instead of
-implicitly applying the C++ analyzer to a language-less mode.
+`C-c C-r`, and `C-c C-b` for expression, region, and buffer evaluation. Its language mechanism
+tokenizes comments, literals, symbols, numbers, keywords, datum prefixes, and all three delimiter
+pairs. The same revision-keyed analysis supplies highlighting, balanced deletion, datum motion,
+delimiter-aware input, and form-aware Scheme indentation. Opening delimiters and
+string quotes insert their matching delimiter outside literals and comments; typing an existing
+closing delimiter advances over it.
+
+`paredit-mode` is a regular minor mode with its own sparse keymap. `paredit.mode` toggles it for the
+current Buffer. The mode binds `M-s` to splice, `C-)`/`C-}` to forward slurp/barf, and
+`C-(`/`C-{` to backward slurp/barf. These Scheme commands call `structural-edit!`; the active
+language mechanism owns delimiter movement and returns the resulting document change and caret.
+This keeps command names, activation, and bindings in Scheme while preserving atomic edits and
+undo integration in the native document mechanism.
 
 The default self-insert and deletion commands query `structural-editing` before selecting
 `type-text!` or structural `delete-grapheme!`; otherwise they compose `insert-text!` and raw

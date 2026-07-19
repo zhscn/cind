@@ -25,6 +25,7 @@
     (cind vim)
     (cind helix)
     (cind structural)
+    (cind paredit)
     (cind introspect)
     (cind core)))
 

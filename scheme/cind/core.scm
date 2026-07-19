@@ -16,6 +16,7 @@
   #:use-module (cind meow)
   #:use-module (cind minibuffer)
   #:use-module (cind pointer)
+  #:use-module (cind paredit)
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
@@ -2942,6 +2943,7 @@
    (helix-command-definitions host)
    (meow-command-definitions host)
    (structural-command-definitions host)
+   (paredit-command-definitions host)
    (vim-command-definitions host)
    (toy-modal-command-definitions host)))
 
@@ -2956,6 +2958,7 @@
               commands)
     (install-introspection-documentation! host)
     (install-development-documentation! host)
+    (install-paredit-documentation! host)
     (length commands)))
 
 (define (core-providers host)
@@ -3072,10 +3075,15 @@
     '((language.c-family.dialect . "c++")))
   (define-language-profile!
     host 'cind.scheme
-    '((structural-motion . cind.scheme.structural-motion))
+    '((lexing . cind.scheme.lexer)
+      (indentation . cind.scheme.indentation)
+      (structural-motion . cind.scheme.structural-motion)
+      (structural-editing . cind.scheme.structural-editing)
+      (highlighting . cind.scheme.highlighting))
     '())
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'scheme-repl-mode-map #f)
+  (install-paredit-mode! host)
   (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
     #:interaction-class 'editing
@@ -3111,7 +3119,7 @@
     #:parent 'special-mode
     #:keymap 'cind.location-list.map
     #:interaction-class 'interface)
-  7)
+  8)
 
 (define (install-core-resource-policies! host)
   (define-file-mode-rule!
@@ -3319,6 +3327,7 @@
   (define-keymap! host 'window.policy-created #f)
   (define-keymap! host 'scheme-mode-map #f)
   (define-keymap! host 'scheme-repl-mode-map #f)
+  (define-keymap! host 'paredit-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
   (bind-key! host 'editor.control-x "w" '(prefix editor.workbench "C-x w"))
@@ -3339,6 +3348,7 @@
        (bind-all! host 'window.policy-created policy-created-window-bindings)
        (bind-all! host 'scheme-mode-map scheme-mode-bindings)
        (bind-all! host 'scheme-repl-mode-map scheme-repl-mode-bindings)
+       (install-paredit-keymap! host)
        (bind-all! host 'cind.location-list.map location-list-bindings)
        (install-helix-keymaps! host)
        (install-meow-keymaps! host)

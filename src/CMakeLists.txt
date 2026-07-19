@@ -120,7 +120,7 @@ add_library(cind_scheme STATIC
   editor/scheme_mode.cpp
 )
 target_include_directories(cind_scheme PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(cind_scheme PUBLIC cind_application)
+target_link_libraries(cind_scheme PUBLIC cind_application PRIVATE cind_indent)
 
 set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
 set(CIND_ARES_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/ares.scm")
@@ -151,6 +151,8 @@ set(CIND_MINIBUFFER_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/minibuffer.
 set(CIND_MINIBUFFER_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/minibuffer.scm")
 set(CIND_POINTER_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/pointer.scm")
 set(CIND_POINTER_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/pointer.scm")
+set(CIND_PAREDIT_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/paredit.scm")
+set(CIND_PAREDIT_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/paredit.scm")
 set(CIND_STRUCTURAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/structural.scm")
 set(CIND_STRUCTURAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/structural.scm")
 set(CIND_VIM_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/vim.scm")
@@ -168,6 +170,7 @@ add_custom_command(
          "${CIND_LIFECYCLE_SCHEME_OUTPUT}"
          "${CIND_MEOW_SCHEME_OUTPUT}" "${CIND_MINIBUFFER_SCHEME_OUTPUT}"
          "${CIND_POINTER_SCHEME_OUTPUT}"
+         "${CIND_PAREDIT_SCHEME_OUTPUT}"
          "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
          "${CIND_VIM_SCHEME_OUTPUT}"
          "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
@@ -201,6 +204,8 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_POINTER_SCHEME_SOURCE}" "${CIND_POINTER_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${CIND_PAREDIT_SCHEME_SOURCE}" "${CIND_PAREDIT_SCHEME_OUTPUT}"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_STRUCTURAL_SCHEME_SOURCE}" "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_VIM_SCHEME_SOURCE}" "${CIND_VIM_SCHEME_OUTPUT}"
@@ -215,6 +220,7 @@ add_custom_command(
           "${CIND_LIFECYCLE_SCHEME_SOURCE}"
           "${CIND_MEOW_SCHEME_SOURCE}" "${CIND_MINIBUFFER_SCHEME_SOURCE}"
           "${CIND_POINTER_SCHEME_SOURCE}"
+          "${CIND_PAREDIT_SCHEME_SOURCE}"
           "${CIND_STRUCTURAL_SCHEME_SOURCE}"
           "${CIND_VIM_SCHEME_SOURCE}"
           "${CIND_TOY_MODAL_SCHEME_SOURCE}"
@@ -231,6 +237,7 @@ add_custom_target(cind_scheme_resources
           "${CIND_LIFECYCLE_SCHEME_OUTPUT}"
           "${CIND_MEOW_SCHEME_OUTPUT}" "${CIND_MINIBUFFER_SCHEME_OUTPUT}"
           "${CIND_POINTER_SCHEME_OUTPUT}"
+          "${CIND_PAREDIT_SCHEME_OUTPUT}"
           "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
           "${CIND_VIM_SCHEME_OUTPUT}"
           "${CIND_TOY_MODAL_SCHEME_OUTPUT}"

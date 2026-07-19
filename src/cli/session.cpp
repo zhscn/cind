@@ -150,6 +150,20 @@ std::optional<TextOffset> EditSession::move_structurally(TextOffset from,
         .move_structurally(snapshot(), from, motion);
 }
 
+std::expected<void, std::string> EditSession::edit_structure(StructuralEdit edit) {
+    const TextOffset before = caret();
+    LanguageMechanismSession& mechanism = language_session(LanguageFacet::StructuralEditing);
+    std::expected<StructuralEditResult, std::string> result =
+        mechanism.edit_structure(mutable_document(), before, edit);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    apply_language_change(result->change, snapshot(), &mechanism);
+    set_caret(result->caret);
+    record_caret(before);
+    return {};
+}
+
 void EditSession::set_caret(TextOffset caret) {
     if (caret.value > snapshot().size_bytes()) {
         throw std::out_of_range("EditSession: caret out of range");
@@ -180,6 +194,17 @@ void EditSession::type_text(std::string_view text) {
         LanguageMechanismSession& mechanism = language_session(LanguageFacet::StructuralEditing);
         TypeCharsResult result = mechanism.type_chars(mutable_document(), carets, ch, *style_);
         apply_language_change(result.change, snapshot(), &mechanism);
+        if (result.carets.size() == selection.ranges.size()) {
+            ViewSelection updated = selection_model();
+            for (std::size_t index = 0; index < updated.ranges.size(); ++index) {
+                const bool collapsed = selection.ranges[index].ordered().empty();
+                updated.ranges[index].head = result.carets[index];
+                if (collapsed) {
+                    updated.ranges[index].anchor = result.carets[index];
+                }
+            }
+            set_selection(std::move(updated));
+        }
         record_caret(before);
     }
 }

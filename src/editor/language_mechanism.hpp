@@ -1,13 +1,16 @@
 #pragma once
 
+#include "document/document.hpp"
 #include "document/snapshot.hpp"
 #include "editor/language.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace cind {
 
@@ -23,6 +26,19 @@ enum class StructuralMotion : std::uint8_t {
     ForwardExpression,
     BackwardExpression,
     UpList,
+};
+
+enum class StructuralEdit : std::uint8_t {
+    Splice,
+    ForwardSlurp,
+    ForwardBarf,
+    BackwardSlurp,
+    BackwardBarf,
+};
+
+struct StructuralEditResult {
+    TextOffset caret;
+    DocumentChange change;
 };
 
 // Per-EditSession state for one native language mechanism. The default
@@ -43,6 +59,8 @@ public:
                                           const CppIndentStyle& style);
     virtual std::optional<TextOffset> move_structurally(const DocumentSnapshot& snapshot,
                                                         TextOffset from, StructuralMotion motion);
+    virtual std::expected<StructuralEditResult, std::string>
+    edit_structure(Document& document, TextOffset caret, StructuralEdit edit);
 };
 
 // Immutable executable implementation shared by provider declarations. One

@@ -45,6 +45,7 @@ public:
     void newline(ViewId view);
     std::optional<FormatRole> indent(ViewId view);
     void type_text(ViewId view, std::string_view text);
+    std::expected<void, std::string> edit_structure(ViewId view, StructuralEdit edit);
 
 private:
     DeleteGraphemeOutcome structural_delete(ViewId view, bool forward);

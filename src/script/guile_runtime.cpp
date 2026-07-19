@@ -28,10 +28,10 @@ namespace cind {
 
 namespace {
 
-constexpr std::array<std::string_view, 17> bundled_guile_modules = {
-    "command",    "input",       "async", "lifecycle",  "pointer", "extension",
-    "emacs",      "toy-modal",   "meow",  "vim",        "helix",   "structural",
-    "minibuffer", "development", "ares",  "introspect", "core",
+constexpr std::array<std::string_view, 18> bundled_guile_modules = {
+    "command", "input",      "async",       "lifecycle", "pointer",    "extension",
+    "emacs",   "toy-modal",  "meow",        "vim",       "helix",      "structural",
+    "paredit", "minibuffer", "development", "ares",      "introspect", "core",
 };
 
 struct ScriptCommand {
@@ -4374,6 +4374,28 @@ SCM newline_edit(SCM host_object, SCM view_value) {
     return SCM_UNSPECIFIED;
 }
 
+SCM structural_edit(SCM host_object, SCM view_value, SCM operation_value) {
+    HostLease& host = require_host(host_object, "structural-edit!");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "structural-edit!", 2);
+    const std::string operation = scheme_name(operation_value, "structural-edit!", 3);
+    if (!host.services.structural_edit) {
+        scm_misc_error("structural-edit!", "structural editing capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> result =
+            host.services.structural_edit(view, operation);
+        if (!result) {
+            raise_host_error("structural-edit!", result.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("structural-edit!", exception.what());
+    } catch (...) {
+        scm_misc_error("structural-edit!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM indent_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "indent!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "indent!", 2);
@@ -5976,6 +5998,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("newline!", 2, 0, 0, reinterpret_cast<scm_t_subr>(newline_edit));
     (void)scm_c_define_gsubr("indent!", 2, 0, 0, reinterpret_cast<scm_t_subr>(indent_edit));
     (void)scm_c_define_gsubr("type-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(type_text));
+    (void)scm_c_define_gsubr("structural-edit!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(structural_edit));
     (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
     (void)scm_c_define_gsubr("interaction-status", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_status));
@@ -6122,10 +6146,10 @@ void initialize_host_module(void*) {
         "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
         "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
         "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
-        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
-        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
-        "refresh-interaction!", "submit-interaction!", "interaction-history",
-        "set-interaction-history!", "select-interaction-candidate!",
+        "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!", "page-rows",
+        "interaction-status", "interaction-provider", "set-interaction-provider!",
+        "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
+        "interaction-history", "set-interaction-history!", "select-interaction-candidate!",
         "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
         "completion-active?", "start-completion!", "request-lsp-navigation!", "move-completion!",
         "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
@@ -8431,7 +8455,9 @@ public:
             return std::unexpected(*state_->last_error);
         }
         if (call.count != lease_->modes_installed) {
-            state_->last_error = "Guile mode policy returned an inconsistent definition count";
+            state_->last_error =
+                std::format("Guile mode policy returned {} definitions after installing {} modes",
+                            call.count, lease_->modes_installed);
             return std::unexpected(*state_->last_error);
         }
         ++state_->mode_revision;

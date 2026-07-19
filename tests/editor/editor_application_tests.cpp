@@ -423,7 +423,7 @@ TEST_CASE("resource policy selects file modes without making scratch buffers C++
     CHECK(major_name(scheme) == "scheme-mode");
     CHECK(major_name(text) == "fundamental-mode");
     CHECK(major_name(scratch) == "fundamental-mode");
-    CHECK(scheme.syntax_tokens().empty());
+    CHECK_FALSE(scheme.syntax_tokens().empty());
 
     send_keys(scheme, "C-c C-e");
     REQUIRE(scheme.interaction().state() != nullptr);
@@ -432,16 +432,17 @@ TEST_CASE("resource policy selects file modes without making scratch buffers C++
     EditorApplication plain_scheme = make_application("plain.scm", "{");
     plain_scheme.session().set_caret(TextOffset{1});
     send_keys(plain_scheme, "RET");
-    CHECK(plain_scheme.session().snapshot().content() == "{\n");
+    CHECK(plain_scheme.session().snapshot().content().to_string() == "{\n ");
+    CHECK(plain_scheme.session().caret() == TextOffset{3});
     CHECK(plain_scheme.message().empty());
     plain_scheme.insert_text("\"");
     send_keys(plain_scheme, "Backspace");
-    CHECK(plain_scheme.session().snapshot().content() == "{\n");
+    CHECK(plain_scheme.session().snapshot().content().to_string() == "{\n ");
     send_keys(plain_scheme, "TAB");
-    CHECK(plain_scheme.message() == "indentation unavailable for this mode");
+    CHECK(plain_scheme.message() == "indent: ParenContinuation");
 }
 
-TEST_CASE("Scheme mode navigates datums without inheriting C-family editing") {
+TEST_CASE("Scheme mode navigates datums and enables structural editing") {
     const std::string source = "; ignored ( delimiter\n'(define (square x) \"not )\")\n#u8(1 2)\n";
     EditorApplication application = make_application("sample.scm", source);
     const std::size_t quoted_start = source.find('\'');
@@ -463,7 +464,48 @@ TEST_CASE("Scheme mode navigates datums without inheriting C-family editing") {
     application.session().set_caret(TextOffset{static_cast<std::uint32_t>(nested_start + 4)});
     send_keys(application, "C-M-u");
     CHECK(application.session().caret().value == nested_start);
-    CHECK_FALSE(application.session().has_language_facet(LanguageFacet::StructuralEditing));
+    CHECK(application.session().has_language_facet(LanguageFacet::StructuralEditing));
+    const ModeId paredit = application.runtime().modes().find("paredit-mode").value_or(ModeId{});
+    REQUIRE(paredit);
+    CHECK(std::ranges::find(application.session().buffer().modes().minors(), paredit) ==
+          application.session().buffer().modes().minors().end());
+}
+
+TEST_CASE("Scheme typing pairs delimiters and paredit transforms lists") {
+    EditorApplication application = make_application("sample.scm", "");
+    application.insert_text("(");
+    CHECK(application.session().snapshot().content() == "()");
+    CHECK(application.session().caret() == TextOffset{1});
+    application.insert_text("define value 1");
+    application.insert_text(")");
+    CHECK(application.session().snapshot().content() == "(define value 1)");
+
+    EditorApplication transforms = make_application("sample.scm", "(one (two three) four)");
+    const ModeId paredit = transforms.runtime().modes().find("paredit-mode").value_or(ModeId{});
+    REQUIRE(paredit);
+    REQUIRE(transforms.execute_command("paredit.mode"));
+    CHECK(std::ranges::find(transforms.session().buffer().modes().minors(), paredit) !=
+          transforms.session().buffer().modes().minors().end());
+    transforms.session().set_caret(TextOffset{10});
+    send_keys(transforms, "C-)");
+    CHECK(transforms.session().snapshot().content() == "(one (two three four))");
+    send_keys(transforms, "M-s");
+    CHECK(transforms.session().snapshot().content() == "(one two three four)");
+
+    EditorApplication forward_barf = make_application("sample.scm", "(one (two three four))");
+    forward_barf.session().set_caret(TextOffset{11});
+    REQUIRE(forward_barf.session().edit_structure(StructuralEdit::ForwardBarf));
+    CHECK(forward_barf.session().snapshot().content() == "(one (two three) four)");
+
+    EditorApplication backward_slurp = make_application("sample.scm", "zero (one two)");
+    backward_slurp.session().set_caret(TextOffset{9});
+    REQUIRE(backward_slurp.session().edit_structure(StructuralEdit::BackwardSlurp));
+    CHECK(backward_slurp.session().snapshot().content() == "(zero one two)");
+
+    EditorApplication backward_barf = make_application("sample.scm", "(zero one two)");
+    backward_barf.session().set_caret(TextOffset{8});
+    REQUIRE(backward_barf.session().edit_structure(StructuralEdit::BackwardBarf));
+    CHECK(backward_barf.session().snapshot().content() == "zero (one two)");
 }
 
 TEST_CASE("user initialization overrides file mode policy before the first buffer") {
@@ -1700,7 +1742,7 @@ TEST_CASE("asynchronous file open snapshots mode policy and skips unrelated styl
     const ModeId major = application.session().buffer().modes().major().value_or(ModeId{});
     CHECK(application.runtime().modes().definition(major).name == "scheme-mode");
     CHECK(application.style_origin() == "plain text");
-    CHECK(application.syntax_tokens().empty());
+    CHECK_FALSE(application.syntax_tokens().empty());
 }
 
 TEST_CASE("project discovery indexes files and feeds the project file picker") {

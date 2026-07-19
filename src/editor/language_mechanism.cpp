@@ -45,6 +45,11 @@ LanguageMechanismSession::move_structurally(const DocumentSnapshot&, TextOffset,
     unavailable("structural motion");
 }
 
+std::expected<StructuralEditResult, std::string>
+LanguageMechanismSession::edit_structure(Document&, TextOffset, StructuralEdit) {
+    return std::unexpected("structural transform is unavailable in this language mechanism");
+}
+
 LanguageMechanism::LanguageMechanism(LanguageFacetMask facets, OpenSession open_session)
     : facets_(facets), open_session_(std::move(open_session)) {
     if (facets_ == 0 || (facets_ & ~kAllLanguageFacets) != 0) {

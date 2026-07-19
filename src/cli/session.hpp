@@ -100,6 +100,7 @@ public:
     // scripted language profile. Valid until the next mutation.
     const Analysis& analysis(LanguageFacet facet = LanguageFacet::Syntax) const;
     std::optional<TextOffset> move_structurally(TextOffset from, StructuralMotion motion) const;
+    std::expected<void, std::string> edit_structure(StructuralEdit edit);
 
     std::string render_with_caret() const;
 
