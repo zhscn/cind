@@ -481,17 +481,23 @@
                   (cons (interaction-candidate name name detail filter-text)
                         candidates)))))))
 
+(define (context-default-directory host context)
+  (let ((resource (buffer-resource host (context-buffer context))))
+    (if resource
+        (let ((parent (path-parent host resource)))
+          (if (= (string-length parent) 0) "." parent))
+        ".")))
+
 (define (files-provider-directory host context query)
-  (cond ((= (string-length query) 0)
-         (let ((resource (buffer-resource host (context-buffer context))))
-           (if resource
-               (let ((parent (path-parent host resource)))
-                 (if (= (string-length parent) 0) "." parent))
-               ".")))
-        ((directory-path? host query) query)
-        (else
-         (let ((parent (path-parent host query)))
-           (if (= (string-length parent) 0) "." parent)))))
+  (let ((base (context-default-directory host context)))
+    (cond ((= (string-length query) 0) base)
+          ((directory-path? host query)
+           (path-resolve host query base))
+          (else
+           (let ((parent (path-parent host query)))
+             (path-resolve host
+                           (if (= (string-length parent) 0) "." parent)
+                           base))))))
 
 (define (directory-list-candidates host result)
   (let* ((directory (vector-ref result 1))
@@ -501,7 +507,8 @@
           (and (> (string-length parent) 0)
                (not (string=? parent directory))
                (let ((value (path-as-directory host parent)))
-                 (interaction-candidate value "../" parent value)))))
+                 (interaction-candidate value "../" parent
+                                        (path-as-directory host directory))))))
     (let loop ((index 0)
                (candidates (if parent-candidate (list parent-candidate) '())))
       (if (= index (vector-length entries))
@@ -863,7 +870,11 @@
           ((directory-path? host path)
            (file-open-interaction (path-as-directory host path)))
           (else
-           (open-resource! host (context-window context) path #f #f)
+           (open-resource! host
+                           (context-window context)
+                           (path-resolve host path
+                                         (context-default-directory host context))
+                           #f #f)
            (command-completed)))))
 
 (define (file-save-completed host buffer resource task result)

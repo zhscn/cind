@@ -449,6 +449,45 @@ TEST_CASE("Guile interaction providers transform cancellable async host results"
                candidate.value ==
                    directory.parent_path().string() + std::filesystem::path::preferred_separator;
     }));
+
+    completed = false;
+    candidates.clear();
+    result = runtime.interaction_providers().complete(
+        "files", context, directory.string() + std::filesystem::path::preferred_separator);
+    provider_task = std::get_if<InteractionCandidateAsync>(&result);
+    REQUIRE(provider_task != nullptr);
+    started = provider_task->start(
+        [&](std::vector<InteractionCandidate> values) {
+            candidates = std::move(values);
+            completed = true;
+        },
+        [&](std::string message) { failure = std::move(message); }, [] {});
+    REQUIRE(started.has_value());
+    drain_until(async, [&] { return completed || !failure.empty(); });
+    CHECK(failure.empty());
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.label == "../" &&
+               candidate.value ==
+                   directory.parent_path().string() + std::filesystem::path::preferred_separator;
+    }));
+
+    completed = false;
+    candidates.clear();
+    result = runtime.interaction_providers().complete("files", context, "exa");
+    provider_task = std::get_if<InteractionCandidateAsync>(&result);
+    REQUIRE(provider_task != nullptr);
+    started = provider_task->start(
+        [&](std::vector<InteractionCandidate> values) {
+            candidates = std::move(values);
+            completed = true;
+        },
+        [&](std::string message) { failure = std::move(message); }, [] {});
+    REQUIRE(started.has_value());
+    drain_until(async, [&] { return completed || !failure.empty(); });
+    CHECK(failure.empty());
+    CHECK(std::ranges::any_of(candidates, [&](const InteractionCandidate& candidate) {
+        return candidate.value == (directory / "example.cpp").string();
+    }));
     std::filesystem::remove_all(directory, ignored);
 }
 
@@ -1580,13 +1619,23 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(directory_request->initial_input == directory);
     CHECK(async_requests.size() == async_before_open);
 
+    const CommandResult relative_opened = runtime.commands().invoke(
+        open_request->accept_command, context,
+        CommandInvocation{.arguments = {std::string("relative.cpp")}, .prefix = {}});
+    REQUIRE(relative_opened.has_value());
+    REQUIRE(async_requests.size() == async_before_open + 1);
+    const auto* relative_opened_read =
+        std::get_if<ScriptFileReadRequest>(&async_requests[async_before_open]);
+    REQUIRE(relative_opened_read != nullptr);
+    CHECK(relative_opened_read->path == "/tmp/relative.cpp");
+
     const CommandResult opened = runtime.commands().invoke(
         open_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/example.cpp")}, .prefix = {}});
     REQUIRE(opened.has_value());
-    REQUIRE(async_requests.size() == async_before_open + 1);
+    REQUIRE(async_requests.size() == async_before_open + 2);
     const auto* opened_read =
-        std::get_if<ScriptFileReadRequest>(&async_requests[async_before_open]);
+        std::get_if<ScriptFileReadRequest>(&async_requests[async_before_open + 1]);
     REQUIRE(opened_read != nullptr);
     CHECK(opened_read->path == "/tmp/example.cpp");
 

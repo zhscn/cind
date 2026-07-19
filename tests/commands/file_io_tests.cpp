@@ -120,6 +120,11 @@ TEST_CASE("file reads and directory listings expose worker-friendly value result
     CHECK(std::ranges::any_of(listing->entries, [](const DirectoryEntry& entry) {
         return entry.name == "src" && entry.directory;
     }));
+
+    const std::expected<DirectoryListing, std::error_code> trailing_listing =
+        list_directory(directory.path().string() + std::filesystem::path::preferred_separator, 100);
+    REQUIRE(trailing_listing.has_value());
+    CHECK(trailing_listing->directory == std::filesystem::absolute(directory.path()));
 }
 
 TEST_CASE("file operations acknowledge cancellation before external commit") {

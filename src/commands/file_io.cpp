@@ -110,6 +110,9 @@ list_directory(const std::filesystem::path& path, std::size_t maximum_entries,
     if (error) {
         return std::unexpected(error);
     }
+    if (directory != directory.root_path() && directory.filename().empty()) {
+        directory = directory.parent_path();
+    }
     if (!fs::is_directory(directory, error)) {
         return std::unexpected(error ? error : std::make_error_code(std::errc::not_a_directory));
     }

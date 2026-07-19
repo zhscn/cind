@@ -2648,6 +2648,31 @@ SCM path_filename(SCM host_object, SCM path_value) {
     return SCM_BOOL_F;
 }
 
+// The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
+// name and validation preserve the semantic order.
+SCM path_resolve(SCM host_object, SCM path_value, SCM base_value) {
+    if (!scm_is_string(path_value)) {
+        scm_wrong_type_arg_msg("path-resolve", 2, path_value, "string");
+    }
+    if (!scm_is_string(base_value)) {
+        scm_wrong_type_arg_msg("path-resolve", 3, base_value, "string");
+    }
+    (void)require_host(host_object, "path-resolve");
+    try {
+        std::filesystem::path path(scheme_string(path_value));
+        if (path.is_relative()) {
+            path = std::filesystem::path(scheme_string(base_value)) / path;
+        }
+        const std::string resolved = path.lexically_normal().string();
+        return scm_from_utf8_string(resolved.c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("path-resolve", exception.what());
+    } catch (...) {
+        scm_misc_error("path-resolve", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM active_key_bindings(SCM host_object) {
     HostLease& host = require_host(host_object, "active-key-bindings");
     if (!host.services.active_key_bindings) {
@@ -3534,8 +3559,11 @@ SCM path_parent(SCM host_object, SCM path_value) {
     }
     (void)require_host(host_object, "path-parent");
     try {
-        const std::string parent =
-            std::filesystem::path(scheme_string(path_value)).parent_path().string();
+        std::filesystem::path path(scheme_string(path_value));
+        if (path != path.root_path() && path.filename().empty()) {
+            path = path.parent_path();
+        }
+        const std::string parent = path.parent_path().string();
         return scm_from_utf8_string(parent.c_str());
     } catch (const std::exception& exception) {
         raise_host_error("path-parent", exception.what());
@@ -5477,6 +5505,7 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("project-files", 2, 0, 0, reinterpret_cast<scm_t_subr>(project_files));
     (void)scm_c_define_gsubr("path-relative", 3, 0, 0, reinterpret_cast<scm_t_subr>(path_relative));
     (void)scm_c_define_gsubr("path-filename", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_filename));
+    (void)scm_c_define_gsubr("path-resolve", 3, 0, 0, reinterpret_cast<scm_t_subr>(path_resolve));
     (void)scm_c_define_gsubr("active-key-bindings", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(active_key_bindings));
     (void)scm_c_define_gsubr("view-caret", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_caret));
@@ -5704,32 +5733,33 @@ void initialize_host_module(void*) {
         "new-workbench!", "switch-workbench!", "close-workbench!", "adopt-project!",
         "expel-buffer!", "workbench-session-state", "restore-workbench-session!", "project-list",
         "owned-user-modules", "project-root", "project-files", "path-relative", "path-filename",
-        "active-key-bindings", "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-text",
-        "buffer-byte-size", "buffer-locations", "set-buffer-locations!", "set-location-list!",
-        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
-        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
-        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
-        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
-        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
-        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
-        "refresh-interaction!", "submit-interaction!", "interaction-history",
-        "set-interaction-history!", "select-interaction-candidate!",
-        "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
-        "completion-active?", "start-completion!", "move-completion!", "apply-completion!",
-        "cancel-completion!", "view-position", "location-navigation", "set-location-navigation!",
-        "location-list-target", "move-location-list!", "position-buffer-view!", "set-message!",
-        "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
-        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
-        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
+        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
+        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-buffer-at!", "display-generated-buffer!", "navigate-jump!",
+        "mark-jump!", "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!",
+        "move-caret-to-line!", "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!",
+        "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!",
+        "type-text!", "page-rows", "interaction-status", "interaction-provider",
+        "set-interaction-provider!", "interaction-origin-project", "refresh-interaction!",
+        "submit-interaction!", "interaction-history", "set-interaction-history!",
+        "select-interaction-candidate!", "set-interaction-history-position!", "cancel-interaction!",
+        "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
+        "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
+        "set-location-navigation!", "location-list-target", "move-location-list!",
+        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
+        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
+        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "window-role", "set-window-role!", "window-pinned?", "set-window-pinned!",
         "window-created-by-policy?", "workbench-slot", "focus-window!", "request-redraw!", nullptr);
