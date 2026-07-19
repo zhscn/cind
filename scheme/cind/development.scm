@@ -1,5 +1,6 @@
 (define-module (cind development)
   #:use-module (ares repl)
+  #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-13)
   #:use-module (cind async)
@@ -12,7 +13,30 @@
             evaluate-source))
 
 (define evaluation-buffer-name "*Scheme Evaluation*")
+(define repl-buffer-name "*Scheme REPL*")
+(define repl-history-name "scheme-repl-buffer")
+(define repl-prompt "scheme> ")
+(define repl-banner
+  (string-append "Cind Scheme REPL\n"
+                 "Definitions share the editor's persistent evaluation module.\n\n"
+                 repl-prompt))
 (define evaluation-modules (make-weak-key-hash-table))
+(define repl-states (make-weak-key-hash-table))
+
+(define (utf8-length text)
+  (bytevector-length (string->utf8 text)))
+
+(define (host-repl-states host)
+  (or (hashq-ref repl-states host)
+      (let ((states (make-hash-table)))
+        (hashq-set! repl-states host states)
+        states)))
+
+(define (repl-state host buffer)
+  (hash-ref (host-repl-states host) buffer))
+
+(define (set-repl-state! host buffer state)
+  (hash-set! (host-repl-states host) buffer state))
 
 (define (make-evaluation-module host)
   (or (hashq-ref evaluation-modules host)
@@ -157,6 +181,108 @@
     (evaluate! host context (buffer-text host buffer)
                (buffer-source-name host buffer) #t)))
 
+(define (repl-stream text)
+  (cond ((string-null? text) "")
+        ((string-suffix? "\n" text) text)
+        (else (string-append text "\n"))))
+
+(define (repl-output result)
+  (let ((status (vector-ref result 0)))
+    (if (eq? status 'error)
+        (string-append
+         (repl-stream (vector-ref result 2))
+         (repl-stream (vector-ref result 3))
+         "error: " (vector-ref result 1) "\n")
+        (let ((values (vector-ref result 1)))
+          (string-append
+           (repl-stream (vector-ref result 2))
+           (repl-stream (vector-ref result 3))
+           (string-concatenate
+            (map (lambda (value) (string-append "=> " value "\n"))
+                 (vector->list values))))))))
+
+(define (replace-repl-input! host context state input)
+  (let* ((view (context-view context))
+         (buffer (context-buffer context))
+         (start (buffer-marker-offset host buffer (vector-ref state 0)))
+         (end (buffer-byte-size host buffer)))
+    (replace-selection!
+     host view (selection (list (selection-range start end 'char))) input)
+    (set-view-caret! host view (+ start (utf8-length input)))
+    (command-completed/preserve)))
+
+(define (open-repl host context invocation)
+  (let* ((existing (buffer-id-by-name host repl-buffer-name))
+         (buffer (or existing
+                     (create-buffer! host repl-buffer-name repl-banner
+                                     'process #f #f 'scheme-repl-mode #f
+                                     "scheme repl")))
+         (window (context-window context)))
+    (unless (repl-state host buffer)
+      (set-repl-state! host buffer
+                       (vector (create-buffer-marker!
+                                host buffer (buffer-byte-size host buffer) 'before)
+                               #f "")))
+    (let ((target (display-buffer! host window buffer 'tools)))
+      (set-view-caret! host (window-view-id host target)
+                       (buffer-byte-size host buffer)))
+    (command-completed)))
+
+(define (submit-repl host context invocation)
+  (let* ((buffer (context-buffer context))
+         (state (repl-state host buffer)))
+    (if (not state)
+        (command-error "current buffer is not a Scheme REPL")
+        (let* ((marker (vector-ref state 0))
+               (start (buffer-marker-offset host buffer marker))
+               (end (buffer-byte-size host buffer))
+               (source (buffer-substring host buffer start end))
+               (result (and (not (string-null? source))
+                            (evaluate-scheme! host source repl-buffer-name)))
+               (transcript
+                (string-append "\n"
+                               (if result (repl-output result) "")
+                               repl-prompt)))
+          (record-minibuffer-history! host repl-history-name source)
+          (set-view-caret! host (context-view context) end)
+          (insert-text! host (context-view context) transcript)
+          (let ((new-end (buffer-byte-size host buffer)))
+            (remove-buffer-marker! host buffer marker)
+            (vector-set! state 0
+                         (create-buffer-marker! host buffer new-end 'before))
+            (vector-set! state 1 #f)
+            (vector-set! state 2 "")
+            (set-view-caret! host (context-view context) new-end))
+          (command-completed/preserve)))))
+
+(define (move-repl-history host context delta)
+  (let* ((buffer (context-buffer context))
+         (state (repl-state host buffer)))
+    (if (not state)
+        (command-error "current buffer is not a Scheme REPL")
+        (let* ((entries (interaction-history host repl-history-name))
+               (count (vector-length entries))
+               (index (vector-ref state 1))
+               (start (buffer-marker-offset host buffer (vector-ref state 0)))
+               (current (buffer-substring host buffer start
+                                          (buffer-byte-size host buffer)))
+               (target
+                (cond ((zero? count) #f)
+                      ((< delta 0)
+                       (if index (max 0 (- index 1)) (- count 1)))
+                      ((not index) #f)
+                      ((< (+ index 1) count) (+ index 1))
+                      (else count))))
+          (cond ((not target) (command-completed/preserve))
+                ((= target count)
+                 (vector-set! state 1 #f)
+                 (replace-repl-input! host context state (vector-ref state 2)))
+                (else
+                 (unless index (vector-set! state 2 current))
+                 (vector-set! state 1 target)
+                 (replace-repl-input! host context state
+                                      (vector-ref entries target))))))))
+
 (define (development-command-definitions host)
   (list
    (list "scheme.eval-expression" eval-expression #f)
@@ -171,6 +297,22 @@
    (list "scheme.eval-buffer"
          (lambda (context invocation)
            (eval-buffer host context invocation))
+         #f)
+   (list "scheme.repl"
+         (lambda (context invocation)
+           (open-repl host context invocation))
+         #f)
+   (list "scheme.repl.submit"
+         (lambda (context invocation)
+           (submit-repl host context invocation))
+         #f)
+   (list "scheme.repl.previous-input"
+         (lambda (context invocation)
+           (move-repl-history host context -1))
+         #f)
+   (list "scheme.repl.next-input"
+         (lambda (context invocation)
+           (move-repl-history host context 1))
          #f)))
 
 (define command-documentation
@@ -179,7 +321,15 @@
     ("scheme.eval-region" .
      "Evaluate the primary active region in the application user module.")
     ("scheme.eval-buffer" .
-     "Evaluate the current buffer in the application user module.")))
+     "Evaluate the current buffer in the application user module.")
+    ("scheme.repl" .
+     "Open the editor-owned Scheme REPL buffer for the application user module.")
+    ("scheme.repl.submit" .
+     "Evaluate the current Scheme REPL input and append its result to the transcript.")
+    ("scheme.repl.previous-input" .
+     "Replace the current Scheme REPL input with the previous history entry.")
+    ("scheme.repl.next-input" .
+     "Replace the current Scheme REPL input with the next history entry.")))
 
 (define (install-development-documentation! host)
   (for-each (lambda (entry)

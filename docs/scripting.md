@@ -157,6 +157,9 @@ The native module exports:
 (buffer-name host buffer-id)
 (buffer-text host buffer-id)
 (buffer-byte-size host buffer-id)
+(create-buffer-marker! host buffer-id byte-offset 'before-or-after)
+(buffer-marker-offset host buffer-id marker-id)
+(remove-buffer-marker! host buffer-id marker-id)
 (buffer-locations host buffer-id)
 (buffer-diagnostics host buffer-id)
 (set-buffer-locations! host buffer-id locations)
@@ -659,6 +662,18 @@ is created.
 Buffer snapshot. Single-line values use the message area. Stream output, multiple values, and
 buffer evaluation use the reusable `*Scheme Evaluation*` generated buffer.
 
+`scheme.repl` opens the application-local `*Scheme REPL*` process Buffer in
+`scheme-repl-mode`. `C-c C-z` opens it from a Scheme Buffer. `RET` evaluates the input following the
+current prompt, appends captured output, error output, and rendered values to the transcript, then
+creates the next prompt. `C-j` inserts a newline for multi-line input. `M-p` and `M-n` traverse the
+bounded `scheme-repl-buffer` history while preserving the current draft. The REPL Buffer uses the
+same evaluation module and Ares document-completion provider as Scheme source Buffers.
+
+Buffer markers are document-owned byte positions with before-insertion or after-insertion
+affinity. They follow transactions, undo, and redo until explicitly removed or their Buffer is
+released. Scheme REPL state retains a before-insertion marker at the start of the editable input,
+so transcript edits preserve the input boundary.
+
 View and text capabilities expose byte offsets as unsigned integers. Ordinary text ranges use
 two-element start/end vectors. `view-selection` returns
 `#(selection primary metadata ranges)`, where `ranges` is a non-empty vector of
@@ -1060,6 +1075,7 @@ Ares values map onto existing editor mechanisms:
 | --- | --- |
 | REPL expression candidates | interaction provider |
 | Scheme buffer candidates | scripted document-completion provider |
+| REPL transcript and input | `scheme-repl-mode` process Buffer |
 | evaluation values and captured output | echo area or generated result buffer |
 
 `M-:` requests a normal picker interaction from the command loop. The `scheme-repl` provider
@@ -1074,8 +1090,9 @@ output. The command policy chooses the echo area for a compact value and the reu
 `scheme-mode` selects the `ares` document provider before local word completion. The provider scans
 the Scheme symbol preceding the caret as UTF-8 bytes, queries Ares in the persistent evaluation
 module, and returns an explicit byte replacement range. Scheme punctuation such as hyphens remains
-part of the symbol even when the generic word provider uses a narrower anchor. Candidate type,
-namespace, and documentation metadata flow through the shared completion UI and inspector.
+part of the symbol even when the generic word provider uses a narrower anchor. Candidate type and
+namespace flow through the shared completion UI immediately. Documentation is resolved only for
+visible candidates and then appears in the same UI and inspector.
 `scheme-mode` enables automatic requests after identifier characters; a request with no matches is
 closed once every provider settles. The cursor-following list is an item-only overlay with semantic
 kind and detail columns, while manual `C-M-i` uses the same provider pipeline.

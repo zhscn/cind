@@ -3538,6 +3538,70 @@ SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+SCM create_buffer_marker(SCM host_object, SCM buffer_value, SCM offset_value, SCM affinity_value) {
+    try {
+        HostLease& host = require_host(host_object, "create-buffer-marker!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "create-buffer-marker!", 2);
+        const TextOffset offset = text_offset_from_scheme(offset_value, "create-buffer-marker!", 3);
+        const std::string affinity = scheme_name(affinity_value, "create-buffer-marker!", 4);
+        if (affinity != "before" && affinity != "after") {
+            scm_misc_error("create-buffer-marker!", "marker affinity must be before or after",
+                           SCM_EOL);
+        }
+        const AnchorId marker = host.runtime->buffers().get(buffer).create_navigation_anchor(
+            offset, affinity == "before" ? AnchorAffinity::BeforeInsertion
+                                         : AnchorAffinity::AfterInsertion);
+        return scm_from_uint32(marker);
+    } catch (const std::exception& exception) {
+        raise_host_error("create-buffer-marker!", exception.what());
+    } catch (...) {
+        scm_misc_error("create-buffer-marker!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM buffer_marker_offset(SCM host_object, SCM buffer_value, SCM marker_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-marker-offset");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-marker-offset", 2);
+        if (scm_is_unsigned_integer(marker_value, 0, std::numeric_limits<std::uint32_t>::max()) ==
+            0) {
+            scm_wrong_type_arg_msg("buffer-marker-offset", 3, marker_value,
+                                   "unsigned 32-bit marker ID");
+        }
+        const TextOffset offset = host.runtime->buffers().get(buffer).navigation_anchor_offset(
+            scm_to_uint32(marker_value));
+        return scm_from_uint32(offset.value);
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-marker-offset", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-marker-offset", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM remove_buffer_marker(SCM host_object, SCM buffer_value, SCM marker_value) {
+    try {
+        HostLease& host = require_host(host_object, "remove-buffer-marker!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "remove-buffer-marker!", 2);
+        if (scm_is_unsigned_integer(marker_value, 0, std::numeric_limits<std::uint32_t>::max()) ==
+            0) {
+            scm_wrong_type_arg_msg("remove-buffer-marker!", 3, marker_value,
+                                   "unsigned 32-bit marker ID");
+        }
+        host.runtime->buffers().get(buffer).remove_navigation_anchor(scm_to_uint32(marker_value));
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("remove-buffer-marker!", exception.what());
+    } catch (...) {
+        scm_misc_error("remove-buffer-marker!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 // Returns #(source-start source-end resource target-line target-column excerpt encoding) entries.
 SCM buffer_locations(SCM host_object, SCM buffer_value) {
     try {
@@ -5817,6 +5881,12 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
+    (void)scm_c_define_gsubr("create-buffer-marker!", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(create_buffer_marker));
+    (void)scm_c_define_gsubr("buffer-marker-offset", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_marker_offset));
+    (void)scm_c_define_gsubr("remove-buffer-marker!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(remove_buffer_marker));
     (void)scm_c_define_gsubr("buffer-locations", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_locations));
     (void)scm_c_define_gsubr("buffer-diagnostics", 2, 0, 0,
@@ -5999,22 +6069,23 @@ void initialize_host_module(void*) {
         "adopt-project!", "expel-buffer!", "workbench-session-state", "restore-workbench-session!",
         "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
         "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
-        "buffer-diagnostics", "set-buffer-locations!", "set-location-list!", "buffer-read-only?",
-        "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
-        "view-selection", "set-selection!", "clear-selection!", "push-selection-history!",
-        "pop-selection-history!", "clear-selection-history!", "selection-history-depth",
-        "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
-        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
-        "display-buffer-position-at!", "display-generated-buffer!", "navigate-jump!", "mark-jump!",
-        "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!", "move-caret-to-line!",
-        "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!",
-        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
-        "page-rows", "interaction-status", "interaction-provider", "set-interaction-provider!",
-        "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
-        "interaction-history", "set-interaction-history!", "select-interaction-candidate!",
+        "buffer-resource", "buffer-text", "buffer-byte-size", "create-buffer-marker!",
+        "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
+        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
+        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
+        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
+        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
+        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
+        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
+        "refresh-interaction!", "submit-interaction!", "interaction-history",
+        "set-interaction-history!", "select-interaction-candidate!",
         "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
         "completion-active?", "start-completion!", "request-lsp-navigation!", "move-completion!",
         "apply-completion!", "cancel-completion!", "view-position", "location-navigation",

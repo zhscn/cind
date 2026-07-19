@@ -3075,6 +3075,7 @@
     '((structural-motion . cind.scheme.structural-motion))
     '())
   (define-keymap! host 'scheme-mode-map #f)
+  (define-keymap! host 'scheme-repl-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (define-major-mode! host 'fundamental-mode
     #:interaction-class 'editing
@@ -3094,6 +3095,10 @@
     #:interaction-class 'editing
     #:completion-auto? #t
     #:completion-providers '("ares" "word"))
+  (define-major-mode! host 'scheme-repl-mode
+    #:parent 'scheme-mode
+    #:keymap 'scheme-repl-mode-map
+    #:interaction-class 'editing)
   (define-major-mode! host 'cind.cpp
     #:parent 'prog-mode
     #:language 'cind.cpp
@@ -3106,7 +3111,7 @@
     #:parent 'special-mode
     #:keymap 'cind.location-list.map
     #:interaction-class 'interface)
-  6)
+  7)
 
 (define (install-core-resource-policies! host)
   (define-file-mode-rule!
@@ -3272,7 +3277,14 @@
 (define scheme-mode-bindings
   '(("C-c C-e" . "scheme.eval-expression")
     ("C-c C-r" . "scheme.eval-region")
-    ("C-c C-b" . "scheme.eval-buffer")))
+    ("C-c C-b" . "scheme.eval-buffer")
+    ("C-c C-z" . "scheme.repl")))
+
+(define scheme-repl-mode-bindings
+  '(("RET" . "scheme.repl.submit")
+    ("C-j" . "edit.newline")
+    ("M-p" . "scheme.repl.previous-input")
+    ("M-n" . "scheme.repl.next-input")))
 
 (define location-list-bindings
   '(("RET" . "location.visit")
@@ -3306,6 +3318,7 @@
   (define-keymap! host 'editor.workbench #f)
   (define-keymap! host 'window.policy-created #f)
   (define-keymap! host 'scheme-mode-map #f)
+  (define-keymap! host 'scheme-repl-mode-map #f)
   (define-keymap! host 'cind.location-list.map #f)
   (bind-key! host 'editor.default "C-x" '(prefix editor.control-x "C-x"))
   (bind-key! host 'editor.control-x "w" '(prefix editor.workbench "C-x w"))
@@ -3325,6 +3338,7 @@
        (bind-all! host 'editor.workbench workbench-bindings)
        (bind-all! host 'window.policy-created policy-created-window-bindings)
        (bind-all! host 'scheme-mode-map scheme-mode-bindings)
+       (bind-all! host 'scheme-repl-mode-map scheme-repl-mode-bindings)
        (bind-all! host 'cind.location-list.map location-list-bindings)
        (install-helix-keymaps! host)
        (install-meow-keymaps! host)

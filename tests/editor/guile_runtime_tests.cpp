@@ -808,8 +808,8 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
 
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
-    CHECK(*first == 6);
-    CHECK(*second == 6);
+    CHECK(*first == 7);
+    CHECK(*second == 7);
     const ModeId fundamental = runtime.modes().find("fundamental-mode").value_or(ModeId{});
     const ModeId prog = runtime.modes().find("prog-mode").value_or(ModeId{});
     const ModeId special = runtime.modes().find("special-mode").value_or(ModeId{});
@@ -882,7 +882,7 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
     REQUIRE(emacs_strategy);
     CHECK(runtime.input_strategies().default_strategy() == emacs_strategy);
     CHECK(guile.snapshot().mode_revision == 2);
-    CHECK(guile.snapshot().scripted_modes == 6);
+    CHECK(guile.snapshot().scripted_modes == 7);
 }
 
 TEST_CASE("bundled Guile policy defines file modes and project discovery providers") {
@@ -1394,7 +1394,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 223);
+    CHECK(*installed == 227);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 14);
@@ -2116,7 +2116,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 223);
+    CHECK(snapshot.scripted_commands == 227);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 14);
     CHECK_FALSE(snapshot.last_error.has_value());
