@@ -1047,6 +1047,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .visit_jump = {},
          .link_jump = {},
          .jump_branches = {},
+         .jump_node = {},
+         .evict_jumps = {},
          .move_caret_to_line = [&](ViewId target_view, std::uint32_t line,
                                    std::uint32_t column) -> std::expected<void, std::string> {
              moved = std::tuple{target_view, line, column};
@@ -1332,10 +1334,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 218);
+    CHECK(*installed == 221);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 11);
+    CHECK(*providers == 12);
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -2032,8 +2034,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 218);
+    CHECK(snapshot.scripted_commands == 221);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 11);
+    CHECK(snapshot.scripted_providers == 12);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

@@ -3719,6 +3719,42 @@ SCM jump_branches(SCM host_object, SCM window_value, SCM incoming_value) {
     return result;
 }
 
+SCM jump_node(SCM host_object, SCM window_value, SCM node_value) {
+    HostLease& host = require_host(host_object, "jump-node");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "jump-node", 2);
+    if (scm_is_unsigned_integer(node_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("jump-node", 3, node_value, "positive 64-bit integer");
+    }
+    if (!host.services.jump_node) {
+        scm_misc_error("jump-node", "jump query capability is unavailable", SCM_EOL);
+    }
+    const std::optional<GuileJumpNode> node =
+        host.services.jump_node(window, scm_to_uint64(node_value));
+    if (!node) {
+        return SCM_BOOL_F;
+    }
+    SCM result = scm_c_make_vector(6, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_uint64(node->id));
+    scm_c_vector_set_x(result, 1, scm_from_utf8_string(node->resource.c_str()));
+    scm_c_vector_set_x(result, 2, scm_from_uint32(node->line));
+    scm_c_vector_set_x(result, 3, scm_from_uint32(node->byte_column));
+    scm_c_vector_set_x(result, 4, scm_from_utf8_string(node->excerpt.c_str()));
+    scm_c_vector_set_x(result, 5, scm_from_uint64(node->last_visit));
+    return result;
+}
+
+SCM evict_jumps(SCM host_object, SCM window_value, SCM maximum_value) {
+    HostLease& host = require_host(host_object, "evict-jumps!");
+    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "evict-jumps!", 2);
+    if (scm_is_unsigned_integer(maximum_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("evict-jumps!", 3, maximum_value, "non-negative integer");
+    }
+    if (!host.services.evict_jumps) {
+        scm_misc_error("evict-jumps!", "jump eviction capability is unavailable", SCM_EOL);
+    }
+    return scm_from_size_t(host.services.evict_jumps(window, scm_to_size_t(maximum_value)));
+}
+
 SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, SCM text_value,
                              SCM mode_value, SCM style_origin_value, SCM intent_value) {
     if (!scm_is_string(name_value)) {
@@ -5516,6 +5552,9 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("visit-jump!", 3, 0, 0, reinterpret_cast<scm_t_subr>(visit_jump));
     (void)scm_c_define_gsubr("link-jump!", 6, 0, 0, reinterpret_cast<scm_t_subr>(link_jump));
     (void)scm_c_define_gsubr("jump-branches", 3, 0, 0, reinterpret_cast<scm_t_subr>(jump_branches));
+    (void)scm_c_define_gsubr("jump-node", 3, 0, 0, reinterpret_cast<scm_t_subr>(jump_node));
+    (void)scm_c_define_gsubr("evict-jumps!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(evict_jumps));
     (void)scm_c_define_gsubr("display-generated-buffer!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_generated_buffer));
     (void)scm_c_define_gsubr("evaluate-scheme!", 3, 0, 0,

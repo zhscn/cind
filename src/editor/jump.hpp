@@ -54,10 +54,12 @@ public:
 
     const JumpNode* find(JumpNodeId node) const;
     JumpNode* find(JumpNodeId node);
+    bool touch(JumpNodeId node);
     std::span<const JumpNode> nodes() const { return nodes_; }
     std::span<const JumpEdge> edges() const { return edges_; }
     std::vector<JumpEdge> outgoing(JumpNodeId node) const;
     std::vector<JumpEdge> incoming(JumpNodeId node) const;
+    std::vector<JumpNode> evict(std::size_t maximum_nodes);
 
     void detach_buffer(BufferId buffer,
                        const std::function<LinePosition(AnchorId)>& resolve_position,
@@ -82,6 +84,7 @@ public:
     std::optional<JumpNodeId> current() const;
     std::span<const JumpNodeId> entries() const { return entries_; }
     std::optional<std::size_t> cursor() const { return cursor_; }
+    void forget(std::span<const JumpNodeId> nodes);
     void clear();
 
 private:

@@ -22,6 +22,8 @@ namespace cind {
 
 namespace {
 
+constexpr std::size_t default_jump_graph_limit = 4096;
+
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
     const TextOffset content_end = text.line_content_end(line);
@@ -220,6 +222,21 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
+           .jump_node =
+               [this](WindowId window, std::uint64_t node) -> std::optional<GuileJumpNode> {
+                   const std::optional<JumpNode> found = jump_node(window, node);
+                   if (!found) {
+                       return std::nullopt;
+                   }
+                   return GuileJumpNode{.id = found->id,
+                                        .resource = found->position.resource,
+                                        .line = found->position.fallback.line,
+                                        .byte_column = found->position.fallback.byte_column,
+                                        .excerpt = found->position.excerpt,
+                                        .last_visit = found->last_visit};
+               },
+           .evict_jumps = [this](WindowId window,
+                                 std::size_t maximum) { return evict_jumps(window, maximum); },
            .move_caret_to_line =
                [this](ViewId view, std::uint32_t line, std::uint32_t display_column) {
                    return move_caret_to_line(view, line, display_column);
@@ -1381,6 +1398,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
             (void)workbench.jumps().link(*from, *to, jump_edge_kind(intent));
         }
     }
+    (void)evict_jump_graph(workbench, default_jump_graph_limit);
     return target;
 }
 
@@ -1420,6 +1438,20 @@ std::vector<JumpEdge> EditorApplication::jump_branches(WindowId window, bool inc
     }
     const JumpGraph& graph = workbenches_.get(*owner).jumps();
     return incoming ? graph.incoming(*current) : graph.outgoing(*current);
+}
+
+std::optional<JumpNode> EditorApplication::jump_node(WindowId window, JumpNodeId node) const {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    if (!owner) {
+        return std::nullopt;
+    }
+    const JumpNode* found = workbenches_.get(*owner).jumps().find(node);
+    return found == nullptr ? std::nullopt : std::optional(*found);
+}
+
+std::size_t EditorApplication::evict_jumps(WindowId window, std::size_t maximum_nodes) {
+    const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
+    return owner ? evict_jump_graph(workbenches_.get(*owner), maximum_nodes) : 0;
 }
 
 bool EditorApplication::visit_jump(WindowId window, JumpNodeId node) {
@@ -2955,7 +2987,32 @@ bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, Jump
         return false;
     }
     apply_position(window, position);
+    (void)workbench.jumps().touch(node);
     return true;
+}
+
+std::size_t EditorApplication::evict_jump_graph(Workbench& workbench,
+                                                std::size_t maximum_nodes) {
+    std::vector<JumpNode> removed = workbench.jumps().evict(maximum_nodes);
+    if (removed.empty()) {
+        return 0;
+    }
+    std::vector<JumpNodeId> ids;
+    ids.reserve(removed.size());
+    for (const JumpNode& node : removed) {
+        ids.push_back(node.id);
+        if (node.position.buffer && node.position.anchor != 0) {
+            if (Buffer* buffer = runtime_.buffers().try_get(node.position.buffer)) {
+                buffer->remove_navigation_anchor(node.position.anchor);
+            }
+        }
+    }
+    for (const WindowId window : workbench.layout().leaves()) {
+        if (Window* target = runtime_.windows().try_get(window)) {
+            target->jump_walk().forget(ids);
+        }
+    }
+    return removed.size();
 }
 
 void EditorApplication::release_jump_anchors(Workbench& workbench) {

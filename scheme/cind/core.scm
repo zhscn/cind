@@ -2009,6 +2009,78 @@
           (command-completed/preserve))
         (command-error "current position cannot be marked"))))
 
+(define jump-link-origins (make-weak-key-hash-table))
+
+(define (jump-link-origin host window)
+  (let loop ((entries (or (hashq-ref jump-link-origins host) '())))
+    (and (pair? entries)
+         (if (equal? (caar entries) window)
+             (cdar entries)
+             (loop (cdr entries))))))
+
+(define (set-jump-link-origin! host window node)
+  (let ((remaining (filter (lambda (entry) (not (equal? (car entry) window)))
+                           (or (hashq-ref jump-link-origins host) '()))))
+    (hashq-set! jump-link-origins host
+                (if node (cons (cons window node) remaining) remaining))))
+
+(define (jump-link host context)
+  (let* ((window (context-window context))
+         (origin (jump-link-origin host window))
+         (current (mark-jump! host window)))
+    (cond
+     ((not current) (command-error "current position cannot be linked"))
+     ((not origin)
+      (set-jump-link-origin! host window current)
+      (set-message! host "jump link origin marked")
+      (command-completed/preserve))
+     ((= origin current)
+      (set-jump-link-origin! host window #f)
+      (command-error "jump link requires two distinct positions"))
+     (else
+      (set-jump-link-origin! host window #f)
+      (link-jump! host window origin current 'manual #t)
+      (link-jump! host window current origin 'manual #t)
+      (set-message! host "jump positions linked")
+      (command-completed/preserve)))))
+
+(define (jump-branches-provider host context query)
+  (let* ((window (context-window context))
+         (edges (jump-branches host window #f)))
+    (let loop ((index 0)
+               (candidates '()))
+      (if (= index (vector-length edges))
+          (list->vector (reverse candidates))
+          (let* ((edge (vector-ref edges index))
+                 (node (jump-node host window (vector-ref edge 1))))
+            (loop (+ index 1)
+                  (if node
+                      (let* ((resource (vector-ref node 1))
+                             (line (+ 1 (vector-ref node 2)))
+                             (column (+ 1 (vector-ref node 3)))
+                             (kind (symbol->string (vector-ref edge 2)))
+                             (label (format #f "~a:~a:~a" resource line column)))
+                        (cons (interaction-candidate
+                               (number->string (vector-ref node 0)) label kind
+                               (string-append label " " kind " " (vector-ref node 4)))
+                              candidates))
+                      candidates)))))))
+
+(define (jump-branches-accept host context invocation)
+  (let* ((value (last-string-argument invocation))
+         (node (and value (string->number value))))
+    (if (and node (visit-jump! host (context-window context) node))
+        (begin
+          (request-redraw! host)
+          (command-completed/preserve))
+        (command-error "selected jump branch is unavailable"))))
+
+(define (jump-branch-picker host context)
+  (if (zero? (vector-length (jump-branches host (context-window context) #f)))
+      (command-error "current jump has no outgoing branches")
+      (completing-read "Jump branch: " "jump-branches" "jump.branches.accept"
+                       #:history "jump-branches")))
+
 (define (location-list-move host direction)
   (if (move-location-list! host direction)
       (begin
@@ -2459,6 +2531,18 @@
                (lambda (context invocation)
                  (jump-mark host context))
                #f)
+         (list "jump.link"
+               (lambda (context invocation)
+                 (jump-link host context))
+               #f)
+         (list "jump.branches.accept"
+               (lambda (context invocation)
+                 (jump-branches-accept host context invocation))
+               #f)
+         (list "jump.branches"
+               (lambda (context invocation)
+                 (jump-branch-picker host context))
+               #f)
          (list "location.previous-list"
                (lambda (context invocation)
                  (location-list-move host -1))
@@ -2701,7 +2785,10 @@
                  (window-roles-provider host context query)))
          (cons "key-bindings"
                (lambda (context query)
-                 (key-bindings-provider host context query))))
+                 (key-bindings-provider host context query)))
+         (cons "jump-branches"
+               (lambda (context query)
+                 (jump-branches-provider host context query))))
    (introspection-providers host)))
 
 (define (install-core-providers! host)
@@ -2894,6 +2981,9 @@
     ("M-g p" . "location.previous-error")
     ("M-," . "jump.back")
     ("C-M-," . "jump.forward")
+    ("C-c j b" . "jump.branches")
+    ("C-c j l" . "jump.link")
+    ("C-c j m" . "jump.mark")
     ("M-%" . "search.replace")
     ("C-h b" . "help.describe-bindings")
     ("C-h k" . "help.describe-key")

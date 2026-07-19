@@ -153,6 +153,15 @@ struct GuileJumpEdge {
     bool persistent = false;
 };
 
+struct GuileJumpNode {
+    std::uint64_t id = 0;
+    std::string resource;
+    std::uint32_t line = 0;
+    std::uint32_t byte_column = 0;
+    std::string excerpt;
+    std::uint64_t last_visit = 0;
+};
+
 struct GuileDisplayPosition {
     std::uint32_t line = 0;
     std::uint32_t byte_column = 0;
@@ -170,6 +179,8 @@ struct GuileHostServices {
     std::function<bool(WindowId, std::uint64_t)> visit_jump;
     std::function<bool(WindowId, std::uint64_t, std::uint64_t, std::string_view, bool)> link_jump;
     std::function<std::vector<GuileJumpEdge>(WindowId, bool)> jump_branches;
+    std::function<std::optional<GuileJumpNode>(WindowId, std::uint64_t)> jump_node;
+    std::function<std::size_t(WindowId, std::size_t)> evict_jumps;
     std::function<std::expected<void, std::string>(ViewId, std::uint32_t, std::uint32_t)>
         move_caret_to_line;
     std::function<bool(ViewId)> undo;

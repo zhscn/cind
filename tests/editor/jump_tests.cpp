@@ -74,3 +74,40 @@ TEST_CASE("jump walk is append-only and bounds every movement") {
     CHECK_FALSE(walk.move(std::numeric_limits<std::int64_t>::min()).has_value());
     CHECK_FALSE(walk.move(1).has_value());
 }
+
+TEST_CASE("jump graph eviction preserves persistent manual edges") {
+    JumpGraph graph;
+    const BufferId buffer{0, 1};
+    const JumpNodeId first = graph.intern(position(buffer, 1, 1, "/source.cc")).node;
+    const JumpNodeId manual = graph.intern(position(buffer, 2, 2, "/source.cc")).node;
+    const JumpNodeId target = graph.intern(position(buffer, 3, 3, "/source.cc")).node;
+    const JumpNodeId newest = graph.intern(position(buffer, 4, 4, "/source.cc")).node;
+    REQUIRE(graph.link(manual, target, "manual", true));
+
+    const std::vector<JumpNode> removed = graph.evict(2);
+
+    REQUIRE(removed.size() == 2);
+    CHECK(removed[0].id == first);
+    CHECK(removed[1].id == newest);
+    CHECK(graph.find(manual) != nullptr);
+    CHECK(graph.find(target) != nullptr);
+    CHECK(graph.edges().size() == 1);
+}
+
+TEST_CASE("jump walk removes evicted entries without losing its logical cursor") {
+    JumpWalk walk;
+    REQUIRE(walk.record(1));
+    REQUIRE(walk.record(2));
+    REQUIRE(walk.record(3));
+    REQUIRE(walk.record(4));
+    REQUIRE(walk.move(-1) == std::optional<JumpNodeId>{3});
+
+    const std::vector<JumpNodeId> removed{2, 3};
+    walk.forget(removed);
+
+    REQUIRE(walk.entries().size() == 2);
+    CHECK(walk.entries()[0] == 1);
+    CHECK(walk.entries()[1] == 4);
+    CHECK(walk.current() == std::optional<JumpNodeId>{1});
+    CHECK(walk.move(1) == std::optional<JumpNodeId>{4});
+}

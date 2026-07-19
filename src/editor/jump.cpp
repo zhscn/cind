@@ -4,6 +4,8 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
+#include <unordered_set>
 #include <utility>
 
 namespace cind {
@@ -68,6 +70,15 @@ JumpNode* JumpGraph::find(JumpNodeId node) {
     return const_cast<JumpNode*>(std::as_const(*this).find(node));
 }
 
+bool JumpGraph::touch(JumpNodeId node) {
+    JumpNode* target = find(node);
+    if (target == nullptr) {
+        return false;
+    }
+    target->last_visit = tick();
+    return true;
+}
+
 std::vector<JumpEdge> JumpGraph::outgoing(JumpNodeId node) const {
     std::vector<JumpEdge> result;
     std::ranges::copy_if(edges_, std::back_inserter(result),
@@ -82,6 +93,49 @@ std::vector<JumpEdge> JumpGraph::incoming(JumpNodeId node) const {
                          [node](const JumpEdge& edge) { return edge.to == node; });
     std::ranges::sort(result, std::greater{}, &JumpEdge::at);
     return result;
+}
+
+std::vector<JumpNode> JumpGraph::evict(std::size_t maximum_nodes) {
+    if (nodes_.size() <= maximum_nodes) {
+        return {};
+    }
+    std::unordered_set<JumpNodeId> protected_nodes;
+    for (const JumpEdge& edge : edges_) {
+        if (edge.persistent) {
+            protected_nodes.insert(edge.from);
+            protected_nodes.insert(edge.to);
+        }
+    }
+    std::vector<const JumpNode*> candidates;
+    candidates.reserve(nodes_.size());
+    for (const JumpNode& node : nodes_) {
+        if (!protected_nodes.contains(node.id)) {
+            candidates.push_back(&node);
+        }
+    }
+    std::ranges::sort(candidates, [](const JumpNode* left, const JumpNode* right) {
+        return std::tie(left->last_visit, left->created_at, left->id) <
+               std::tie(right->last_visit, right->created_at, right->id);
+    });
+    const std::size_t count = std::min(nodes_.size() - maximum_nodes, candidates.size());
+    std::unordered_set<JumpNodeId> removed_ids;
+    std::vector<JumpNode> removed;
+    removed_ids.reserve(count);
+    removed.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        removed_ids.insert(candidates[index]->id);
+        removed.push_back(*candidates[index]);
+    }
+    std::erase_if(edges_, [&](const JumpEdge& edge) {
+        return removed_ids.contains(edge.from) || removed_ids.contains(edge.to);
+    });
+    std::erase_if(nodes_,
+                  [&](const JumpNode& node) { return removed_ids.contains(node.id); });
+    node_index_.clear();
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        node_index_.emplace(nodes_[index].id, index);
+    }
+    return removed;
 }
 
 void JumpGraph::detach_buffer(BufferId buffer,
@@ -154,6 +208,32 @@ std::optional<JumpNodeId> JumpWalk::move(std::int64_t delta) {
 
 std::optional<JumpNodeId> JumpWalk::current() const {
     return cursor_ ? std::optional(entries_[*cursor_]) : std::nullopt;
+}
+
+void JumpWalk::forget(std::span<const JumpNodeId> nodes) {
+    if (nodes.empty() || entries_.empty()) {
+        return;
+    }
+    const std::unordered_set<JumpNodeId> removed(nodes.begin(), nodes.end());
+    const std::size_t old_cursor = cursor_.value_or(entries_.size() - 1);
+    std::vector<JumpNodeId> retained;
+    retained.reserve(entries_.size());
+    std::optional<std::size_t> retained_cursor;
+    for (std::size_t index = 0; index < entries_.size(); ++index) {
+        if (removed.contains(entries_[index])) {
+            continue;
+        }
+        retained.push_back(entries_[index]);
+        if (index <= old_cursor) {
+            retained_cursor = retained.size() - 1;
+        }
+    }
+    entries_ = std::move(retained);
+    if (entries_.empty()) {
+        cursor_.reset();
+    } else {
+        cursor_ = retained_cursor.value_or(0);
+    }
 }
 
 void JumpWalk::clear() {

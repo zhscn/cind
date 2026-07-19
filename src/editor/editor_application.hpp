@@ -173,6 +173,8 @@ public:
                    std::optional<LinePosition> position = std::nullopt);
     bool navigate_jump(WindowId window, std::int64_t delta);
     std::vector<JumpEdge> jump_branches(WindowId window, bool incoming = false) const;
+    std::optional<JumpNode> jump_node(WindowId window, JumpNodeId node) const;
+    std::size_t evict_jumps(WindowId window, std::size_t maximum_nodes);
     bool visit_jump(WindowId window, JumpNodeId node);
     std::optional<JumpNodeId> mark_jump(WindowId window);
     bool link_jump(WindowId window, JumpNodeId from, JumpNodeId to, std::string kind,
@@ -331,6 +333,7 @@ private:
     void apply_position(WindowId window, LinePosition position);
     std::optional<JumpNodeId> capture_jump(Workbench& workbench, WindowId window);
     bool restore_jump(Workbench& workbench, WindowId window, JumpNodeId node);
+    std::size_t evict_jump_graph(Workbench& workbench, std::size_t maximum_nodes);
     void release_jump_anchors(Workbench& workbench);
     void register_commands();
     void register_input_states();
