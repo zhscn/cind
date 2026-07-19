@@ -140,7 +140,7 @@ Scene frame_scene(int cursor_row, int marker, bool popup_visible = false) {
             .first_item = 0,
             .total_items = 1,
             .selected_item = 0,
-            .items = {{.label = "edit.undo", .detail = "command"}},
+            .items = {{.label = "edit.undo", .detail = "command", .kind = {}}},
         });
         scene.regions.push_back(std::move(popup));
     }

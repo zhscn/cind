@@ -109,6 +109,7 @@ struct PositionedText {
 
 struct PopupItemLayout {
     SkRect row;
+    std::optional<PositionedText> kind;
     PositionedText label;
     std::optional<PositionedText> detail;
 };
@@ -122,6 +123,7 @@ struct PopupLayout {
     float row_height = 0.0F;
     float rows_top = 0.0F;
     std::size_t item_count = 0;
+    bool completion = false;
     bool input_active = false;
     std::string input;
     float horizontal_scroll = 0.0F;
@@ -261,16 +263,39 @@ std::string popup_label(std::string_view title) {
     return std::string(title);
 }
 
+std::string completion_kind_glyph(std::string_view kind) {
+    if (kind == "function" || kind == "procedure" || kind == "method") {
+        return "ƒ";
+    }
+    if (kind == "macro") {
+        return "λ";
+    }
+    if (kind == "variable" || kind == "parameter" || kind == "field") {
+        return "v";
+    }
+    if (kind == "module" || kind == "namespace") {
+        return "m";
+    }
+    if (kind == "class" || kind == "type" || kind == "struct") {
+        return "t";
+    }
+    return "·";
+}
+
 // The picker lives in a nano-style minibuffer: a full-width band whose rows
 // the scene reflowed between the modeline and the echo line, one candidate
 // per row. No shell — the band's ground color is the boundary.
 std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport viewport,
-                                        const ui::SceneVerticalMetrics& metrics) {
+                                        const ui::SceneVerticalMetrics& metrics, int cell_width) {
     const ui::Region* popup = scene.find(ui::RegionRole::Popup);
-    if (popup == nullptr || popup->popup() == nullptr || popup->rect.rows < 2) {
+    if (popup == nullptr || popup->popup() == nullptr || popup->rect.rows < 1) {
         return std::nullopt;
     }
     const ui::Region::PopupContent& content = *popup->popup();
+    const bool completion = content.presentation == ui::Region::PopupPresentation::Completion;
+    if (!completion && popup->rect.rows < 2) {
+        return std::nullopt;
+    }
 
     const ui::SceneVerticalLayout vertical_layout(scene, metrics);
     const float panel_top = vertical_layout.row_top(popup->rect.row);
@@ -279,13 +304,22 @@ std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport 
         return std::nullopt;
     }
     const bool input_active = content.input.has_value();
-    const float header_height = vertical_layout.row_height(popup->rect.row);
-    const float row_height = vertical_layout.row_height(popup->rect.row + 1);
+    const float header_height = completion ? 0.0F : vertical_layout.row_height(popup->rect.row);
+    const float row_height = vertical_layout.row_height(popup->rect.row + (completion ? 0 : 1));
     const std::size_t item_count = content.items.size();
 
-    const SkRect panel = SkRect::MakeLTRB(0.0F, panel_top, viewport.width, panel_bottom);
+    const float panel_left = completion ? static_cast<float>(popup->rect.col * cell_width) : 0.0F;
+    const float panel_right =
+        completion ? std::min(viewport.width,
+                              panel_left + static_cast<float>(popup->rect.cols * cell_width))
+                   : viewport.width;
+    const SkRect panel = SkRect::MakeLTRB(panel_left, panel_top, panel_right, panel_bottom);
     const SkRect header = SkRect::MakeXYWH(panel.left(), panel.top(), panel.width(), header_height);
-    const SkRect shadow = panel;
+    SkRect shadow = panel;
+    if (completion) {
+        shadow.outset(4.0F, 4.0F);
+        shadow.offset(0.0F, 3.0F);
+    }
     return PopupLayout{.region = popup,
                        .content = &content,
                        .panel = panel,
@@ -294,6 +328,7 @@ std::optional<PopupLayout> popup_layout(const ui::Scene& scene, LogicalViewport 
                        .row_height = row_height,
                        .rows_top = header.bottom(),
                        .item_count = item_count,
+                       .completion = completion,
                        .input_active = input_active,
                        .input = content.input.value_or(std::string{}),
                        .horizontal_scroll = 0.0F,
@@ -829,7 +864,7 @@ struct SkiaPresenter::Impl {
     std::optional<PopupLayout> prepare_popup_layout(const ui::Scene& scene,
                                                     LogicalViewport viewport) const {
         std::optional<PopupLayout> prepared =
-            popup_layout(scene, viewport, vertical_metrics(viewport.height));
+            popup_layout(scene, viewport, vertical_metrics(viewport.height), cell_width);
         if (!prepared) {
             return std::nullopt;
         }
@@ -837,7 +872,11 @@ struct SkiaPresenter::Impl {
         const ui::Region::PopupContent& popup = *layout.content;
         const float header_text_top =
             layout.header.top() + (layout.header.height() - static_cast<float>(cell_height)) * 0.5F;
-        if (layout.input_active) {
+        if (layout.completion) {
+            // Cursor-following completion is an item-only surface. Its query
+            // remains visible in the document and does not need a second
+            // minibuffer-style input row.
+        } else if (layout.input_active) {
             ShapedText prompt = shape_text(popup_prompt(popup), PresentationTextRole::PopupPrompt);
             ShapedText space = shape_text(" ");
             ShapedText input = shape_text(layout.input, PresentationTextRole::PopupInput);
@@ -903,23 +942,39 @@ struct SkiaPresenter::Impl {
                 row.top() + (row.height() - static_cast<float>(cell_height)) * 0.5F;
             PopupItemLayout item_layout{
                 .row = row,
+                .kind = std::nullopt,
                 .label = {.role = "item-label",
                           .style_role = PresentationTextRole::PopupItem,
                           .shaped = shape_text(item.label, PresentationTextRole::PopupItem),
-                          .origin =
-                              SkPoint::Make(row.left() + metrics.minibuffer_padding_x, text_top)},
+                          .origin = SkPoint::Make(row.left() + metrics.minibuffer_padding_x +
+                                                      (layout.completion
+                                                           ? static_cast<float>(cell_width) * 1.5F
+                                                           : 0.0F),
+                                                  text_top)},
                 .detail = std::nullopt,
             };
+            if (layout.completion) {
+                item_layout.kind = PositionedText{
+                    .role = "item-kind",
+                    .style_role = PresentationTextRole::PopupPrompt,
+                    .shaped = shape_text(completion_kind_glyph(item.kind),
+                                         PresentationTextRole::PopupPrompt),
+                    .origin = SkPoint::Make(row.left() + metrics.minibuffer_padding_x, text_top),
+                };
+            }
             if (!item.detail.empty()) {
-                // Details trail the label; in a full-width band a right-aligned
-                // detail would sit too far from the item to read as one row.
-                const float detail_x = item_layout.label.origin.x() +
-                                       item_layout.label.shaped.advance +
-                                       metrics.minibuffer_detail_gap;
+                ShapedText detail = shape_text(item.detail, PresentationTextRole::PopupDetail);
+                const float detail_x =
+                    layout.completion
+                        ? std::max(item_layout.label.origin.x() + item_layout.label.shaped.advance +
+                                       metrics.minibuffer_detail_gap,
+                                   row.right() - metrics.minibuffer_padding_x - detail.advance)
+                        : item_layout.label.origin.x() + item_layout.label.shaped.advance +
+                              metrics.minibuffer_detail_gap;
                 item_layout.detail = PositionedText{
                     .role = "item-detail",
                     .style_role = PresentationTextRole::PopupDetail,
-                    .shaped = shape_text(item.detail, PresentationTextRole::PopupDetail),
+                    .shaped = std::move(detail),
                     .origin = SkPoint::Make(detail_x, text_top),
                 };
             }
@@ -1166,14 +1221,28 @@ struct SkiaPresenter::Impl {
                      const RasterView& raster, SkiaRenderDiagnostics* diagnostics,
                      const SkRect* damage_bounds) {
         const ui::Region::PopupContent& popup = *layout.content;
-        if (damage_bounds && !SkRect::Intersects(layout.panel, *damage_bounds)) {
+        if (damage_bounds && !SkRect::Intersects(layout.shadow, *damage_bounds)) {
             return;
         }
 
         SkPaint band_fill;
-        band_fill.setAntiAlias(false);
+        band_fill.setAntiAlias(layout.completion);
         band_fill.setColor(color(text_background(PresentationTextRole::Popup)));
-        canvas.drawRect(layout.panel, band_fill);
+        if (layout.completion) {
+            SkPaint shadow;
+            shadow.setAntiAlias(true);
+            shadow.setColor(with_opacity(0xFF000000U, 96));
+            canvas.drawRoundRect(layout.shadow, 6.0F, 6.0F, shadow);
+            canvas.drawRoundRect(layout.panel, 4.0F, 4.0F, band_fill);
+            SkPaint border;
+            border.setAntiAlias(true);
+            border.setStyle(SkPaint::kStroke_Style);
+            border.setStrokeWidth(1.0F);
+            border.setColor(color(theme.divider));
+            canvas.drawRoundRect(layout.panel, 4.0F, 4.0F, border);
+        } else {
+            canvas.drawRect(layout.panel, band_fill);
+        }
 
         const auto join_bounds = [](std::optional<SkRect>& bounds, const SkRect& incoming) {
             if (bounds) {
@@ -1231,7 +1300,7 @@ struct SkiaPresenter::Impl {
         canvas.save();
         canvas.clipRect(layout.panel);
 
-        {
+        if (!layout.completion) {
             std::optional<PixelProbe> probe;
             if (diagnostics) {
                 probe = capture_probe(layout.header, raster);
@@ -1248,20 +1317,24 @@ struct SkiaPresenter::Impl {
 
         for (std::size_t visible_index = 0; visible_index < layout.items.size(); ++visible_index) {
             const std::size_t item_index = visible_index;
-            const std::size_t primitive_index = item_index + 1;
+            const std::size_t primitive_index = item_index + (layout.completion ? 0 : 1);
             if (item_index >= popup.items.size()) {
                 break;
             }
             const PopupItemLayout& item = layout.items[visible_index];
             const SkRect& row = item.row;
-            // Nano's minibuffer selection: the row inverts to faded ground
-            // with canvas-colored ink.
             const bool selected = popup.selected_item == popup.first_item + item_index;
             if (selected) {
                 SkPaint fill;
-                fill.setAntiAlias(false);
-                fill.setColor(color(text_background(PresentationTextRole::PopupSelected)));
-                canvas.drawRect(row, fill);
+                fill.setAntiAlias(layout.completion);
+                fill.setColor(layout.completion
+                                  ? color(theme.selection)
+                                  : color(text_background(PresentationTextRole::PopupSelected)));
+                if (layout.completion) {
+                    canvas.drawRoundRect(row, 3.0F, 3.0F, fill);
+                } else {
+                    canvas.drawRect(row, fill);
+                }
             }
 
             std::optional<PixelProbe> probe;
@@ -1271,12 +1344,16 @@ struct SkiaPresenter::Impl {
             std::optional<SkRect> shape_bounds;
             canvas.save();
             canvas.clipRect(row);
-            const SkColor item_color = selected ? text_color(PresentationTextRole::PopupSelected)
-                                                : text_color(item.label.style_role);
+            const SkColor item_color = selected && !layout.completion
+                                           ? text_color(PresentationTextRole::PopupSelected)
+                                           : text_color(item.label.style_role);
+            if (item.kind) {
+                draw_text(*item.kind, text_color(item.kind->style_role), shape_bounds);
+            }
             draw_text(item.label, item_color, shape_bounds);
             if (item.detail) {
                 const SkColor detail_color =
-                    selected
+                    selected && !layout.completion
                         ? with_opacity(styles.style(PresentationTextRole::PopupSelected).foreground,
                                        styles.secondary_alpha)
                         : text_color(item.detail->style_role);

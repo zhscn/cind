@@ -575,7 +575,8 @@ TEST_CASE("user initialization owns editor chrome policy") {
     CHECK(content.echo_cursor_column == 6);
     CHECK(content.popup_title == "custom-popup");
     REQUIRE(content.popup_items.size() == 1);
-    CHECK(content.popup_items.front() == ChromeItem{.label = "first", .detail = "detail"});
+    CHECK(content.popup_items.front() ==
+          ChromeItem{.label = "first", .detail = "detail", .kind = {}});
     CHECK(content.popup_capacity == 1);
     CHECK(content.popup_selection == 0);
     CHECK(content.popup_input == "query");
@@ -3474,6 +3475,49 @@ TEST_CASE("Scheme buffer completion uses Ares bindings and Scheme symbol ranges"
         application.completion().select(static_cast<std::size_t>(match - state->matches.begin())));
     send_keys(application, "RET");
     CHECK(application.session().snapshot().content().to_string() == "(cind-live-binding");
+}
+
+TEST_CASE("Scheme typing starts Ares completion and deletion refilters cached bindings") {
+    EditorApplication application = make_application("sample.scm", "(");
+    application.session().set_caret(TextOffset{1});
+
+    application.insert_text("d");
+    const CompletionState* state = application.completion().state();
+    REQUIRE(state != nullptr);
+    CHECK(state->request.trigger.kind == CompletionTriggerKind::Automatic);
+    CHECK(state->request.query == "d");
+    const auto define_match =
+        std::ranges::find_if(state->matches, [](const CompletionMatch& candidate) {
+            return candidate.item.label == "define";
+        });
+    REQUIRE(define_match != state->matches.end());
+    const std::uint64_t define_id = define_match->item.id;
+    const auto scripted =
+        std::ranges::find_if(state->providers, [](const CompletionProviderState& candidate) {
+            return candidate.provider.kind == CompletionProviderKind::Scripted;
+        });
+    REQUIRE(scripted != state->providers.end());
+    CHECK_FALSE(scripted->is_incomplete);
+
+    application.insert_text("e");
+    state = application.completion().state();
+    REQUIRE(state != nullptr);
+    CHECK(state->request.query == "de");
+    CHECK(std::ranges::any_of(state->matches, [define_id](const CompletionMatch& candidate) {
+        return candidate.item.label == "define" && candidate.item.id == define_id;
+    }));
+
+    send_keys(application, "Backspace");
+    state = application.completion().state();
+    REQUIRE(state != nullptr);
+    CHECK(state->request.query == "d");
+    CHECK(std::ranges::any_of(state->matches, [define_id](const CompletionMatch& candidate) {
+        return candidate.item.label == "define" && candidate.item.id == define_id;
+    }));
+
+    send_keys(application, "Backspace");
+    CHECK_FALSE(application.completion().active());
+    CHECK(application.session().snapshot().content().to_string() == "(");
 }
 
 TEST_CASE("include completion selects the asynchronous path provider") {

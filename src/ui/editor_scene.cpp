@@ -318,8 +318,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         for (std::size_t offset = 0; offset < visible_count; ++offset) {
             const std::size_t index = first + offset;
             const ChromeItem& item = input.popup_items[index];
-            popup_content.items.push_back(
-                {.label = std::string(item.label), .detail = std::string(item.detail)});
+            popup_content.items.push_back({.label = std::string(item.label),
+                                           .detail = std::string(item.detail),
+                                           .kind = std::string(item.kind)});
         }
     }
 
@@ -347,13 +348,17 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                 std::size_t content_width = 12;
                 for (std::size_t offset = 0; offset < visible_count; ++offset) {
                     const ChromeItem& item = input.completion_items[first + offset];
-                    content_width =
-                        std::max(content_width, item.label.size() + item.detail.size() + 3);
+                    const std::string_view metadata = item.detail.empty()
+                                                          ? std::string_view(item.kind)
+                                                          : std::string_view(item.detail);
+                    content_width = std::max(content_width,
+                                             static_cast<std::size_t>(display_width(item.label) +
+                                                                      display_width(metadata) + 7));
                 }
                 const int column = std::clamp(anchor_column, 0, std::max(0, input.cols - 1));
                 const int width = std::max(
                     1, std::min<int>(static_cast<int>(content_width), input.cols - column));
-                const int height = static_cast<int>(visible_count) + 1;
+                const int height = static_cast<int>(visible_count);
                 const int below = anchor_row + 1;
                 const int row =
                     below + height <= text_rows ? below : std::max(0, anchor_row - height);
@@ -362,14 +367,15 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                                    VerticalAnchor::Overlay, "editor/completion", input.revision);
                 completion->set_popup({});
                 Region::PopupContent& content = *completion->popup();
-                content.title = std::format("completion · {}", input.completion_items.size());
+                content.presentation = Region::PopupPresentation::Completion;
                 content.first_item = first;
                 content.total_items = input.completion_items.size();
                 content.selected_item = completion_selection;
                 content.items.reserve(visible_count);
                 for (std::size_t offset = 0; offset < visible_count; ++offset) {
                     const ChromeItem& item = input.completion_items[first + offset];
-                    content.items.push_back({.label = item.label, .detail = item.detail});
+                    content.items.push_back(
+                        {.label = item.label, .detail = item.detail, .kind = item.kind});
                 }
                 if (input.completion_documentation && !input.completion_documentation->empty()) {
                     constexpr int preferred_width = 48;

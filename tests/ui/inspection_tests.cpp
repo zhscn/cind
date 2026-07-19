@@ -169,6 +169,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .major_mode = "cind.cpp",
                      .interaction_class = "editing",
                      .initial_input_state = "emacs",
+                     .completion_auto = true,
                      .things = {{.name = "defun", .definition = "cind.defun"}},
                      .completion_providers = {"lsp:cpp:clangd", "word", "path"},
                      .location_count = 0,
@@ -280,7 +281,7 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
         .first_item = 0,
         .total_items = 1,
         .selected_item = 0,
-        .items = {{.label = "file.save", .detail = "command"}},
+        .items = {{.label = "file.save", .detail = "command", .kind = {}}},
     });
     Region echo{RegionRole::EchoArea,   {1, 0, 1, 10}, {}, SurfaceClass::Echo,
                 VerticalAnchor::Bottom, "editor/echo", 7};
@@ -631,6 +632,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(buffers.payload.find("\"major_mode\":\"cind.cpp\"") != std::string::npos);
     CHECK(buffers.payload.find("\"completion_providers\":[\"lsp:cpp:clangd\",\"word\",\"path\"]") !=
           std::string::npos);
+    CHECK(buffers.payload.find("\"completion_auto\":true") != std::string::npos);
     CHECK(buffers.payload.find("\"location_count\":0") != std::string::npos);
     CHECK(buffers.payload.find("\"diagnostics\":{\"count\":3,\"errors\":1,\"warnings\":2}") !=
           std::string::npos);

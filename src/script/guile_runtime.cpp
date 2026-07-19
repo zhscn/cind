@@ -1522,7 +1522,7 @@ SCM mode_things_value(const std::vector<ModeThingBinding>& things) {
 }
 
 SCM mode_policy_value(const EffectiveModePolicy& policy, const EditorRuntime& runtime) {
-    SCM result = scm_c_make_vector(4, SCM_BOOL_F);
+    SCM result = scm_c_make_vector(5, SCM_BOOL_F);
     scm_c_vector_set_x(result, 0, interaction_class_symbol(policy.interaction_class));
     if (policy.initial_state) {
         scm_c_vector_set_x(
@@ -1530,6 +1530,7 @@ SCM mode_policy_value(const EffectiveModePolicy& policy, const EditorRuntime& ru
     }
     scm_c_vector_set_x(result, 2, mode_things_value(policy.things));
     scm_c_vector_set_x(result, 3, string_vector_value(policy.completion_providers));
+    scm_c_vector_set_x(result, 4, scm_from_bool(policy.completion_auto));
     return result;
 }
 
@@ -1765,7 +1766,6 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
             completion_providers =
                 string_sequence_from_scheme(completion_providers_value, "%define-mode!", 10);
         }
-
         const std::optional<ModeId> existing = host.runtime->modes().find(name);
         const ModeId mode =
             existing ? *existing : host.runtime->modes().define(name, kind, language);
@@ -1793,6 +1793,27 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
         scm_misc_error("%define-mode!", exception.what(), SCM_EOL);
     } catch (...) {
         scm_misc_error("%define-mode!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM set_mode_completion_auto(SCM host_object, SCM mode_value, SCM enabled_value) {
+    if (!scheme_boolean(enabled_value) && !symbol_is(enabled_value, "inherit")) {
+        scm_wrong_type_arg_msg("set-mode-completion-auto!", 3, enabled_value,
+                               "boolean or 'inherit");
+    }
+    try {
+        HostLease& host = require_host(host_object, "set-mode-completion-auto!");
+        const ModeId mode = require_mode(host, mode_value, "set-mode-completion-auto!", 2);
+        host.runtime->modes().set_completion_auto(
+            mode, symbol_is(enabled_value, "inherit")
+                      ? std::nullopt
+                      : std::optional<bool>{scheme_true(enabled_value)});
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        scm_misc_error("set-mode-completion-auto!", exception.what(), SCM_EOL);
+    } catch (...) {
+        scm_misc_error("set-mode-completion-auto!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -1844,7 +1865,7 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
         HostLease& host = require_host(host_object, "mode-properties");
         const ModeId mode = require_mode(host, mode_value, "mode-properties", 2);
         const ModeRegistry::Definition& definition = host.runtime->modes().definition(mode);
-        SCM result = scm_c_make_vector(9, SCM_BOOL_F);
+        SCM result = scm_c_make_vector(10, SCM_BOOL_F);
         scm_c_vector_set_x(result, 0, name_symbol(definition.name));
         scm_c_vector_set_x(
             result, 1,
@@ -1878,6 +1899,11 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
         }
         if (definition.completion_providers) {
             scm_c_vector_set_x(result, 8, string_vector_value(*definition.completion_providers));
+        }
+        if (definition.completion_auto) {
+            scm_c_vector_set_x(
+                result, 9,
+                scm_from_utf8_symbol(*definition.completion_auto ? "enabled" : "disabled"));
         }
         return result;
     } catch (const std::exception& exception) {
@@ -5290,7 +5316,7 @@ SCM completion_active(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
+SCM start_completion(SCM host_object, SCM context_value, SCM providers_value, SCM trigger_value) {
     HostLease& host = require_host(host_object, "start-completion!");
     if (!host.services.start_completion) {
         scm_misc_error("start-completion!", "completion capability is unavailable", SCM_EOL);
@@ -5298,6 +5324,14 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
     try {
         const CommandContext context =
             command_context_from_scheme(host, context_value, "start-completion!");
+        CompletionTrigger trigger;
+        if (symbol_is(trigger_value, "manual")) {
+            trigger.kind = CompletionTriggerKind::Manual;
+        } else if (symbol_is(trigger_value, "automatic")) {
+            trigger.kind = CompletionTriggerKind::Automatic;
+        } else {
+            scm_wrong_type_arg_msg("start-completion!", 4, trigger_value, "'manual or 'automatic");
+        }
         std::vector<CompletionProvider> providers;
         for (const std::string& name :
              string_sequence_from_scheme(providers_value, "start-completion!", 3)) {
@@ -5329,7 +5363,7 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
                                    .buffer = context.buffer_id(),
                                    .view = context.view_id()};
         std::expected<void, std::string> started =
-            host.services.start_completion(target, std::move(providers));
+            host.services.start_completion(target, std::move(providers), std::move(trigger));
         if (!started) {
             raise_host_error("start-completion!", started.error());
         }
@@ -5658,6 +5692,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("define-language-profile!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_language_profile));
     (void)scm_c_define_gsubr("%define-mode!", 10, 0, 0, reinterpret_cast<scm_t_subr>(define_mode));
+    (void)scm_c_define_gsubr("set-mode-completion-auto!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(set_mode_completion_auto));
     (void)scm_c_define_gsubr("define-file-mode-rule!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_file_mode_rule));
     (void)scm_c_define_gsubr("define-project-provider!", 3, 0, 0,
@@ -5841,7 +5877,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
     (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(completion_active));
-    (void)scm_c_define_gsubr("start-completion!", 3, 0, 0,
+    (void)scm_c_define_gsubr("start-completion!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
     (void)scm_c_define_gsubr("request-lsp-navigation!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(request_lsp_navigation));
@@ -5938,16 +5974,16 @@ void initialize_host_module(void*) {
         "define-input-strategy!", "set-default-input-strategy!", "set-view-input-strategy!",
         "view-input-strategy", "set-base-input-state!", "push-input-state!", "pop-input-state!",
         "reset-input-states!", "view-input-states", "observe-input-state-changes!", "define-thing!",
-        "define-motion!", "define-language-profile!", "%define-mode!", "define-file-mode-rule!",
-        "define-project-provider!", "mode-properties", "buffer-language-facet?",
-        "set-buffer-major-mode!", "set-buffer-minor-mode!", "buffer-mode-policy",
-        "buffer-mode-summary", "observe-mode-policy-changes!", "enabled-command-names",
-        "command-properties", "open-buffer-summaries", "workbench-list", "current-workbench",
-        "workbench-scope", "workbench-mru", "workbench-buffer-summaries", "workbench-buffer-ids",
-        "new-workbench!", "switch-workbench!", "close-workbench!", "adopt-project!",
-        "expel-buffer!", "workbench-session-state", "restore-workbench-session!", "project-list",
-        "owned-user-modules", "project-root", "project-files", "path-relative", "path-filename",
-        "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
+        "define-motion!", "define-language-profile!", "%define-mode!", "set-mode-completion-auto!",
+        "define-file-mode-rule!", "define-project-provider!", "mode-properties",
+        "buffer-language-facet?", "set-buffer-major-mode!", "set-buffer-minor-mode!",
+        "buffer-mode-policy", "buffer-mode-summary", "observe-mode-policy-changes!",
+        "enabled-command-names", "command-properties", "open-buffer-summaries", "workbench-list",
+        "current-workbench", "workbench-scope", "workbench-mru", "workbench-buffer-summaries",
+        "workbench-buffer-ids", "new-workbench!", "switch-workbench!", "close-workbench!",
+        "adopt-project!", "expel-buffer!", "workbench-session-state", "restore-workbench-session!",
+        "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
+        "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
         "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
         "buffer-diagnostics", "set-buffer-locations!", "set-location-list!", "buffer-read-only?",
         "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
@@ -6182,7 +6218,8 @@ ChromeItem chrome_item_from_scheme(SCM value, const char* caller) {
         scm_wrong_type_arg_msg(caller, 0, value, "#(chrome-item label detail)");
     }
     return {.label = scheme_string(scm_c_vector_ref(value, 1)),
-            .detail = scheme_string(scm_c_vector_ref(value, 2))};
+            .detail = scheme_string(scm_c_vector_ref(value, 2)),
+            .kind = {}};
 }
 
 std::optional<std::size_t> optional_size_from_scheme(SCM value, const char* caller) {

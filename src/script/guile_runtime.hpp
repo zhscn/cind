@@ -214,7 +214,8 @@ struct GuileHostServices {
     std::function<bool()> completion_active;
     std::function<std::expected<CompletionProvider, std::string>(CommandTarget, std::string_view)>
         resolve_completion_provider;
-    std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>)>
+    std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>,
+                                                   CompletionTrigger)>
         start_completion;
     std::function<std::expected<void, std::string>(CommandTarget, std::string, std::string)>
         request_lsp_navigation;

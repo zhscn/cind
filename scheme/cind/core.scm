@@ -1801,12 +1801,36 @@
   (set-message! host "cancelled")
   (command-completed/preserve))
 
-(define (completion-start host context invocation)
+(define (mode-completion-policy host context)
   (let* ((summary (buffer-mode-summary host (context-buffer context)))
          (policy (vector-ref summary 2)))
-    (start-completion! host context (vector-ref policy 3)))
+    policy))
+
+(define (start-mode-completion! host context trigger)
+  (let ((policy (mode-completion-policy host context)))
+    (start-completion! host context (vector-ref policy 3) trigger)))
+
+(define (completion-start host context invocation)
+  (start-mode-completion! host context 'manual)
   (request-redraw! host)
   (command-completed/preserve))
+
+(define (automatic-completion-character? text)
+  (and (> (string-length text) 0)
+       (let* ((character (string-ref text (- (string-length text) 1)))
+              (codepoint (char->integer character)))
+         (and (< codepoint 128)
+              (or (char-alphabetic? character)
+                  (char-numeric? character)
+                  (char=? character #\_))))))
+
+(define (maybe-start-automatic-completion! host context text)
+  (let ((policy (mode-completion-policy host context)))
+    (when (and (vector-ref policy 4)
+               (> (vector-length (vector-ref policy 3)) 0)
+               (not (completion-active? host))
+               (automatic-completion-character? text))
+      (start-completion! host context (vector-ref policy 3) 'automatic))))
 
 (define (completion-move host delta)
   (lambda (context invocation)
@@ -2309,7 +2333,8 @@
                         (buffer-language-facet? host (context-buffer context)
                                                 'structural-editing))
                    (type-text! host view committed)
-                   (insert-text! host view committed)))
+                   (insert-text! host view committed))
+               (maybe-start-automatic-completion! host context committed))
              (request-redraw! host)
              (command-completed))))))
 
@@ -2999,9 +3024,12 @@
                             (interaction-class #f)
                             (initial-state #f)
                             (things '())
-                            (completion-providers #f))
-  (%define-mode! host name 'major parent language keymap interaction-class initial-state things
-                 completion-providers))
+                            (completion-providers #f)
+                            (completion-auto? 'inherit))
+  (let ((mode (%define-mode! host name 'major parent language keymap interaction-class
+                             initial-state things completion-providers)))
+    (set-mode-completion-auto! host name completion-auto?)
+    mode))
 
 (define* (define-minor-mode! host name
                             #:key
@@ -3010,9 +3038,12 @@
                             (interaction-class #f)
                             (initial-state #f)
                             (things '())
-                            (completion-providers #f))
-  (%define-mode! host name 'minor parent #f keymap interaction-class initial-state things
-                 completion-providers))
+                            (completion-providers #f)
+                            (completion-auto? 'inherit))
+  (let ((mode (%define-mode! host name 'minor parent #f keymap interaction-class initial-state
+                             things completion-providers)))
+    (set-mode-completion-auto! host name completion-auto?)
+    mode))
 
 (define (install-core-modes! host)
   (define-thing! host 'cind.angle '(pair "<" ">"))
@@ -3061,6 +3092,7 @@
     #:language 'cind.scheme
     #:keymap 'scheme-mode-map
     #:interaction-class 'editing
+    #:completion-auto? #t
     #:completion-providers '("ares" "word"))
   (define-major-mode! host 'cind.cpp
     #:parent 'prog-mode

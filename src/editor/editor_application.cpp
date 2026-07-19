@@ -363,8 +363,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return resolve_completion_provider(target, name);
                },
            .start_completion =
-               [this](CommandTarget target, std::vector<CompletionProvider> providers) {
-                   return start_completion(target, std::move(providers));
+               [this](CommandTarget target, std::vector<CompletionProvider> providers,
+                      CompletionTrigger trigger) {
+                   return start_completion(target, std::move(providers), std::move(trigger));
                },
            .request_lsp_navigation =
                [this](CommandTarget target, const std::string& kind, const std::string& provider) {
@@ -1076,7 +1077,8 @@ ChromeContent EditorApplication::chrome_content(std::string_view preedit) {
         }
         facts.candidates.reserve(interaction->candidates.size());
         for (const InteractionCandidate& candidate : interaction->candidates) {
-            facts.candidates.push_back({.label = candidate.label, .detail = candidate.detail});
+            facts.candidates.push_back(
+                {.label = candidate.label, .detail = candidate.detail, .kind = {}});
         }
     }
     const std::vector<KeyBindingHint> hints = pending_key_hints();
@@ -1205,6 +1207,9 @@ EditorApplication::start_completion(CommandTarget target, std::vector<Completion
     }
     if (providers.empty()) {
         return std::unexpected("no completion provider is enabled for this syntax context");
+    }
+    if (trigger.kind == CompletionTriggerKind::Automatic && anchor == caret) {
+        return {};
     }
     CommandContext context(runtime_, target.window, target.buffer, target.view);
     return completion_->start(context, anchor, std::move(providers), std::move(trigger));
@@ -2481,6 +2486,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
                      return input_state ? runtime_.input_states().definition(*input_state).name
                                         : std::string();
                  }(),
+             .completion_auto = mode_policy.completion_auto,
              .things = mode_policy.things,
              .completion_providers = mode_policy.completion_providers,
              .location_count = buffer.locations().size(),

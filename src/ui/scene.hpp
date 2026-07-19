@@ -119,6 +119,11 @@ struct SceneDivider {
 };
 
 struct Region {
+    enum class PopupPresentation : std::uint8_t {
+        Band,
+        Completion,
+    };
+
     struct DocumentMapping {
         std::uint32_t first_line = 0;
         std::optional<int> first_display_column;
@@ -134,10 +139,12 @@ struct Region {
     struct PopupItem {
         std::string label;
         std::string detail;
+        std::string kind;
 
         bool operator==(const PopupItem&) const = default;
     };
     struct PopupContent {
+        PopupPresentation presentation = PopupPresentation::Band;
         std::string title;
         std::optional<std::string> input;
         std::optional<std::size_t> input_cursor;
@@ -218,7 +225,8 @@ struct Region {
 
     std::size_t item_count() const {
         if (const PopupContent* popup_content = popup()) {
-            return popup_content->items.size() + 1;
+            return popup_content->items.size() +
+                   (popup_content->presentation == PopupPresentation::Band ? 1 : 0);
         }
         if (status() != nullptr || echo() != nullptr) {
             return 1;

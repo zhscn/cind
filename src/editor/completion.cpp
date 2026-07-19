@@ -141,9 +141,12 @@ CompletionPipeline::start(CommandContext& context, TextOffset anchor,
     }
     state_.emplace(CompletionState{
         .request = request, .providers = std::move(sources), .matches = {}, .selected = 0});
+    dispatching_batch_ = true;
     for (CompletionProvider provider : providers) {
         request_provider(provider, request);
     }
+    dispatching_batch_ = false;
+    settle_automatic();
     return {};
 }
 
@@ -161,6 +164,10 @@ std::expected<void, std::string> CompletionPipeline::update(CommandContext& cont
     }
     const DocumentSnapshot snapshot = context.buffer().snapshot();
     const TextOffset caret = runtime_->views().caret(context.view_id());
+    if (caret == previous.anchor) {
+        (void)cancel();
+        return {};
+    }
     if (caret < previous.anchor || caret.value > snapshot.content().size_bytes() ||
         snapshot.content().position(caret).line != previous.line) {
         (void)cancel();
@@ -195,6 +202,7 @@ std::expected<void, std::string> CompletionPipeline::update(CommandContext& cont
     }
     cancel_pending();
     const CompletionRequest request = active->request;
+    dispatching_batch_ = true;
     for (CompletionProviderState& provider : active->providers) {
         if (provider.is_incomplete) {
             request_provider(
@@ -210,7 +218,9 @@ std::expected<void, std::string> CompletionPipeline::update(CommandContext& cont
                     .generation = request.generation});
         }
     }
+    dispatching_batch_ = false;
     rebuild_matches();
+    settle_automatic();
     return {};
 }
 
@@ -470,6 +480,7 @@ void CompletionPipeline::publish(std::uint64_t generation, CompletionProviderRes
     if (active != nullptr && !active->matches.empty()) {
         resolve_visible(active->selected, 1);
     }
+    settle_automatic();
 }
 
 void CompletionPipeline::fail(std::uint64_t generation, CompletionProvider provider,
@@ -481,6 +492,7 @@ void CompletionPipeline::fail(std::uint64_t generation, CompletionProvider provi
         found->pending = false;
         found->error = std::move(error);
     }
+    settle_automatic();
 }
 
 void CompletionPipeline::cancelled(std::uint64_t generation, CompletionProvider provider) {
@@ -490,6 +502,7 @@ void CompletionPipeline::cancelled(std::uint64_t generation, CompletionProvider 
     if (CompletionProviderState* found = source(provider)) {
         found->pending = false;
     }
+    settle_automatic();
 }
 
 void CompletionPipeline::rebuild_matches() {
@@ -528,6 +541,16 @@ void CompletionPipeline::rebuild_matches() {
             state_->selected = static_cast<std::size_t>(found - state_->matches.begin());
         }
     }
+}
+
+void CompletionPipeline::settle_automatic() {
+    if (dispatching_batch_ || !state_ ||
+        state_->request.trigger.kind != CompletionTriggerKind::Automatic ||
+        std::ranges::any_of(state_->providers, &CompletionProviderState::pending) ||
+        !state_->matches.empty()) {
+        return;
+    }
+    (void)cancel();
 }
 
 void CompletionPipeline::resolve_item(std::uint64_t id) {

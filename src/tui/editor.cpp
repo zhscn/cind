@@ -256,9 +256,9 @@ private:
         if (completion != nullptr) {
             completion_items.reserve(completion->matches.size());
             for (const CompletionMatch& match : completion->matches) {
-                completion_items.push_back(
-                    {.label = match.item.label,
-                     .detail = match.item.detail.empty() ? match.item.kind : match.item.detail});
+                completion_items.push_back({.label = match.item.label,
+                                            .detail = match.item.detail,
+                                            .kind = match.item.kind});
             }
         }
         const std::optional<std::size_t> completion_selection =

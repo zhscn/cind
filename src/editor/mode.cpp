@@ -135,6 +135,10 @@ void ModeRegistry::set_completion_providers(ModeId mode,
     definition_for_configuration(mode).completion_providers = std::move(providers);
 }
 
+void ModeRegistry::set_completion_auto(ModeId mode, std::optional<bool> enabled) {
+    definition_for_configuration(mode).completion_auto = enabled;
+}
+
 void ModeRegistry::add_keymap(ModeId mode, KeymapId keymap) {
     Definition& definition = definition_for_configuration(mode);
     (void)keymaps_->definition(keymap);
@@ -219,6 +223,17 @@ ModeRegistry::inherited_completion_providers(ModeId mode) const {
     return std::nullopt;
 }
 
+std::optional<bool> ModeRegistry::inherited_completion_auto(ModeId mode) const {
+    const Definition* current = &definition(mode);
+    while (current != nullptr) {
+        if (current->completion_auto) {
+            return current->completion_auto;
+        }
+        current = current->parent ? &definition(*current->parent) : nullptr;
+    }
+    return std::nullopt;
+}
+
 void ModeRegistry::append_inherited_things(ModeId mode,
                                            std::vector<ModeThingBinding>& things) const {
     const Definition* current = &definition(mode);
@@ -276,6 +291,17 @@ EffectiveModePolicy ModeRegistry::effective_policy(const BufferModes& modes) con
     }
     result.completion_providers =
         completion_providers ? std::move(*completion_providers) : std::vector<std::string>{};
+    std::optional<bool> completion_auto;
+    for (auto mode = modes.minors().rbegin(); mode != modes.minors().rend(); ++mode) {
+        if (const std::optional<bool> enabled = inherited_completion_auto(*mode)) {
+            completion_auto = enabled;
+            break;
+        }
+    }
+    if (!completion_auto && modes.major()) {
+        completion_auto = inherited_completion_auto(*modes.major());
+    }
+    result.completion_auto = completion_auto.value_or(false);
     for (auto mode = modes.minors().rbegin(); mode != modes.minors().rend(); ++mode) {
         append_inherited_things(*mode, result.things);
     }

@@ -851,6 +851,9 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
           std::vector<KeymapId>{require_keymap(runtime, "scheme-mode-map")});
     CHECK(runtime.modes().definition(scheme).completion_providers ==
           std::optional<std::vector<std::string>>{{"ares", "word"}});
+    CHECK(runtime.modes().definition(scheme).completion_auto == std::optional<bool>{true});
+    CHECK_FALSE(runtime.modes().definition(prog).completion_auto.has_value());
+    CHECK_FALSE(runtime.modes().definition(cpp).completion_auto.has_value());
     CHECK(runtime.modes().definition(location_list).parent == special);
     CHECK_FALSE(runtime.modes().definition(location_list).language.has_value());
     CHECK(runtime.modes().definition(location_list).keymaps ==

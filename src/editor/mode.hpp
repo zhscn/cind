@@ -49,6 +49,7 @@ struct EffectiveModePolicy {
     std::optional<InputStateId> initial_state;
     std::vector<ModeThingBinding> things;
     std::vector<std::string> completion_providers;
+    bool completion_auto = false;
 
     friend bool operator==(const EffectiveModePolicy&, const EffectiveModePolicy&) = default;
 };
@@ -86,6 +87,7 @@ public:
         std::optional<InputStateId> initial_state;
         std::vector<ModeThingBinding> things;
         std::optional<std::vector<std::string>> completion_providers;
+        std::optional<bool> completion_auto;
         SettingsLayer defaults;
         std::vector<KeymapId> keymaps;
         std::optional<KeymapId> derived_keymap_parent;
@@ -108,6 +110,7 @@ public:
     void set_initial_state(ModeId mode, std::optional<InputStateId> state);
     void set_things(ModeId mode, std::vector<ModeThingBinding> things);
     void set_completion_providers(ModeId mode, std::optional<std::vector<std::string>> providers);
+    void set_completion_auto(ModeId mode, std::optional<bool> enabled);
     void add_keymap(ModeId mode, KeymapId keymap);
     void clear_keymaps(ModeId mode);
     std::vector<KeymapId> effective_keymaps(ModeId mode) const;
@@ -131,6 +134,7 @@ private:
     std::optional<InteractionClass> inherited_interaction_class(ModeId mode) const;
     std::optional<InputStateId> inherited_initial_state(ModeId mode) const;
     std::optional<std::vector<std::string>> inherited_completion_providers(ModeId mode) const;
+    std::optional<bool> inherited_completion_auto(ModeId mode) const;
     void append_inherited_things(ModeId mode, std::vector<ModeThingBinding>& things) const;
 
     const SettingRegistry* settings_;

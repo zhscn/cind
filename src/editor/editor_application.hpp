@@ -64,6 +64,7 @@ struct OpenBufferSnapshot {
     std::string major_mode;
     std::string interaction_class;
     std::string initial_input_state;
+    bool completion_auto = false;
     std::vector<ModeThingBinding> things;
     std::vector<std::string> completion_providers;
     std::size_t location_count = 0;

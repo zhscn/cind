@@ -114,8 +114,9 @@ palette also exposes `scheme.eval-region` and `scheme.eval-buffer`; definitions 
 three commands remain available to later evaluations and to `describe-function` /
 `describe-variable`. Multiline output is shown in the reusable `*Scheme Evaluation*` buffer.
 Scheme source files use `scheme-mode`, with `C-c C-e`, `C-c C-r`, and `C-c C-b` bound to expression,
-region, and buffer evaluation. `C-M-i` completes Scheme bindings through Ares, including definitions
-created in the persistent user module by any of those evaluation commands.
+region, and buffer evaluation. Typing a Scheme symbol opens Ares completion automatically;
+`C-M-i` remains available for an explicit request. Candidates include definitions created in the
+persistent user module by any of those evaluation commands.
 
 ## Build without the GUI
 

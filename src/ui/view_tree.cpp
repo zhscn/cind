@@ -121,10 +121,12 @@ std::optional<HitTarget> resolve_hit_target(const Scene& scene, const ViewHit& h
         return target;
     }
     if (const Region::PopupContent* popup = region.popup()) {
-        if (hit.content_index && *hit.content_index > 0 &&
-            *hit.content_index <= popup->items.size()) {
+        const std::size_t header_rows =
+            popup->presentation == Region::PopupPresentation::Band ? 1 : 0;
+        if (hit.content_index && *hit.content_index >= header_rows &&
+            *hit.content_index < popup->items.size() + header_rows) {
             target.kind = HitTargetKind::PopupItem;
-            target.popup_item = popup->first_item + *hit.content_index - 1;
+            target.popup_item = popup->first_item + *hit.content_index - header_rows;
         } else {
             target.kind = HitTargetKind::PopupHeader;
         }

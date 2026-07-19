@@ -168,6 +168,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     cells[cell_index(region.rect.row, region.rect.col, scene.cols)];
                 if (const Region::PopupContent* popup = region.popup()) {
                     signature.push_back('\x1e');
+                    append_integer(signature, static_cast<std::uint32_t>(popup->presentation));
                     append_text(signature, popup->title);
                     append_integer(signature, static_cast<std::uint32_t>(popup->input.has_value()));
                     if (popup->input) {
@@ -185,6 +186,7 @@ std::vector<std::string> visual_cells(const Scene& scene) {
                     for (const Region::PopupItem& item : popup->items) {
                         append_text(signature, item.label);
                         append_text(signature, item.detail);
+                        append_text(signature, item.kind);
                     }
                 } else if (const ModelineContent* status = region.status()) {
                     signature.push_back('\x1c');

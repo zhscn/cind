@@ -183,6 +183,7 @@ private:
     void fail(std::uint64_t generation, CompletionProvider provider, std::string error);
     void cancelled(std::uint64_t generation, CompletionProvider provider);
     void rebuild_matches();
+    void settle_automatic();
     void resolve_item(std::uint64_t id);
     void publish_resolved(std::uint64_t generation, std::uint64_t id, CompletionItem item);
     void resolve_failed(std::uint64_t generation, std::uint64_t id, std::string error);
@@ -200,6 +201,7 @@ private:
     Applied applied_;
     std::uint64_t next_generation_ = 0;
     std::uint64_t next_item_id_ = 0;
+    bool dispatching_batch_ = false;
     std::optional<CompletionState> state_;
     std::vector<std::function<void()>> pending_cancellations_;
     std::unordered_map<std::uint64_t, std::function<void()>> resolve_cancellations_;

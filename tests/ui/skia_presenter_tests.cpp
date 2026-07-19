@@ -698,9 +698,9 @@ TEST_CASE("Skia presenter lays the interactive picker out as a bottom minibuffer
         .first_item = 0,
         .total_items = 3,
         .selected_item = 0,
-        .items = {{.label = "edit.undo", .detail = "command"},
-                  {.label = "edit.redo", .detail = "command"},
-                  {.label = "edit.yank", .detail = "command"}},
+        .items = {{.label = "edit.undo", .detail = "command", .kind = {}},
+                  {.label = "edit.redo", .detail = "command", .kind = {}},
+                  {.label = "edit.yank", .detail = "command", .kind = {}}},
     });
     scene.regions = {body, status, echo, popup};
 
@@ -787,6 +787,51 @@ TEST_CASE("Skia presenter lays the interactive picker out as a bottom minibuffer
     presenter.render_damage(changed_layout, width, height, retained.data(), row_bytes, rectangles);
     presenter.render(changed_layout, width, height, reference.data(), row_bytes);
     CHECK(retained == reference);
+}
+
+TEST_CASE("Skia presenter lays completion out as a compact cursor overlay") {
+    SkiaPresenter presenter("monospace", 16.0F, test_theme(), test_styles(), test_metrics());
+    Scene scene;
+    scene.rows = 20;
+    scene.cols = 80;
+    scene.cursor_row = 5;
+    scene.cursor_col = 15;
+    Region body{RegionRole::TextArea, {0, 5, 18, 75}, {}};
+    Region completion{
+        RegionRole::Popup, {5, 14, 3, 28}, {}, SurfaceClass::Status, VerticalAnchor::Overlay};
+    completion.set_popup(Region::PopupContent{
+        .presentation = Region::PopupPresentation::Completion,
+        .title = {},
+        .input = std::nullopt,
+        .input_cursor = std::nullopt,
+        .first_item = 0,
+        .total_items = 3,
+        .selected_item = 1,
+        .items = {{.label = "define", .detail = "guile", .kind = "function"},
+                  {.label = "define-module", .detail = "guile", .kind = "macro"},
+                  {.label = "defined?", .detail = "guile", .kind = "function"}},
+    });
+    scene.regions = {body, completion};
+
+    const int width = presenter.cell_width() * scene.cols;
+    const int height = presenter.cell_height() * scene.rows;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    const SkiaFrameLayout layout =
+        presenter.prepare_layout(scene, static_cast<float>(width), static_cast<float>(height));
+    SkiaRenderDiagnostics diagnostics;
+    presenter.render(layout, width, height, pixels.data(), row_bytes, 1.0F, &diagnostics);
+
+    REQUIRE(diagnostics.popup_layout.has_value());
+    const SkiaPopupLayoutDiagnostics& popup = *diagnostics.popup_layout;
+    CHECK(popup.panel_bounds.x ==
+          doctest::Approx(static_cast<float>(completion.rect.col * presenter.cell_width())));
+    CHECK(popup.panel_bounds.width ==
+          doctest::Approx(static_cast<float>(completion.rect.cols * presenter.cell_width())));
+    CHECK(popup.panel_bounds.width < static_cast<float>(width));
+    CHECK(popup.header_bounds.height == doctest::Approx(0.0F));
+    CHECK(popup.header_text.empty());
+    CHECK_FALSE(popup.cursor_rect.has_value());
 }
 
 TEST_CASE("Skia damage rendering matches a full reference frame") {

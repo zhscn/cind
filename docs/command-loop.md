@@ -323,6 +323,9 @@ providers implement the command palette, key help, buffer switching, and file op
 render the same candidate and loading state through frontend-specific layout. Interactive pickers
 own a stable minibuffer band containing the prompt, input and candidate rows; the echo area is a
 separate message surface. Prefix help uses the same structured popup content without an input.
+Document completion is a distinct cursor-anchored overlay: the document owns the query and caret,
+and the popup contains only candidate rows. Presentation semantics therefore do not require a
+frontend to infer whether a popup is a minibuffer or a completion list from its geometry.
 
 The application owns one transient message independently of either frontend. A normalized key
 starts a new message lifetime; command errors and `set-message!` may replace the cleared value.

@@ -21,8 +21,7 @@ std::vector<ChromeItem> completion_items(const EditorApplication& application) {
     items.reserve(completion->matches.size());
     for (const CompletionMatch& match : completion->matches) {
         items.push_back(
-            {.label = match.item.label,
-             .detail = match.item.detail.empty() ? match.item.kind : match.item.detail});
+            {.label = match.item.label, .detail = match.item.detail, .kind = match.item.kind});
     }
     return items;
 }
@@ -558,6 +557,7 @@ EditorStateSnapshot EditorModel::inspect() {
                            .major_mode = buffer.major_mode,
                            .interaction_class = buffer.interaction_class,
                            .initial_input_state = buffer.initial_input_state,
+                           .completion_auto = buffer.completion_auto,
                            .things = std::move(things),
                            .completion_providers = buffer.completion_providers,
                            .location_count = buffer.location_count,

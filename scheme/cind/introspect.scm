@@ -145,7 +145,8 @@
          (things (vector-ref properties 5))
          (keymaps (vector-ref properties 6))
          (language (vector-ref properties 7))
-         (completion-providers (vector-ref properties 8)))
+         (completion-providers (vector-ref properties 8))
+         (completion-auto (vector-ref properties 9)))
     (string-append
      (format #f "~a (~a mode)\n" (vector-ref properties 0) (vector-ref properties 1))
      (format #f "  parent: ~a\n" (if parent parent "none"))
@@ -156,6 +157,8 @@
      (if completion-providers
          (indented-lines (vector->strings completion-providers) "none")
          "    inherited\n")
+     (format #f "  automatic completion: ~a\n"
+             (if completion-auto completion-auto "inherited"))
      "  keymaps:\n" (indented-lines (vector->strings keymaps) "none")
      "  semantic things:\n"
      (if (null? things)
@@ -187,6 +190,8 @@
               (if (vector-ref policy 1) (vector-ref policy 1) "none"))
       "  completion providers:\n"
       (indented-lines (vector->strings (vector-ref policy 3)) "none")
+      (format #f "  automatic completion: ~a\n"
+              (if (vector-ref policy 4) "enabled" "disabled"))
       "  semantic things:\n"
       (if (null? (vector-ref policy 2))
           "    none\n"

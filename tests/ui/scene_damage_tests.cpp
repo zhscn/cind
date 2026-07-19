@@ -199,8 +199,8 @@ TEST_CASE("scene damage requests full repaint when the footer stack changes") {
                 .first_item = 0,
                 .total_items = 2,
                 .selected_item = std::nullopt,
-                .items = {{.label = "first", .detail = "command"},
-                          {.label = "second", .detail = "command"}},
+                .items = {{.label = "first", .detail = "command", .kind = {}},
+                          {.label = "second", .detail = "command", .kind = {}}},
             });
             scene.regions.push_back(std::move(band));
         }
@@ -231,7 +231,7 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
         .first_item = 0,
         .total_items = 20,
         .selected_item = 0,
-        .items = {{.label = "first", .detail = "command"}},
+        .items = {{.label = "first", .detail = "command", .kind = {}}},
     });
     scene.regions.push_back(std::move(popup));
 
@@ -251,6 +251,11 @@ TEST_CASE("scene damage tracks structured popup list metadata") {
     const SceneDamage relabeled = tracker.update(scene);
     CHECK_FALSE(relabeled.full_repaint);
     CHECK_FALSE(relabeled.cell_rects.empty());
+
+    scene.regions.back().popup()->items.front().kind = "function";
+    const SceneDamage retyped = tracker.update(scene);
+    CHECK_FALSE(retyped.full_repaint);
+    CHECK_FALSE(retyped.cell_rects.empty());
 }
 
 TEST_CASE("scene damage tracks structured status content") {

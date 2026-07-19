@@ -80,7 +80,7 @@
         (let loop ((index 0)
                    (result '()))
           (if (= index (vector-length candidates))
-              (completion-result (reverse result) #:incomplete? #t)
+              (completion-result (reverse result))
               (let* ((candidate (vector-ref candidates index))
                      (name (completion-candidate-name candidate)))
                 (loop (+ index 1)

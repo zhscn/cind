@@ -508,6 +508,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     runtime.modes().set_interaction_class(fundamental, InteractionClass::Editing);
     runtime.modes().set_things(fundamental, {{.name = "word", .definition = "character"}});
     runtime.modes().set_completion_providers(fundamental, std::vector<std::string>{"word", "path"});
+    runtime.modes().set_completion_auto(fundamental, true);
     runtime.modes().add_keymap(fundamental, parent_map);
 
     const KeymapId child_map = runtime.keymaps().define("test.child.map");
@@ -529,6 +530,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     runtime.modes().set_initial_state(forced, transient);
     const ModeId completion_muted = runtime.modes().define("completion-muted", ModeKind::Minor);
     runtime.modes().set_completion_providers(completion_muted, std::vector<std::string>{});
+    runtime.modes().set_completion_auto(completion_muted, false);
     CHECK_THROWS_AS(runtime.modes().set_parent(editable, special), std::invalid_argument);
     CHECK_THROWS_AS(runtime.modes().set_parent(fundamental, special), std::invalid_argument);
 
@@ -546,6 +548,7 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
           std::vector<ModeThingBinding>{{.name = "word", .definition = "interface"},
                                         {.name = "item", .definition = "line"}});
     CHECK(initial.completion_providers == std::vector<std::string>{"word", "path"});
+    CHECK(initial.completion_auto);
 
     const ViewId first = runtime.views().create(buffer);
     const ViewId second = runtime.views().create(buffer);
@@ -582,6 +585,8 @@ TEST_CASE("mode policy inheritance rederives every view input state") {
     CHECK(runtime.modes()
               .effective_policy(runtime.buffers().get(buffer).modes())
               .completion_providers.empty());
+    CHECK_FALSE(
+        runtime.modes().effective_policy(runtime.buffers().get(buffer).modes()).completion_auto);
     REQUIRE(runtime.buffers().get(buffer).modes().disable_minor(completion_muted));
 
     REQUIRE(runtime.buffers().get(buffer).modes().enable_minor(runtime.modes(), forced));

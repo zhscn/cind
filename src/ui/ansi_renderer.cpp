@@ -138,24 +138,32 @@ std::string render_ansi(const Scene& scene, const PresentationTheme& theme,
                 paint_primitive(region, {0, 0, echo->text, StyleClass::Message, false,
                                          PrimKind::Text, "echo:main"});
             } else if (const Region::PopupContent* popup = region.popup()) {
-                std::string title =
-                    std::string(clip_to_display_width(popup->title, region.rect.cols));
-                title.append(static_cast<std::size_t>(region.rect.cols - display_width(title)),
-                             ' ');
-                paint_primitive(region, {0, 0, std::move(title), StyleClass::StatusKey, false,
-                                         PrimKind::Text, "popup:title"});
+                const bool band = popup->presentation == Region::PopupPresentation::Band;
+                if (band) {
+                    std::string title =
+                        std::string(clip_to_display_width(popup->title, region.rect.cols));
+                    title.append(static_cast<std::size_t>(region.rect.cols - display_width(title)),
+                                 ' ');
+                    paint_primitive(region, {0, 0, std::move(title), StyleClass::StatusKey, false,
+                                             PrimKind::Text, "popup:title"});
+                }
                 for (std::size_t offset = 0; offset < popup->items.size(); ++offset) {
                     const Region::PopupItem& item = popup->items[offset];
-                    std::string row = item.detail.empty()
-                                          ? item.label
-                                          : std::format("{:<10} {}", item.label, item.detail);
+                    const std::string_view detail =
+                        !item.detail.empty() ? std::string_view(item.detail)
+                        : popup->presentation == Region::PopupPresentation::Completion
+                            ? std::string_view(item.kind)
+                            : std::string_view{};
+                    std::string row =
+                        detail.empty() ? item.label : std::format("{:<10} {}", item.label, detail);
                     row = std::string(clip_to_display_width(row, region.rect.cols));
                     row.append(static_cast<std::size_t>(region.rect.cols - display_width(row)),
                                ' ');
                     paint_primitive(
-                        region, {static_cast<int>(offset) + 1, 0, std::move(row), StyleClass::Popup,
-                                 popup->selected_item == popup->first_item + offset, PrimKind::Text,
-                                 std::format("popup:item:{}", popup->first_item + offset)});
+                        region,
+                        {static_cast<int>(offset) + (band ? 1 : 0), 0, std::move(row),
+                         StyleClass::Popup, popup->selected_item == popup->first_item + offset,
+                         PrimKind::Text, std::format("popup:item:{}", popup->first_item + offset)});
                 }
             }
         }

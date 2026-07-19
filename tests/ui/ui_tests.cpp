@@ -144,7 +144,8 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     CHECK(laid_out.viewport.top_line == 0);
     CHECK(laid_out.viewport.top_line_offset == doctest::Approx(0.0F));
 
-    const std::vector<ChromeItem> items(20, ChromeItem{.label = "command", .detail = "command"});
+    const std::vector<ChromeItem> items(
+        20, ChromeItem{.label = "command", .detail = "command", .kind = {}});
     const ModelineContent modeline{.segments = {{.text = "sample.cc", .group = ModelineGroup::Left},
                                                 {.text = "N", .group = ModelineGroup::Right}}};
     const EditorSceneInput input{.text = text,
@@ -224,8 +225,8 @@ TEST_CASE("completion menu is caret anchored and does not reflow document rows")
     const LineSigns signs;
     const ModelineContent modeline{
         .segments = {{.text = "sample.cc", .group = ModelineGroup::Left}}};
-    const std::vector<ChromeItem> items{{.label = "alphabet", .detail = "word"},
-                                        {.label = "alpha_value", .detail = "word"}};
+    const std::vector<ChromeItem> items{{.label = "alphabet", .detail = {}, .kind = "function"},
+                                        {.label = "alpha_value", .detail = {}, .kind = "variable"}};
     EditorSceneViewState view;
     view = layout_editor_scene({.text = text,
                                 .caret = TextOffset{5},
@@ -274,14 +275,19 @@ TEST_CASE("completion menu is caret anchored and does not reflow document rows")
     CHECK(completion->rect.row == 1);
     CHECK(completion->rect.col == text_area_column(text.line_count()));
     REQUIRE(completion->popup() != nullptr);
+    CHECK(completion->popup()->presentation == Region::PopupPresentation::Completion);
+    CHECK(completion->rect.rows == 2);
+    CHECK(completion->popup()->title.empty());
+    CHECK(completion->popup()->items.front().kind == "function");
     CHECK(completion->popup()->selected_item == 1);
+    CHECK(render_ansi(scene, test_theme(), test_styles()).find("function") != std::string::npos);
     const auto documentation = std::ranges::find(
         scene.regions, std::string("editor/completion-documentation"), &Region::id);
     REQUIRE(documentation != scene.regions.end());
     CHECK(documentation->role == RegionRole::Documentation);
     CHECK(documentation->vertical_anchor == VerticalAnchor::Overlay);
     CHECK(documentation->rect.col > completion->rect.col + completion->rect.cols);
-    CHECK(documentation->primitives().size() == 3);
+    CHECK(documentation->primitives().size() == 2);
     const Region* status = scene.find(RegionRole::StatusBar);
     REQUIRE(status != nullptr);
     CHECK(status->rect.row == 8);
@@ -291,8 +297,8 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     const Text text("zero\none\ntwo\nthree\n");
     const TokenBuffer tokens(lex(text).tokens);
     const std::vector<ChromeItem> popup_items{
-        {.label = "first", .detail = "command"},
-        {.label = "second", .detail = "command"},
+        {.label = "first", .detail = "command", .kind = {}},
+        {.label = "second", .detail = "command", .kind = {}},
     };
     const EditorSceneViewState view{
         .viewport = {.top_line = 1, .top_line_offset = 0.0F, .left_column = 4},

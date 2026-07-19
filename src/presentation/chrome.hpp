@@ -13,6 +13,7 @@ enum class ChromeInteractionKind : std::uint8_t { Text, Picker };
 struct ChromeItem {
     std::string label;
     std::string detail;
+    std::string kind;
 
     friend bool operator==(const ChromeItem&, const ChromeItem&) = default;
 };

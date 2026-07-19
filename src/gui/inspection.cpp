@@ -202,7 +202,8 @@ std::optional<ui::Prim> inspection_primitive(const ui::Region& region, std::size
         return std::nullopt;
     }
     if (const ui::Region::PopupContent* popup = region.popup()) {
-        if (index == 0) {
+        const bool band = popup->presentation == ui::Region::PopupPresentation::Band;
+        if (band && index == 0) {
             return ui::Prim{0,
                             0,
                             popup->title,
@@ -211,7 +212,7 @@ std::optional<ui::Prim> inspection_primitive(const ui::Region& region, std::size
                             ui::PrimKind::Text,
                             std::format("{}/title", region_id(region))};
         }
-        const std::size_t item_index = index - 1;
+        const std::size_t item_index = index - (band ? 1 : 0);
         if (item_index >= popup->items.size()) {
             return std::nullopt;
         }
@@ -498,6 +499,8 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
         append_json_string(output, buffer.interaction_class);
         output += ",\"initial_input_state\":";
         append_json_string(output, buffer.initial_input_state);
+        output += ",\"completion_auto\":";
+        append_bool(output, buffer.completion_auto);
         output += ",\"things\":[";
         for (std::size_t thing_index = 0; thing_index < buffer.things.size(); ++thing_index) {
             if (thing_index != 0) {
@@ -979,7 +982,11 @@ void append_region(std::string& output, const ui::Region& region) {
     append_rect(output, region.rect);
     output += ",\"popup\":";
     if (const ui::Region::PopupContent* popup = region.popup()) {
-        output += "{\"title\":";
+        output += "{\"presentation\":";
+        append_json_string(output, popup->presentation == ui::Region::PopupPresentation::Completion
+                                       ? "completion"
+                                       : "band");
+        output += ",\"title\":";
         append_json_string(output, popup->title);
         output += ",\"input\":";
         if (popup->input) {
@@ -1010,6 +1017,8 @@ void append_region(std::string& output, const ui::Region& region) {
             append_json_string(output, popup->items[index].label);
             output += ",\"detail\":";
             append_json_string(output, popup->items[index].detail);
+            output += ",\"kind\":";
+            append_json_string(output, popup->items[index].kind);
             output.push_back('}');
         }
         output += "]}";
@@ -1984,6 +1993,9 @@ std::vector<std::string> validate_frame(const FrameInspection& frame) {
             if (popup->input_cursor &&
                 (!popup->input || *popup->input_cursor > popup->input->size())) {
                 violations.emplace_back("popup input cursor is past the input end");
+            }
+            if (popup->presentation == ui::Region::PopupPresentation::Completion && popup->input) {
+                violations.emplace_back("completion popup owns a duplicate input surface");
             }
             if (popup->first_item > popup->total_items ||
                 popup->items.size() > popup->total_items - popup->first_item) {
@@ -3119,6 +3131,7 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                << " name=\"" << printable(buffer.name) << "\" resource=\""
                << printable(buffer.resource) << "\" class=" << printable(buffer.interaction_class)
                << " initial-state=" << printable(buffer.initial_input_state)
+               << " completion-auto=" << (buffer.completion_auto ? "true" : "false")
                << " completion-providers=";
         for (std::size_t index = 0; index < buffer.completion_providers.size(); ++index) {
             if (index != 0) {
@@ -3189,9 +3202,12 @@ std::string inspection_tree_text(const FrameInspection& frame) {
                    << " content-offset=" << region.content_offset_rows
                    << " items=" << region.item_count() << '\n';
             if (const ui::Region::PopupContent* popup = region.popup()) {
-                output << "      list first=" << popup->first_item
-                       << " visible=" << popup->items.size() << " total=" << popup->total_items
-                       << " selected=";
+                output << "      list presentation="
+                       << (popup->presentation == ui::Region::PopupPresentation::Completion
+                               ? "completion"
+                               : "band")
+                       << " first=" << popup->first_item << " visible=" << popup->items.size()
+                       << " total=" << popup->total_items << " selected=";
                 if (popup->selected_item) {
                     output << *popup->selected_item;
                 } else {
