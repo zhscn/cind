@@ -13,6 +13,15 @@
             interaction-candidate
             interaction-provider-task
             completion-item
+            completion-item-label
+            completion-item-kind
+            completion-item-detail
+            completion-item-filter-text
+            completion-item-sort-text
+            completion-item-insert-text
+            completion-item-documentation
+            completion-item-start
+            completion-item-end
             completion-result
             completion-request-query
             completion-request-anchor
@@ -129,6 +138,23 @@
                           (end #f))
   (vector 'completion-item label kind detail filter-text sort-text insert-text documentation
           start end))
+
+(define (completion-item-field item index)
+  (unless (and (vector? item)
+               (= (vector-length item) 10)
+               (eq? (vector-ref item 0) 'completion-item))
+    (error "expected a completion item" item))
+  (vector-ref item index))
+
+(define (completion-item-label item) (completion-item-field item 1))
+(define (completion-item-kind item) (completion-item-field item 2))
+(define (completion-item-detail item) (completion-item-field item 3))
+(define (completion-item-filter-text item) (completion-item-field item 4))
+(define (completion-item-sort-text item) (completion-item-field item 5))
+(define (completion-item-insert-text item) (completion-item-field item 6))
+(define (completion-item-documentation item) (completion-item-field item 7))
+(define (completion-item-start item) (completion-item-field item 8))
+(define (completion-item-end item) (completion-item-field item 9))
 
 (define* (completion-result candidates #:key (incomplete? #f))
   (vector 'completion-result

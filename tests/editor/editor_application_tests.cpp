@@ -3498,6 +3498,23 @@ TEST_CASE("Scheme typing starts Ares completion and deletion refilters cached bi
         });
     REQUIRE(scripted != state->providers.end());
     CHECK_FALSE(scripted->is_incomplete);
+    const auto unresolved =
+        std::ranges::find_if(scripted->items, [](const CompletionItem& candidate) {
+            return candidate.label != "define" && !candidate.resolved;
+        });
+    REQUIRE(unresolved != scripted->items.end());
+    CHECK(unresolved->documentation.empty());
+
+    REQUIRE(application.completion().select(
+        static_cast<std::size_t>(define_match - state->matches.begin())));
+    state = application.completion().state();
+    REQUIRE(state != nullptr);
+    const auto resolved_define =
+        std::ranges::find_if(state->matches, [define_id](const CompletionMatch& candidate) {
+            return candidate.item.id == define_id;
+        });
+    REQUIRE(resolved_define != state->matches.end());
+    CHECK(resolved_define->item.resolved);
 
     application.insert_text("e");
     state = application.completion().state();

@@ -20,6 +20,7 @@
             repl-module
             repl-evaluate
             repl-complete
+            repl-complete-summaries
             repl-lookup
             repl-result?
             repl-result-status
@@ -101,6 +102,11 @@
   "Return structured completion candidates for PREFIX in REPL."
   (validate-repl repl)
   (completion-candidates prefix (repl-module repl)))
+
+(define (repl-complete-summaries repl prefix)
+  "Return completion candidates without resolving documentation metadata."
+  (validate-repl repl)
+  (completion-candidate-summaries prefix (repl-module repl)))
 
 (define (repl-lookup repl symbol)
   "Return source and documentation metadata for SYMBOL in REPL."

@@ -387,6 +387,9 @@ public:
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     std::expected<CompletionProviderResponse, std::string>
     complete(const CompletionProvider& provider, const CompletionRequest& request);
+    std::expected<CompletionItem, std::string> resolve(const CompletionProvider& provider,
+                                                       const CompletionRequest& request,
+                                                       const CompletionItem& item);
     GuileRuntimeSnapshot snapshot() const;
 
     // Releases task callbacks while the application's async service is still

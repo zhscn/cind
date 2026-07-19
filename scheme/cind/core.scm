@@ -3003,7 +3003,7 @@
                    (rank-provider-result ((cdr provider) context query) query))))
               providers)
     (for-each (lambda (provider)
-                (define-completion-provider! host (car provider) (cdr provider)))
+                (apply define-completion-provider! host provider))
               completion-providers)
     (+ (length providers) (length completion-providers))))
 

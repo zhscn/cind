@@ -3836,8 +3836,17 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
                                                CompletionPipeline::ResolveCompleted completed,
                                                CompletionProviderAsync::Failed failed,
                                                CompletionProviderAsync::Cancelled cancelled) {
+    if (item.provider.kind == CompletionProviderKind::Scripted) {
+        std::expected<CompletionItem, std::string> resolved =
+            guile_.resolve(item.provider, request, item);
+        if (!resolved) {
+            return std::unexpected(std::move(resolved.error()));
+        }
+        completed(std::move(*resolved));
+        return CompletionProviderAsync::Cancel{};
+    }
     if (item.provider.kind != CompletionProviderKind::Lsp) {
-        return std::unexpected("only LSP completion items require asynchronous resolution");
+        return std::unexpected("completion item provider does not support resolution");
     }
     LspSession* session = lsp_sessions_->find(LspSessionId{item.provider.session});
     if (session == nullptr) {

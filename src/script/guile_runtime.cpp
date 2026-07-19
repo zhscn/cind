@@ -46,6 +46,7 @@ struct ScriptProvider {
 struct ScriptCompletionProvider {
     std::string name;
     SCM complete = SCM_UNDEFINED;
+    SCM resolve = SCM_BOOL_F;
 };
 
 struct ScriptInputState {
@@ -581,12 +582,19 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
     return SCM_BOOL_F;
 }
 
-SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_value) {
+SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_value,
+                               SCM resolve_value) {
+    if (scheme_true(scm_eq_p(resolve_value, SCM_UNDEFINED))) {
+        resolve_value = SCM_BOOL_F;
+    }
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("define-completion-provider!", 2, name_value, "string");
     }
     if (!scheme_true(scm_procedure_p(complete_value))) {
         scm_wrong_type_arg_msg("define-completion-provider!", 3, complete_value, "procedure");
+    }
+    if (!scheme_false(resolve_value) && !scheme_true(scm_procedure_p(resolve_value))) {
+        scm_wrong_type_arg_msg("define-completion-provider!", 4, resolve_value, "procedure or #f");
     }
     HostLease& host = require_host(host_object, "define-completion-provider!");
     const std::shared_ptr<GuileState> state = host.state;
@@ -598,9 +606,13 @@ SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_val
         const std::string name = scheme_string(name_value);
         const std::size_t provider_index = state->completion_providers.size();
         (void)scm_gc_protect_object(complete_value);
+        if (!scheme_false(resolve_value)) {
+            (void)scm_gc_protect_object(resolve_value);
+        }
         bool appended = false;
         try {
-            state->completion_providers.push_back({.name = name, .complete = complete_value});
+            state->completion_providers.push_back(
+                {.name = name, .complete = complete_value, .resolve = resolve_value});
             appended = true;
             state->completion_providers_by_name.insert_or_assign(name, provider_index);
             ++host.providers_installed;
@@ -610,6 +622,9 @@ SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_val
                 state->completion_providers.pop_back();
             }
             (void)scm_gc_unprotect_object(complete_value);
+            if (!scheme_false(resolve_value)) {
+                (void)scm_gc_unprotect_object(resolve_value);
+            }
             throw;
         }
     } catch (const std::exception& exception) {
@@ -5640,7 +5655,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_command_documentation));
     (void)scm_c_define_gsubr("define-interaction-provider!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(define_interaction_provider));
-    (void)scm_c_define_gsubr("define-completion-provider!", 3, 0, 0,
+    (void)scm_c_define_gsubr("define-completion-provider!", 3, 1, 0,
                              reinterpret_cast<scm_t_subr>(define_completion_provider));
     (void)scm_c_define_gsubr("bind-key-if-command!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(bind_key_if_command));
@@ -6777,6 +6792,7 @@ struct GuileCall {
         InvokeCommand,
         InvokeProvider,
         InvokeCompletionProvider,
+        InvokeCompletionResolver,
         TransformProviderResult,
         InvokeInputHandler,
         InvokePositionHints,
@@ -6794,6 +6810,7 @@ struct GuileCall {
     const CommandContext* context = nullptr;
     const CommandInvocation* invocation = nullptr;
     const CompletionRequest* completion_request = nullptr;
+    const CompletionItem* completion_item = nullptr;
     const InputStateChange* input_state_change = nullptr;
     const BufferModePolicyChange* mode_policy_change = nullptr;
     EditorRuntime* runtime = nullptr;
@@ -6813,6 +6830,7 @@ struct GuileCall {
     std::vector<InteractionCandidate> provider_candidates;
     CompletionProvider completion_provider;
     CompletionProviderResponse completion_response;
+    CompletionItem resolved_completion_item;
     std::vector<PositionHint> position_hints;
     ModelineContent modeline_content;
     std::string error;
@@ -6833,6 +6851,7 @@ struct GuileCall {
     GuileDisplayPlan display_plan;
     Operation operation = Operation::Load;
     bool pending_key_sequence = false;
+    bool completion_needs_resolution = false;
     bool force = false;
     bool enabled = false;
 };
@@ -6872,7 +6891,11 @@ void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
         state.providers.pop_back();
     }
     while (state.completion_providers.size() > checkpoint.completion_providers.size()) {
-        (void)scm_gc_unprotect_object(state.completion_providers.back().complete);
+        const ScriptCompletionProvider& provider = state.completion_providers.back();
+        (void)scm_gc_unprotect_object(provider.complete);
+        if (!scheme_false(provider.resolve)) {
+            (void)scm_gc_unprotect_object(provider.resolve);
+        }
         state.completion_providers.pop_back();
     }
     while (state.commands.size() > checkpoint.commands.size()) {
@@ -7221,8 +7244,32 @@ SCM completion_request_value(const CompletionRequest& request) {
     return result;
 }
 
+SCM completion_item_value(const CompletionItem& item) {
+    SCM result = scm_c_make_vector(10, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("completion-item"));
+    const auto set_text = [&](std::size_t index, const std::string& value) {
+        scm_c_vector_set_x(result, index, scm_from_utf8_stringn(value.data(), value.size()));
+    };
+    set_text(1, item.label);
+    set_text(2, item.kind);
+    set_text(3, item.detail);
+    set_text(4, item.filter_text);
+    set_text(5, item.sort_text);
+    set_text(6, item.edit ? item.edit->new_text : item.label);
+    set_text(7, item.documentation);
+    if (item.edit) {
+        scm_c_vector_set_x(result, 8, scm_from_uint32(item.edit->replace_range.start.value));
+        scm_c_vector_set_x(result, 9, scm_from_uint32(item.edit->replace_range.end.value));
+    } else {
+        scm_c_vector_set_x(result, 8, SCM_BOOL_F);
+        scm_c_vector_set_x(result, 9, SCM_BOOL_F);
+    }
+    return result;
+}
+
 CompletionProviderResponse completion_response_from_scheme(SCM value, CompletionProvider provider,
-                                                           const CompletionRequest& request) {
+                                                           const CompletionRequest& request,
+                                                           bool needs_resolution = false) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 3 ||
         !symbol_is(scm_c_vector_ref(value, 0), "completion-result") ||
         !scm_is_vector(scm_c_vector_ref(value, 1)) || !scheme_boolean(scm_c_vector_ref(value, 2))) {
@@ -7262,10 +7309,11 @@ CompletionProviderResponse completion_response_from_scheme(SCM value, Completion
             replacement = {TextOffset{scm_to_uint32(start_value)},
                            TextOffset{scm_to_uint32(end_value)}};
         }
+        const std::string label = scheme_string(scm_c_vector_ref(candidate, 1));
         items.push_back(
             {.provider = provider,
              .filter_text = scheme_string(scm_c_vector_ref(candidate, 4)),
-             .label = scheme_string(scm_c_vector_ref(candidate, 1)),
+             .label = label,
              .kind = scheme_string(scm_c_vector_ref(candidate, 2)),
              .detail = scheme_string(scm_c_vector_ref(candidate, 3)),
              .edit = CompletionEdit{.insert_range = replacement,
@@ -7273,12 +7321,12 @@ CompletionProviderResponse completion_response_from_scheme(SCM value, Completion
                                     .new_text = scheme_string(scm_c_vector_ref(candidate, 6))},
              .sort_text = scheme_string(scm_c_vector_ref(candidate, 5)),
              .is_snippet = false,
-             .resolved = true,
+             .resolved = !needs_resolution,
              .resolving = false,
              .resolve_error = {},
              .documentation = scheme_string(scm_c_vector_ref(candidate, 7)),
              .additional_edits = {},
-             .raw = {}});
+             .raw = needs_resolution ? label : std::string{}});
     }
     return {.provider = provider,
             .items = std::move(items),
@@ -7476,8 +7524,24 @@ SCM call_body(void* data) {
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      completion_request_value(*call.completion_request));
             call.completion_response = completion_response_from_scheme(
-                call.result, call.completion_provider, *call.completion_request);
+                call.result, call.completion_provider, *call.completion_request,
+                call.completion_needs_resolution);
             break;
+        case GuileCall::Operation::InvokeCompletionResolver: {
+            call.result = scm_call_3(call.procedure, command_context_value(*call.context),
+                                     completion_request_value(*call.completion_request),
+                                     completion_item_value(*call.completion_item));
+            SCM candidates = scm_c_make_vector(1, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(candidates, 0, call.result);
+            SCM response = scm_c_make_vector(3, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(response, 0, scm_from_utf8_symbol("completion-result"));
+            scm_c_vector_set_x(response, 1, candidates);
+            scm_c_vector_set_x(response, 2, SCM_BOOL_F);
+            CompletionProviderResponse converted = completion_response_from_scheme(
+                response, call.completion_provider, *call.completion_request);
+            call.resolved_completion_item = std::move(converted.items.front());
+            break;
+        }
         case GuileCall::Operation::TransformProviderResult:
             call.result = scm_call_1(call.procedure, call.argument);
             call.provider_candidates = provider_candidates_from_scheme(call.result);
@@ -8079,6 +8143,9 @@ public:
         state_->providers.clear();
         for (const ScriptCompletionProvider& provider : state_->completion_providers) {
             (void)scm_gc_unprotect_object(provider.complete);
+            if (!scheme_false(provider.resolve)) {
+                (void)scm_gc_unprotect_object(provider.resolve);
+            }
         }
         state_->completion_providers.clear();
         state_->completion_providers_by_name.clear();
@@ -8651,6 +8718,8 @@ public:
         call.context = &context;
         call.completion_request = &request;
         call.completion_provider = provider;
+        call.completion_needs_resolution =
+            !scheme_false(state_->completion_providers[provider.session].resolve);
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(
@@ -8658,6 +8727,36 @@ public:
         }
         state_->last_error.reset();
         return std::move(call.completion_response);
+    }
+
+    std::expected<CompletionItem, std::string> resolve(const CompletionProvider& provider,
+                                                       const CompletionRequest& request,
+                                                       const CompletionItem& item) {
+        require_owner_thread();
+        if (provider.kind != CompletionProviderKind::Scripted ||
+            provider.session >= state_->completion_providers.size()) {
+            return std::unexpected("unknown scripted completion provider");
+        }
+        const SCM procedure = state_->completion_providers[provider.session].resolve;
+        if (scheme_false(procedure)) {
+            return std::unexpected("scripted completion provider has no resolver");
+        }
+        CommandContext context(*lease_->runtime, request.target.window, request.target.buffer,
+                               request.target.view);
+        GuileCall call;
+        call.operation = GuileCall::Operation::InvokeCompletionResolver;
+        call.procedure = procedure;
+        call.context = &context;
+        call.completion_request = &request;
+        call.completion_item = &item;
+        call.completion_provider = provider;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(
+                std::format("Guile completion resolver failed: {}", result.error()));
+        }
+        state_->last_error.reset();
+        return std::move(call.resolved_completion_item);
     }
 
     GuileRuntimeSnapshot snapshot() const {
@@ -8860,6 +8959,12 @@ GuileRuntime::evaluate(GuileEvaluationRequest request) {
 std::expected<CompletionProviderResponse, std::string>
 GuileRuntime::complete(const CompletionProvider& provider, const CompletionRequest& request) {
     return impl_->complete(provider, request);
+}
+
+std::expected<CompletionItem, std::string> GuileRuntime::resolve(const CompletionProvider& provider,
+                                                                 const CompletionRequest& request,
+                                                                 const CompletionItem& item) {
+    return impl_->resolve(provider, request, item);
 }
 
 GuileRuntimeSnapshot GuileRuntime::snapshot() const {

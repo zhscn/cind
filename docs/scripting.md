@@ -77,7 +77,7 @@ The native module exports:
 (define-command! host command-name execute enabled)
 (set-command-documentation! host command-name documentation)
 (define-interaction-provider! host provider-name complete)
-(define-completion-provider! host provider-name complete)
+(define-completion-provider! host provider-name complete [resolve])
 (define-keymap! host keymap-name parent-or-#f)
 (bind-key! host keymap-name key-sequence command-or-prefix)
 (bind-key-if-command! host keymap-name key-sequence command-name)
@@ -584,7 +584,8 @@ protects the procedure from collection, validates the complete result and invali
 with its application. Scheme conditions and malformed candidates become interaction errors and are
 retained in the scripting inspection snapshot.
 
-`define-completion-provider!` registers an editor-thread document-completion procedure. The
+`define-completion-provider!` registers an editor-thread document-completion procedure and an
+optional resolver. The
 procedure receives an immutable command context and a request value whose accessors are exported by
 `(cind command)`: query, generic anchor, caret, logical line, trigger kind, and trigger character.
 `start-completion!` creates that request from an ordered vector of provider names and either the
@@ -597,6 +598,12 @@ and applies the selected edit atomically. A scripted provider may mark a result 
 changes request a fresh result instead of only filtering its previous candidates.
 Complete results are filtered locally as the query grows or shrinks. This keeps deletion on the
 editor thread independent of provider evaluation while retaining stable item identities.
+When a resolver is supplied, initial items remain unresolved and the pipeline calls it only for a
+visible selected item. The resolver receives the command context, original completion request, and
+the `completion-item` value, then returns a replacement `completion-item`. `(cind command)` exports
+field accessors for copying unchanged item data into the resolved value. Providers use this path for
+metadata whose computation is unsuitable for the typing hot path, such as documentation and
+additional semantic detail.
 
 `enabled-command-names`, `open-buffer-summaries`, `project-root`, `project-files` and
 `active-key-bindings` expose immutable registry and application snapshots. Path operations provide

@@ -64,9 +64,6 @@
             (values (utf8->string prefix) start))
           (loop (- start 1))))))
 
-(define (completion-documentation candidate)
-  (or (completion-candidate-documentation candidate) ""))
-
 (define (ares-document-completions host context request)
   (call-with-values
       (lambda ()
@@ -76,7 +73,8 @@
       (let ((candidates
              (if (zero? (string-length prefix))
                  #()
-                 (repl-complete (make-repl (make-evaluation-module host)) prefix))))
+                 (repl-complete-summaries
+                  (make-repl (make-evaluation-module host)) prefix))))
         (let loop ((index 0)
                    (result '()))
           (if (= index (vector-length candidates))
@@ -88,13 +86,30 @@
                              name
                              #:kind (completion-candidate-type candidate)
                              #:detail (completion-candidate-namespace candidate)
-                             #:documentation (completion-documentation candidate)
                              #:start start
                              #:end (completion-request-caret request))
                             result)))))))))
 
+(define (ares-resolve-document-completion host context request item)
+  (let* ((metadata
+          (repl-lookup (make-repl (make-evaluation-module host))
+                       (string->symbol (completion-item-label item))))
+         (documentation (or (and metadata (assoc-ref metadata "docstring")) "")))
+    (completion-item
+     (completion-item-label item)
+     #:kind (completion-item-kind item)
+     #:detail (completion-item-detail item)
+     #:filter-text (completion-item-filter-text item)
+     #:sort-text (completion-item-sort-text item)
+     #:insert-text (completion-item-insert-text item)
+     #:documentation documentation
+     #:start (completion-item-start item)
+     #:end (completion-item-end item))))
+
 (define (ares-completion-provider-definitions host)
   (list
-   (cons "ares"
+   (list "ares"
          (lambda (context request)
-           (ares-document-completions host context request)))))
+           (ares-document-completions host context request))
+         (lambda (context request item)
+           (ares-resolve-document-completion host context request item)))))

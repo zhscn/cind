@@ -21,7 +21,8 @@
             completion-candidate-namespace
             completion-candidate-arglists
             completion-candidate-documentation
-            completion-candidates))
+            completion-candidates
+            completion-candidate-summaries))
 
 (define-record-type <completion-candidate>
   (make-completion-candidate name type namespace arglists documentation)
@@ -52,6 +53,34 @@
                    (object->string (module-name candidate-module))
                    (get-arglists variable)
                    (get-docstring variable))
+                  result))
+          '()
+          (string-append "^" (regexp-quote prefix))
+          ((@@ (ice-9 session) make-fold-modules)
+           (lambda () (list module))
+           (compose reverse module-uses)
+           identity))))
+    (list->vector
+     (sort! candidates
+            (lambda (left right)
+              (string<? (completion-candidate-name left)
+                        (completion-candidate-name right)))))))
+
+(define (completion-candidate-summaries prefix module)
+  "Return inexpensive completion metadata for names beginning with PREFIX in MODULE."
+  (unless (string? prefix)
+    (error "completion prefix must be a string" prefix))
+  (unless (module? module)
+    (error "completion environment must be a module" module))
+  (let ((candidates
+         (apropos-fold
+          (lambda (candidate-module name variable result)
+            (cons (make-completion-candidate
+                   (symbol->string name)
+                   (variable-type variable)
+                   (object->string (module-name candidate-module))
+                   #f
+                   #f)
                   result))
           '()
           (string-append "^" (regexp-quote prefix))
