@@ -75,4 +75,23 @@ LineSigns line_signs(const Text& baseline, const Text& current) {
     return signs;
 }
 
+void DiagnosticLineSigns::include(std::uint32_t line, DiagnosticSignKind kind) {
+    if (kind == DiagnosticSignKind::None) {
+        return;
+    }
+    const auto found = std::ranges::lower_bound(entries_, line, {}, &DiagnosticLineSign::line);
+    if (found != entries_.end() && found->line == line) {
+        if (static_cast<std::uint8_t>(kind) < static_cast<std::uint8_t>(found->kind)) {
+            found->kind = kind;
+        }
+        return;
+    }
+    entries_.insert(found, {.line = line, .kind = kind});
+}
+
+DiagnosticSignKind DiagnosticLineSigns::at(std::uint32_t line) const {
+    const auto found = std::ranges::lower_bound(entries_, line, {}, &DiagnosticLineSign::line);
+    return found != entries_.end() && found->line == line ? found->kind : DiagnosticSignKind::None;
+}
+
 } // namespace cind::ui

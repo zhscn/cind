@@ -43,6 +43,24 @@ const std::vector<BufferLocation>& Buffer::locations() const {
     return locations_revision_ == snapshot().revision() ? locations_ : empty;
 }
 
+std::vector<Diagnostic> Buffer::diagnostics() const {
+    const RevisionId revision = snapshot().revision();
+    std::vector<Diagnostic> result;
+    for (const auto& [owner, set] : diagnostic_sets_) {
+        (void)owner;
+        if (set.revision == revision) {
+            result.insert(result.end(), set.diagnostics.begin(), set.diagnostics.end());
+        }
+    }
+    std::ranges::sort(result, [](const Diagnostic& left, const Diagnostic& right) {
+        if (left.range.start != right.range.start) {
+            return left.range.start < right.range.start;
+        }
+        return static_cast<std::uint8_t>(left.severity) < static_cast<std::uint8_t>(right.severity);
+    });
+    return result;
+}
+
 void Buffer::require_writable() const {
     if (read_only_) {
         throw std::logic_error("buffer is read-only");
@@ -275,6 +293,38 @@ void BufferRegistry::set_locations(BufferId id, std::vector<BufferLocation> loca
     }
     buffer.locations_ = std::move(locations);
     buffer.locations_revision_ = buffer.snapshot().revision();
+}
+
+void BufferRegistry::set_diagnostics(BufferId id, std::string owner, RevisionId revision,
+                                     std::vector<Diagnostic> diagnostics) {
+    Buffer& buffer = get(id);
+    if (owner.empty()) {
+        throw std::invalid_argument("diagnostic owner must not be empty");
+    }
+    if (revision != buffer.snapshot().revision()) {
+        throw std::invalid_argument("diagnostics do not match the current buffer revision");
+    }
+    const std::uint32_t size = buffer.snapshot().size_bytes();
+    for (const Diagnostic& diagnostic : diagnostics) {
+        if (diagnostic.range.start > diagnostic.range.end || diagnostic.range.end.value > size ||
+            diagnostic.message.empty()) {
+            throw std::invalid_argument("diagnostic has an invalid range or message");
+        }
+    }
+    DiagnosticSet set{
+        .owner = std::move(owner), .revision = revision, .diagnostics = std::move(diagnostics)};
+    const std::string key = set.owner;
+    buffer.diagnostic_sets_.insert_or_assign(key, std::move(set));
+    ++buffer.diagnostics_generation_;
+}
+
+bool BufferRegistry::clear_diagnostics(BufferId id, std::string_view owner) {
+    Buffer& buffer = get(id);
+    if (buffer.diagnostic_sets_.erase(std::string(owner)) == 0) {
+        return false;
+    }
+    ++buffer.diagnostics_generation_;
+    return true;
 }
 
 } // namespace cind

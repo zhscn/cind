@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "lsp/completion.hpp"
+#include "lsp/diagnostics.hpp"
 #include "lsp/json_rpc.hpp"
 #include "lsp/navigation.hpp"
 #include "lsp/protocol.hpp"
@@ -257,7 +258,8 @@ TEST_CASE("LSP navigation decodes locations and location links") {
                         .arguments = {},
                         .root = std::filesystem::temp_directory_path().string(),
                         .language_id = "cpp",
-                        .client_capabilities = {LspNavigationFeature::client_capabilities()}});
+                        .client_capabilities = {LspDiagnosticsFeature::client_capabilities(),
+                                                LspNavigationFeature::client_capabilities()}});
     const LspNavigationRequest request{
         .uri = "file:///tmp/origin.cpp",
         .language_id = "cpp",
@@ -268,7 +270,11 @@ TEST_CASE("LSP navigation decodes locations and location links") {
     };
 
     std::optional<std::vector<LspLocation>> definitions;
+    std::optional<LspPublishedDiagnostics> diagnostics;
     std::string error;
+    LspDiagnosticsFeature::attach(
+        session, [&](LspPublishedDiagnostics published) { diagnostics = std::move(published); },
+        [&](std::string message) { error = std::move(message); });
     auto started = LspNavigationFeature::request(
         session, LspNavigationKind::Definition, request,
         [&](std::vector<LspLocation> locations) { definitions = std::move(locations); },
@@ -285,6 +291,12 @@ TEST_CASE("LSP navigation decodes locations and location links") {
     CHECK((*definitions)[0].range.start.line == 0);
     CHECK((*definitions)[0].range.start.character == 3);
     CHECK(LspNavigationFeature::supported(session, LspNavigationKind::Definition));
+    REQUIRE(diagnostics.has_value());
+    CHECK(diagnostics->uri == request.uri);
+    CHECK(diagnostics->version == request.revision);
+    REQUIRE(diagnostics->diagnostics.size() == 1);
+    CHECK(diagnostics->diagnostics[0].severity == DiagnosticSeverity::Warning);
+    CHECK(diagnostics->diagnostics[0].message == "test warning");
 
     std::optional<std::vector<LspLocation>> references;
     started = LspNavigationFeature::request(

@@ -510,7 +510,10 @@ void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapsh
             output.push_back('}');
         }
         output.push_back(']');
-        output += std::format(",\"location_count\":{}", buffer.location_count);
+        output += std::format(",\"location_count\":{},\"diagnostics\":{{\"count\":{},\"errors\":{},"
+                              "\"warnings\":{}}}",
+                              buffer.location_count, buffer.diagnostic_count,
+                              buffer.diagnostic_errors, buffer.diagnostic_warnings);
         output.push_back('}');
     }
     output.push_back(']');
@@ -2977,6 +2980,14 @@ std::string_view style_class_name(ui::StyleClass style) {
         return "sign-modified";
     case ui::StyleClass::SignDeleted:
         return "sign-deleted";
+    case ui::StyleClass::DiagnosticError:
+        return "diagnostic-error";
+    case ui::StyleClass::DiagnosticWarning:
+        return "diagnostic-warning";
+    case ui::StyleClass::DiagnosticInformation:
+        return "diagnostic-information";
+    case ui::StyleClass::DiagnosticHint:
+        return "diagnostic-hint";
     case ui::StyleClass::StatusBar:
         return "status-bar";
     case ui::StyleClass::StatusKey:

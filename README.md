@@ -161,6 +161,7 @@ preferred.
 - [Guile scripting architecture](docs/scripting.md)
 - [Asynchronous runtime](docs/async-runtime.md)
 - [LSP sessions and semantic completion](docs/lsp.md)
+- [Diagnostics](docs/diagnostics.md)
 - [Projects](docs/projects.md)
 - [Workbenches](docs/workbenches.md)
 - [Location lists](docs/location-lists.md)

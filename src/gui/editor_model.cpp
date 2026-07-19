@@ -189,6 +189,8 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     const ui::EditorSceneInput active_input{.text = snapshot.content(),
                                             .tokens = application_.syntax_tokens(),
                                             .signs = signs(application_.window_id()),
+                                            .diagnostic_signs =
+                                                &diagnostic_signs(application_.window_id()),
                                             .caret = session.caret(),
                                             .selections = active_selections,
                                             .position_hints = active_position_hints,
@@ -243,6 +245,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
             {.text = pane_snapshot.content(),
              .tokens = application_.syntax_tokens(placement.window),
              .signs = signs(placement.window),
+             .diagnostic_signs = &diagnostic_signs(placement.window),
              .caret = pane_session.caret(),
              .selections = pane_selections,
              .position_hints = pane_position_hints,
@@ -556,7 +559,10 @@ EditorStateSnapshot EditorModel::inspect() {
                            .interaction_class = buffer.interaction_class,
                            .initial_input_state = buffer.initial_input_state,
                            .things = std::move(things),
-                           .location_count = buffer.location_count});
+                           .location_count = buffer.location_count,
+                           .diagnostic_count = buffer.diagnostic_count,
+                           .diagnostic_errors = buffer.diagnostic_errors,
+                           .diagnostic_warnings = buffer.diagnostic_warnings});
     }
     const auto inspect_window = [&](WindowId window, bool active) {
         const Window& definition = runtime.windows().get(window);
@@ -806,7 +812,7 @@ const ui::LineSigns& EditorModel::signs(WindowId window) {
     auto found = std::ranges::find_if(
         sign_caches_, [buffer](const SignCache& cache) { return cache.buffer == buffer; });
     if (found == sign_caches_.end()) {
-        sign_caches_.push_back({.buffer = buffer, .signs = {}});
+        sign_caches_.push_back({.buffer = buffer, .signs = {}, .diagnostic_signs = {}});
         found = std::prev(sign_caches_.end());
     }
     if (found->revision != snapshot.revision() ||
@@ -817,6 +823,43 @@ const ui::LineSigns& EditorModel::signs(WindowId window) {
         found->generation = application_.save_generation(window);
     }
     return found->signs;
+}
+
+const ui::DiagnosticLineSigns& EditorModel::diagnostic_signs(WindowId window) {
+    const Buffer& buffer = application_.session(window).buffer();
+    const BufferId id = buffer.id();
+    const RevisionId revision = buffer.snapshot().revision();
+    auto found = std::ranges::find_if(sign_caches_,
+                                      [id](const SignCache& cache) { return cache.buffer == id; });
+    if (found == sign_caches_.end()) {
+        sign_caches_.push_back({.buffer = id, .signs = {}, .diagnostic_signs = {}});
+        found = std::prev(sign_caches_.end());
+    }
+    if (found->diagnostics_revision != revision ||
+        found->diagnostics_generation != buffer.diagnostics_generation()) {
+        ui::DiagnosticLineSigns signs;
+        const Text& text = buffer.snapshot().content();
+        for (const Diagnostic& diagnostic : buffer.diagnostics()) {
+            const ui::DiagnosticSignKind kind = [&] {
+                switch (diagnostic.severity) {
+                case DiagnosticSeverity::Error:
+                    return ui::DiagnosticSignKind::Error;
+                case DiagnosticSeverity::Warning:
+                    return ui::DiagnosticSignKind::Warning;
+                case DiagnosticSeverity::Information:
+                    return ui::DiagnosticSignKind::Information;
+                case DiagnosticSeverity::Hint:
+                    return ui::DiagnosticSignKind::Hint;
+                }
+                return ui::DiagnosticSignKind::Error;
+            }();
+            signs.include(text.position(diagnostic.range.start).line, kind);
+        }
+        found->diagnostic_signs = std::move(signs);
+        found->diagnostics_revision = revision;
+        found->diagnostics_generation = buffer.diagnostics_generation();
+    }
+    return found->diagnostic_signs;
 }
 
 std::string EditorModel::pane_id(WindowId window) {

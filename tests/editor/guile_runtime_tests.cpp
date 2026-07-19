@@ -1384,7 +1384,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 225);
+    CHECK(*installed == 226);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 12);
@@ -2106,7 +2106,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 225);
+    CHECK(snapshot.scripted_commands == 226);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 12);
     CHECK_FALSE(snapshot.last_error.has_value());

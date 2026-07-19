@@ -184,22 +184,49 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         numbers.primitives().push_back({row, 0, std::format("{:>{}} ", line + 1, digits),
                                         StyleClass::Gutter, false, PrimKind::Text,
                                         std::format("line:{}/number", line)});
-        switch (input.signs.at(line)) {
-        case SignKind::Added:
-            marks.primitives().push_back({row, 0, "▎", StyleClass::SignAdded, false,
-                                          PrimKind::ChangeBar, std::format("line:{}/sign", line)});
+        const DiagnosticSignKind diagnostic = input.diagnostic_signs != nullptr
+                                                  ? input.diagnostic_signs->at(line)
+                                                  : DiagnosticSignKind::None;
+        switch (diagnostic) {
+        case DiagnosticSignKind::Error:
+            marks.primitives().push_back({row, 0, "●", StyleClass::DiagnosticError, false,
+                                          PrimKind::Text, std::format("line:{}/diagnostic", line)});
             break;
-        case SignKind::Modified:
-            marks.primitives().push_back({row, 0, "▎", StyleClass::SignModified, false,
-                                          PrimKind::ChangeBar, std::format("line:{}/sign", line)});
+        case DiagnosticSignKind::Warning:
+            marks.primitives().push_back({row, 0, "▲", StyleClass::DiagnosticWarning, false,
+                                          PrimKind::Text, std::format("line:{}/diagnostic", line)});
             break;
-        case SignKind::DeletedAbove:
-            marks.primitives().push_back({row, 0, "▔", StyleClass::SignDeleted, false,
-                                          PrimKind::ChangeDeletion,
-                                          std::format("line:{}/sign", line)});
+        case DiagnosticSignKind::Information:
+            marks.primitives().push_back({row, 0, "●", StyleClass::DiagnosticInformation, false,
+                                          PrimKind::Text, std::format("line:{}/diagnostic", line)});
             break;
-        case SignKind::None:
+        case DiagnosticSignKind::Hint:
+            marks.primitives().push_back({row, 0, "·", StyleClass::DiagnosticHint, false,
+                                          PrimKind::Text, std::format("line:{}/diagnostic", line)});
             break;
+        case DiagnosticSignKind::None:
+            break;
+        }
+        if (diagnostic == DiagnosticSignKind::None) {
+            switch (input.signs.at(line)) {
+            case SignKind::Added:
+                marks.primitives().push_back({row, 0, "▎", StyleClass::SignAdded, false,
+                                              PrimKind::ChangeBar,
+                                              std::format("line:{}/sign", line)});
+                break;
+            case SignKind::Modified:
+                marks.primitives().push_back({row, 0, "▎", StyleClass::SignModified, false,
+                                              PrimKind::ChangeBar,
+                                              std::format("line:{}/sign", line)});
+                break;
+            case SignKind::DeletedAbove:
+                marks.primitives().push_back({row, 0, "▔", StyleClass::SignDeleted, false,
+                                              PrimKind::ChangeDeletion,
+                                              std::format("line:{}/sign", line)});
+                break;
+            case SignKind::None:
+                break;
+            }
         }
 
         const TextRange content = input.text.line_content_range(line);

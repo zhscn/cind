@@ -63,9 +63,13 @@ private:
         RevisionId revision = static_cast<RevisionId>(-1);
         std::uint32_t generation = static_cast<std::uint32_t>(-1);
         ui::LineSigns signs;
+        RevisionId diagnostics_revision = static_cast<RevisionId>(-1);
+        std::uint64_t diagnostics_generation = static_cast<std::uint64_t>(-1);
+        ui::DiagnosticLineSigns diagnostic_signs;
     };
 
     const ui::LineSigns& signs(WindowId window);
+    const ui::DiagnosticLineSigns& diagnostic_signs(WindowId window);
     static std::string pane_id(WindowId window);
 
     EditorApplication application_;

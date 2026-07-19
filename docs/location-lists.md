@@ -56,3 +56,10 @@ both on the editor thread.
 
 Ripgrep exit status zero represents matches and status one represents an empty list. Tool failures
 remain echo-area diagnostics and do not create a result buffer.
+
+## Diagnostic producer
+
+`diagnostic.list` reads revision-current diagnostics from the active Buffer and creates a generated
+location list with severity, producer, optional code, and message. Entries use byte coordinates
+because the Buffer diagnostic store has already resolved protocol positions against the current
+document snapshot. `C-c l e` opens this list.

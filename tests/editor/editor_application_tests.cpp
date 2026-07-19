@@ -3508,6 +3508,19 @@ TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
                               [](const JumpEdge& edge) { return edge.kind == "list"; }));
 
     REQUIRE(application.switch_buffer(origin));
+    const std::vector<Diagnostic> diagnostics =
+        application.runtime().buffers().get(origin).diagnostics();
+    REQUIRE(diagnostics.size() == 1);
+    CHECK(diagnostics[0].range == make_range(1, 5));
+    CHECK(diagnostics[0].severity == DiagnosticSeverity::Warning);
+    CHECK(diagnostics[0].source == "cind-test");
+    REQUIRE(application.execute_command("diagnostic.list"));
+    CHECK(application.session().buffer().kind() == BufferKind::Process);
+    CHECK(application.session().buffer().locations().size() == 1);
+    send_keys(application, "RET");
+    CHECK(application.buffer_id() == origin);
+    CHECK(application.session().caret() == TextOffset{1});
+
     application.session().set_caret(TextOffset{});
     REQUIRE(application.execute_command("lsp.definition"));
     for (int iteration = 0; application.session().caret() != TextOffset{5} && iteration < 20;

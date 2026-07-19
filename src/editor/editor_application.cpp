@@ -3,6 +3,7 @@
 #include "editor/noun_evaluator.hpp"
 #include "editor/resource_policy.hpp"
 #include "lsp/completion.hpp"
+#include "lsp/diagnostics.hpp"
 #include "lsp/navigation.hpp"
 #include "syntax/structure.hpp"
 #include "ui/char_width.hpp"
@@ -2439,6 +2440,7 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         released != nullptr && released->resource_uri()) {
         (void)lsp_sessions_->close_document(path_to_file_uri(*released->resource_uri()));
     }
+    lsp_buffer_sessions_.erase(buffer);
     buffers_.erase(found);
     if (!runtime_.buffers().erase(buffer)) {
         throw std::logic_error("buffer lifecycle registry is inconsistent");
@@ -2458,6 +2460,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
         const ViewState* view = find_view(window_id(), state.buffer);
         const std::optional<ModeId> major = buffer.modes().major();
         const EffectiveModePolicy mode_policy = runtime_.modes().effective_policy(buffer.modes());
+        const std::vector<Diagnostic> diagnostics = buffer.diagnostics();
         result.push_back(
             {.buffer = state.buffer,
              .view = view != nullptr ? std::optional(view->view) : std::nullopt,
@@ -2479,7 +2482,12 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
                                         : std::string();
                  }(),
              .things = mode_policy.things,
-             .location_count = buffer.locations().size()});
+             .location_count = buffer.locations().size(),
+             .diagnostic_count = diagnostics.size(),
+             .diagnostic_errors = static_cast<std::size_t>(
+                 std::ranges::count(diagnostics, DiagnosticSeverity::Error, &Diagnostic::severity)),
+             .diagnostic_warnings = static_cast<std::size_t>(std::ranges::count(
+                 diagnostics, DiagnosticSeverity::Warning, &Diagnostic::severity))});
     }
     return result;
 }
@@ -3444,11 +3452,97 @@ EditorApplication::resolve_lsp_session(CommandTarget target, std::string_view na
          .root = std::move(root),
          .language_id = language,
          .client_capabilities = {LspCompletionFeature::client_capabilities(),
+                                 LspDiagnosticsFeature::client_capabilities(),
                                  LspNavigationFeature::client_capabilities()}});
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }
+    lsp_buffer_sessions_.insert_or_assign(target.buffer, *session);
+    attach_lsp_diagnostics(*session);
     return *session;
+}
+
+void EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
+    if (!lsp_diagnostic_sessions_.insert(session_id.value).second) {
+        return;
+    }
+    LspSession* session = lsp_sessions_->find(session_id);
+    if (session == nullptr) {
+        lsp_diagnostic_sessions_.erase(session_id.value);
+        return;
+    }
+    LspDiagnosticsFeature::attach(
+        *session,
+        [this, session_id](LspPublishedDiagnostics published) {
+            publish_lsp_diagnostics(session_id, std::move(published));
+        },
+        [this](std::string error) {
+            message_ = std::format("LSP diagnostics failed: {}", std::move(error));
+        });
+}
+
+void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
+                                                LspPublishedDiagnostics published) {
+    const std::expected<std::string, std::string> resource = file_uri_to_path(published.uri);
+    if (!resource) {
+        message_ = std::format("LSP diagnostics failed: {}", resource.error());
+        return;
+    }
+    const std::optional<BufferId> buffer_id = runtime_.buffers().find_by_resource(*resource);
+    if (!buffer_id) {
+        return;
+    }
+    const auto owned = lsp_buffer_sessions_.find(*buffer_id);
+    if (owned == lsp_buffer_sessions_.end() || owned->second != session_id) {
+        return;
+    }
+    const DocumentSnapshot snapshot = runtime_.buffers().get(*buffer_id).snapshot();
+    if (published.version && *published.version != snapshot.revision()) {
+        return;
+    }
+    std::vector<Diagnostic> diagnostics;
+    diagnostics.reserve(published.diagnostics.size());
+    for (LspDiagnostic& source : published.diagnostics) {
+        const std::optional<TextRange> range =
+            text_range_from_lsp(snapshot.content(), source.range);
+        if (!range) {
+            message_ = "LSP diagnostics failed: server returned an invalid range";
+            return;
+        }
+        diagnostics.push_back({.range = *range,
+                               .severity = source.severity,
+                               .message = std::move(source.message),
+                               .source = std::move(source.source),
+                               .code = std::move(source.code)});
+    }
+    try {
+        runtime_.buffers().set_diagnostics(*buffer_id, std::format("lsp:{}", session_id.value),
+                                           snapshot.revision(), std::move(diagnostics));
+    } catch (const std::exception& exception) {
+        message_ = std::format("LSP diagnostics failed: {}", exception.what());
+    }
+}
+
+void EditorApplication::synchronize_lsp_buffer(BufferId buffer_id) {
+    const auto found = lsp_buffer_sessions_.find(buffer_id);
+    if (found == lsp_buffer_sessions_.end()) {
+        return;
+    }
+    Buffer* buffer = runtime_.buffers().try_get(buffer_id);
+    LspSession* session = lsp_sessions_->find(found->second);
+    if (buffer == nullptr || session == nullptr || !buffer->resource_uri()) {
+        lsp_buffer_sessions_.erase(found);
+        return;
+    }
+    const DocumentSnapshot snapshot = buffer->snapshot();
+    if (std::expected<void, std::string> synchronized =
+            session->synchronize_document({.uri = path_to_file_uri(*buffer->resource_uri()),
+                                           .language_id = session->config().language_id,
+                                           .revision = snapshot.revision(),
+                                           .text = snapshot.content()});
+        !synchronized) {
+        message_ = std::format("LSP synchronization failed: {}", synchronized.error());
+    }
 }
 
 std::expected<void, std::string>
@@ -3773,6 +3867,7 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
 void EditorApplication::after_edit() {
     message_.clear();
     reveal_caret_ = true;
+    synchronize_lsp_buffer(buffer_id());
 }
 
 std::expected<std::string, std::string> EditorApplication::begin_buffer_save(BufferId buffer) {

@@ -19,8 +19,10 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -31,6 +33,7 @@
 namespace cind {
 
 struct LocationListDocument;
+struct LspPublishedDiagnostics;
 
 struct EditorPlatformServices {
     std::function<std::expected<void, std::string>(std::string_view)> write_clipboard;
@@ -63,6 +66,9 @@ struct OpenBufferSnapshot {
     std::string initial_input_state;
     std::vector<ModeThingBinding> things;
     std::size_t location_count = 0;
+    std::size_t diagnostic_count = 0;
+    std::size_t diagnostic_errors = 0;
+    std::size_t diagnostic_warnings = 0;
 };
 
 struct OpenWindowSnapshot {
@@ -376,6 +382,9 @@ private:
     resolve_completion_provider(CommandTarget target, std::string_view name);
     std::expected<LspSessionId, std::string> resolve_lsp_session(CommandTarget target,
                                                                  std::string_view name);
+    void attach_lsp_diagnostics(LspSessionId session);
+    void publish_lsp_diagnostics(LspSessionId session, LspPublishedDiagnostics published);
+    void synchronize_lsp_buffer(BufferId buffer);
     std::expected<void, std::string>
     start_lsp_navigation(CommandTarget target, std::string_view kind, std::string_view provider);
     bool cancel_lsp_navigation();
@@ -412,6 +421,8 @@ private:
     std::unique_ptr<CompletionPipeline> completion_;
     LspSession::Cancel cancel_lsp_navigation_;
     std::uint64_t lsp_navigation_generation_ = 0;
+    std::map<BufferId, LspSessionId> lsp_buffer_sessions_;
+    std::set<std::uint64_t> lsp_diagnostic_sessions_;
 };
 
 } // namespace cind

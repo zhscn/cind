@@ -108,6 +108,9 @@ struct OpenBufferStateSnapshot {
     std::string initial_input_state;
     std::vector<ModeThingStateSnapshot> things;
     std::size_t location_count = 0;
+    std::size_t diagnostic_count = 0;
+    std::size_t diagnostic_errors = 0;
+    std::size_t diagnostic_warnings = 0;
 };
 
 struct OpenWindowStateSnapshot {

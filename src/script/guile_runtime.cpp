@@ -3470,6 +3470,56 @@ SCM buffer_locations(SCM host_object, SCM buffer_value) {
     return SCM_BOOL_F;
 }
 
+SCM diagnostic_severity_value(DiagnosticSeverity severity) {
+    switch (severity) {
+    case DiagnosticSeverity::Error:
+        return name_symbol("error");
+    case DiagnosticSeverity::Warning:
+        return name_symbol("warning");
+    case DiagnosticSeverity::Information:
+        return name_symbol("information");
+    case DiagnosticSeverity::Hint:
+        return name_symbol("hint");
+    }
+    return name_symbol("error");
+}
+
+// Returns #(start-line start-column end-line end-column severity source code message) entries.
+SCM buffer_diagnostics(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-diagnostics");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-diagnostics", 2);
+        const Buffer& source = host.runtime->buffers().get(buffer);
+        const Text& text = source.snapshot().content();
+        const std::vector<Diagnostic> diagnostics = source.diagnostics();
+        SCM result = scm_c_make_vector(diagnostics.size(), SCM_UNSPECIFIED);
+        for (std::size_t index = 0; index < diagnostics.size(); ++index) {
+            const Diagnostic& diagnostic = diagnostics[index];
+            const LinePosition start = text.position(diagnostic.range.start);
+            const LinePosition end = text.position(diagnostic.range.end);
+            SCM entry = scm_c_make_vector(8, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(entry, 0, scm_from_uint32(start.line));
+            scm_c_vector_set_x(entry, 1, scm_from_uint32(start.byte_column));
+            scm_c_vector_set_x(entry, 2, scm_from_uint32(end.line));
+            scm_c_vector_set_x(entry, 3, scm_from_uint32(end.byte_column));
+            scm_c_vector_set_x(entry, 4, diagnostic_severity_value(diagnostic.severity));
+            scm_c_vector_set_x(entry, 5, scm_from_utf8_string(diagnostic.source.c_str()));
+            scm_c_vector_set_x(entry, 6, scm_from_utf8_string(diagnostic.code.c_str()));
+            scm_c_vector_set_x(
+                entry, 7,
+                scm_from_utf8_stringn(diagnostic.message.data(), diagnostic.message.size()));
+            scm_c_vector_set_x(result, index, entry);
+        }
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-diagnostics", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-diagnostics", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 std::vector<BufferLocation> locations_from_scheme(SCM locations_value, const char* caller,
                                                   int position) {
     if (!scm_is_vector(locations_value)) {
@@ -5655,6 +5705,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
     (void)scm_c_define_gsubr("buffer-locations", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_locations));
+    (void)scm_c_define_gsubr("buffer-diagnostics", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_diagnostics));
     (void)scm_c_define_gsubr("set-buffer-locations!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_locations));
     (void)scm_c_define_gsubr("set-location-list!", 5, 0, 0,
@@ -5834,21 +5886,21 @@ void initialize_host_module(void*) {
         "owned-user-modules", "project-root", "project-files", "path-relative", "path-filename",
         "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
         "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-locations",
-        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
-        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
-        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
-        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
-        "delete-grapheme!", "newline!", "indent!", "type-text!", "page-rows", "interaction-status",
-        "interaction-provider", "set-interaction-provider!", "interaction-origin-project",
-        "refresh-interaction!", "submit-interaction!", "interaction-history",
-        "set-interaction-history!", "select-interaction-candidate!",
+        "buffer-diagnostics", "set-buffer-locations!", "set-location-list!", "buffer-read-only?",
+        "path-parent", "directory-path?", "path-as-directory", "view-caret", "view-mark",
+        "view-selection", "set-selection!", "clear-selection!", "push-selection-history!",
+        "pop-selection-history!", "clear-selection-history!", "selection-history-depth",
+        "replace-selection!", "selection-texts", "buffer-substring", "find-buffer-text",
+        "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
+        "display-buffer-position-at!", "display-generated-buffer!", "navigate-jump!", "mark-jump!",
+        "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!", "move-caret-to-line!",
+        "scroll-view-lines!", "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!",
+        "move-caret-line-boundary!", "delete-grapheme!", "newline!", "indent!", "type-text!",
+        "page-rows", "interaction-status", "interaction-provider", "set-interaction-provider!",
+        "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
+        "interaction-history", "set-interaction-history!", "select-interaction-candidate!",
         "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
         "completion-active?", "start-completion!", "request-lsp-navigation!", "move-completion!",
         "apply-completion!", "cancel-completion!", "view-position", "location-navigation",

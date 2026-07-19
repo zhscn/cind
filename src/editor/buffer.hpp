@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/document.hpp"
+#include "editor/diagnostic.hpp"
 #include "editor/ids.hpp"
 #include "editor/mode.hpp"
 #include "editor/settings.hpp"
@@ -82,6 +83,8 @@ public:
     std::uint32_t attached_view_count() const { return attached_views_; }
     const std::vector<BufferLocation>& locations() const;
     const BufferLocation* location_at(TextOffset offset) const;
+    std::vector<Diagnostic> diagnostics() const;
+    std::uint64_t diagnostics_generation() const { return diagnostics_generation_; }
 
 private:
     friend class BufferRegistry;
@@ -106,6 +109,8 @@ private:
     std::vector<KeymapId> keymaps_;
     std::vector<BufferLocation> locations_;
     RevisionId locations_revision_ = 0;
+    std::unordered_map<std::string, DiagnosticSet> diagnostic_sets_;
+    std::uint64_t diagnostics_generation_ = 0;
     std::uint32_t attached_views_ = 0;
 };
 
@@ -129,6 +134,9 @@ public:
     void rename(BufferId id, std::string requested_name);
     void set_resource(BufferId id, std::optional<std::string> uri, BufferKind kind);
     void set_locations(BufferId id, std::vector<BufferLocation> locations);
+    void set_diagnostics(BufferId id, std::string owner, RevisionId revision,
+                         std::vector<Diagnostic> diagnostics);
+    bool clear_diagnostics(BufferId id, std::string_view owner);
 
 private:
     struct Slot {

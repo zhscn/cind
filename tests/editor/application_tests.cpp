@@ -339,6 +339,48 @@ TEST_CASE("buffers expose validated semantic source locations") {
     CHECK(mutable_result.locations().empty());
 }
 
+TEST_CASE("buffers merge revision-bound diagnostics by producer") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "diagnostics.cpp",
+                                                      .initial_text = "one\ntwo\n",
+                                                      .kind = BufferKind::File,
+                                                      .resource_uri = "/work/diagnostics.cpp",
+                                                      .read_only = false});
+    const RevisionId revision = runtime.buffers().get(buffer).snapshot().revision();
+    runtime.buffers().set_diagnostics(buffer, "compiler", revision,
+                                      {{.range = make_range(4, 7),
+                                        .severity = DiagnosticSeverity::Warning,
+                                        .message = "warning",
+                                        .source = "compiler",
+                                        .code = "W1"}});
+    runtime.buffers().set_diagnostics(buffer, "lsp", revision,
+                                      {{.range = make_range(0, 3),
+                                        .severity = DiagnosticSeverity::Error,
+                                        .message = "error",
+                                        .source = "lsp",
+                                        .code = "E1"}});
+
+    Buffer& source = runtime.buffers().get(buffer);
+    REQUIRE(source.diagnostics().size() == 2);
+    CHECK(source.diagnostics()[0].message == "error");
+    CHECK(source.diagnostics()[1].message == "warning");
+    CHECK(runtime.buffers().clear_diagnostics(buffer, "compiler"));
+    REQUIRE(source.diagnostics().size() == 1);
+    CHECK_FALSE(runtime.buffers().clear_diagnostics(buffer, "compiler"));
+    CHECK_THROWS_AS(runtime.buffers().set_diagnostics(buffer, "", revision,
+                                                      {{.range = make_range(0, 1),
+                                                        .severity = DiagnosticSeverity::Error,
+                                                        .message = "invalid owner",
+                                                        .source = {},
+                                                        .code = {}}}),
+                    std::invalid_argument);
+
+    auto transaction = source.begin_transaction();
+    transaction.insert(TextOffset{0}, "x");
+    (void)transaction.commit();
+    CHECK(source.diagnostics().empty());
+}
+
 TEST_CASE("runtime noun registries own validated named mechanisms") {
     EditorRuntime runtime;
     const ThingId angle = runtime.things().define(

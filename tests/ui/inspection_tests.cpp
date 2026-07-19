@@ -170,7 +170,10 @@ void publish_test_frame(InspectionHub& hub, bool row_overflow = false,
                      .interaction_class = "editing",
                      .initial_input_state = "emacs",
                      .things = {{.name = "defun", .definition = "cind.defun"}},
-                     .location_count = 0}},
+                     .location_count = 0,
+                     .diagnostic_count = 3,
+                     .diagnostic_errors = 1,
+                     .diagnostic_warnings = 2}},
         .windows = {{.window_slot = 0,
                      .window_generation = 1,
                      .view_slot = 0,
@@ -487,7 +490,7 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(frame->violations.empty());
 
     const std::string snapshot = inspection_snapshot_json(*frame);
-    CHECK(snapshot.find("\"schema\":51") != std::string::npos);
+    CHECK(snapshot.find("\"schema\":52") != std::string::npos);
     CHECK(snapshot.find("\"buffer_name\":\" *minibuffer*\"") != std::string::npos);
     CHECK(snapshot.find("\"styles\":{\"inactive_alpha\":176") != std::string::npos);
     CHECK(snapshot.find("\"metrics\":{\"modeline_extra_height\":12") != std::string::npos);
@@ -626,6 +629,8 @@ TEST_CASE("inspection snapshot exposes model, scene, render, and event state") {
     CHECK(buffers.payload.find("\"name\":\"sample.cc\"") != std::string::npos);
     CHECK(buffers.payload.find("\"major_mode\":\"cind.cpp\"") != std::string::npos);
     CHECK(buffers.payload.find("\"location_count\":0") != std::string::npos);
+    CHECK(buffers.payload.find("\"diagnostics\":{\"count\":3,\"errors\":1,\"warnings\":2}") !=
+          std::string::npos);
 
     const InspectionResponse windows = run_inspection_query(hub, "get editor.windows");
     REQUIRE(windows.ok);

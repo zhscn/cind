@@ -156,6 +156,7 @@ The native module exports:
 (buffer-text host buffer-id)
 (buffer-byte-size host buffer-id)
 (buffer-locations host buffer-id)
+(buffer-diagnostics host buffer-id)
 (set-buffer-locations! host buffer-id locations)
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)

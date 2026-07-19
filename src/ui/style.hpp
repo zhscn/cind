@@ -21,6 +21,10 @@ enum class StyleClass : std::uint8_t {
     SignAdded, // unsaved-change sign column
     SignModified,
     SignDeleted,
+    DiagnosticError,
+    DiagnosticWarning,
+    DiagnosticInformation,
+    DiagnosticHint,
     StatusBar,
     StatusKey,    // keystroke caption on the status bar
     Message,      // message / prompt line
@@ -50,6 +54,14 @@ constexpr PresentationTextRole presentation_role(StyleClass style) {
         return PresentationTextRole::SignModified;
     case StyleClass::SignDeleted:
         return PresentationTextRole::SignDeleted;
+    case StyleClass::DiagnosticError:
+        return PresentationTextRole::DiagnosticError;
+    case StyleClass::DiagnosticWarning:
+        return PresentationTextRole::DiagnosticWarning;
+    case StyleClass::DiagnosticInformation:
+        return PresentationTextRole::DiagnosticInformation;
+    case StyleClass::DiagnosticHint:
+        return PresentationTextRole::DiagnosticHint;
     case StyleClass::StatusBar:
         return PresentationTextRole::StatusBar;
     case StyleClass::StatusKey:

@@ -4,9 +4,11 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 
@@ -14,6 +16,21 @@ using Json = nlohmann::json;
 
 void send(const Json& message) {
     std::cout << cind::frame_json_rpc(message.dump()) << std::flush;
+}
+
+void publish_diagnostic(std::string uri, std::uint64_t version) {
+    send({{"jsonrpc", "2.0"},
+          {"method", "textDocument/publishDiagnostics"},
+          {"params",
+           {{"uri", std::move(uri)},
+            {"version", version},
+            {"diagnostics", Json::array({{{"range",
+                                           {{"start", {{"line", 0}, {"character", 1}}},
+                                            {"end", {{"line", 0}, {"character", 3}}}}},
+                                          {"severity", 2},
+                                          {"source", "cind-test"},
+                                          {"code", "W1"},
+                                          {"message", "test warning"}}})}}}});
 }
 
 } // namespace
@@ -76,8 +93,14 @@ int main() {
                       {"params", message["params"]}});
             } else if (method == "textDocument/didOpen") {
                 ++opens;
+                publish_diagnostic(
+                    message["params"]["textDocument"]["uri"].get<std::string>(),
+                    message["params"]["textDocument"]["version"].get<std::uint64_t>());
             } else if (method == "textDocument/didChange") {
                 ++changes;
+                publish_diagnostic(
+                    message["params"]["textDocument"]["uri"].get<std::string>(),
+                    message["params"]["textDocument"]["version"].get<std::uint64_t>());
             } else if (method == "textDocument/didClose") {
                 ++closes;
             } else if (method == "test/documentCounts") {

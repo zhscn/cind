@@ -610,6 +610,53 @@ TEST_CASE("line signs: content entered into an empty file is added") {
     }
 }
 
+TEST_CASE("diagnostic gutter signs retain the highest severity on each line") {
+    DiagnosticLineSigns diagnostic_signs;
+    diagnostic_signs.include(1, DiagnosticSignKind::Warning);
+    diagnostic_signs.include(1, DiagnosticSignKind::Error);
+    diagnostic_signs.include(2, DiagnosticSignKind::Hint);
+    CHECK(diagnostic_signs.at(0) == DiagnosticSignKind::None);
+    CHECK(diagnostic_signs.at(1) == DiagnosticSignKind::Error);
+    CHECK(diagnostic_signs.at(2) == DiagnosticSignKind::Hint);
+
+    const Text text("zero\none\ntwo\n");
+    const TokenBuffer tokens(lex(text).tokens);
+    const LineSigns changes;
+    const ModelineContent modeline;
+    const Scene scene = compose_editor_scene({.text = text,
+                                              .tokens = tokens,
+                                              .signs = changes,
+                                              .diagnostic_signs = &diagnostic_signs,
+                                              .caret = {},
+                                              .selections = {},
+                                              .position_hints = {},
+                                              .rows = 6,
+                                              .cols = 40,
+                                              .modeline = modeline,
+                                              .pending_key = {},
+                                              .echo = {},
+                                              .echo_cursor_column = std::nullopt,
+                                              .echo_cursor_byte = std::nullopt,
+                                              .popup_title = {},
+                                              .popup_items = {},
+                                              .popup_capacity = 0,
+                                              .popup_selection = std::nullopt,
+                                              .popup_input = std::nullopt,
+                                              .popup_input_cursor = std::nullopt,
+                                              .completion_items = {},
+                                              .completion_selection = std::nullopt,
+                                              .completion_anchor = std::nullopt,
+                                              .completion_documentation = std::nullopt},
+                                             {});
+    const Region* marks = scene.find(RegionRole::ChangeSigns);
+    REQUIRE(marks != nullptr);
+    REQUIRE(marks->primitives().size() == 2);
+    CHECK(marks->primitives()[0].row == 1);
+    CHECK(marks->primitives()[0].style == StyleClass::DiagnosticError);
+    CHECK(marks->primitives()[1].row == 2);
+    CHECK(marks->primitives()[1].style == StyleClass::DiagnosticHint);
+}
+
 TEST_CASE("ansi renderer: regions paint at absolute positions") {
     // Primitive content uses region-local coordinates. Semantic chrome is
     // projected by the renderer.

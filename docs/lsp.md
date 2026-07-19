@@ -120,3 +120,20 @@ root, generic pending request count, synchronized document count, complete serve
 transport errors.
 Completion state at `editor.completion` identifies LSP candidates by their fixed provider/session
 name and exposes resolve progress, resolve errors, and normalized documentation.
+
+## Diagnostics
+
+`LspDiagnosticsFeature` owns `textDocument/publishDiagnostics`. It validates notification payloads,
+retains the server document version, and converts UTF-16 ranges only after resolving the target to
+an open Buffer. Notifications for stale revisions, closed resources, and sessions that do not own
+the Buffer are ignored.
+
+The Buffer diagnostic store is keyed by producer. Each set belongs to one document revision, so
+editing immediately excludes stale diagnostics while the synchronized language server computes a
+new publication. Multiple producers can coexist without replacing one another. Severity, source,
+code, message, and byte range remain available to Scheme through `buffer-diagnostics`.
+
+The editor gutter shows the highest-severity diagnostic for each visible line in the existing sign
+column. The `diagnostic.list` Scheme command builds a `cind.location-list` buffer from the active
+diagnostics; `C-c l e` opens it and normal location-list navigation visits the source range. The GUI
+inspector exposes diagnostic totals and error/warning counts for every entry in `editor.buffers`.

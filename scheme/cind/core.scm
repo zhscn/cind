@@ -351,6 +351,10 @@
     (presentation-style 'sign-added (color 14) #f 'regular)
     (presentation-style 'sign-modified (color 15) #f 'regular)
     (presentation-style 'sign-deleted (color 16) #f 'regular)
+    (presentation-style 'diagnostic-error (color 16) #f 'strong)
+    (presentation-style 'diagnostic-warning (color 12) #f 'strong)
+    (presentation-style 'diagnostic-information (color 10) #f 'regular)
+    (presentation-style 'diagnostic-hint (color 9) #f 'regular)
     (presentation-style 'status-bar (color 6) (color 3) 'regular)
     (presentation-style 'status-key (color 7) (color 3) 'strong)
     (presentation-style 'message (color 6) #f 'regular)
@@ -2085,6 +2089,64 @@
                                        (symbol->string kind) "…"))
           (command-completed/preserve)))))
 
+(define (diagnostic-label resource diagnostic)
+  (let ((source (vector-ref diagnostic 5))
+        (code (vector-ref diagnostic 6)))
+    (format #f "~a:~a:~a: ~a~a~a: ~a"
+            resource
+            (+ (vector-ref diagnostic 0) 1)
+            (+ (vector-ref diagnostic 1) 1)
+            (symbol->string (vector-ref diagnostic 4))
+            (if (= (string-length source) 0) "" (string-append " [" source))
+            (cond ((and (> (string-length source) 0) (> (string-length code) 0))
+                   (string-append " " code "]"))
+                  ((> (string-length source) 0) "]")
+                  ((> (string-length code) 0) (string-append " [" code "]"))
+                  (else ""))
+            (vector-ref diagnostic 7))))
+
+(define (diagnostic-location-buffer-data resource diagnostics)
+  (let loop ((index 0) (offset 0) (lines '()) (items '()))
+    (if (= index (vector-length diagnostics))
+        (vector (apply string-append (reverse lines))
+                (list->vector (reverse items)))
+        (let* ((diagnostic (vector-ref diagnostics index))
+               (label (diagnostic-label resource diagnostic))
+               (bytes (string-utf8-length label)))
+          (loop (+ index 1)
+                (+ offset bytes 1)
+                (cons (string-append label "\n") lines)
+                (cons (vector offset (+ offset bytes)
+                              resource
+                              (vector-ref diagnostic 0)
+                              (vector-ref diagnostic 1)
+                              ""
+                              'bytes)
+                      items))))))
+
+(define (diagnostic-list host context)
+  (let* ((source-buffer (context-buffer context))
+         (resource (buffer-resource host source-buffer))
+         (diagnostics (buffer-diagnostics host source-buffer)))
+    (cond ((not resource)
+           (command-error "diagnostics require a file-backed buffer"))
+          ((= (vector-length diagnostics) 0)
+           (command-error "the current buffer has no diagnostics"))
+          (else
+           (let* ((data (diagnostic-location-buffer-data resource diagnostics))
+                  (buffer (create-buffer! host "*Diagnostics*" (vector-ref data 0)
+                                          'process #f #t 'cind.location-list #f
+                                          "location-list")))
+             (set-location-list! host (context-window context) buffer 'diagnostics
+                                 (vector-ref data 1))
+             (set-location-navigation! host buffer #f)
+             (display-buffer! host (context-window context) buffer 'tools)
+             (set-message! host
+                           (format #f "~a diagnostic~a"
+                                   (vector-length diagnostics)
+                                   (if (= (vector-length diagnostics) 1) "" "s")))
+             (command-completed/preserve))))))
+
 (define (jump-move host context invocation direction)
   (let* ((count (or (invocation-repeat-count invocation) 1))
          (delta (* direction count)))
@@ -2630,6 +2692,13 @@
                (lambda (context invocation)
                  (lsp-navigation host context 'references))
                (lambda (context) (lsp-navigation-provider host context)))
+         (list "diagnostic.list"
+               (lambda (context invocation)
+                 (diagnostic-list host context))
+               (lambda (context)
+                 (> (vector-length
+                     (buffer-diagnostics host (context-buffer context)))
+                    0)))
          (list "jump.back"
                (lambda (context invocation)
                  (jump-move host context invocation -1))
@@ -3101,6 +3170,7 @@
     ("C-c l D" . "lsp.declaration")
     ("C-c l i" . "lsp.implementation")
     ("C-c l r" . "lsp.references")
+    ("C-c l e" . "diagnostic.list")
     ("M-%" . "search.replace")
     ("C-h b" . "help.describe-bindings")
     ("C-h k" . "help.describe-key")

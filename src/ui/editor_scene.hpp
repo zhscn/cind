@@ -49,6 +49,7 @@ struct EditorSceneInput {
     const Text& text;
     const TokenBuffer& tokens;
     const LineSigns& signs;
+    const DiagnosticLineSigns* diagnostic_signs = nullptr;
     TextOffset caret;
     std::span<const TextRange> selections;
     std::span<const PositionHint> position_hints;

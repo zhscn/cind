@@ -3,6 +3,7 @@
 #include "document/text.hpp"
 
 #include <cstdint>
+#include <vector>
 
 namespace cind::ui {
 
@@ -51,5 +52,28 @@ struct LineSigns {
 };
 
 LineSigns line_signs(const Text& baseline, const Text& current);
+
+enum class DiagnosticSignKind : std::uint8_t {
+    None,
+    Error,
+    Warning,
+    Information,
+    Hint,
+};
+
+struct DiagnosticLineSign {
+    std::uint32_t line = 0;
+    DiagnosticSignKind kind = DiagnosticSignKind::None;
+};
+
+class DiagnosticLineSigns {
+public:
+    void include(std::uint32_t line, DiagnosticSignKind kind);
+    DiagnosticSignKind at(std::uint32_t line) const;
+    const std::vector<DiagnosticLineSign>& entries() const { return entries_; }
+
+private:
+    std::vector<DiagnosticLineSign> entries_;
+};
 
 } // namespace cind::ui
