@@ -34,6 +34,7 @@
             idle-echo-text
             modeline-content
             open-resource!
+            open-resource-with-intent!
             project-search-running?
             project-index-updated!))
 

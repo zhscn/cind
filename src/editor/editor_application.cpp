@@ -1310,7 +1310,8 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     if (!workbench.layout().contains(origin) || runtime_.windows().try_get(origin) == nullptr) {
         origin = workbench.active_window();
     }
-    const std::optional<JumpNodeId> from = capture_jump(workbench, origin);
+    const bool replay = intent == "replay";
+    const std::optional<JumpNodeId> from = replay ? std::nullopt : capture_jump(workbench, origin);
     GuileDisplayFacts facts{.intent = std::string(intent),
                             .origin = origin,
                             .active = workbench.active_window(),
@@ -1820,12 +1821,11 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
         std::optional<std::size_t> cursor = walk.cursor();
         if (entries.size() > maximum_entries && cursor) {
             const std::size_t half = maximum_entries / 2;
-            const std::size_t first =
-                std::min(std::max<std::size_t>(*cursor, half) - half,
-                         entries.size() - maximum_entries);
-            entries = std::vector(entries.begin() + static_cast<std::ptrdiff_t>(first),
-                                  entries.begin() +
-                                      static_cast<std::ptrdiff_t>(first + maximum_entries));
+            const std::size_t first = std::min(std::max<std::size_t>(*cursor, half) - half,
+                                               entries.size() - maximum_entries);
+            entries =
+                std::vector(entries.begin() + static_cast<std::ptrdiff_t>(first),
+                            entries.begin() + static_cast<std::ptrdiff_t>(first + maximum_entries));
             cursor = *cursor - first;
         }
         return std::pair{std::move(entries), cursor};
@@ -2161,7 +2161,7 @@ EditorApplication::restore_workbench_session(std::string_view serialized) {
                 runtime_.windows().get(target).set_pinned(leaf.pinned);
                 runtime_.windows().get(target).set_created_by_policy(leaf.created_by_policy);
                 runtime_.windows().get(target).jump_walk().restore(leaf.jump_walk,
-                                                                  leaf.jump_cursor);
+                                                                   leaf.jump_cursor);
             };
             apply_node(source.layout, root_window);
             const std::vector<WindowId> leaves(workbench.layout().leaves().begin(),
@@ -2997,8 +2997,7 @@ void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
                 if (!matches(line) && !position.excerpt.empty()) {
                     constexpr std::uint32_t radius = 64;
                     const std::uint32_t first = line > radius ? line - radius : 0;
-                    const std::uint32_t last =
-                        std::min(text.line_count() - 1, line + radius);
+                    const std::uint32_t last = std::min(text.line_count() - 1, line + radius);
                     std::optional<std::uint32_t> nearby;
                     for (std::uint32_t candidate = first; candidate <= last; ++candidate) {
                         if (!matches(candidate)) {
@@ -3015,9 +3014,9 @@ void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
                     }
                 }
                 LinePosition fallback{.line = line,
-                                      .byte_column = std::min(
-                                          position.fallback.byte_column,
-                                          text.line_content_range(line).length())};
+                                      .byte_column =
+                                          std::min(position.fallback.byte_column,
+                                                   text.line_content_range(line).length())};
                 return std::pair{buffer.create_navigation_anchor(text.offset(fallback)), fallback};
             });
     }
@@ -3133,9 +3132,23 @@ std::optional<JumpNodeId> EditorApplication::capture_jump(Workbench& workbench, 
 
 bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, JumpNodeId node) {
     JumpNode* target = workbench.jumps().find(node);
-    if (target == nullptr || !target->position.buffer ||
-        runtime_.buffers().try_get(target->position.buffer) == nullptr) {
+    if (target == nullptr) {
         return false;
+    }
+    if (!target->position.buffer ||
+        runtime_.buffers().try_get(target->position.buffer) == nullptr) {
+        if (target->position.resource.empty()) {
+            return false;
+        }
+        (void)workbench.jumps().touch(node);
+        const std::expected<void, std::string> opened = guile_.open_resource(
+            window, target->position.resource, target->position.fallback.line,
+            target->position.fallback.byte_column, "replay");
+        if (!opened) {
+            message_ = std::format("jump reopen failed: {}", opened.error());
+            return false;
+        }
+        return true;
     }
     Buffer& buffer = runtime_.buffers().get(target->position.buffer);
     LinePosition position = target->position.fallback;

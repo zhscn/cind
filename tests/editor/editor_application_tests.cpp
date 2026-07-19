@@ -2242,8 +2242,7 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
                         .excerpt = "visitor",
                         .created_at = 2,
                         .last_visit = 4}};
-    code.jump_edges = {
-        {.from = 10, .to = 11, .kind = "manual", .at = 5, .persistent = true}};
+    code.jump_edges = {{.from = 10, .to = 11, .kind = "manual", .at = 5, .persistent = true}};
     code.layout.first->window->jump_walk = {10, 11};
     code.layout.first->window->jump_cursor = 0;
     WorkbenchSessionEntry notes;
@@ -2586,6 +2585,44 @@ TEST_CASE("display navigation records a window walk with exact landing positions
     CHECK(application.buffer_id(navigation_window) == help);
     send_keys(application, "C-M-,");
     CHECK(application.buffer_id(navigation_window) == source);
+}
+
+TEST_CASE("jump replay asynchronously reopens a released buffer without recording itself") {
+    TemporaryDirectory directory(
+        std::format("cind-jump-reopen-{}", static_cast<long>(::getpid())));
+    const std::filesystem::path source_path = directory.write("source.cc", "source\n");
+    const std::filesystem::path target_path = directory.write("target.cc", "target\n");
+    WakeSignal wake;
+    EditorApplication application = make_application(
+        source_path.string(), "source\n",
+        {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] { wake.notify(); }});
+    const WindowId window = application.window_id();
+    const BufferId source = application.buffer_id();
+
+    REQUIRE(application.open_file(target_path.string()).has_value());
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    const BufferId target = application.buffer_id();
+    REQUIRE(target != source);
+    REQUIRE(application.navigate_jump(window, -1));
+    CHECK(application.buffer_id() == source);
+    REQUIRE(application.release_buffer(target, source).has_value());
+    CHECK_FALSE(application.runtime().buffers().find_by_resource(target_path.string()));
+
+    REQUIRE(application.navigate_jump(window, 1));
+    while (application.has_background_work()) {
+        REQUIRE(wake.wait());
+        (void)application.poll_background_work();
+    }
+    CHECK(application.runtime().buffers().get(application.buffer_id()).resource_uri() ==
+          std::optional{target_path.string()});
+    REQUIRE(application.navigate_jump(window, -1));
+    CHECK(application.buffer_id() == source);
+    REQUIRE(application.navigate_jump(window, 1));
+    CHECK(application.runtime().buffers().get(application.buffer_id()).resource_uri() ==
+          std::optional{target_path.string()});
 }
 
 TEST_CASE("invalid scripted display plans fall back to the built-in policy") {

@@ -5553,8 +5553,7 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("link-jump!", 6, 0, 0, reinterpret_cast<scm_t_subr>(link_jump));
     (void)scm_c_define_gsubr("jump-branches", 3, 0, 0, reinterpret_cast<scm_t_subr>(jump_branches));
     (void)scm_c_define_gsubr("jump-node", 3, 0, 0, reinterpret_cast<scm_t_subr>(jump_node));
-    (void)scm_c_define_gsubr("evict-jumps!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(evict_jumps));
+    (void)scm_c_define_gsubr("evict-jumps!", 3, 0, 0, reinterpret_cast<scm_t_subr>(evict_jumps));
     (void)scm_c_define_gsubr("display-generated-buffer!", 7, 0, 0,
                              reinterpret_cast<scm_t_subr>(display_generated_buffer));
     (void)scm_c_define_gsubr("evaluate-scheme!", 3, 0, 0,
@@ -6540,7 +6539,8 @@ struct GuileCall {
     BufferId buffer;
     ProjectId project;
     std::optional<std::uint32_t> line;
-    std::optional<std::uint32_t> column;
+        std::optional<std::uint32_t> column;
+        std::string intent;
     KeyStroke key;
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
@@ -7002,11 +7002,13 @@ SCM call_body(void* data) {
             call.enabled = scheme_true(call.result);
             break;
         case GuileCall::Operation::OpenResource:
-            call.result = scm_call_5(scm_c_public_ref("cind core", "open-resource!"), call.host,
-                                     entity_id(call.window.slot, call.window.generation),
-                                     scm_from_utf8_string(call.path.c_str()),
-                                     call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
-                                     call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F);
+            call.result = scm_call_6(
+                scm_c_public_ref("cind core", "open-resource-with-intent!"), call.host,
+                entity_id(call.window.slot, call.window.generation),
+                scm_from_utf8_string(call.path.c_str()),
+                call.line ? scm_from_uint32(*call.line) : SCM_BOOL_F,
+                call.column ? scm_from_uint32(*call.column) : SCM_BOOL_F,
+                name_symbol(call.intent));
             break;
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
@@ -8002,8 +8004,12 @@ public:
 
     std::expected<void, std::string> open_resource(WindowId window, std::string_view path,
                                                    std::optional<std::uint32_t> line,
-                                                   std::optional<std::uint32_t> column) {
+                                                   std::optional<std::uint32_t> column,
+                                                   std::string_view intent) {
         require_owner_thread();
+        if (intent.empty()) {
+            return std::unexpected("resource open intent must not be empty");
+        }
         GuileCall call;
         call.operation = GuileCall::Operation::OpenResource;
         call.host = host_;
@@ -8011,6 +8017,7 @@ public:
         call.path = path;
         call.line = line;
         call.column = column;
+        call.intent = intent;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
@@ -8346,8 +8353,9 @@ std::expected<bool, std::string> GuileRuntime::handle_scroll(const CommandContex
 
 std::expected<void, std::string> GuileRuntime::open_resource(WindowId window, std::string_view path,
                                                              std::optional<std::uint32_t> line,
-                                                             std::optional<std::uint32_t> column) {
-    return impl_->open_resource(window, path, line, column);
+                                                             std::optional<std::uint32_t> column,
+                                                             std::string_view intent) {
+    return impl_->open_resource(window, path, line, column, intent);
 }
 
 bool GuileRuntime::project_search_running() const {
