@@ -401,6 +401,42 @@ void append_interaction(std::string& output, const InteractionStateSnapshot& int
     output += "]}";
 }
 
+void append_completion(std::string& output, const CompletionStateSnapshot& completion) {
+    output += "{\"active\":";
+    append_bool(output, completion.active);
+    output += std::format(",\"generation\":{},\"revision\":{},\"anchor\":{},\"caret\":{},"
+                          "\"selected\":{},\"query\":",
+                          completion.generation, completion.revision, completion.anchor.value,
+                          completion.caret.value, completion.selected);
+    append_json_string(output, completion.query);
+    output += ",\"pending_providers\":[";
+    for (std::size_t index = 0; index < completion.pending_providers.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_json_string(output, completion.pending_providers[index]);
+    }
+    output += "],\"items\":[";
+    for (std::size_t index = 0; index < completion.items.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const CompletionItemStateSnapshot& item = completion.items[index];
+        output += std::format("{{\"id\":{},\"provider\":", item.id);
+        append_json_string(output, item.provider);
+        output += ",\"label\":";
+        append_json_string(output, item.label);
+        output += ",\"kind\":";
+        append_json_string(output, item.kind);
+        output += ",\"detail\":";
+        append_json_string(output, item.detail);
+        output += ",\"resolved\":";
+        append_bool(output, item.resolved);
+        output.push_back('}');
+    }
+    output += "]}";
+}
+
 void append_buffers(std::string& output, const std::vector<OpenBufferStateSnapshot>& buffers) {
     output.push_back('[');
     for (std::size_t index = 0; index < buffers.size(); ++index) {
@@ -736,6 +772,8 @@ void append_editor(std::string& output, const EditorStateSnapshot& editor) {
     append_scripting(output, editor.scripting);
     output += ",\"interaction\":";
     append_interaction(output, editor.interaction);
+    output += ",\"completion\":";
+    append_completion(output, editor.completion);
     output += ",\"buffers\":";
     append_buffers(output, editor.buffers);
     output += ",\"windows\":";
@@ -2337,6 +2375,8 @@ InspectionResponse get_query(const FrameInspection& frame, std::string_view path
         append_scripting(output, frame.editor.scripting);
     } else if (path == "editor.interaction") {
         append_interaction(output, frame.editor.interaction);
+    } else if (path == "editor.completion") {
+        append_completion(output, frame.editor.completion);
     } else if (path == "editor.buffers") {
         append_buffers(output, frame.editor.buffers);
     } else if (path == "editor.windows") {

@@ -250,6 +250,22 @@ private:
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
         const ChromeContent chrome_content = application_.chrome_content();
+        std::vector<ChromeItem> completion_items;
+        const CompletionState* completion = application_.completion().state();
+        if (completion != nullptr) {
+            completion_items.reserve(completion->matches.size());
+            for (const CompletionMatch& match : completion->matches) {
+                completion_items.push_back(
+                    {.label = match.item.label,
+                     .detail = match.item.detail.empty() ? match.item.kind : match.item.detail});
+            }
+        }
+        const std::optional<std::size_t> completion_selection =
+            completion != nullptr && !completion->matches.empty()
+                ? std::optional(completion->selected)
+                : std::nullopt;
+        const std::optional<TextOffset> completion_anchor =
+            completion != nullptr ? std::optional(completion->request.anchor) : std::nullopt;
         const std::optional<std::string_view> popup_input =
             chrome_content.popup_input
                 ? std::optional<std::string_view>(*chrome_content.popup_input)
@@ -270,11 +286,13 @@ private:
                 EditSession& pane_session = application_.session(placement.window);
                 const DocumentSnapshot pane_snapshot = pane_session.snapshot();
                 ViewportState& pane_state = pane_session.view().viewport();
+                const bool active = placement.window == application_.window_id();
                 ui::EditorSceneViewState pane_view{
                     .viewport = {.top_line = pane_state.top_line,
                                  .top_line_offset = pane_state.top_line_offset,
                                  .left_column = pane_state.left_column},
                     .popup = {},
+                    .completion = active ? completion_viewport_ : ui::ListViewport{},
                 };
                 pane_view = ui::layout_editor_scene(
                     {.text = pane_snapshot.content(),
@@ -284,14 +302,18 @@ private:
                      .tab_width = pane_session.style().tab_width,
                      .reveal_caret = placement.window == application_.window_id(),
                      .popup_item_count = 0,
-                     .popup_selection = std::nullopt},
+                     .popup_selection = std::nullopt,
+                     .completion_item_count = active ? completion_items.size() : 0,
+                     .completion_selection = active ? completion_selection : std::nullopt},
                     pane_view);
                 pane_state.top_line = pane_view.viewport.top_line;
                 pane_state.top_line_offset = pane_view.viewport.top_line_offset;
                 pane_state.left_column = pane_view.viewport.left_column;
+                if (active) {
+                    completion_viewport_ = pane_view.completion;
+                }
                 const ui::LineSigns pane_signs =
                     ui::line_signs(pane_session.buffer().save_point(), pane_snapshot.content());
-                const bool active = placement.window == application_.window_id();
                 const InputStateRegistry::Definition& pane_input_state =
                     application_.input_state(placement.window);
                 const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
@@ -321,7 +343,11 @@ private:
                      .popup_items = {},
                      .popup_selection = std::nullopt,
                      .popup_input = std::nullopt,
-                     .popup_input_cursor = std::nullopt},
+                     .popup_input_cursor = std::nullopt,
+                     .completion_items = active ? std::span<const ChromeItem>(completion_items)
+                                                : std::span<const ChromeItem>{},
+                     .completion_selection = active ? completion_selection : std::nullopt,
+                     .completion_anchor = active ? completion_anchor : std::nullopt},
                     pane_view);
                 panes.push_back({.id = std::format("window:{}:{}", placement.window.slot,
                                                    placement.window.generation),
@@ -351,6 +377,7 @@ private:
                              .top_line_offset = active_state.top_line_offset,
                              .left_column = active_state.left_column},
                 .popup = popup_viewport_,
+                .completion = completion_viewport_,
             };
             chrome_view =
                 ui::layout_editor_scene({.text = snap.content(),
@@ -361,9 +388,12 @@ private:
                                          .reveal_caret = false,
                                          .popup_item_count = chrome_content.popup_items.size(),
                                          .popup_capacity = chrome_content.popup_capacity,
-                                         .popup_selection = chrome_content.popup_selection},
+                                         .popup_selection = chrome_content.popup_selection,
+                                         .completion_item_count = completion_items.size(),
+                                         .completion_selection = completion_selection},
                                         chrome_view);
             popup_viewport_ = chrome_view.popup;
+            completion_viewport_ = chrome_view.completion;
             ui::Scene chrome =
                 ui::compose_editor_scene({.text = snap.content(),
                                           .tokens = tokens(),
@@ -386,7 +416,10 @@ private:
                                           .popup_capacity = chrome_content.popup_capacity,
                                           .popup_selection = chrome_content.popup_selection,
                                           .popup_input = popup_input,
-                                          .popup_input_cursor = chrome_content.popup_input_cursor},
+                                          .popup_input_cursor = chrome_content.popup_input_cursor,
+                                          .completion_items = {},
+                                          .completion_selection = std::nullopt,
+                                          .completion_anchor = std::nullopt},
                                          chrome_view);
             return ui::compose_editor_workspace({.rows = size.rows, .cols = size.cols},
                                                 std::move(panes), std::move(dividers),
@@ -398,6 +431,7 @@ private:
                          .top_line_offset = state.top_line_offset,
                          .left_column = state.left_column},
             .popup = popup_viewport_,
+            .completion = completion_viewport_,
         };
         view = ui::layout_editor_scene({.text = snap.content(),
                                         .caret = session().caret(),
@@ -407,12 +441,15 @@ private:
                                         .reveal_caret = true,
                                         .popup_item_count = chrome_content.popup_items.size(),
                                         .popup_capacity = chrome_content.popup_capacity,
-                                        .popup_selection = chrome_content.popup_selection},
+                                        .popup_selection = chrome_content.popup_selection,
+                                        .completion_item_count = completion_items.size(),
+                                        .completion_selection = completion_selection},
                                        view);
         state.top_line = view.viewport.top_line;
         state.top_line_offset = view.viewport.top_line_offset;
         state.left_column = view.viewport.left_column;
         popup_viewport_ = view.popup;
+        completion_viewport_ = view.completion;
         ui::Scene scene =
             ui::compose_editor_scene({.text = snap.content(),
                                       .tokens = tokens(),
@@ -435,7 +472,10 @@ private:
                                       .popup_capacity = chrome_content.popup_capacity,
                                       .popup_selection = chrome_content.popup_selection,
                                       .popup_input = popup_input,
-                                      .popup_input_cursor = chrome_content.popup_input_cursor},
+                                      .popup_input_cursor = chrome_content.popup_input_cursor,
+                                      .completion_items = completion_items,
+                                      .completion_selection = completion_selection,
+                                      .completion_anchor = completion_anchor},
                                      view);
         return scene;
     }
@@ -454,6 +494,7 @@ private:
     RevisionId signs_rev_ = static_cast<RevisionId>(-1);
     std::uint32_t signs_gen_ = static_cast<std::uint32_t>(-1);
     ui::ListViewport popup_viewport_;
+    ui::ListViewport completion_viewport_;
 };
 
 } // namespace

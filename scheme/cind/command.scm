@@ -131,7 +131,8 @@
   (vector (vector 'editor.default)
           (vector 'application.global)
           (vector 'editor.system)
-          (vector 'window.policy-created)))
+          (vector 'window.policy-created)
+          (vector 'completion.active)))
 
 (define (keymap-name-vector value name)
   (let ((result (cond ((vector? value) value)
@@ -150,12 +151,14 @@
                                    (editor (vector 'editor.default))
                                    (application (vector 'application.global))
                                    (overrides (vector 'editor.system))
-                                   (policy-created-window (vector 'window.policy-created)))
+                                   (policy-created-window (vector 'window.policy-created))
+                                   (completion (vector 'completion.active)))
   (let ((policy (vector (keymap-name-vector editor "editor keymaps")
                         (keymap-name-vector application "application keymaps")
                         (keymap-name-vector overrides "override keymaps")
                         (keymap-name-vector policy-created-window
-                                            "policy-created window keymaps"))))
+                                            "policy-created window keymaps")
+                        (keymap-name-vector completion "completion keymaps"))))
     (hashq-set! keymap-root-policies host policy)
     policy))
 
@@ -241,7 +244,11 @@
 (define (resolve-keymap-policy host context)
   (let* ((snapshot (keymap-context-snapshot host context))
          (roots (keymap-root-policy host))
-         (state-layers (append-state-layers '() (vector-ref snapshot 2)))
+         (context-layers
+          (if (vector-ref snapshot 9)
+              (append-keymap-vector '() (vector-ref roots 4) "completion-active")
+              '()))
+         (state-layers (append-state-layers context-layers (vector-ref snapshot 2)))
          (layers (assemble-base-keymap-layers snapshot roots state-layers)))
     (vector 'keymap-policy (list->vector layers) (vector-ref roots 2))))
 

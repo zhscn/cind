@@ -1768,9 +1768,31 @@
 (define (keyboard-quit host context invocation)
   (reset-input-states! host (context-view context))
   (cancel-pending-input! host)
-  (unless (cancel-interaction! host)
+  (unless (or (cancel-completion! host)
+              (cancel-interaction! host))
     (clear-selection! host (context-view context)))
   (set-message! host "cancelled")
+  (command-completed/preserve))
+
+(define (completion-start host context invocation)
+  (start-completion! host context '("word" "path"))
+  (request-redraw! host)
+  (command-completed/preserve))
+
+(define (completion-move host delta)
+  (lambda (context invocation)
+    (move-completion! host delta)
+    (request-redraw! host)
+    (command-completed/preserve)))
+
+(define (completion-accept host context invocation)
+  (apply-completion! host #f)
+  (request-redraw! host)
+  (command-completed/preserve))
+
+(define (completion-cancel host context invocation)
+  (cancel-completion! host)
+  (request-redraw! host)
   (command-completed/preserve))
 
 (define (interaction-move-candidate host delta)
@@ -2318,6 +2340,24 @@
                (lambda (context invocation)
                  (keyboard-quit host context invocation))
                #f)
+         (list "completion.start"
+               (lambda (context invocation)
+                 (completion-start host context invocation))
+               (lambda (context) (not (completion-active? host))))
+         (list "completion.next"
+               (completion-move host 1)
+               (lambda (context) (completion-active? host)))
+         (list "completion.previous"
+               (completion-move host -1)
+               (lambda (context) (completion-active? host)))
+         (list "completion.accept"
+               (lambda (context invocation)
+                 (completion-accept host context invocation))
+               (lambda (context) (completion-active? host)))
+         (list "completion.cancel"
+               (lambda (context invocation)
+                 (completion-cancel host context invocation))
+               (lambda (context) (completion-active? host)))
          (list "interaction.submit"
                (lambda (context invocation)
                  (interaction-submit host context invocation))
@@ -2729,6 +2769,7 @@
 
 (define text-input-bindings
   '(("C-a" . "cursor.line-start")
+    ("C-M-i" . "completion.start")
     ("C-e" . "cursor.line-end")
     ("C-f" . "cursor.forward-character")
     ("C-b" . "cursor.backward-character")
@@ -2817,6 +2858,16 @@
     ("C-p" . "interaction.previous-candidate")
     ("Up" . "interaction.previous-candidate")))
 
+(define completion-bindings
+  '(("C-n" . "completion.next")
+    ("Down" . "completion.next")
+    ("C-p" . "completion.previous")
+    ("Up" . "completion.previous")
+    ("TAB" . "completion.accept")
+    ("RET" . "completion.accept")
+    ("C-e" . "completion.cancel")
+    ("ESC" . "completion.cancel")))
+
 (define workbench-bindings
   '(("n" . "workbench.new")
     ("s" . "workbench.switch")
@@ -2864,6 +2915,7 @@
   (define-keymap! host 'editor.system #f)
   (define-keymap! host 'interaction.text 'editor.text-input)
   (define-keymap! host 'interaction.picker 'interaction.text)
+  (define-keymap! host 'completion.active #f)
   (define-keymap! host 'workbench.buffer-picker 'interaction.picker)
   (define-keymap! host 'editor.workbench #f)
   (define-keymap! host 'window.policy-created #f)
@@ -2883,6 +2935,7 @@
        (bind-all! host 'editor.system system-bindings)
        (bind-all! host 'interaction.text interaction-text-bindings)
        (bind-all! host 'interaction.picker interaction-picker-bindings)
+       (bind-all! host 'completion.active completion-bindings)
        (bind-all! host 'editor.workbench workbench-bindings)
        (bind-all! host 'window.policy-created policy-created-window-bindings)
        (bind-all! host 'scheme-mode-map scheme-mode-bindings)

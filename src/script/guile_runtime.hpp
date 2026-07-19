@@ -2,6 +2,7 @@
 
 #include "editor/buffer.hpp"
 #include "editor/command.hpp"
+#include "editor/completion.hpp"
 #include "editor/ids.hpp"
 #include "editor/pointer.hpp"
 #include "editor/selection.hpp"
@@ -169,6 +170,12 @@ struct GuileHostServices {
     std::function<bool(std::optional<std::size_t>, std::string, std::string)>
         set_interaction_history_position;
     std::function<bool()> cancel_interaction;
+    std::function<bool()> completion_active;
+    std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>)>
+        start_completion;
+    std::function<bool(std::int64_t)> move_completion;
+    std::function<std::expected<void, std::string>(bool)> apply_completion;
+    std::function<bool()> cancel_completion;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
     std::function<GuileLocationNavigation()> location_navigation;

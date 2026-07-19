@@ -10,6 +10,25 @@
 
 namespace cind::gui {
 
+namespace {
+
+std::vector<ChromeItem> completion_items(const EditorApplication& application) {
+    std::vector<ChromeItem> items;
+    const CompletionState* completion = application.completion().state();
+    if (completion == nullptr) {
+        return items;
+    }
+    items.reserve(completion->matches.size());
+    for (const CompletionMatch& match : completion->matches) {
+        items.push_back(
+            {.label = match.item.label,
+             .detail = match.item.detail.empty() ? match.item.kind : match.item.detail});
+    }
+    return items;
+}
+
+} // namespace
+
 EditorModel::EditorModel(std::string path, std::optional<std::string> initial,
                          std::uint32_t initial_line, EditorPlatformServices platform_services,
                          std::optional<std::string> init_file)
@@ -21,6 +40,11 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial,
 
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
     const ChromeContent chrome = application_.chrome_content(preedit_);
+    const std::vector<ChromeItem> completions = completion_items(application_);
+    const CompletionState* completion = application_.completion().state();
+    const std::optional<std::size_t> completion_selection =
+        completion != nullptr && !completion->matches.empty() ? std::optional(completion->selected)
+                                                              : std::nullopt;
 
     if (application_.window_layout().leaves().size() > 1) {
         const WindowPartition partition = application_.window_layout().partition(rows - 1, columns);
@@ -33,6 +57,8 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                              .top_line_offset = pane_state.top_line_offset,
                              .left_column = pane_state.left_column},
                 .popup = {},
+                .completion = placement.window == application_.window_id() ? completion_viewport_
+                                                                           : ui::ListViewport{},
             };
             pane_view = ui::layout_editor_scene(
                 {.text = pane_snapshot.content(),
@@ -45,11 +71,19 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                      placement.window == application_.window_id() && application_.reveal_caret(),
                  .popup_item_count = 0,
                  .popup_capacity = 0,
-                 .popup_selection = std::nullopt},
+                 .popup_selection = std::nullopt,
+                 .completion_item_count =
+                     placement.window == application_.window_id() ? completions.size() : 0,
+                 .completion_selection = placement.window == application_.window_id()
+                                             ? completion_selection
+                                             : std::nullopt},
                 pane_view);
             pane_state.top_line = pane_view.viewport.top_line;
             pane_state.top_line_offset = pane_view.viewport.top_line_offset;
             pane_state.left_column = pane_view.viewport.left_column;
+            if (placement.window == application_.window_id()) {
+                completion_viewport_ = pane_view.completion;
+            }
         }
 
         EditSession& active = application_.session();
@@ -60,6 +94,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                          .top_line_offset = active_state.top_line_offset,
                          .left_column = active_state.left_column},
             .popup = popup_viewport_,
+            .completion = completion_viewport_,
         };
         popup_view = ui::layout_editor_scene({.text = active_snapshot.content(),
                                               .caret = active.caret(),
@@ -70,9 +105,12 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                               .reveal_caret = false,
                                               .popup_item_count = chrome.popup_items.size(),
                                               .popup_capacity = chrome.popup_capacity,
-                                              .popup_selection = chrome.popup_selection},
+                                              .popup_selection = chrome.popup_selection,
+                                              .completion_item_count = completions.size(),
+                                              .completion_selection = completion_selection},
                                              popup_view);
         popup_viewport_ = popup_view.popup;
+        completion_viewport_ = popup_view.completion;
         last_rows_ = rows;
         return;
     }
@@ -86,6 +124,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                      .top_line_offset = state.top_line_offset,
                      .left_column = state.left_column},
         .popup = popup_viewport_,
+        .completion = completion_viewport_,
     };
     view = ui::layout_editor_scene({.text = snapshot.content(),
                                     .caret = session.caret(),
@@ -96,12 +135,15 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
                                     .reveal_caret = application_.reveal_caret(),
                                     .popup_item_count = chrome.popup_items.size(),
                                     .popup_capacity = chrome.popup_capacity,
-                                    .popup_selection = chrome.popup_selection},
+                                    .popup_selection = chrome.popup_selection,
+                                    .completion_item_count = completions.size(),
+                                    .completion_selection = completion_selection},
                                    view);
     state.top_line = view.viewport.top_line;
     state.top_line_offset = view.viewport.top_line_offset;
     state.left_column = view.viewport.left_column;
     popup_viewport_ = view.popup;
+    completion_viewport_ = view.completion;
     last_rows_ = rows;
 }
 
@@ -109,6 +151,13 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
     const ChromeContent chrome = application_.chrome_content(preedit_);
+    const std::vector<ChromeItem> completions = completion_items(application_);
+    const CompletionState* completion = application_.completion().state();
+    const std::optional<std::size_t> completion_selection =
+        completion != nullptr && !completion->matches.empty() ? std::optional(completion->selected)
+                                                              : std::nullopt;
+    const std::optional<TextOffset> completion_anchor =
+        completion != nullptr ? std::optional(completion->request.anchor) : std::nullopt;
     const std::optional<std::string_view> popup_input =
         chrome.popup_input ? std::optional<std::string_view>(*chrome.popup_input) : std::nullopt;
     const InputStateRegistry::Definition& active_input_state = application_.input_state();
@@ -118,6 +167,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                      .top_line_offset = state.top_line_offset,
                      .left_column = state.left_column},
         .popup = popup_viewport_,
+        .completion = completion_viewport_,
     };
     const std::vector<TextRange> active_selections = session.selected_ranges();
     PositionHintProviderResult active_hint_result =
@@ -147,7 +197,10 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
                                             .popup_capacity = chrome.popup_capacity,
                                             .popup_selection = chrome.popup_selection,
                                             .popup_input = popup_input,
-                                            .popup_input_cursor = chrome.popup_input_cursor};
+                                            .popup_input_cursor = chrome.popup_input_cursor,
+                                            .completion_items = completions,
+                                            .completion_selection = completion_selection,
+                                            .completion_anchor = completion_anchor};
     if (application_.window_layout().leaves().size() == 1) {
         return ui::compose_editor_scene(active_input, view);
     }
@@ -159,13 +212,14 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
         EditSession& pane_session = application_.session(placement.window);
         const DocumentSnapshot pane_snapshot = pane_session.snapshot();
         const ViewportState& pane_state = pane_session.view().viewport();
+        const bool active = placement.window == application_.window_id();
         const ui::EditorSceneViewState pane_view{
             .viewport = {.top_line = pane_state.top_line,
                          .top_line_offset = pane_state.top_line_offset,
                          .left_column = pane_state.left_column},
             .popup = {},
+            .completion = active ? completion_viewport_ : ui::ListViewport{},
         };
-        const bool active = placement.window == application_.window_id();
         const InputStateRegistry::Definition& pane_input_state =
             application_.input_state(placement.window);
         const std::vector<TextRange> pane_selections = pane_session.selected_ranges();
@@ -196,7 +250,11 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
              .popup_capacity = 0,
              .popup_selection = std::nullopt,
              .popup_input = std::nullopt,
-             .popup_input_cursor = std::nullopt},
+             .popup_input_cursor = std::nullopt,
+             .completion_items =
+                 active ? std::span<const ChromeItem>(completions) : std::span<const ChromeItem>{},
+             .completion_selection = active ? completion_selection : std::nullopt,
+             .completion_anchor = active ? completion_anchor : std::nullopt},
             pane_view);
         panes.push_back({.id = pane_id(placement.window),
                          .rect = {.row = placement.rect.row,
@@ -403,6 +461,32 @@ EditorStateSnapshot EditorModel::inspect() {
         for (const InteractionCandidate& candidate : interaction->candidates) {
             interaction_state.candidates.push_back(
                 {.value = candidate.value, .label = candidate.label, .detail = candidate.detail});
+        }
+    }
+    CompletionStateSnapshot completion_state;
+    if (const CompletionState* completion = application_.completion().state()) {
+        completion_state.active = true;
+        completion_state.generation = completion->request.generation;
+        completion_state.revision = completion->request.revision;
+        completion_state.anchor = completion->request.anchor;
+        completion_state.caret = completion->request.caret;
+        completion_state.query = completion->request.query;
+        completion_state.selected = completion->selected;
+        for (const CompletionProviderState& provider : completion->providers) {
+            if (provider.pending) {
+                completion_state.pending_providers.push_back(
+                    completion_provider_name(provider.provider));
+            }
+        }
+        completion_state.items.reserve(completion->matches.size());
+        for (const CompletionMatch& match : completion->matches) {
+            completion_state.items.push_back(
+                {.id = match.item.id,
+                 .provider = completion_provider_name(match.item.provider),
+                 .label = match.item.label,
+                 .kind = match.item.kind,
+                 .detail = match.item.detail,
+                 .resolved = match.item.resolved});
         }
     }
     std::vector<OpenBufferStateSnapshot> buffers;
@@ -620,6 +704,7 @@ EditorStateSnapshot EditorModel::inspect() {
             .command_loop = std::move(command_state),
             .scripting = std::move(scripting_state),
             .interaction = std::move(interaction_state),
+            .completion = std::move(completion_state),
             .buffers = std::move(buffers),
             .windows = std::move(windows),
             .workbenches = std::move(workbenches),

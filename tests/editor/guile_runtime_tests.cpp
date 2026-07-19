@@ -1072,6 +1072,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .select_interaction_candidate = {},
          .set_interaction_history_position = {},
          .cancel_interaction = {},
+         .completion_active = {},
+         .start_completion = {},
+         .move_completion = {},
+         .apply_completion = {},
+         .cancel_completion = {},
          .cancel_pending_input = {},
          .view_position = {},
          .location_navigation = {},
@@ -1317,7 +1322,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
-    CHECK(*installed == 208);
+    CHECK(*installed == 213);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 11);
@@ -2017,7 +2022,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
-    CHECK(snapshot.scripted_commands == 208);
+    CHECK(snapshot.scripted_commands == 213);
     CHECK(snapshot.provider_revision == 1);
     CHECK(snapshot.scripted_providers == 11);
     CHECK_FALSE(snapshot.last_error.has_value());

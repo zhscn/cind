@@ -3262,3 +3262,47 @@ TEST_CASE("describe commands display reusable generated help buffers") {
     CHECK(key_help.find("file.save is a command") != std::string::npos);
     CHECK(key_help.find("Key sequence: C-x C-s") != std::string::npos);
 }
+
+TEST_CASE("completion commands use the completion-active keymap and apply buffer words") {
+    EditorApplication application = make_application("sample.cc", "foo foobar fo");
+    application.session().set_caret(TextOffset{13});
+
+    send_keys(application, "C-M-i");
+    REQUIRE(application.completion().active());
+    REQUIRE(application.completion().state() != nullptr);
+    REQUIRE(application.completion().state()->matches.size() == 2);
+    CHECK(std::ranges::any_of(application.active_keymap_layers(), [](const KeymapLayer& layer) {
+        return layer.scope == "completion-active";
+    }));
+
+    send_keys(application, "C-n");
+    CHECK(application.completion().state()->selected == 1);
+    send_keys(application, "RET");
+    CHECK_FALSE(application.completion().active());
+    const std::string text = application.session().snapshot().content().to_string();
+    CHECK((text == "foo foobar foo" || text == "foo foobar foobar"));
+}
+
+TEST_CASE("include completion selects the asynchronous path provider") {
+    TemporaryDirectory directory("cind-completion-path-test");
+    const std::filesystem::path source = directory.write("main.cc", "#include \"fo");
+    (void)directory.write("foo.hpp", "");
+    WakeSignal wake;
+    EditorApplication application =
+        make_application(source.string(), "#include \"fo",
+                         {.write_clipboard = {}, .read_clipboard = {}, .wake_event_loop = [&wake] {
+                              wake.notify();
+                          }});
+    application.session().set_caret(TextOffset{12});
+
+    send_keys(application, "C-M-i");
+    REQUIRE(application.completion().state() != nullptr);
+    REQUIRE(application.completion().state()->providers.size() == 1);
+    CHECK(application.completion().state()->providers.front().provider ==
+          CompletionProvider::path());
+    REQUIRE(wake.wait());
+    CHECK(application.poll_background_work());
+    REQUIRE(application.completion().state() != nullptr);
+    REQUIRE(application.completion().state()->matches.size() == 1);
+    CHECK(application.completion().state()->matches.front().item.label == "foo.hpp");
+}

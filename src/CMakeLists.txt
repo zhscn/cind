@@ -69,6 +69,7 @@ add_library(cind_application STATIC
   editor/buffer.cpp
   editor/command.cpp
   editor/command_loop.cpp
+  editor/completion.cpp
   editor/input_state.cpp
   editor/input_strategy.cpp
   editor/interaction.cpp

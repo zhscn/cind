@@ -909,7 +909,7 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             major = named_keymap_source_value(runtime, "major-mode", mode.name, keymaps);
         }
 
-        SCM result = scm_c_make_vector(9, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(10, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
         scm_c_vector_set_x(result, 1, buffer_kind_symbol(buffer.kind()));
         scm_c_vector_set_x(result, 2, states);
@@ -919,6 +919,9 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
         scm_c_vector_set_x(result, 6, minors);
         scm_c_vector_set_x(result, 7, major);
         scm_c_vector_set_x(result, 8, scm_from_bool(window.created_by_policy()));
+        scm_c_vector_set_x(
+            result, 9,
+            scm_from_bool(host.services.completion_active && host.services.completion_active()));
         return result;
     } catch (const std::exception& exception) {
         scm_misc_error("keymap-context-snapshot", exception.what(), SCM_EOL);
@@ -4892,6 +4895,116 @@ SCM cancel_interaction(SCM host_object) {
     return SCM_BOOL_F;
 }
 
+SCM completion_active(SCM host_object) {
+    HostLease& host = require_host(host_object, "completion-active?");
+    if (!host.services.completion_active) {
+        return SCM_BOOL_F;
+    }
+    try {
+        return scm_from_bool(host.services.completion_active());
+    } catch (const std::exception& exception) {
+        raise_host_error("completion-active?", exception.what());
+    } catch (...) {
+        scm_misc_error("completion-active?", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM start_completion(SCM host_object, SCM context_value, SCM providers_value) {
+    HostLease& host = require_host(host_object, "start-completion!");
+    if (!host.services.start_completion) {
+        scm_misc_error("start-completion!", "completion capability is unavailable", SCM_EOL);
+    }
+    try {
+        const CommandContext context =
+            command_context_from_scheme(host, context_value, "start-completion!");
+        std::vector<CompletionProvider> providers;
+        for (const std::string& name :
+             string_sequence_from_scheme(providers_value, "start-completion!", 3)) {
+            if (name == "word") {
+                providers.push_back(CompletionProvider::word());
+            } else if (name == "path") {
+                providers.push_back(CompletionProvider::path());
+            } else if (name == "snippet") {
+                providers.push_back(CompletionProvider::snippet());
+            } else {
+                raise_host_error("start-completion!",
+                                 std::format("unknown completion provider '{}'", name));
+            }
+        }
+        const CommandTarget target{.window = context.window_id(),
+                                   .buffer = context.buffer_id(),
+                                   .view = context.view_id()};
+        std::expected<void, std::string> started =
+            host.services.start_completion(target, std::move(providers));
+        if (!started) {
+            raise_host_error("start-completion!", started.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("start-completion!", exception.what());
+    } catch (...) {
+        scm_misc_error("start-completion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM move_completion(SCM host_object, SCM delta_value) {
+    if (scm_is_integer(delta_value) == 0) {
+        scm_wrong_type_arg_msg("move-completion!", 2, delta_value, "integer");
+    }
+    HostLease& host = require_host(host_object, "move-completion!");
+    if (!host.services.move_completion) {
+        scm_misc_error("move-completion!", "completion navigation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.move_completion(scm_to_int64(delta_value)));
+    } catch (const std::exception& exception) {
+        raise_host_error("move-completion!", exception.what());
+    } catch (...) {
+        scm_misc_error("move-completion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM apply_completion(SCM host_object, SCM replace_value) {
+    HostLease& host = require_host(host_object, "apply-completion!");
+    if (!host.services.apply_completion) {
+        scm_misc_error("apply-completion!", "completion application capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        std::expected<void, std::string> applied =
+            host.services.apply_completion(scheme_true(replace_value));
+        if (!applied) {
+            raise_host_error("apply-completion!", applied.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("apply-completion!", exception.what());
+    } catch (...) {
+        scm_misc_error("apply-completion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM cancel_completion(SCM host_object) {
+    HostLease& host = require_host(host_object, "cancel-completion!");
+    if (!host.services.cancel_completion) {
+        scm_misc_error("cancel-completion!", "completion cancellation capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        return scm_from_bool(host.services.cancel_completion());
+    } catch (const std::exception& exception) {
+        raise_host_error("cancel-completion!", exception.what());
+    } catch (...) {
+        scm_misc_error("cancel-completion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM cancel_pending_input(SCM host_object) {
     HostLease& host = require_host(host_object, "cancel-pending-input!");
     if (!host.services.cancel_pending_input) {
@@ -5237,6 +5350,16 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(set_interaction_history_position));
     (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
+    (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(completion_active));
+    (void)scm_c_define_gsubr("start-completion!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(start_completion));
+    (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(move_completion));
+    (void)scm_c_define_gsubr("apply-completion!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(apply_completion));
+    (void)scm_c_define_gsubr("cancel-completion!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(cancel_completion));
     (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_pending_input));
     (void)scm_c_define_gsubr("view-position", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_position));
@@ -5345,13 +5468,15 @@ void initialize_host_module(void*) {
         "refresh-interaction!", "submit-interaction!", "interaction-history",
         "set-interaction-history!", "select-interaction-candidate!",
         "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
-        "view-position", "location-navigation", "set-location-navigation!", "position-buffer-view!",
-        "set-message!", "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
-        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
-        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "completion-active?", "start-completion!", "move-completion!", "apply-completion!",
+        "cancel-completion!", "view-position", "location-navigation", "set-location-navigation!",
+        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
+        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
+        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "window-role", "set-window-role!", "window-pinned?", "set-window-pinned!",
         "window-created-by-policy?", "workbench-slot", "focus-window!", "request-redraw!", nullptr);

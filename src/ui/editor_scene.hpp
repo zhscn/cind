@@ -24,6 +24,7 @@ struct EditorViewport {
 struct EditorSceneViewState {
     EditorViewport viewport;
     ListViewport popup;
+    ListViewport completion;
 };
 
 struct EditorSceneLayoutInput {
@@ -40,6 +41,8 @@ struct EditorSceneLayoutInput {
     // geometry remains unchanged while filtering to fewer or zero items.
     std::size_t popup_capacity = 0;
     std::optional<std::size_t> popup_selection;
+    std::size_t completion_item_count = 0;
+    std::optional<std::size_t> completion_selection;
 };
 
 struct EditorSceneInput {
@@ -77,6 +80,10 @@ struct EditorSceneInput {
     // owner of this input and its caret in every frontend.
     std::optional<std::string_view> popup_input;
     std::optional<std::size_t> popup_input_cursor;
+
+    std::span<const ChromeItem> completion_items;
+    std::optional<std::size_t> completion_selection;
+    std::optional<TextOffset> completion_anchor;
 };
 
 struct EditorPaneScene {

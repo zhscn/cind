@@ -3,6 +3,7 @@
 #include "async/runtime.hpp"
 #include "cli/session.hpp"
 #include "editor/command_loop.hpp"
+#include "editor/completion.hpp"
 #include "editor/editing_mechanisms.hpp"
 #include "editor/input_state.hpp"
 #include "editor/interaction.hpp"
@@ -129,6 +130,8 @@ public:
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionController& interaction() { return interaction_; }
     const InteractionController& interaction() const { return interaction_; }
+    CompletionPipeline& completion() { return *completion_; }
+    const CompletionPipeline& completion() const { return *completion_; }
     GuileRuntimeSnapshot scripting() const { return guile_.snapshot(); }
     void refresh_default_keymap();
 
@@ -137,6 +140,12 @@ public:
     bool handle_scroll(ScrollInput input);
     bool request_close(bool force = false);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
+    std::expected<void, std::string> start_completion(CommandTarget target,
+                                                      std::vector<CompletionProvider> providers,
+                                                      CompletionTrigger trigger = {});
+    bool move_completion(std::int64_t delta);
+    std::expected<void, std::string> apply_completion(bool replace = false);
+    bool cancel_completion();
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;
     TextInputPolicy text_input_policy() const;
@@ -303,6 +312,9 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     bool execute_command(CommandId command, const CommandInvocation& invocation);
     void refresh_interaction_after_edit(RevisionId before);
+    void refresh_completion_after_command();
+    CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,
+                                                          const CompletionRequest& request);
     CommandContext command_context();
     void after_edit();
     std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
@@ -333,6 +345,7 @@ private:
     // then the native runtime joins before captured editor state is destroyed.
     AsyncRuntime async_runtime_;
     AsyncScriptHost script_async_;
+    std::unique_ptr<CompletionPipeline> completion_;
 };
 
 } // namespace cind

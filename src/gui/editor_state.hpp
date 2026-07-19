@@ -57,6 +57,27 @@ struct InteractionStateSnapshot {
     std::vector<InteractionCandidateSnapshot> candidates;
 };
 
+struct CompletionItemStateSnapshot {
+    std::uint64_t id = 0;
+    std::string provider;
+    std::string label;
+    std::string kind;
+    std::string detail;
+    bool resolved = false;
+};
+
+struct CompletionStateSnapshot {
+    bool active = false;
+    std::uint64_t generation = 0;
+    RevisionId revision = 0;
+    TextOffset anchor;
+    TextOffset caret;
+    std::string query;
+    std::size_t selected = 0;
+    std::vector<std::string> pending_providers;
+    std::vector<CompletionItemStateSnapshot> items;
+};
+
 struct OpenBufferStateSnapshot {
     std::uint32_t buffer_slot = 0;
     std::uint32_t buffer_generation = 0;
@@ -263,6 +284,7 @@ struct EditorStateSnapshot {
     CommandLoopStateSnapshot command_loop;
     ScriptingStateSnapshot scripting;
     InteractionStateSnapshot interaction;
+    CompletionStateSnapshot completion;
     std::vector<OpenBufferStateSnapshot> buffers;
     std::vector<OpenWindowStateSnapshot> windows;
     std::vector<WorkbenchStateSnapshot> workbenches;

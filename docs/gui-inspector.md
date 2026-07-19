@@ -136,6 +136,7 @@ cmk run -p gui cind-ui-inspect -- --socket /tmp/cind-debug.sock snapshot
 | `editor.input_state` | focused View 的 input strategy、InputState 名称、text-input/selection-after-edit policy、cursor shape、modeline indicator、handler、on-enter/on-exit 和 position-hints provider 状态 |
 | `editor.scripting` | Guile 版本、策略模块、scripted command/provider/input-state/input-strategy/mode/file-mode-rule/project-provider 数量、对应 installation revision、outstanding async task 数量和最近一次 host 错误 |
 | `editor.interaction` | minibuffer Window/View/Buffer、策略提供的 buffer name、origin target、prompt/picker 输入、provider、候选、选中项、history 大小/游标/草稿、generation、loading 和错误 |
+| `editor.completion` | 补全 generation/revision、anchor/caret/query、选中项、等待中的固定 provider 以及按稳定 ID 暴露的已过滤候选 |
 | `editor.buffers` | 所有打开 buffer 的资源、major mode、interaction class、初始 InputState、semantic thing 名称与 registry definition、location 数量、view ID、modified、saving 和 active 状态 |
 | `editor.windows` | window、绑定的 view/buffer ID 和 active 状态 |
 | `editor.workbenches` | 所有 active/inactive workbench 的 scope、MRU、active window、slot、完整 layout 树及保活的 window/view/buffer 状态 |
@@ -176,6 +177,7 @@ cmk run -p gui cind-ui-inspect -- get editor.command_loop
 cmk run -p gui cind-ui-inspect -- get editor.input_state
 cmk run -p gui cind-ui-inspect -- get editor.scripting
 cmk run -p gui cind-ui-inspect -- get editor.interaction
+cmk run -p gui cind-ui-inspect -- get editor.completion
 cmk run -p gui cind-ui-inspect -- get editor.buffers
 cmk run -p gui cind-ui-inspect -- get editor.windows
 cmk run -p gui cind-ui-inspect -- get editor.workbenches

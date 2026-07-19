@@ -122,19 +122,23 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
     EditorSceneViewState current{
         .viewport = {.top_line = 3, .top_line_offset = 0.5F, .left_column = 4},
         .popup = {},
+        .completion = {},
     };
     current.popup.reveal(8, 20, 4);
 
-    const EditorSceneViewState laid_out = layout_editor_scene({.text = text,
-                                                               .caret = TextOffset{0},
-                                                               .rows = 6,
-                                                               .cols = 40,
-                                                               .visible_text_rows = 3.5F,
-                                                               .tab_width = 4,
-                                                               .reveal_caret = true,
-                                                               .popup_item_count = 20,
-                                                               .popup_selection = 8},
-                                                              current);
+    const EditorSceneViewState laid_out =
+        layout_editor_scene({.text = text,
+                             .caret = TextOffset{0},
+                             .rows = 6,
+                             .cols = 40,
+                             .visible_text_rows = 3.5F,
+                             .tab_width = 4,
+                             .reveal_caret = true,
+                             .popup_item_count = 20,
+                             .popup_selection = 8,
+                             .completion_item_count = 0,
+                             .completion_selection = std::nullopt},
+                            current);
     CHECK(current.viewport.top_line == 3);
     CHECK(current.viewport.top_line_offset == doctest::Approx(0.5F));
     CHECK(laid_out.viewport.top_line == 0);
@@ -164,7 +168,10 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .popup_items = items,
                                  .popup_selection = 8,
                                  .popup_input = std::nullopt,
-                                 .popup_input_cursor = std::nullopt};
+                                 .popup_input_cursor = std::nullopt,
+                                 .completion_items = {},
+                                 .completion_selection = std::nullopt,
+                                 .completion_anchor = std::nullopt};
     const Scene first = compose_editor_scene(input, laid_out);
     const Scene second = compose_editor_scene(input, laid_out);
     CHECK(first.grid_offset_rows == doctest::Approx(second.grid_offset_rows));
@@ -210,6 +217,66 @@ TEST_CASE("char width: ascii, CJK, combining marks, invalid bytes") {
     CHECK(decode_utf8("\xE4\xB8").bytes == 1); // truncated 3-byte sequence
 }
 
+TEST_CASE("completion menu is caret anchored and does not reflow document rows") {
+    const Text text("alpha\nbeta\n");
+    const TokenBuffer tokens(lex(text).tokens);
+    const LineSigns signs;
+    const ModelineContent modeline{
+        .segments = {{.text = "sample.cc", .group = ModelineGroup::Left}}};
+    const std::vector<ChromeItem> items{{.label = "alphabet", .detail = "word"},
+                                        {.label = "alpha_value", .detail = "word"}};
+    EditorSceneViewState view;
+    view = layout_editor_scene({.text = text,
+                                .caret = TextOffset{5},
+                                .rows = 10,
+                                .cols = 50,
+                                .tab_width = 4,
+                                .reveal_caret = true,
+                                .popup_item_count = 0,
+                                .popup_capacity = 0,
+                                .popup_selection = std::nullopt,
+                                .completion_item_count = items.size(),
+                                .completion_selection = 1},
+                               view);
+    const Scene scene = compose_editor_scene({.text = text,
+                                              .tokens = tokens,
+                                              .signs = signs,
+                                              .caret = TextOffset{5},
+                                              .selections = {},
+                                              .position_hints = {},
+                                              .rows = 10,
+                                              .cols = 50,
+                                              .tab_width = 4,
+                                              .revision = 1,
+                                              .modeline = modeline,
+                                              .cursor_shape = CursorShape::Beam,
+                                              .pending_key = {},
+                                              .echo = {},
+                                              .echo_cursor_column = std::nullopt,
+                                              .echo_cursor_byte = std::nullopt,
+                                              .popup_title = {},
+                                              .popup_items = {},
+                                              .popup_capacity = 0,
+                                              .popup_selection = std::nullopt,
+                                              .popup_input = std::nullopt,
+                                              .popup_input_cursor = std::nullopt,
+                                              .completion_items = items,
+                                              .completion_selection = 1,
+                                              .completion_anchor = TextOffset{}},
+                                             view);
+    const auto completion =
+        std::ranges::find(scene.regions, std::string("editor/completion"), &Region::id);
+    REQUIRE(completion != scene.regions.end());
+    CHECK(completion->vertical_anchor == VerticalAnchor::Overlay);
+    CHECK(completion->rect.row == 1);
+    CHECK(completion->rect.col == text_area_column(text.line_count()));
+    REQUIRE(completion->popup() != nullptr);
+    CHECK(completion->popup()->selected_item == 1);
+    const Region* status = scene.find(RegionRole::StatusBar);
+    REQUIRE(status != nullptr);
+    CHECK(status->rect.row == 8);
+}
+
 TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     const Text text("zero\none\ntwo\nthree\n");
     const TokenBuffer tokens(lex(text).tokens);
@@ -220,6 +287,7 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
     const EditorSceneViewState view{
         .viewport = {.top_line = 1, .top_line_offset = 0.0F, .left_column = 4},
         .popup = {},
+        .completion = {},
     };
     const ModelineContent modeline{
         .segments = {{.text = "sample.cc", .group = ModelineGroup::Left}}};
@@ -243,7 +311,10 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .popup_items = popup_items,
                                               .popup_selection = 1,
                                               .popup_input = std::nullopt,
-                                              .popup_input_cursor = std::nullopt},
+                                              .popup_input_cursor = std::nullopt,
+                                              .completion_items = {},
+                                              .completion_selection = std::nullopt,
+                                              .completion_anchor = std::nullopt},
                                              view);
     const ViewTree tree(scene);
     CHECK(tree.layer(ViewLayer::Grid).children.size() == 3);
@@ -309,7 +380,10 @@ TEST_CASE("position hints replace document cells without changing text layout") 
                                               .popup_items = {},
                                               .popup_selection = std::nullopt,
                                               .popup_input = std::nullopt,
-                                              .popup_input_cursor = std::nullopt},
+                                              .popup_input_cursor = std::nullopt,
+                                              .completion_items = {},
+                                              .completion_selection = std::nullopt,
+                                              .completion_anchor = std::nullopt},
                                              {});
 
     const Region* body = scene.find(RegionRole::TextArea);

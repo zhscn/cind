@@ -13,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -95,6 +96,11 @@ GuileDisplayPlan built_in_display_plan(const GuileDisplayFacts& facts) {
     }
     return !pinned(facts.active) ? reuse_display_plan(facts.active)
                                  : split_display_plan(facts.origin, WindowSplitAxis::Columns, 0.5F);
+}
+
+bool completion_word_byte(char byte) {
+    const auto value = static_cast<unsigned char>(byte);
+    return std::isalnum(value) != 0 || byte == '_';
 }
 
 } // namespace
@@ -227,6 +233,14 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    interaction_session_.reset();
                    return interaction_.cancel();
                },
+           .completion_active = [this] { return completion_ && completion_->active(); },
+           .start_completion =
+               [this](CommandTarget target, std::vector<CompletionProvider> providers) {
+                   return start_completion(target, std::move(providers));
+               },
+           .move_completion = [this](std::int64_t delta) { return move_completion(delta); },
+           .apply_completion = [this](bool replace) { return apply_completion(replace); },
+           .cancel_completion = [this] { return cancel_completion(); },
            .cancel_pending_input = [this] { command_loop_.cancel_pending(); },
            .view_position =
                [this](ViewId view) {
@@ -630,6 +644,11 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)), script_async_(async_runtime_) {
     interaction_.attach_async_runtime(async_runtime_);
+    completion_ = std::make_unique<CompletionPipeline>(
+        runtime_, async_runtime_,
+        [this](CompletionProvider provider, const CompletionRequest& request) {
+            return dispatch_completion_provider(provider, request);
+        });
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
             guile_.project_index_updated(project);
@@ -708,6 +727,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
 }
 
 EditorApplication::~EditorApplication() {
+    (void)completion_->cancel();
     interaction_session_.reset();
     (void)interaction_.cancel();
     guile_.shutdown_async_tasks();
@@ -782,6 +802,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 if (std::optional<CommandLoopResult> override =
                         command_loop_.dispatch_override(key, context)) {
                     const bool consumed = handle_loop_result(std::move(*override));
+                    refresh_completion_after_command();
                     sync_keymaps();
                     return consumed;
                 }
@@ -811,6 +832,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                     const bool consumed = handle_loop_result(
                         command_loop_.execute(handled->command, context, handled->invocation));
                     refresh_interaction_after_edit(interaction_revision);
+                    refresh_completion_after_command();
                     sync_keymaps();
                     return consumed;
                 }
@@ -843,6 +865,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                                           text_input_policy() == TextInputPolicy::Accept;
     const bool consumed = handle_loop_result(std::move(result));
     refresh_interaction_after_edit(interaction_revision);
+    refresh_completion_after_command();
     if (preserve_prefix_for_text) {
         command_loop_.set_pending_prefix(text_prefix);
     }
@@ -933,8 +956,89 @@ bool EditorApplication::execute_command(CommandId command, const CommandInvocati
     CommandContext context = command_context();
     const bool consumed = handle_loop_result(command_loop_.execute(command, context, invocation));
     refresh_interaction_after_edit(interaction_revision);
+    refresh_completion_after_command();
     sync_keymaps();
     return consumed;
+}
+
+std::expected<void, std::string>
+EditorApplication::start_completion(CommandTarget target, std::vector<CompletionProvider> providers,
+                                    CompletionTrigger trigger) {
+    if (interaction_.active()) {
+        return std::unexpected("completion is unavailable while the minibuffer owns focus");
+    }
+    if (target.window != window_id() || target.buffer != buffer_id() || target.view != view_id()) {
+        return std::unexpected("completion target is not the active editor view");
+    }
+    EditSession& active = session_for(target.view);
+    const DocumentSnapshot snapshot = active.snapshot();
+    const Text& text = snapshot.content();
+    const TextOffset caret = active.caret();
+    const std::uint32_t line = text.position(caret).line;
+    const TextOffset line_start = text.line_start(line);
+    const std::string prefix = text.substring({line_start, caret});
+
+    TextOffset anchor = caret;
+    bool include_path = false;
+    if (const std::size_t include = prefix.find("#include"); include != std::string::npos) {
+        const std::size_t quote = prefix.find_last_of("\"<");
+        if (quote != std::string::npos && quote > include) {
+            const std::size_t slash = prefix.find_last_of("/\\");
+            const std::size_t start =
+                slash != std::string::npos && slash > quote ? slash + 1 : quote + 1;
+            anchor = TextOffset{line_start.value + static_cast<std::uint32_t>(start)};
+            include_path = true;
+        }
+    }
+    if (include_path) {
+        providers = {CompletionProvider::path()};
+    } else {
+        if (caret.value > 0) {
+            const TextOffset probe{caret.value - 1};
+            const TokenBuffer& tokens = syntax_tokens(target.window);
+            const auto token = std::ranges::find_if(
+                tokens, [probe](Token candidate) { return candidate.range.contains(probe); });
+            if (token != tokens.end()) {
+                const TokenKind kind = (*token).kind;
+                if (kind == TokenKind::LineComment || kind == TokenKind::BlockComment ||
+                    kind == TokenKind::StringLiteral || kind == TokenKind::RawStringLiteral ||
+                    kind == TokenKind::CharacterLiteral) {
+                    return std::unexpected(
+                        "completion is suppressed in the current syntax context");
+                }
+            }
+        }
+        while (anchor > line_start &&
+               completion_word_byte(text.byte_at(TextOffset{anchor.value - 1}))) {
+            --anchor.value;
+        }
+        providers.erase(std::remove_if(providers.begin(), providers.end(),
+                                       [](CompletionProvider p) {
+                                           return p.kind == CompletionProviderKind::Path;
+                                       }),
+                        providers.end());
+    }
+    if (providers.empty()) {
+        return std::unexpected("no completion provider is enabled for this syntax context");
+    }
+    CommandContext context(runtime_, target.window, target.buffer, target.view);
+    return completion_->start(context, anchor, std::move(providers), std::move(trigger));
+}
+
+bool EditorApplication::move_completion(std::int64_t delta) {
+    return completion_->select_relative(delta);
+}
+
+std::expected<void, std::string> EditorApplication::apply_completion(bool replace) {
+    std::expected<void, std::string> applied = completion_->apply({.replace = replace});
+    if (applied) {
+        after_edit();
+    }
+    return applied;
+}
+
+bool EditorApplication::cancel_completion() {
+    return completion_->cancel();
 }
 
 TextInputPolicy EditorApplication::text_input_policy() const {
@@ -1011,6 +1115,7 @@ void EditorApplication::insert_text(std::string_view text) {
     (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
     last_key_ = "text";
     refresh_interaction_after_edit(interaction_revision);
+    refresh_completion_after_command();
     sync_keymaps();
 }
 
@@ -2533,6 +2638,132 @@ void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
     if (interaction_.active() && interaction_.input_revision() != before) {
         interaction_.refresh_candidates();
     }
+}
+
+void EditorApplication::refresh_completion_after_command() {
+    if (!completion_->active()) {
+        return;
+    }
+    const CompletionRequest request = completion_->state()->request;
+    if (request.target.window != window_id() || request.target.buffer != buffer_id() ||
+        request.target.view != view_id()) {
+        (void)completion_->cancel();
+        return;
+    }
+    CommandContext context(runtime_, request.target.window, request.target.buffer,
+                           request.target.view);
+    if (runtime_.buffers().get(request.target.buffer).snapshot().revision() != request.revision) {
+        if (std::expected<void, std::string> updated = completion_->update(context); !updated) {
+            message_ = updated.error();
+        }
+    } else {
+        (void)completion_->invalidate_if_stale();
+    }
+}
+
+CompletionProviderResult
+EditorApplication::dispatch_completion_provider(CompletionProvider provider,
+                                                const CompletionRequest& request) {
+    const Buffer* buffer = runtime_.buffers().try_get(request.target.buffer);
+    if (buffer == nullptr || buffer->snapshot().revision() != request.revision) {
+        throw std::runtime_error("completion provider received a stale request");
+    }
+    const DocumentSnapshot snapshot = buffer->snapshot();
+    if (provider.kind == CompletionProviderKind::Word) {
+        const TokenBuffer& tokens = syntax_tokens(request.target.window);
+        std::set<std::string, std::less<>> words;
+        for (const Token token : tokens) {
+            if (token.kind != TokenKind::Identifier) {
+                continue;
+            }
+            std::string word = snapshot.content().substring(token.range);
+            if (!word.empty() && word != request.query) {
+                words.insert(std::move(word));
+            }
+        }
+        std::vector<CompletionItem> items;
+        items.reserve(words.size());
+        for (const std::string& word : words) {
+            items.push_back(
+                {.provider = provider,
+                 .filter_text = word,
+                 .label = word,
+                 .kind = "word",
+                 .detail = "buffer",
+                 .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                        .replace_range = {request.anchor, request.caret},
+                                        .new_text = word},
+                 .sort_text = word,
+                 .documentation = {},
+                 .additional_edits = {},
+                 .raw = {}});
+        }
+        return CompletionProviderResponse{
+            .provider = provider, .items = std::move(items), .is_incomplete = false};
+    }
+    if (provider.kind == CompletionProviderKind::Path) {
+        std::string query = request.query;
+        std::filesystem::path base = std::filesystem::current_path();
+        if (buffer->resource_uri()) {
+            base = std::filesystem::path(*buffer->resource_uri()).parent_path();
+        }
+        const TextRange line_range = snapshot.content().line_content_range(request.line);
+        const std::string line = snapshot.content().substring(line_range);
+        const std::size_t anchor_in_line = request.anchor.value - line_range.start.value;
+        const std::string before = line.substr(0, std::min(anchor_in_line, line.size()));
+        const std::size_t delimiter = before.find_last_of("\"<");
+        const bool system = delimiter != std::string::npos && before[delimiter] == '<';
+        std::filesystem::path relative = delimiter == std::string::npos
+                                             ? std::filesystem::path{}
+                                             : std::filesystem::path(before.substr(delimiter + 1));
+        const TextRange replacement{request.anchor, request.caret};
+        return CompletionProviderWork{
+            [provider, replacement, query = std::move(query), base = std::move(base),
+             relative = std::move(relative),
+             system](const std::stop_token& stop) -> CompletionProviderResponse {
+                std::vector<std::filesystem::path> roots{base};
+                if (system) {
+                    roots = {"/usr/local/include", "/usr/include"};
+                }
+                std::set<std::string, std::less<>> names;
+                for (const std::filesystem::path& root : roots) {
+                    std::error_code error;
+                    const std::filesystem::path directory = root / relative;
+                    for (std::filesystem::directory_iterator iterator(directory, error), end;
+                         !error && iterator != end; iterator.increment(error)) {
+                        if (stop.stop_requested()) {
+                            throw AsyncTaskCancelled();
+                        }
+                        std::string name = iterator->path().filename().string();
+                        if (!name.starts_with(query)) {
+                            continue;
+                        }
+                        if (iterator->is_directory(error)) {
+                            name.push_back('/');
+                        }
+                        names.insert(std::move(name));
+                    }
+                }
+                std::vector<CompletionItem> items;
+                items.reserve(names.size());
+                for (const std::string& name : names) {
+                    items.push_back({.provider = provider,
+                                     .filter_text = name,
+                                     .label = name,
+                                     .kind = name.ends_with('/') ? "directory" : "file",
+                                     .detail = "path",
+                                     .edit = CompletionEdit{.insert_range = replacement,
+                                                            .replace_range = replacement,
+                                                            .new_text = name},
+                                     .sort_text = name,
+                                     .documentation = {},
+                                     .additional_edits = {},
+                                     .raw = {}});
+                }
+                return {.provider = provider, .items = std::move(items), .is_incomplete = false};
+            }};
+    }
+    return CompletionProviderResponse{.provider = provider, .items = {}, .is_incomplete = false};
 }
 
 void EditorApplication::after_edit() {

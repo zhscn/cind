@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "editor/command_loop.hpp"
+#include "editor/completion.hpp"
 #include "editor/interaction.hpp"
 #include "editor/language_mechanism.hpp"
 #include "editor/runtime.hpp"
@@ -1685,4 +1686,148 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
     CHECK(async.drain() == 1);
     REQUIRE(interaction.state()->candidates.size() == 1);
     CHECK(interaction.state()->candidates.front().value == "new");
+}
+
+TEST_CASE("completion pipeline merges fixed providers and addresses duplicate labels by id") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion",
+                                                      .initial_text = "fo",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{2});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            const std::string detail = completion_provider_name(provider);
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {{.id = provider.kind == CompletionProviderKind::Word ? 11U : 22U,
+                           .provider = provider,
+                           .filter_text = "foobar",
+                           .label = "same label",
+                           .kind = "value",
+                           .detail = detail,
+                           .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                                  .replace_range = {request.anchor, request.caret},
+                                                  .new_text = detail},
+                           .sort_text = detail,
+                           .documentation = {},
+                           .additional_edits = {},
+                           .raw = {}}},
+                .is_incomplete = false};
+        });
+
+    REQUIRE(
+        pipeline
+            .start(context, TextOffset{}, {CompletionProvider::word(), CompletionProvider::path()})
+            .has_value());
+    REQUIRE(pipeline.state() != nullptr);
+    REQUIRE(pipeline.state()->matches.size() == 2);
+    CHECK(pipeline.state()->matches[0].item.label == "same label");
+    CHECK(pipeline.state()->matches[1].item.label == "same label");
+    CHECK(pipeline.state()->matches[0].item.id != pipeline.state()->matches[1].item.id);
+    CHECK(pipeline.state()->providers.size() == 2);
+}
+
+TEST_CASE("completion pipeline refilters complete sources and requeries only incomplete sources") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-update",
+                                                      .initial_text = "f",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{1});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    int word_requests = 0;
+    int path_requests = 0;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [&](CompletionProvider provider,
+            const CompletionRequest& request) -> CompletionProviderResult {
+            const bool word = provider.kind == CompletionProviderKind::Word;
+            (word ? word_requests : path_requests) += 1;
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {{.id = word ? 1U : static_cast<std::uint64_t>(path_requests + 10),
+                           .provider = provider,
+                           .filter_text = word ? "first" : "foo.hpp",
+                           .label = word ? "first" : "foo.hpp",
+                           .kind = word ? "word" : "path",
+                           .detail = {},
+                           .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                                  .replace_range = {request.anchor, request.caret},
+                                                  .new_text = word ? "first" : "foo.hpp"},
+                           .sort_text = {},
+                           .documentation = {},
+                           .additional_edits = {},
+                           .raw = {}}},
+                .is_incomplete = !word};
+        });
+    REQUIRE(
+        pipeline
+            .start(context, TextOffset{}, {CompletionProvider::word(), CompletionProvider::path()})
+            .has_value());
+    CHECK(word_requests == 1);
+    CHECK(path_requests == 1);
+
+    EditTransaction transaction = runtime.buffers().get(buffer).begin_transaction();
+    transaction.insert(TextOffset{1}, "o");
+    (void)transaction.commit();
+    runtime.views().set_caret(view, TextOffset{2});
+    REQUIRE(pipeline.update(context).has_value());
+    CHECK(word_requests == 1);
+    CHECK(path_requests == 2);
+    REQUIRE(pipeline.state() != nullptr);
+    CHECK(pipeline.state()->request.query == "fo");
+    REQUIRE(pipeline.state()->matches.size() == 1);
+    CHECK(pipeline.state()->matches.front().item.label == "foo.hpp");
+}
+
+TEST_CASE("completion application merges primary and additional edits into one undo step") {
+    EditorRuntime runtime;
+    const std::string original = "#include\nfo";
+    const BufferId buffer = runtime.buffers().create({.name = "completion-apply",
+                                                      .initial_text = original,
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{11});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {{.id = 1,
+                           .provider = provider,
+                           .filter_text = "foo",
+                           .label = "foo",
+                           .kind = "function",
+                           .detail = {},
+                           .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                                  .replace_range = {request.anchor, request.caret},
+                                                  .new_text = "foo"},
+                           .sort_text = {},
+                           .documentation = {},
+                           .additional_edits = {{{TextOffset{}, TextOffset{}}, "using X;\n"}},
+                           .raw = {}}},
+                .is_incomplete = false};
+        });
+    REQUIRE(pipeline.start(context, TextOffset{9}, {CompletionProvider::word()}).has_value());
+    REQUIRE(pipeline.apply().has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() ==
+          "using X;\n#include\nfoo");
+    CHECK(runtime.views().caret(view) == TextOffset{21});
+    REQUIRE(runtime.buffers().get(buffer).undo().has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == original);
 }

@@ -103,6 +103,8 @@ EditorSceneViewState layout_editor_scene(const EditorSceneLayoutInput& input,
     current.popup.reveal(
         input.popup_selection, input.popup_item_count,
         scene_popup_capacity({.rows = input.rows, .cols = input.cols}, popup_capacity));
+    current.completion.reveal(input.completion_selection, input.completion_item_count,
+                              std::min<std::size_t>(8, input.completion_item_count));
     return current;
 }
 
@@ -294,6 +296,57 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
         }
     }
 
+    std::optional<Region> completion;
+    const std::optional<std::size_t> completion_selection =
+        input.completion_selection && *input.completion_selection < input.completion_items.size()
+            ? input.completion_selection
+            : std::nullopt;
+    if (!input.completion_items.empty() && input.completion_anchor &&
+        *input.completion_anchor <= input.caret) {
+        const LinePosition anchor_position = input.text.position(*input.completion_anchor);
+        if (anchor_position.line >= viewport.top_line) {
+            const int anchor_row = static_cast<int>(anchor_position.line - viewport.top_line);
+            const int anchor_column =
+                text_column +
+                display_column(input.text, *input.completion_anchor, input.tab_width) -
+                viewport.left_column;
+            if (anchor_row >= 0 && anchor_row < text_rows && anchor_column < input.cols) {
+                const std::size_t capacity =
+                    std::min<std::size_t>(8, input.completion_items.size());
+                const std::size_t visible_count = capacity;
+                const std::size_t maximum_first = input.completion_items.size() - visible_count;
+                const std::size_t first = std::min(view.completion.first_item(), maximum_first);
+                std::size_t content_width = 12;
+                for (std::size_t offset = 0; offset < visible_count; ++offset) {
+                    const ChromeItem& item = input.completion_items[first + offset];
+                    content_width =
+                        std::max(content_width, item.label.size() + item.detail.size() + 3);
+                }
+                const int column = std::clamp(anchor_column, 0, std::max(0, input.cols - 1));
+                const int width = std::max(
+                    1, std::min<int>(static_cast<int>(content_width), input.cols - column));
+                const int height = static_cast<int>(visible_count) + 1;
+                const int below = anchor_row + 1;
+                const int row =
+                    below + height <= text_rows ? below : std::max(0, anchor_row - height);
+                completion.emplace(RegionRole::Popup, Rect{row, column, height, width},
+                                   std::vector<Prim>{}, SurfaceClass::Status,
+                                   VerticalAnchor::Overlay, "editor/completion", input.revision);
+                completion->set_popup({});
+                Region::PopupContent& content = *completion->popup();
+                content.title = std::format("completion · {}", input.completion_items.size());
+                content.first_item = first;
+                content.total_items = input.completion_items.size();
+                content.selected_item = completion_selection;
+                content.items.reserve(visible_count);
+                for (std::size_t offset = 0; offset < visible_count; ++offset) {
+                    const ChromeItem& item = input.completion_items[first + offset];
+                    content.items.push_back({.label = item.label, .detail = item.detail});
+                }
+            }
+        }
+    }
+
     if (input.echo_cursor_column) {
         scene.cursor_row = input.rows;
         scene.cursor_col = *input.echo_cursor_column + 1;
@@ -318,6 +371,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     scene.regions.push_back(std::move(echo));
     if (popup) {
         scene.regions.push_back(std::move(*popup));
+    }
+    if (completion) {
+        scene.regions.push_back(std::move(*completion));
     }
     return scene;
 }
@@ -346,7 +402,8 @@ Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<Edi
         }
         const int text_rows = std::max(1, pane.rect.rows - 1);
         for (Region& region : pane.scene.regions) {
-            if (region.role == RegionRole::EchoArea || region.role == RegionRole::Popup) {
+            if (region.role == RegionRole::EchoArea ||
+                (region.role == RegionRole::Popup && region.id == "editor/minibuffer")) {
                 continue;
             }
             region.rect.row += pane.rect.row;
@@ -363,8 +420,10 @@ Scene compose_editor_workspace(EditorWorkspaceGeometry geometry, std::vector<Edi
                 region.rect.cols = pane.rect.cols;
                 region.vertical_anchor = VerticalAnchor::Cell;
             } else {
-                region.vertical_anchor = VerticalAnchor::PaneGrid;
-                region.content_offset_rows = pane.scene.grid_offset_rows;
+                if (region.vertical_anchor != VerticalAnchor::Overlay) {
+                    region.vertical_anchor = VerticalAnchor::PaneGrid;
+                    region.content_offset_rows = pane.scene.grid_offset_rows;
+                }
             }
             workspace.regions.push_back(std::move(region));
         }

@@ -71,6 +71,7 @@ private:
     EditorApplication application_;
     std::deque<SignCache> sign_caches_;
     ui::ListViewport popup_viewport_;
+    ui::ListViewport completion_viewport_;
     int last_rows_ = 24;
     std::string preedit_;
 };
