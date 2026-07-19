@@ -2,6 +2,7 @@
 
 #include "async/runtime.hpp"
 #include "editor/buffer.hpp"
+#include "editor/command.hpp"
 #include "formatting/cpp_indent_style.hpp"
 #include "project/project_files.hpp"
 
@@ -25,6 +26,7 @@ enum class ScriptAsyncTaskKind : std::uint8_t {
     ProjectDiscovery,
     RgResultParse,
     Process,
+    LspNavigation,
 };
 
 struct ScriptFileReadRequest {
@@ -63,10 +65,16 @@ struct ScriptProcessRequest {
     std::string working_directory;
 };
 
+struct ScriptLspNavigationRequest {
+    CommandTarget target;
+    std::string kind;
+    std::string provider;
+};
+
 using ScriptAsyncRequest =
     std::variant<ScriptFileReadRequest, ScriptFileWriteRequest, ScriptDirectoryListRequest,
                  ScriptClangFormatStyleRequest, ScriptProjectDiscoveryRequest,
-                 ScriptRgResultParseRequest, ScriptProcessRequest>;
+                 ScriptRgResultParseRequest, ScriptProcessRequest, ScriptLspNavigationRequest>;
 
 struct ScriptFileReadResult {
     std::string path;
@@ -113,10 +121,22 @@ struct ScriptProcessResult {
     std::string standard_error;
 };
 
+struct ScriptLspLocation {
+    std::string resource;
+    std::uint32_t start_line = 0;
+    std::uint32_t start_column = 0;
+    std::uint32_t end_line = 0;
+    std::uint32_t end_column = 0;
+};
+
+struct ScriptLspNavigationResult {
+    std::vector<ScriptLspLocation> locations;
+};
+
 using ScriptAsyncResult =
     std::variant<ScriptFileReadResult, ScriptFileWriteResult, ScriptDirectoryListResult,
                  ScriptClangFormatStyleResult, ScriptProjectDiscoveryResult,
-                 ScriptRgResultParseResult, ScriptProcessResult>;
+                 ScriptRgResultParseResult, ScriptProcessResult, ScriptLspNavigationResult>;
 
 struct ScriptAsyncCallbacks {
     std::function<void(std::uint64_t, ScriptAsyncResult)> completed;
@@ -129,12 +149,26 @@ struct ScriptAsyncTaskSummary {
     ScriptAsyncTaskKind kind = ScriptAsyncTaskKind::FileRead;
 };
 
+struct ScriptExternalAsyncCallbacks {
+    std::function<void(ScriptAsyncResult)> completed;
+    std::function<void()> cancelled;
+    std::function<void(std::string)> failed;
+};
+
+struct ScriptAsyncExternalServices {
+    using Cancel = std::function<void()>;
+
+    std::function<std::expected<Cancel, std::string>(ScriptAsyncRequest,
+                                                     ScriptExternalAsyncCallbacks)>
+        start;
+};
+
 // Adapts the native async runtime to a stable task protocol for embedded
 // languages. Worker callbacks operate only on immutable native values;
 // terminal callbacks are delivered by AsyncRuntime::drain() on its owner.
 class AsyncScriptHost {
 public:
-    explicit AsyncScriptHost(AsyncRuntime& runtime);
+    explicit AsyncScriptHost(AsyncRuntime& runtime, ScriptAsyncExternalServices external = {});
     ~AsyncScriptHost();
 
     AsyncScriptHost(const AsyncScriptHost&) = delete;

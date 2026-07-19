@@ -387,9 +387,9 @@ private:
     void attach_lsp_diagnostics(LspSessionId session);
     void publish_lsp_diagnostics(LspSessionId session, LspPublishedDiagnostics published);
     void synchronize_lsp_buffer(BufferId buffer);
-    std::expected<void, std::string>
-    start_lsp_navigation(CommandTarget target, std::string_view kind, std::string_view provider);
-    bool cancel_lsp_navigation();
+    std::expected<ScriptAsyncExternalServices::Cancel, std::string>
+    start_lsp_navigation(const ScriptLspNavigationRequest& request,
+                         ScriptExternalAsyncCallbacks callbacks);
     CommandContext command_context();
     void after_edit();
     std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
@@ -415,14 +415,12 @@ private:
     bool reveal_caret_ = true;
     bool quit_ = false;
     std::uint64_t workbench_restore_generation_ = 0;
-    // These are declared last so the script adapter first cancels its work,
-    // then the native runtime joins before captured editor state is destroyed.
+    // These are declared last in dependency order. Completion and script tasks
+    // cancel while LSP sessions remain live, then the native runtime joins.
     AsyncRuntime async_runtime_;
-    AsyncScriptHost script_async_;
     std::unique_ptr<LspSessionRegistry> lsp_sessions_;
+    AsyncScriptHost script_async_;
     std::unique_ptr<CompletionPipeline> completion_;
-    LspSession::Cancel cancel_lsp_navigation_;
-    std::uint64_t lsp_navigation_generation_ = 0;
     std::map<BufferId, LspSessionId> lsp_buffer_sessions_;
     std::set<std::uint64_t> lsp_diagnostic_sessions_;
 };

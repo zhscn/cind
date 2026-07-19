@@ -21,7 +21,11 @@ namespace cind {
 
 namespace {
 
-using NativeTask = std::variant<AsyncTaskId, AsyncProcessId>;
+struct ExternalTask {
+    ScriptAsyncExternalServices::Cancel cancel;
+};
+
+using NativeTask = std::variant<AsyncTaskId, AsyncProcessId, ExternalTask>;
 
 struct TaskRecord {
     ScriptAsyncTaskKind kind = ScriptAsyncTaskKind::FileRead;
@@ -51,6 +55,7 @@ struct AsyncScriptHost::State {
     std::thread::id owner;
     bool active = true;
     std::uint64_t next_id = 1;
+    ScriptAsyncExternalServices external;
     std::unordered_map<std::uint64_t, TaskRecord> tasks;
 };
 
@@ -78,9 +83,11 @@ void throw_file_error(const std::error_code& error) {
 
 } // namespace
 
-AsyncScriptHost::AsyncScriptHost(AsyncRuntime& runtime) : state_(std::make_shared<State>()) {
+AsyncScriptHost::AsyncScriptHost(AsyncRuntime& runtime, ScriptAsyncExternalServices external)
+    : state_(std::make_shared<State>()) {
     state_->runtime = &runtime;
     state_->owner = std::this_thread::get_id();
+    state_->external = std::move(external);
 }
 
 AsyncScriptHost::~AsyncScriptHost() {
@@ -93,10 +100,17 @@ AsyncScriptHost::~AsyncScriptHost() {
     state_->active = false;
     for (const auto& [id, task] : state_->tasks) {
         (void)id;
-        if (const auto* native = std::get_if<AsyncTaskId>(&task.native)) {
-            (void)state_->runtime->cancel(*native);
-        } else if (const auto* process = std::get_if<AsyncProcessId>(&task.native)) {
-            (void)state_->runtime->terminate(*process);
+        try {
+            if (const auto* native = std::get_if<AsyncTaskId>(&task.native)) {
+                (void)state_->runtime->cancel(*native);
+            } else if (const auto* process = std::get_if<AsyncProcessId>(&task.native)) {
+                (void)state_->runtime->terminate(*process);
+            } else if (const auto* external = std::get_if<ExternalTask>(&task.native);
+                       external != nullptr && external->cancel) {
+                external->cancel();
+            }
+        } catch (...) {
+            state_->external.start = {};
         }
     }
     state_->tasks.clear();
@@ -458,7 +472,7 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                                              });
                              }});
                     return {.kind = ScriptAsyncTaskKind::RgResultParse, .native = native};
-                } else {
+                } else if constexpr (std::is_same_v<Request, ScriptProcessRequest>) {
                     if (operation.file.empty()) {
                         throw std::invalid_argument("process executable is empty");
                     }
@@ -504,6 +518,47 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                                              });
                              }});
                     return {.kind = ScriptAsyncTaskKind::Process, .native = native};
+                } else {
+                    if (!state_->external.start) {
+                        throw std::runtime_error("external async capability is unavailable");
+                    }
+                    std::expected<ScriptAsyncExternalServices::Cancel, std::string> started =
+                        state_->external.start(
+                            ScriptAsyncRequest{std::forward<decltype(operation)>(operation)},
+                            {.completed =
+                                 [weak_state, id, completed = callbacks.completed](
+                                     ScriptAsyncResult result) mutable {
+                                     finish_task(weak_state, id,
+                                                 [id, completed = std::move(completed),
+                                                  result = std::move(result)]() mutable {
+                                                     completed(id, std::move(result));
+                                                 });
+                                 },
+                             .cancelled =
+                                 [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                     finish_task(weak_state, id,
+                                                 [id, cancelled = std::move(cancelled)] {
+                                                     if (cancelled) {
+                                                         cancelled(id);
+                                                     }
+                                                 });
+                                 },
+                             .failed =
+                                 [weak_state, id,
+                                  failed = callbacks.failed](std::string message) mutable {
+                                     finish_task(weak_state, id,
+                                                 [id, failed = std::move(failed),
+                                                  message = std::move(message)]() mutable {
+                                                     if (failed) {
+                                                         failed(id, std::move(message));
+                                                     }
+                                                 });
+                                 }});
+                    if (!started) {
+                        throw std::runtime_error(started.error());
+                    }
+                    return {.kind = ScriptAsyncTaskKind::LspNavigation,
+                            .native = ExternalTask{.cancel = std::move(*started)}};
                 }
             },
             std::move(request));
@@ -523,13 +578,23 @@ bool AsyncScriptHost::cancel(std::uint64_t task) {
     if (found == state_->tasks.end()) {
         return false;
     }
+    if (const auto* external = std::get_if<ExternalTask>(&found->second.native)) {
+        ScriptAsyncExternalServices::Cancel cancel = external->cancel;
+        if (!cancel) {
+            return false;
+        }
+        cancel();
+        return true;
+    }
     return std::visit(
-        [runtime = state_->runtime](const auto native) {
+        [runtime = state_->runtime](const auto& native) {
             using Native = std::remove_cvref_t<decltype(native)>;
             if constexpr (std::is_same_v<Native, AsyncTaskId>) {
                 return runtime->cancel(native);
-            } else {
+            } else if constexpr (std::is_same_v<Native, AsyncProcessId>) {
                 return runtime->terminate(native);
+            } else {
+                return false;
             }
         },
         found->second.native);

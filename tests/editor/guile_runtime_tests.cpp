@@ -1083,9 +1083,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const std::string workbench_session = "serialized workbench session";
     std::optional<std::string> restored_workbench_session;
     std::string interaction_provider;
-    std::optional<CommandTarget> lsp_navigation_target;
-    std::string lsp_navigation_kind;
-    std::string lsp_navigation_provider;
     GuileRuntime guile(
         runtime,
         {.display_buffer =
@@ -1128,6 +1125,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .newline = {},
          .indent = {},
          .type_text = {},
+         .structural_edit = {},
          .page_rows = {},
          .interaction_status = {},
          .interaction_provider = {},
@@ -1146,13 +1144,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .completion_active = {},
          .resolve_completion_provider = {},
          .start_completion = {},
-         .request_lsp_navigation = [&](CommandTarget target, std::string kind,
-                                       std::string provider) -> std::expected<void, std::string> {
-             lsp_navigation_target = target;
-             lsp_navigation_kind = std::move(kind);
-             lsp_navigation_provider = std::move(provider);
-             return {};
-         },
          .move_completion = {},
          .apply_completion = {},
          .cancel_completion = {},
@@ -1415,12 +1406,31 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const CommandResult definition =
         runtime.commands().invoke(require_command(runtime, "lsp.definition"), context);
     REQUIRE(definition.has_value());
-    REQUIRE(lsp_navigation_target.has_value());
-    CHECK(lsp_navigation_target->window == window);
-    CHECK(lsp_navigation_target->buffer == buffer);
-    CHECK(lsp_navigation_target->view == view);
-    CHECK(lsp_navigation_kind == "definition");
-    CHECK(lsp_navigation_provider == "lsp:cpp:clangd");
+    REQUIRE(pending_async_request.has_value());
+    const ScriptAsyncRequest navigation_request =
+        pending_async_request.value_or(ScriptFileReadRequest{});
+    const auto* navigation = std::get_if<ScriptLspNavigationRequest>(&navigation_request);
+    REQUIRE(navigation != nullptr);
+    CHECK(navigation->target.window == window);
+    CHECK(navigation->target.buffer == buffer);
+    CHECK(navigation->target.view == view);
+    CHECK(navigation->kind == "definition");
+    CHECK(navigation->provider == "lsp:cpp:clangd");
+    const std::uint64_t definition_task = next_async_task - 1;
+    const CommandResult references =
+        runtime.commands().invoke(require_command(runtime, "lsp.references"), context);
+    REQUIRE(references.has_value());
+    REQUIRE_FALSE(cancelled_async_tasks.empty());
+    CHECK(cancelled_async_tasks.back() == definition_task);
+    const ScriptAsyncRequest references_request =
+        pending_async_request.value_or(ScriptFileReadRequest{});
+    const auto* references_navigation =
+        std::get_if<ScriptLspNavigationRequest>(&references_request);
+    REQUIRE(references_navigation != nullptr);
+    CHECK(references_navigation->kind == "references");
+    pending_async_callbacks.completed(next_async_task - 1,
+                                      ScriptLspNavigationResult{.locations = {}});
+    CHECK(message == "no LSP references found");
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -1433,7 +1443,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(write->path == "/tmp/sample");
     CHECK(write->contents == "abc\n");
     CHECK(message == "saving /tmp/sample…");
-    pending_async_callbacks.completed(1, ScriptFileWriteResult{.path = "/tmp/sample"});
+    pending_async_callbacks.completed(next_async_task - 1,
+                                      ScriptFileWriteResult{.path = "/tmp/sample"});
     CHECK(buffer_save_completed);
     CHECK_FALSE(buffer_save_aborted);
     CHECK(message == "saved /tmp/sample");

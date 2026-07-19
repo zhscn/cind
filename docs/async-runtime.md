@@ -105,10 +105,11 @@ work.
 ## Script tasks
 
 `AsyncScriptHost` gives embedded languages one task namespace over native file reads and writes,
-directory enumeration, clang-format discovery, project discovery, ripgrep result parsing and child
-processes. Each request receives a stable integer ID and follows the same completed, cancelled or
-failed terminal path. The adapter retains the native `AsyncTaskId` or
-`AsyncProcessId` internally, so cancellation does not expose libuv handle types to language code.
+directory enumeration, clang-format discovery, project discovery, ripgrep result parsing, child
+processes and editor-thread protocol requests such as LSP navigation. Each request receives a
+stable integer ID and follows the same completed, cancelled or failed terminal path. The adapter
+retains the native task, process or protocol cancellation handle internally, so cancellation does
+not expose libuv or language-server handle types to language code.
 
 File and style workers receive copied paths and immutable read or write payloads. Directory workers
 receive copied paths and limits. Project discovery receives a copied ordered provider snapshot.
@@ -117,6 +118,9 @@ executable, argument vector and working directory. No worker callback enters Gui
 `SCM` value. `AsyncRuntime::drain()` transfers a typed native result to the Guile bridge, which then
 invokes the protected Scheme callback on the editor thread. The task record is removed before the
 callback runs, allowing callbacks to start or cancel other tasks without re-entering a live record.
+Protocol requests already execute on the editor thread and use the same terminal delivery contract;
+their Scheme owners retain the task ID and policy state while the native adapter retains only the
+cancellation handle.
 
 An interaction provider may return a typed request with a Scheme result transform. The bridge
 tracks that native callback in the same task set as `start-async-task!`; after draining, it converts

@@ -8,6 +8,7 @@
             async-project-discovery
             async-rg-result-parse
             async-process
+            async-lsp-navigation
             start-async-task!
             cancel-async-task!
             async-task-summaries))
@@ -63,6 +64,13 @@
   (unless (string? working-directory)
     (error "async process working directory must be a string" working-directory))
   (vector 'process file arguments working-directory))
+
+(define (async-lsp-navigation window buffer view kind provider)
+  (unless (symbol? kind)
+    (error "LSP navigation kind must be a symbol" kind))
+  (unless (string? provider)
+    (error "LSP navigation provider must be a string" provider))
+  (vector 'lsp-navigation window buffer view kind provider))
 
 (define* (start-async-task! host request completed
                             #:key (failed #f) (cancelled #f))

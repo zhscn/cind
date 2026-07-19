@@ -53,6 +53,25 @@ std::string scheme_string_with_nuls(SCM value) {
     return result;
 }
 
+std::string scheme_name(SCM value, const char* caller, int position) {
+    if (!scheme_true(scm_symbol_p(value))) {
+        scm_wrong_type_arg_msg(caller, position, value, "symbol");
+    }
+    return scheme_string(scm_symbol_to_string(value));
+}
+
+template <typename Tag> EntityId<Tag> entity_id(SCM value, const char* caller, int position) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 2 ||
+        scm_is_unsigned_integer(scm_c_vector_ref(value, 0), 0,
+                                std::numeric_limits<std::uint32_t>::max()) == 0 ||
+        scm_is_unsigned_integer(scm_c_vector_ref(value, 1), 1,
+                                std::numeric_limits<std::uint32_t>::max()) == 0) {
+        scm_wrong_type_arg_msg(caller, position, value, "entity ID vector");
+    }
+    return {.slot = scm_to_uint32(scm_c_vector_ref(value, 0)),
+            .generation = scm_to_uint32(scm_c_vector_ref(value, 1))};
+}
+
 bool symbol_is(SCM value, const char* expected) {
     return scheme_true(scm_symbol_p(value)) &&
            scheme_true(scm_eq_p(value, scm_from_utf8_symbol(expected)));
@@ -233,6 +252,19 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                                         string_sequence(scm_c_vector_ref(value, 2), caller),
                                     .working_directory = scheme_string(scm_c_vector_ref(value, 3))};
     }
+    if (symbol_is(tag, "lsp-navigation")) {
+        if (size != 6 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 4))) ||
+            !scm_is_string(scm_c_vector_ref(value, 5))) {
+            scm_wrong_type_arg_msg(caller, position, value,
+                                   "#(lsp-navigation window buffer view kind provider) request");
+        }
+        return ScriptLspNavigationRequest{
+            .target = {.window = entity_id<WindowTag>(scm_c_vector_ref(value, 1), caller, position),
+                       .buffer = entity_id<BufferTag>(scm_c_vector_ref(value, 2), caller, position),
+                       .view = entity_id<ViewTag>(scm_c_vector_ref(value, 3), caller, position)},
+            .kind = scheme_name(scm_c_vector_ref(value, 4), caller, position),
+            .provider = scheme_string(scm_c_vector_ref(value, 5))};
+    }
     scm_misc_error(caller, "unknown async request kind", SCM_EOL);
     return ScriptFileReadRequest{};
 }
@@ -275,6 +307,8 @@ const char* task_kind_name(ScriptAsyncTaskKind kind) {
         return "rg-result-parse";
     case ScriptAsyncTaskKind::Process:
         return "process";
+    case ScriptAsyncTaskKind::LspNavigation:
+        return "lsp-navigation";
     }
     return "unknown";
 }
@@ -364,7 +398,7 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                                    scm_from_utf8_stringn(value.text.data(), value.text.size()));
                 scm_c_vector_set_x(converted, 2, locations);
                 return converted;
-            } else {
+            } else if constexpr (std::is_same_v<Result, ScriptProcessResult>) {
                 SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);
                 scm_c_vector_set_x(converted, 0, name_symbol("process"));
                 scm_c_vector_set_x(converted, 1, scm_from_int64(value.exit_status));
@@ -375,6 +409,25 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 scm_c_vector_set_x(converted, 4,
                                    scm_from_utf8_stringn(value.standard_error.data(),
                                                          value.standard_error.size()));
+                return converted;
+            } else {
+                SCM locations = scm_c_make_vector(value.locations.size(), SCM_UNSPECIFIED);
+                for (std::size_t index = 0; index < value.locations.size(); ++index) {
+                    const ScriptLspLocation& location = value.locations[index];
+                    SCM converted_location = scm_c_make_vector(6, SCM_UNSPECIFIED);
+                    scm_c_vector_set_x(converted_location, 0,
+                                       scm_from_utf8_string(location.resource.c_str()));
+                    scm_c_vector_set_x(converted_location, 1, scm_from_uint32(location.start_line));
+                    scm_c_vector_set_x(converted_location, 2,
+                                       scm_from_uint32(location.start_column));
+                    scm_c_vector_set_x(converted_location, 3, scm_from_uint32(location.end_line));
+                    scm_c_vector_set_x(converted_location, 4, scm_from_uint32(location.end_column));
+                    scm_c_vector_set_x(converted_location, 5, name_symbol("utf-16"));
+                    scm_c_vector_set_x(locations, index, converted_location);
+                }
+                SCM converted = scm_c_make_vector(2, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(converted, 0, name_symbol("lsp-navigation"));
+                scm_c_vector_set_x(converted, 1, locations);
                 return converted;
             }
         },

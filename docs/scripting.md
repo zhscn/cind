@@ -1057,6 +1057,12 @@ is expressed as a typed native request and never enters Guile. The Guile async b
 Scheme callbacks and provider transforms while their tasks are outstanding, so shutdown,
 inspection, cancellation, and extension rollback observe one task namespace.
 
+The task namespace also carries editor-thread protocol operations. Semantic LSP navigation is a
+typed request/result pair: Scheme owns the pending request identity, replacement and quit policy,
+failure messages, and result presentation, while the host owns session resolution, protocol
+encoding and the opaque cancellation handle. This boundary keeps asynchronous feature state out of
+`EditorApplication` without exposing transport objects to Scheme.
+
 Additional host APIs follow the same boundary:
 
 - pass stable names, generational IDs, immutable snapshots and typed values across languages;

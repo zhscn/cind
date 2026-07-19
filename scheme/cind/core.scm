@@ -1796,6 +1796,7 @@
 (define (keyboard-quit host context invocation)
   (reset-input-states! host (context-view context))
   (cancel-pending-input! host)
+  (cancel-lsp-navigation! host)
   (unless (or (cancel-completion! host)
               (cancel-interaction! host))
     (clear-selection! host (context-view context)))
@@ -2096,6 +2097,57 @@
                               (symbol->string source) count
                               (if (= count 1) "" "s"))))))))
 
+(define-record-type <pending-lsp-navigation>
+  (make-pending-lsp-navigation task window source)
+  pending-lsp-navigation?
+  (task pending-lsp-navigation-task)
+  (window pending-lsp-navigation-window)
+  (source pending-lsp-navigation-source))
+
+(define pending-lsp-navigations (make-weak-key-hash-table))
+
+(define (pending-lsp-navigation-live? host task)
+  (let ((pending (hashq-ref pending-lsp-navigations host)))
+    (and pending (= task (pending-lsp-navigation-task pending)))))
+
+(define (clear-lsp-navigation! host task)
+  (when (pending-lsp-navigation-live? host task)
+    (hashq-remove! pending-lsp-navigations host)))
+
+(define (cancel-lsp-navigation! host)
+  (let ((pending (hashq-ref pending-lsp-navigations host)))
+    (and pending
+         (begin
+           (hashq-remove! pending-lsp-navigations host)
+           (cancel-async-task! host (pending-lsp-navigation-task pending))))))
+
+(define (replace-lsp-navigation! host pending)
+  (cancel-lsp-navigation! host)
+  (hashq-set! pending-lsp-navigations host pending))
+
+(define (complete-lsp-navigation! host task result)
+  (when (pending-lsp-navigation-live? host task)
+    (let ((pending (hashq-ref pending-lsp-navigations host)))
+      (clear-lsp-navigation! host task)
+      (if (and (vector? result)
+               (= (vector-length result) 2)
+               (eq? (vector-ref result 0) 'lsp-navigation)
+               (vector? (vector-ref result 1)))
+          (lsp-locations-completed! host
+                                    (pending-lsp-navigation-window pending)
+                                    (pending-lsp-navigation-source pending)
+                                    (vector-ref result 1))
+          (set-message! host "LSP navigation returned a malformed result")))))
+
+(define (fail-lsp-navigation! host task message)
+  (when (pending-lsp-navigation-live? host task)
+    (let ((source (pending-lsp-navigation-source
+                   (hashq-ref pending-lsp-navigations host))))
+      (clear-lsp-navigation! host task)
+      (set-message! host
+                    (format #f "LSP ~a failed: ~a"
+                            (symbol->string source) message)))))
+
 (define (lsp-navigation-provider host context)
   (and (eq? (vector-ref (buffer-mode-summary host (context-buffer context)) 0)
             'cind.cpp)
@@ -2105,8 +2157,23 @@
   (let ((provider (lsp-navigation-provider host context)))
     (if (not provider)
         (command-error "LSP navigation is unavailable for the current mode")
-        (begin
-          (request-lsp-navigation! host context kind provider)
+        (let ((task
+               (start-async-task!
+                host
+                (async-lsp-navigation (context-window context)
+                                      (context-buffer context)
+                                      (context-view context)
+                                      kind provider)
+                (lambda (completed-task result)
+                  (complete-lsp-navigation! host completed-task result))
+                #:failed
+                (lambda (failed-task message)
+                  (fail-lsp-navigation! host failed-task message))
+                #:cancelled
+                (lambda (cancelled-task)
+                  (clear-lsp-navigation! host cancelled-task)))))
+          (replace-lsp-navigation!
+           host (make-pending-lsp-navigation task (context-window context) kind))
           (set-message! host
                         (string-append "requesting LSP "
                                        (symbol->string kind) "…"))

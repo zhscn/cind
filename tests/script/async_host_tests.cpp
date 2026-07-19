@@ -257,3 +257,66 @@ TEST_CASE("script async host unifies process completion and cancellation") {
     drain_until(runtime, [&] { return cancelled; });
     CHECK(host.tasks().empty());
 }
+
+TEST_CASE("script async host presents LSP navigation as a cancellable script task") {
+    AsyncRuntime runtime;
+    std::optional<ScriptLspNavigationRequest> native_request;
+    ScriptExternalAsyncCallbacks native_callbacks;
+    bool native_cancelled = false;
+    AsyncScriptHost host(
+        runtime, {.start = [&](ScriptAsyncRequest request, ScriptExternalAsyncCallbacks callbacks)
+                      -> std::expected<ScriptAsyncExternalServices::Cancel, std::string> {
+            native_request = std::get<ScriptLspNavigationRequest>(std::move(request));
+            native_callbacks = std::move(callbacks);
+            return ScriptAsyncExternalServices::Cancel{[&] {
+                native_cancelled = true;
+                native_callbacks.cancelled();
+            }};
+        }});
+    const CommandTarget target{.window = {1, 2}, .buffer = {3, 4}, .view = {5, 6}};
+    ScriptLspNavigationResult completed_result;
+    bool completed = false;
+    bool cancelled = false;
+
+    const auto task = host.start(
+        ScriptLspNavigationRequest{
+            .target = target, .kind = "definition", .provider = "lsp:cpp:clangd"},
+        {.completed =
+             [&](std::uint64_t, ScriptAsyncResult result) {
+                 completed_result = std::get<ScriptLspNavigationResult>(std::move(result));
+                 completed = true;
+             },
+         .cancelled = {},
+         .failed = {}});
+    REQUIRE(task.has_value());
+    REQUIRE(native_request.has_value());
+    const ScriptLspNavigationRequest captured = native_request.value_or(
+        ScriptLspNavigationRequest{.target = {}, .kind = {}, .provider = {}});
+    CHECK(captured.target == target);
+    CHECK(captured.kind == "definition");
+    REQUIRE(host.tasks().size() == 1);
+    CHECK(host.tasks().front().kind == ScriptAsyncTaskKind::LspNavigation);
+
+    native_callbacks.completed(
+        ScriptLspNavigationResult{.locations = {{.resource = "/tmp/target.cpp",
+                                                 .start_line = 3,
+                                                 .start_column = 5,
+                                                 .end_line = 3,
+                                                 .end_column = 9}}});
+    REQUIRE(completed);
+    REQUIRE(completed_result.locations.size() == 1);
+    CHECK(completed_result.locations.front().resource == "/tmp/target.cpp");
+    CHECK(host.tasks().empty());
+
+    const auto replacement = host.start(
+        ScriptLspNavigationRequest{
+            .target = target, .kind = "references", .provider = "lsp:cpp:clangd"},
+        {.completed = [](std::uint64_t, const ScriptAsyncResult&) {},
+         .cancelled = [&](std::uint64_t) { cancelled = true; },
+         .failed = {}});
+    REQUIRE(replacement.has_value());
+    CHECK(host.cancel(*replacement));
+    CHECK(native_cancelled);
+    CHECK(cancelled);
+    CHECK(host.tasks().empty());
+}

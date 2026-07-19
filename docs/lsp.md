@@ -110,6 +110,13 @@ and every references result become a `cind.location-list` buffer and the current
 list. Visiting an entry uses the `list` intent. These display paths record `def`, `ref`, or `list`
 edges in the workbench jump graph without coupling the LSP adapter to window placement.
 
+Navigation is exposed to Scheme through the shared typed async-task protocol. The native request
+contains only a generational command target, navigation kind and provider name; its result contains
+normalized UTF-16 locations. `(cind core)` owns the pending-navigation record, replacement and quit
+cancellation, stale-result rejection, messages, and the choice between direct display and a
+location-list buffer. C++ retains only the cancellable protocol request and removes it from the
+native task registry before delivering a terminal callback.
+
 `M-.` requests a definition, `M-?` requests references, and the `lsp.definition`,
 `lsp.declaration`, `lsp.implementation`, and `lsp.references` commands remain available to other
 keymaps and extensions. Starting another semantic navigation request cancels the pending request;
