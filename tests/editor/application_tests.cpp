@@ -1716,6 +1716,9 @@ TEST_CASE("completion pipeline merges fixed providers and addresses duplicate la
                                                   .replace_range = {request.anchor, request.caret},
                                                   .new_text = detail},
                            .sort_text = detail,
+                           .resolved = true,
+                           .resolving = false,
+                           .resolve_error = {},
                            .documentation = {},
                            .additional_edits = {},
                            .raw = {}}},
@@ -1732,6 +1735,190 @@ TEST_CASE("completion pipeline merges fixed providers and addresses duplicate la
     CHECK(pipeline.state()->matches[1].item.label == "same label");
     CHECK(pipeline.state()->matches[0].item.id != pipeline.state()->matches[1].item.id);
     CHECK(pipeline.state()->providers.size() == 2);
+}
+
+TEST_CASE("completion pipeline resolves visible candidates in place by stable id") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-resolve",
+                                                      .initial_text = "fo",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{2});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    int resolve_requests = 0;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            std::vector<CompletionItem> items;
+            for (const std::uint64_t id : {41U, 42U}) {
+                const std::string label = std::format("foo{}", id);
+                items.push_back(
+                    {.id = id,
+                     .provider = provider,
+                     .filter_text = label,
+                     .label = label,
+                     .kind = "function",
+                     .detail = "unresolved",
+                     .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                            .replace_range = {request.anchor, request.caret},
+                                            .new_text = label},
+                     .sort_text = label,
+                     .resolved = false,
+                     .resolving = false,
+                     .resolve_error = {},
+                     .documentation = {},
+                     .additional_edits = {},
+                     .raw = std::format("{{\"id\":{}}}", id)});
+            }
+            return CompletionProviderResponse{
+                .provider = provider, .items = std::move(items), .is_incomplete = false};
+        },
+        [&](const CompletionRequest&, const CompletionItem& item,
+            CompletionPipeline::ResolveCompleted completed, CompletionProviderAsync::Failed,
+            CompletionProviderAsync::Cancelled)
+            -> std::expected<CompletionProviderAsync::Cancel, std::string> {
+            ++resolve_requests;
+            CompletionItem resolved = item;
+            resolved.detail = "resolved";
+            resolved.documentation = std::format("documentation for {}", item.label);
+            resolved.resolved = true;
+            completed(std::move(resolved));
+            return CompletionProviderAsync::Cancel{};
+        });
+
+    REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
+    REQUIRE(pipeline.state() != nullptr);
+    CHECK(resolve_requests == 1);
+    REQUIRE(pipeline.state()->matches.size() == 2);
+    const std::uint64_t selected_id = pipeline.state()->matches.front().item.id;
+    CHECK(pipeline.state()->matches.front().item.resolved);
+    CHECK(pipeline.state()->matches.front().item.documentation ==
+          std::format("documentation for {}", pipeline.state()->matches.front().item.label));
+
+    pipeline.resolve_visible(0, 2);
+    CHECK(resolve_requests == 2);
+    REQUIRE(pipeline.state() != nullptr);
+    CHECK(pipeline.state()->matches.front().item.id == selected_id);
+    CHECK(std::ranges::all_of(pipeline.state()->matches, [](const CompletionMatch& match) {
+        return match.item.resolved && match.item.detail == "resolved";
+    }));
+}
+
+TEST_CASE("completion pipeline cancels outstanding item resolution with its session") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-resolve-cancel",
+                                                      .initial_text = "f",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{1});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    int cancellations = 0;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {{.id = 9,
+                           .provider = provider,
+                           .filter_text = "foo",
+                           .label = "foo",
+                           .kind = "function",
+                           .detail = {},
+                           .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                                  .replace_range = {request.anchor, request.caret},
+                                                  .new_text = "foo"},
+                           .sort_text = {},
+                           .resolved = false,
+                           .resolving = false,
+                           .resolve_error = {},
+                           .documentation = {},
+                           .additional_edits = {},
+                           .raw = "payload"}},
+                .is_incomplete = false};
+        },
+        [&](const CompletionRequest&, const CompletionItem&, CompletionPipeline::ResolveCompleted,
+            CompletionProviderAsync::Failed, CompletionProviderAsync::Cancelled)
+            -> std::expected<CompletionProviderAsync::Cancel, std::string> {
+            return CompletionProviderAsync::Cancel{[&] { ++cancellations; }};
+        });
+
+    REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
+    REQUIRE(pipeline.state() != nullptr);
+    CHECK(pipeline.state()->matches.front().item.resolving);
+    CHECK(pipeline.cancel());
+    CHECK(cancellations == 1);
+}
+
+TEST_CASE("completion application waits for resolve and commits the resolved edits") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-deferred-apply",
+                                                      .initial_text = "fo\n",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{2});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    CompletionPipeline::ResolveCompleted resolve_completed;
+    CompletionItem unresolved;
+    int applied = 0;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {{.id = 17,
+                           .provider = provider,
+                           .filter_text = "format",
+                           .label = "format",
+                           .kind = "function",
+                           .detail = {},
+                           .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                                  .replace_range = {request.anchor, request.caret},
+                                                  .new_text = "format"},
+                           .sort_text = {},
+                           .resolved = false,
+                           .resolving = false,
+                           .resolve_error = {},
+                           .documentation = {},
+                           .additional_edits = {},
+                           .raw = "payload"}},
+                .is_incomplete = false};
+        },
+        [&](const CompletionRequest&, const CompletionItem& item,
+            CompletionPipeline::ResolveCompleted completed, CompletionProviderAsync::Failed,
+            CompletionProviderAsync::Cancelled)
+            -> std::expected<CompletionProviderAsync::Cancel, std::string> {
+            unresolved = item;
+            resolve_completed = std::move(completed);
+            return CompletionProviderAsync::Cancel{[] {}};
+        },
+        [&] { ++applied; });
+
+    REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
+    REQUIRE(resolve_completed);
+    REQUIRE(pipeline.apply().has_value());
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "fo\n");
+    CHECK(applied == 0);
+
+    unresolved.resolved = true;
+    unresolved.resolving = false;
+    unresolved.additional_edits = {{{TextOffset{3}, TextOffset{3}}, "#include <format>\n"}};
+    resolve_completed(std::move(unresolved));
+    CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() ==
+          "format\n#include <format>\n");
+    CHECK(applied == 1);
+    CHECK_FALSE(pipeline.active());
 }
 
 TEST_CASE("completion pipeline refilters complete sources and requeries only incomplete sources") {
@@ -1765,6 +1952,9 @@ TEST_CASE("completion pipeline refilters complete sources and requeries only inc
                                                   .replace_range = {request.anchor, request.caret},
                                                   .new_text = word ? "first" : "foo.hpp"},
                            .sort_text = {},
+                           .resolved = true,
+                           .resolving = false,
+                           .resolve_error = {},
                            .documentation = {},
                            .additional_edits = {},
                            .raw = {}}},
@@ -1818,6 +2008,9 @@ TEST_CASE("completion application merges primary and additional edits into one u
                                                   .replace_range = {request.anchor, request.caret},
                                                   .new_text = "foo"},
                            .sort_text = {},
+                           .resolved = true,
+                           .resolving = false,
+                           .resolve_error = {},
                            .documentation = {},
                            .additional_edits = {{{TextOffset{}, TextOffset{}}, "using X;\n"}},
                            .raw = {}}},

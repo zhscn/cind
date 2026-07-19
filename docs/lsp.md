@@ -38,6 +38,10 @@ callback and sends `$/cancelRequest` after a request has reached the server. Res
 only on the editor thread. Session failure completes every pending request with the same transport
 error and leaves local completion providers usable.
 
+The initialize handshake records `completionProvider.resolveProvider`. Servers that advertise it
+produce unresolved completion items. `completionItem/resolve` uses the same request ownership and
+cancellation path as initial completion, including transport failure and session shutdown.
+
 ## Completion integration
 
 The default C++ policy requests the fixed `Word`, `Path`, and `Lsp` sources. Include syntax narrows
@@ -50,6 +54,14 @@ detail, documentation, snippet metadata, and the provider payload are normalized
 response arrives. Main and additional text edits are converted against the request snapshot and
 applied by the completion pipeline as one undo transaction.
 
+The pipeline resolves the selected candidate and candidates in the visible menu window. Each item
+has a stable pipeline ID; a resolve response replaces that item in place without resetting ranking
+or selection. Query generations cancel outstanding resolves before reusing cached provider items.
+Accepting an unresolved item queues its application behind the resolve request so additional edits
+remain part of the same transaction. The selected item's documentation is presented in an adjacent
+overlay when the viewport has room, without changing document or completion-menu geometry.
+
 The GUI inspector exposes sessions at `editor.lsp`, including lifecycle state, command, project
-root, pending request count, synchronized document count, and transport errors. Completion state at
-`editor.completion` identifies LSP candidates by their fixed provider/session name.
+root, pending request count, synchronized document count, resolve capability, and transport errors.
+Completion state at `editor.completion` identifies LSP candidates by their fixed provider/session
+name and exposes resolve progress, resolve errors, and normalized documentation.

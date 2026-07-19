@@ -146,6 +146,9 @@ public:
                                                       std::vector<CompletionProvider> providers,
                                                       CompletionTrigger trigger = {});
     bool move_completion(std::int64_t delta);
+    void resolve_completion_window(std::size_t first, std::size_t count) {
+        completion_->resolve_visible(first, count);
+    }
     std::expected<void, std::string> apply_completion(bool replace = false);
     bool cancel_completion();
     const InputStateRegistry::Definition& input_state() const;
@@ -317,6 +320,11 @@ private:
     void refresh_completion_after_command();
     CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,
                                                           const CompletionRequest& request);
+    std::expected<CompletionProviderAsync::Cancel, std::string>
+    dispatch_completion_resolve(const CompletionRequest& request, const CompletionItem& item,
+                                CompletionPipeline::ResolveCompleted completed,
+                                CompletionProviderAsync::Failed failed,
+                                CompletionProviderAsync::Cancelled cancelled);
     std::expected<CompletionProvider, std::string>
     resolve_completion_provider(CommandTarget target, std::string_view name);
     CommandContext command_context();

@@ -250,6 +250,7 @@ private:
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
         const ChromeContent chrome_content = application_.chrome_content();
+        application_.resolve_completion_window(completion_viewport_.first_item(), 8);
         std::vector<ChromeItem> completion_items;
         const CompletionState* completion = application_.completion().state();
         if (completion != nullptr) {
@@ -266,6 +267,12 @@ private:
                 : std::nullopt;
         const std::optional<TextOffset> completion_anchor =
             completion != nullptr ? std::optional(completion->request.anchor) : std::nullopt;
+        const std::optional<std::string_view> completion_documentation =
+            completion != nullptr && completion->selected < completion->matches.size() &&
+                    !completion->matches[completion->selected].item.documentation.empty()
+                ? std::optional<std::string_view>(
+                      completion->matches[completion->selected].item.documentation)
+                : std::nullopt;
         const std::optional<std::string_view> popup_input =
             chrome_content.popup_input
                 ? std::optional<std::string_view>(*chrome_content.popup_input)
@@ -347,7 +354,8 @@ private:
                      .completion_items = active ? std::span<const ChromeItem>(completion_items)
                                                 : std::span<const ChromeItem>{},
                      .completion_selection = active ? completion_selection : std::nullopt,
-                     .completion_anchor = active ? completion_anchor : std::nullopt},
+                     .completion_anchor = active ? completion_anchor : std::nullopt,
+                     .completion_documentation = active ? completion_documentation : std::nullopt},
                     pane_view);
                 panes.push_back({.id = std::format("window:{}:{}", placement.window.slot,
                                                    placement.window.generation),
@@ -419,7 +427,8 @@ private:
                                           .popup_input_cursor = chrome_content.popup_input_cursor,
                                           .completion_items = {},
                                           .completion_selection = std::nullopt,
-                                          .completion_anchor = std::nullopt},
+                                          .completion_anchor = std::nullopt,
+                                          .completion_documentation = std::nullopt},
                                          chrome_view);
             return ui::compose_editor_workspace({.rows = size.rows, .cols = size.cols},
                                                 std::move(panes), std::move(dividers),
@@ -475,7 +484,8 @@ private:
                                       .popup_input_cursor = chrome_content.popup_input_cursor,
                                       .completion_items = completion_items,
                                       .completion_selection = completion_selection,
-                                      .completion_anchor = completion_anchor},
+                                      .completion_anchor = completion_anchor,
+                                      .completion_documentation = completion_documentation},
                                      view);
         return scene;
     }

@@ -146,6 +146,8 @@ CompletionProviderResponse completion_response_from_lsp(CompletionProvider provi
                          .sort_text = std::move(source.sort_text),
                          .is_snippet = source.is_snippet,
                          .resolved = source.resolved,
+                         .resolving = false,
+                         .resolve_error = {},
                          .documentation = std::move(source.documentation),
                          .additional_edits = std::move(additional),
                          .raw = std::move(source.raw)});
@@ -159,6 +161,15 @@ struct LspCompletionBridge {
     CompletionRequest request;
     LspCompletionRequest lsp_request;
 };
+
+void report_completion_failure(const CompletionProviderAsync::Failed& failed,
+                               std::string_view message) noexcept {
+    try {
+        failed(std::string(message));
+    } catch (...) {
+        return;
+    }
+}
 
 } // namespace
 
@@ -710,6 +721,17 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         runtime_, async_runtime_,
         [this](CompletionProvider provider, const CompletionRequest& request) {
             return dispatch_completion_provider(provider, request);
+        },
+        [this](const CompletionRequest& request, const CompletionItem& item,
+               CompletionPipeline::ResolveCompleted completed,
+               CompletionProviderAsync::Failed failed,
+               CompletionProviderAsync::Cancelled cancelled) {
+            return dispatch_completion_resolve(request, item, std::move(completed),
+                                               std::move(failed), std::move(cancelled));
+        },
+        [this] {
+            after_edit();
+            sync_keymaps();
         });
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
@@ -1092,11 +1114,7 @@ bool EditorApplication::move_completion(std::int64_t delta) {
 }
 
 std::expected<void, std::string> EditorApplication::apply_completion(bool replace) {
-    std::expected<void, std::string> applied = completion_->apply({.replace = replace});
-    if (applied) {
-        after_edit();
-    }
-    return applied;
+    return completion_->apply({.replace = replace});
 }
 
 bool EditorApplication::cancel_completion() {
@@ -2856,6 +2874,9 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                                         .replace_range = {request.anchor, request.caret},
                                         .new_text = word},
                  .sort_text = word,
+                 .resolved = true,
+                 .resolving = false,
+                 .resolve_error = {},
                  .documentation = {},
                  .additional_edits = {},
                  .raw = {}});
@@ -2918,6 +2939,9 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                                                             .replace_range = replacement,
                                                             .new_text = name},
                                      .sort_text = name,
+                                     .resolved = true,
+                                     .resolving = false,
+                                     .resolve_error = {},
                                      .documentation = {},
                                      .additional_edits = {},
                                      .raw = {}});
@@ -2926,6 +2950,55 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
             }};
     }
     return CompletionProviderResponse{.provider = provider, .items = {}, .is_incomplete = false};
+}
+
+std::expected<CompletionProviderAsync::Cancel, std::string>
+EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
+                                               const CompletionItem& item,
+                                               CompletionPipeline::ResolveCompleted completed,
+                                               CompletionProviderAsync::Failed failed,
+                                               CompletionProviderAsync::Cancelled cancelled) {
+    if (item.provider.kind != CompletionProviderKind::Lsp) {
+        return std::unexpected("only LSP completion items require asynchronous resolution");
+    }
+    LspSession* session = lsp_sessions_->find(LspSessionId{item.provider.session});
+    if (session == nullptr) {
+        return std::unexpected("completion resolve references an unknown LSP session");
+    }
+    const Buffer* buffer = runtime_.buffers().try_get(request.target.buffer);
+    if (buffer == nullptr || buffer->snapshot().revision() != request.revision) {
+        return std::unexpected("completion resolve targets a stale buffer");
+    }
+    if (item.raw.empty()) {
+        return std::unexpected("LSP completion item has no resolve payload");
+    }
+    auto response_text = std::make_shared<Text>(buffer->snapshot().content());
+    auto response_request = std::make_shared<CompletionRequest>(request);
+    const CompletionProvider provider = item.provider;
+    CompletionProviderAsync::Failed conversion_failed = failed;
+    return session->request_completion_resolve(
+        item.raw,
+        [provider, request = std::move(response_request), text = std::move(response_text),
+         completed = std::move(completed),
+         failed = std::move(conversion_failed)](LspCompletionItem resolved) mutable noexcept {
+            try {
+                LspCompletionResponse response{.items = {std::move(resolved)},
+                                               .is_incomplete = false};
+                CompletionProviderResponse converted =
+                    completion_response_from_lsp(provider, *request, *text, std::move(response));
+                if (converted.items.size() != 1) {
+                    report_completion_failure(failed, "LSP completion resolve returned no item");
+                    return;
+                }
+                completed(std::move(converted.items.front()));
+            } catch (const std::exception& exception) {
+                report_completion_failure(failed, exception.what());
+            } catch (...) {
+                report_completion_failure(failed,
+                                          "unknown LSP completion resolve conversion failure");
+            }
+        },
+        std::move(failed), std::move(cancelled));
 }
 
 void EditorApplication::after_edit() {

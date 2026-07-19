@@ -432,6 +432,12 @@ void append_completion(std::string& output, const CompletionStateSnapshot& compl
         append_json_string(output, item.detail);
         output += ",\"resolved\":";
         append_bool(output, item.resolved);
+        output += ",\"resolving\":";
+        append_bool(output, item.resolving);
+        output += ",\"resolve_error\":";
+        append_json_string(output, item.resolve_error);
+        output += ",\"documentation\":";
+        append_json_string(output, item.documentation);
         output.push_back('}');
     }
     output += "]}";
@@ -450,8 +456,11 @@ void append_lsp(std::string& output, const std::vector<LspSessionStateSnapshot>&
         append_json_string(output, session.command);
         output += ",\"root\":";
         append_json_string(output, session.root);
-        output += std::format(",\"pending_requests\":{},\"open_documents\":{},\"error\":",
+        output += std::format(",\"pending_requests\":{},\"open_documents\":{}",
                               session.pending_requests, session.open_documents);
+        output += ",\"completion_resolve\":";
+        append_bool(output, session.completion_resolve);
+        output += ",\"error\":";
         append_json_string(output, session.error);
         output.push_back('}');
     }
@@ -2818,6 +2827,8 @@ std::string_view region_role_name(ui::RegionRole role) {
         return "echo-area";
     case ui::RegionRole::Popup:
         return "popup";
+    case ui::RegionRole::Documentation:
+        return "documentation";
     }
     return "unknown";
 }

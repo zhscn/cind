@@ -64,6 +64,9 @@ struct CompletionItemStateSnapshot {
     std::string kind;
     std::string detail;
     bool resolved = false;
+    bool resolving = false;
+    std::string resolve_error;
+    std::string documentation;
 };
 
 struct CompletionStateSnapshot {
@@ -85,6 +88,7 @@ struct LspSessionStateSnapshot {
     std::string root;
     std::size_t pending_requests = 0;
     std::size_t open_documents = 0;
+    bool completion_resolve = false;
     std::string error;
 };
 

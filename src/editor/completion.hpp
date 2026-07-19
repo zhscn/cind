@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -79,6 +80,8 @@ struct CompletionItem {
     std::string sort_text;
     bool is_snippet = false;
     bool resolved = true;
+    bool resolving = false;
+    std::string resolve_error;
     std::string documentation;
     std::vector<TextEdit> additional_edits;
     // Type-erased provider payload. The owning fixed provider interprets it
@@ -92,8 +95,7 @@ struct CompletionProviderResponse {
     bool is_incomplete = false;
 };
 
-using CompletionProviderWork =
-    std::function<CompletionProviderResponse(const std::stop_token&)>;
+using CompletionProviderWork = std::function<CompletionProviderResponse(const std::stop_token&)>;
 
 struct CompletionProviderAsync {
     using Completed = std::function<void(CompletionProviderResponse)>;
@@ -140,8 +142,14 @@ class CompletionPipeline {
 public:
     using Dispatch =
         std::function<CompletionProviderResult(CompletionProvider, const CompletionRequest&)>;
+    using ResolveCompleted = std::function<void(CompletionItem)>;
+    using Resolve = std::function<std::expected<CompletionProviderAsync::Cancel, std::string>(
+        const CompletionRequest&, const CompletionItem&, ResolveCompleted,
+        CompletionProviderAsync::Failed, CompletionProviderAsync::Cancelled)>;
+    using Applied = std::function<void()>;
 
-    CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime, Dispatch dispatch);
+    CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime, Dispatch dispatch,
+                       Resolve resolve = {}, Applied applied = {});
     ~CompletionPipeline() noexcept { (void)cancel(); }
 
     CompletionPipeline(const CompletionPipeline&) = delete;
@@ -152,14 +160,15 @@ public:
     const CompletionState* state() const { return state_ ? &*state_ : nullptr; }
 
     std::expected<void, std::string> start(CommandContext& context, TextOffset anchor,
-                                          std::vector<CompletionProvider> providers,
-                                          CompletionTrigger trigger = {});
+                                           std::vector<CompletionProvider> providers,
+                                           CompletionTrigger trigger = {});
     // Advances a complete session without provider RPC when input remains a
     // prefix extension. Incomplete sources are re-requested and replace only
     // their own entries.
     std::expected<void, std::string> update(CommandContext& context);
     bool select(std::size_t index);
     bool select_relative(std::int64_t delta);
+    void resolve_visible(std::size_t first, std::size_t count);
     std::expected<void, std::string> apply(CompletionApplyOptions options = {});
     bool cancel() noexcept;
     bool invalidate_if_stale();
@@ -170,7 +179,12 @@ private:
     void fail(std::uint64_t generation, CompletionProvider provider, std::string error);
     void cancelled(std::uint64_t generation, CompletionProvider provider);
     void rebuild_matches();
+    void resolve_item(std::uint64_t id);
+    void publish_resolved(std::uint64_t generation, std::uint64_t id, CompletionItem item);
+    void resolve_failed(std::uint64_t generation, std::uint64_t id, std::string error);
+    void resolve_cancelled(std::uint64_t generation, std::uint64_t id);
     void cancel_pending() noexcept;
+    CompletionItem* source_item(std::uint64_t id);
     CompletionProviderState* source(CompletionProvider provider);
     const CompletionProviderState* source(CompletionProvider provider) const;
     std::expected<void, std::string> validate_response(CompletionProviderResponse& response);
@@ -178,10 +192,19 @@ private:
     EditorRuntime* runtime_;
     AsyncRuntime* async_runtime_;
     Dispatch dispatch_;
+    Resolve resolve_;
+    Applied applied_;
     std::uint64_t next_generation_ = 0;
     std::uint64_t next_item_id_ = 0;
     std::optional<CompletionState> state_;
     std::vector<std::function<void()>> pending_cancellations_;
+    std::unordered_map<std::uint64_t, std::function<void()>> resolve_cancellations_;
+    struct PendingApply {
+        std::uint64_t generation = 0;
+        std::uint64_t item = 0;
+        CompletionApplyOptions options;
+    };
+    std::optional<PendingApply> pending_apply_;
 };
 
 } // namespace cind

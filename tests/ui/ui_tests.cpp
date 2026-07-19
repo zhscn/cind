@@ -171,7 +171,8 @@ TEST_CASE("editor scene layout is explicit and composition preserves view state"
                                  .popup_input_cursor = std::nullopt,
                                  .completion_items = {},
                                  .completion_selection = std::nullopt,
-                                 .completion_anchor = std::nullopt};
+                                 .completion_anchor = std::nullopt,
+                                 .completion_documentation = std::nullopt};
     const Scene first = compose_editor_scene(input, laid_out);
     const Scene second = compose_editor_scene(input, laid_out);
     CHECK(first.grid_offset_rows == doctest::Approx(second.grid_offset_rows));
@@ -238,32 +239,34 @@ TEST_CASE("completion menu is caret anchored and does not reflow document rows")
                                 .completion_item_count = items.size(),
                                 .completion_selection = 1},
                                view);
-    const Scene scene = compose_editor_scene({.text = text,
-                                              .tokens = tokens,
-                                              .signs = signs,
-                                              .caret = TextOffset{5},
-                                              .selections = {},
-                                              .position_hints = {},
-                                              .rows = 10,
-                                              .cols = 50,
-                                              .tab_width = 4,
-                                              .revision = 1,
-                                              .modeline = modeline,
-                                              .cursor_shape = CursorShape::Beam,
-                                              .pending_key = {},
-                                              .echo = {},
-                                              .echo_cursor_column = std::nullopt,
-                                              .echo_cursor_byte = std::nullopt,
-                                              .popup_title = {},
-                                              .popup_items = {},
-                                              .popup_capacity = 0,
-                                              .popup_selection = std::nullopt,
-                                              .popup_input = std::nullopt,
-                                              .popup_input_cursor = std::nullopt,
-                                              .completion_items = items,
-                                              .completion_selection = 1,
-                                              .completion_anchor = TextOffset{}},
-                                             view);
+    const Scene scene =
+        compose_editor_scene({.text = text,
+                              .tokens = tokens,
+                              .signs = signs,
+                              .caret = TextOffset{5},
+                              .selections = {},
+                              .position_hints = {},
+                              .rows = 10,
+                              .cols = 50,
+                              .tab_width = 4,
+                              .revision = 1,
+                              .modeline = modeline,
+                              .cursor_shape = CursorShape::Beam,
+                              .pending_key = {},
+                              .echo = {},
+                              .echo_cursor_column = std::nullopt,
+                              .echo_cursor_byte = std::nullopt,
+                              .popup_title = {},
+                              .popup_items = {},
+                              .popup_capacity = 0,
+                              .popup_selection = std::nullopt,
+                              .popup_input = std::nullopt,
+                              .popup_input_cursor = std::nullopt,
+                              .completion_items = items,
+                              .completion_selection = 1,
+                              .completion_anchor = TextOffset{},
+                              .completion_documentation = "foo(int value)\nCompletes a foo call."},
+                             view);
     const auto completion =
         std::ranges::find(scene.regions, std::string("editor/completion"), &Region::id);
     REQUIRE(completion != scene.regions.end());
@@ -272,6 +275,13 @@ TEST_CASE("completion menu is caret anchored and does not reflow document rows")
     CHECK(completion->rect.col == text_area_column(text.line_count()));
     REQUIRE(completion->popup() != nullptr);
     CHECK(completion->popup()->selected_item == 1);
+    const auto documentation = std::ranges::find(
+        scene.regions, std::string("editor/completion-documentation"), &Region::id);
+    REQUIRE(documentation != scene.regions.end());
+    CHECK(documentation->role == RegionRole::Documentation);
+    CHECK(documentation->vertical_anchor == VerticalAnchor::Overlay);
+    CHECK(documentation->rect.col > completion->rect.col + completion->rect.cols);
+    CHECK(documentation->primitives().size() == 3);
     const Region* status = scene.find(RegionRole::StatusBar);
     REQUIRE(status != nullptr);
     CHECK(status->rect.row == 8);
@@ -314,7 +324,8 @@ TEST_CASE("view tree resolves backend geometry into semantic editor targets") {
                                               .popup_input_cursor = std::nullopt,
                                               .completion_items = {},
                                               .completion_selection = std::nullopt,
-                                              .completion_anchor = std::nullopt},
+                                              .completion_anchor = std::nullopt,
+                                              .completion_documentation = std::nullopt},
                                              view);
     const ViewTree tree(scene);
     CHECK(tree.layer(ViewLayer::Grid).children.size() == 3);
@@ -383,7 +394,8 @@ TEST_CASE("position hints replace document cells without changing text layout") 
                                               .popup_input_cursor = std::nullopt,
                                               .completion_items = {},
                                               .completion_selection = std::nullopt,
-                                              .completion_anchor = std::nullopt},
+                                              .completion_anchor = std::nullopt,
+                                              .completion_documentation = std::nullopt},
                                              {});
 
     const Region* body = scene.find(RegionRole::TextArea);

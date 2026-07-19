@@ -84,6 +84,7 @@ struct EditorSceneInput {
     std::span<const ChromeItem> completion_items;
     std::optional<std::size_t> completion_selection;
     std::optional<TextOffset> completion_anchor;
+    std::optional<std::string_view> completion_documentation;
 };
 
 struct EditorPaneScene {

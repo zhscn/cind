@@ -297,6 +297,7 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     }
 
     std::optional<Region> completion;
+    std::optional<Region> completion_documentation;
     const std::optional<std::size_t> completion_selection =
         input.completion_selection && *input.completion_selection < input.completion_items.size()
             ? input.completion_selection
@@ -343,6 +344,55 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
                     const ChromeItem& item = input.completion_items[first + offset];
                     content.items.push_back({.label = item.label, .detail = item.detail});
                 }
+                if (input.completion_documentation && !input.completion_documentation->empty()) {
+                    constexpr int preferred_width = 48;
+                    constexpr int minimum_width = 20;
+                    constexpr int gap = 1;
+                    const int right = completion->rect.col + completion->rect.cols + gap;
+                    const int right_space = input.cols - right;
+                    const int left_space = completion->rect.col - gap;
+                    int documentation_column = 0;
+                    int documentation_width = 0;
+                    if (right_space >= minimum_width) {
+                        documentation_column = right;
+                        documentation_width = std::min(preferred_width, right_space);
+                    } else if (left_space >= minimum_width) {
+                        documentation_width = std::min(preferred_width, left_space);
+                        documentation_column = completion->rect.col - gap - documentation_width;
+                    }
+                    if (documentation_width > 0) {
+                        const int documentation_height =
+                            std::min(completion->rect.rows, text_rows - completion->rect.row);
+                        completion_documentation.emplace(
+                            RegionRole::Documentation,
+                            Rect{completion->rect.row, documentation_column, documentation_height,
+                                 documentation_width},
+                            std::vector<Prim>{}, SurfaceClass::Status, VerticalAnchor::Overlay,
+                            "editor/completion-documentation", input.revision);
+                        std::vector<Prim>& primitives = completion_documentation->primitives();
+                        primitives.emplace_back(0, 0, "documentation", StyleClass::StatusKey, false,
+                                                PrimKind::Text, "completion-documentation:title");
+                        std::string_view remaining = *input.completion_documentation;
+                        for (int line = 1; line < documentation_height && !remaining.empty();) {
+                            const std::size_t newline = remaining.find('\n');
+                            const std::string_view source = remaining.substr(0, newline);
+                            const std::string_view clipped =
+                                clip_to_display_width(source, documentation_width);
+                            const int current_line = line++;
+                            primitives.emplace_back(
+                                current_line, 0, std::string(clipped), StyleClass::Popup, false,
+                                PrimKind::Text,
+                                std::format("completion-documentation:line:{}", current_line - 1));
+                            if (clipped.size() < source.size()) {
+                                remaining.remove_prefix(clipped.size());
+                            } else if (newline == std::string_view::npos) {
+                                break;
+                            } else {
+                                remaining.remove_prefix(newline + 1);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -374,6 +424,9 @@ Scene compose_editor_scene(const EditorSceneInput& input, const EditorSceneViewS
     }
     if (completion) {
         scene.regions.push_back(std::move(*completion));
+    }
+    if (completion_documentation) {
+        scene.regions.push_back(std::move(*completion_documentation));
     }
     return scene;
 }

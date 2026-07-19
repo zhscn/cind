@@ -24,6 +24,8 @@ std::string_view role_name(RegionRole role) {
         return "echo-area";
     case RegionRole::Popup:
         return "popup";
+    case RegionRole::Documentation:
+        return "documentation";
     }
     return "unknown";
 }

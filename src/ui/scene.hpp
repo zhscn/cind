@@ -84,6 +84,7 @@ enum class RegionRole : std::uint8_t {
     StatusBar,
     EchoArea, // message / prompt line
     Popup,
+    Documentation,
 };
 
 enum class VerticalAnchor : std::uint8_t {

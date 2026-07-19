@@ -30,8 +30,7 @@ std::optional<LspPosition> parse_position(const Json& value) {
         character > std::numeric_limits<std::uint32_t>::max()) {
         return std::nullopt;
     }
-    return LspPosition{static_cast<std::uint32_t>(line),
-                       static_cast<std::uint32_t>(character)};
+    return LspPosition{static_cast<std::uint32_t>(line), static_cast<std::uint32_t>(character)};
 }
 
 std::optional<LspRange> parse_range(const Json& value) {
@@ -48,11 +47,10 @@ std::optional<LspRange> parse_range(const Json& value) {
 
 std::string completion_kind(const Json& value) {
     static constexpr std::string_view names[] = {
-        "",          "text",      "method",   "function", "constructor", "field",
-        "variable",  "class",     "interface", "module",   "property",    "unit",
-        "value",     "enum",      "keyword",  "snippet",   "color",       "file",
-        "reference", "folder",    "enum member", "constant", "struct",      "event",
-        "operator",  "type parameter",
+        "",         "text",      "method", "function", "constructor",    "field",  "variable",
+        "class",    "interface", "module", "property", "unit",           "value",  "enum",
+        "keyword",  "snippet",   "color",  "file",     "reference",      "folder", "enum member",
+        "constant", "struct",    "event",  "operator", "type parameter",
     };
     if (!value.is_number_integer()) {
         return {};
@@ -88,7 +86,60 @@ std::optional<LspTextEdit> parse_text_edit(const Json& value) {
     return LspTextEdit{.range = *range, .new_text = value["newText"].get<std::string>()};
 }
 
-LspCompletionResponse parse_completion_response(const Json& result) {
+LspCompletionItem parse_completion_item(const Json& value, bool resolved) {
+    if (!value.is_object() || !value.contains("label") || !value["label"].is_string()) {
+        throw std::runtime_error("LSP completion item has no label");
+    }
+    LspCompletionItem item{
+        .label = value["label"].get<std::string>(),
+        .insert_text = {},
+        .filter_text = value.value("filterText", std::string{}),
+        .sort_text = value.value("sortText", std::string{}),
+        .kind = value.contains("kind") ? completion_kind(value["kind"]) : std::string{},
+        .detail = value.value("detail", std::string{}),
+        .edit = std::nullopt,
+        .is_snippet = value.value("insertTextFormat", 1) == 2,
+        .resolved = resolved,
+        .documentation = value.contains("documentation")
+                             ? documentation_text(value["documentation"])
+                             : std::string{},
+        .additional_edits = {},
+        .raw = value.dump(),
+    };
+    std::string insertion = value.value("textEditText", std::string{});
+    if (insertion.empty()) {
+        insertion = value.value("insertText", item.label);
+    }
+    if (const auto edit = value.find("textEdit"); edit != value.end() && edit->is_object()) {
+        const std::string new_text = edit->value("newText", insertion);
+        if (edit->contains("insert") && edit->contains("replace")) {
+            const std::optional<LspRange> insert = parse_range((*edit)["insert"]);
+            const std::optional<LspRange> replace = parse_range((*edit)["replace"]);
+            if (insert && replace) {
+                item.edit = LspCompletionEdit{*insert, *replace, new_text};
+            }
+        } else if (edit->contains("range")) {
+            if (const std::optional<LspRange> range = parse_range((*edit)["range"])) {
+                item.edit = LspCompletionEdit{*range, *range, new_text};
+            }
+        }
+    }
+    if (!item.edit) {
+        insertion = value.value("insertText", item.label);
+    }
+    item.insert_text = std::move(insertion);
+    if (const auto edits = value.find("additionalTextEdits");
+        edits != value.end() && edits->is_array()) {
+        for (const Json& edit : *edits) {
+            if (std::optional<LspTextEdit> parsed = parse_text_edit(edit)) {
+                item.additional_edits.push_back(std::move(*parsed));
+            }
+        }
+    }
+    return item;
+}
+
+LspCompletionResponse parse_completion_response(const Json& result, bool resolved) {
     LspCompletionResponse response;
     const Json* items = &result;
     if (result.is_null()) {
@@ -110,53 +161,7 @@ LspCompletionResponse parse_completion_response(const Json& result) {
         if (!value.is_object() || !value.contains("label") || !value["label"].is_string()) {
             continue;
         }
-        LspCompletionItem item{
-            .label = value["label"].get<std::string>(),
-            .insert_text = {},
-            .filter_text = value.value("filterText", std::string{}),
-            .sort_text = value.value("sortText", std::string{}),
-            .kind = value.contains("kind") ? completion_kind(value["kind"]) : std::string{},
-            .detail = value.value("detail", std::string{}),
-            .edit = std::nullopt,
-            .is_snippet = value.value("insertTextFormat", 1) == 2,
-            .resolved = true,
-            .documentation = value.contains("documentation")
-                                 ? documentation_text(value["documentation"])
-                                 : std::string{},
-            .additional_edits = {},
-            .raw = value.dump(),
-        };
-        std::string insertion = value.value("textEditText", std::string{});
-        if (insertion.empty()) {
-            insertion = value.value("insertText", item.label);
-        }
-        if (const auto edit = value.find("textEdit"); edit != value.end() && edit->is_object()) {
-            const std::string new_text = edit->value("newText", insertion);
-            if (edit->contains("insert") && edit->contains("replace")) {
-                const std::optional<LspRange> insert = parse_range((*edit)["insert"]);
-                const std::optional<LspRange> replace = parse_range((*edit)["replace"]);
-                if (insert && replace) {
-                    item.edit = LspCompletionEdit{*insert, *replace, new_text};
-                }
-            } else if (edit->contains("range")) {
-                if (const std::optional<LspRange> range = parse_range((*edit)["range"])) {
-                    item.edit = LspCompletionEdit{*range, *range, new_text};
-                }
-            }
-        }
-        if (!item.edit) {
-            insertion = value.value("insertText", item.label);
-        }
-        item.insert_text = std::move(insertion);
-        if (const auto edits = value.find("additionalTextEdits");
-            edits != value.end() && edits->is_array()) {
-            for (const Json& edit : *edits) {
-                if (std::optional<LspTextEdit> parsed = parse_text_edit(edit)) {
-                    item.additional_edits.push_back(std::move(*parsed));
-                }
-            }
-        }
-        response.items.push_back(std::move(item));
+        response.items.push_back(parse_completion_item(value, resolved));
     }
     return response;
 }
@@ -180,8 +185,9 @@ LspSessionSnapshot LspSession::snapshot() const {
             .state = state_,
             .command = config_.command,
             .root = config_.root,
-            .pending_requests = pending_.size(),
+            .pending_requests = pending_.size() + pending_resolves_.size(),
             .open_documents = documents_.size(),
+            .completion_resolve = completion_resolve_,
             .error = error_};
 }
 
@@ -198,13 +204,13 @@ LspSession::request_completion(LspCompletionRequest request, Completed completed
         return std::unexpected("LSP session is stopping");
     }
     const std::uint64_t id = ++next_request_;
-    auto [found, inserted] = pending_.emplace(
-        id, PendingCompletion{.id = id,
-                              .request = std::move(request),
-                              .completed = std::move(completed),
-                              .failed = std::move(failed),
-                              .cancelled = std::move(cancelled),
-                              .sent = false});
+    auto [found, inserted] =
+        pending_.emplace(id, PendingCompletion{.id = id,
+                                               .request = std::move(request),
+                                               .completed = std::move(completed),
+                                               .failed = std::move(failed),
+                                               .cancelled = std::move(cancelled),
+                                               .sent = false});
     if (!inserted) {
         return std::unexpected("LSP request id collision");
     }
@@ -219,18 +225,72 @@ LspSession::request_completion(LspCompletionRequest request, Completed completed
     return Cancel{[this, id] { (void)cancel_request(id); }};
 }
 
+std::expected<LspSession::Cancel, std::string>
+LspSession::request_completion_resolve(std::string item, ResolveCompleted completed, Failed failed,
+                                       Cancelled cancelled) {
+    if (!completed || !failed) {
+        return std::unexpected("LSP completion resolve requires completion and failure callbacks");
+    }
+    if (state_ != LspSessionState::Ready) {
+        return std::unexpected(error_.empty() ? "LSP session is not ready" : error_);
+    }
+    if (!completion_resolve_) {
+        return std::unexpected("LSP server does not support completion item resolve");
+    }
+    try {
+        const Json value = Json::parse(item);
+        if (!value.is_object()) {
+            return std::unexpected("LSP completion resolve payload is not an object");
+        }
+    } catch (const std::exception& exception) {
+        return std::unexpected(
+            std::format("invalid LSP completion resolve payload: {}", exception.what()));
+    }
+    const std::uint64_t id = ++next_request_;
+    auto [found, inserted] =
+        pending_resolves_.emplace(id, PendingResolve{.id = id,
+                                                     .item = std::move(item),
+                                                     .completed = std::move(completed),
+                                                     .failed = std::move(failed),
+                                                     .cancelled = std::move(cancelled),
+                                                     .sent = false});
+    if (!inserted) {
+        return std::unexpected("LSP request id collision");
+    }
+    if (!send_pending(found->second)) {
+        PendingResolve pending = std::move(found->second);
+        pending_resolves_.erase(found);
+        fail_pending(pending, "cannot write LSP completion resolve request");
+        return std::unexpected("cannot write LSP completion resolve request");
+    }
+    return Cancel{[this, id] { (void)cancel_request(id); }};
+}
+
 bool LspSession::cancel_request(std::uint64_t request) {
     const auto found = pending_.find(request);
-    if (found == pending_.end()) {
+    if (found != pending_.end()) {
+        PendingCompletion pending = std::move(found->second);
+        pending_.erase(found);
+        if (pending.sent && state_ == LspSessionState::Ready) {
+            (void)send_json(Json{
+                {"jsonrpc", "2.0"}, {"method", "$/cancelRequest"}, {"params", {{"id", request}}}}
+                                .dump());
+        }
+        if (pending.cancelled) {
+            pending.cancelled();
+        }
+        return true;
+    }
+    const auto resolved = pending_resolves_.find(request);
+    if (resolved == pending_resolves_.end()) {
         return false;
     }
-    PendingCompletion pending = std::move(found->second);
-    pending_.erase(found);
+    PendingResolve pending = std::move(resolved->second);
+    pending_resolves_.erase(resolved);
     if (pending.sent && state_ == LspSessionState::Ready) {
-        (void)send_json(Json{{"jsonrpc", "2.0"},
-                             {"method", "$/cancelRequest"},
-                             {"params", {{"id", request}}}}
-                            .dump());
+        (void)send_json(
+            Json{{"jsonrpc", "2.0"}, {"method", "$/cancelRequest"}, {"params", {{"id", request}}}}
+                .dump());
     }
     if (pending.cancelled) {
         pending.cancelled();
@@ -269,6 +329,17 @@ void LspSession::stop() noexcept {
         }
     }
     pending_.clear();
+    for (auto& [id, pending] : pending_resolves_) {
+        (void)id;
+        if (pending.cancelled) {
+            try {
+                pending.cancelled();
+            } catch (...) {
+                continue;
+            }
+        }
+    }
+    pending_resolves_.clear();
     if (process_.valid()) {
         (void)runtime_->terminate(process_);
     }
@@ -285,17 +356,18 @@ void LspSession::start() {
             .arguments = config_.arguments,
             .working_directory = config_.root,
             .started = [this](AsyncProcessId process) { process_started(process); },
-            .standard_output =
-                [this](AsyncProcessId, const std::string& bytes) { process_output(bytes); },
-            .standard_error = [this](AsyncProcessId, const std::string& bytes) {
-                process_error_output(bytes);
-            },
-            .completed = [this](AsyncProcessResult result) { process_completed(std::move(result)); },
-            .cancelled = [this] {
-                if (!stopping_) {
-                    fail("LSP process was cancelled");
-                }
-            },
+            .standard_output = [this](AsyncProcessId,
+                                      const std::string& bytes) { process_output(bytes); },
+            .standard_error = [this](AsyncProcessId,
+                                     const std::string& bytes) { process_error_output(bytes); },
+            .completed =
+                [this](AsyncProcessResult result) { process_completed(std::move(result)); },
+            .cancelled =
+                [this] {
+                    if (!stopping_) {
+                        fail("LSP process was cancelled");
+                    }
+                },
             .failed = [this](const std::exception_ptr& failure) { process_failed(failure); },
         });
     } catch (const std::exception& exception) {
@@ -327,8 +399,8 @@ void LspSession::process_started(AsyncProcessId process) {
                   {"resolveSupport",
                    {{"properties",
                      Json::array({"documentation", "detail", "additionalTextEdits"})}}}}}}}}}}},
-          {"workspaceFolders", Json::array({{{"uri", path_to_file_uri(config_.root)},
-                                               {"name", config_.root}}})}}},
+          {"workspaceFolders",
+           Json::array({{{"uri", path_to_file_uri(config_.root)}, {"name", config_.root}}})}}},
     };
     if (!send_json(initialize.dump())) {
         fail("cannot write LSP initialize request");
@@ -409,18 +481,35 @@ void LspSession::handle_message(std::string_view message) {
         return;
     }
     const auto found = pending_.find(id);
-    if (found == pending_.end()) {
+    if (found != pending_.end()) {
+        PendingCompletion pending = std::move(found->second);
+        pending_.erase(found);
+        if (value.contains("error")) {
+            const std::string error = value["error"].value("message", "LSP completion failed");
+            fail_pending(pending, error);
+            return;
+        }
+        try {
+            pending.completed(
+                parse_completion_response(value.value("result", Json{}), !completion_resolve_));
+        } catch (const std::exception& exception) {
+            fail_pending(pending, exception.what());
+        }
         return;
     }
-    PendingCompletion pending = std::move(found->second);
-    pending_.erase(found);
+    const auto resolved = pending_resolves_.find(id);
+    if (resolved == pending_resolves_.end()) {
+        return;
+    }
+    PendingResolve pending = std::move(resolved->second);
+    pending_resolves_.erase(resolved);
     if (value.contains("error")) {
-        const std::string error = value["error"].value("message", "LSP completion failed");
+        const std::string error = value["error"].value("message", "LSP completion resolve failed");
         fail_pending(pending, error);
         return;
     }
     try {
-        pending.completed(parse_completion_response(value.value("result", Json{})));
+        pending.completed(parse_completion_item(value.value("result", Json{}), true));
     } catch (const std::exception& exception) {
         fail_pending(pending, exception.what());
     }
@@ -431,6 +520,16 @@ void LspSession::initialize_completed(std::string_view message) {
     if (value.contains("error")) {
         fail(value["error"].value("message", "LSP initialize failed"));
         return;
+    }
+    completion_resolve_ = false;
+    if (const auto result = value.find("result"); result != value.end() && result->is_object()) {
+        if (const auto capabilities = result->find("capabilities");
+            capabilities != result->end() && capabilities->is_object()) {
+            if (const auto completion = capabilities->find("completionProvider");
+                completion != capabilities->end() && completion->is_object()) {
+                completion_resolve_ = completion->value("resolveProvider", false);
+            }
+        }
     }
     if (!send_json(Json{{"jsonrpc", "2.0"}, {"method", "initialized"}, {"params", Json::object()}}
                        .dump())) {
@@ -456,14 +555,29 @@ bool LspSession::send_pending(PendingCompletion& pending) {
     if (!pending.request.trigger_character.empty()) {
         context["triggerCharacter"] = pending.request.trigger_character;
     }
+    const Json request{
+        {"jsonrpc", "2.0"},
+        {"id", pending.id},
+        {"method", "textDocument/completion"},
+        {"params",
+         {{"textDocument", {{"uri", pending.request.uri}}},
+          {"position", position_json(lsp_position(pending.request.text, pending.request.caret))},
+          {"context", std::move(context)}}}};
+    if (!send_json(request.dump())) {
+        return false;
+    }
+    pending.sent = true;
+    return true;
+}
+
+bool LspSession::send_pending(PendingResolve& pending) {
+    if (pending.sent) {
+        return true;
+    }
     const Json request{{"jsonrpc", "2.0"},
                        {"id", pending.id},
-                       {"method", "textDocument/completion"},
-                       {"params",
-                        {{"textDocument", {{"uri", pending.request.uri}}},
-                         {"position", position_json(lsp_position(pending.request.text,
-                                                                  pending.request.caret))},
-                         {"context", std::move(context)}}}};
+                       {"method", "completionItem/resolve"},
+                       {"params", Json::parse(pending.item)}};
     if (!send_json(request.dump())) {
         return false;
     }
@@ -476,29 +590,28 @@ void LspSession::sync_document(const LspCompletionRequest& request) {
     const std::int64_t version = static_cast<std::int64_t>(std::min<RevisionId>(
         request.revision, static_cast<RevisionId>(std::numeric_limits<std::int64_t>::max())));
     if (found == documents_.end()) {
-        (void)send_json(
-            Json{{"jsonrpc", "2.0"},
-                 {"method", "textDocument/didOpen"},
-                 {"params",
-                  {{"textDocument",
-                    {{"uri", request.uri},
-                     {"languageId", request.language_id},
-                     {"version", version},
-                     {"text", request.text.to_string()}}}}}}
-                .dump());
+        (void)send_json(Json{{"jsonrpc", "2.0"},
+                             {"method", "textDocument/didOpen"},
+                             {"params",
+                              {{"textDocument",
+                                {{"uri", request.uri},
+                                 {"languageId", request.language_id},
+                                 {"version", version},
+                                 {"text", request.text.to_string()}}}}}}
+                            .dump());
         documents_.emplace(request.uri, OpenDocument{request.revision});
         return;
     }
     if (found->second.revision == request.revision) {
         return;
     }
-    (void)send_json(Json{{"jsonrpc", "2.0"},
-                         {"method", "textDocument/didChange"},
-                         {"params",
-                          {{"textDocument", {{"uri", request.uri}, {"version", version}}},
-                           {"contentChanges",
-                            Json::array({{{"text", request.text.to_string()}}})}}}}
-                        .dump());
+    (void)send_json(
+        Json{{"jsonrpc", "2.0"},
+             {"method", "textDocument/didChange"},
+             {"params",
+              {{"textDocument", {{"uri", request.uri}, {"version", version}}},
+               {"contentChanges", Json::array({{{"text", request.text.to_string()}}})}}}}
+            .dump());
     found->second.revision = request.revision;
 }
 
@@ -519,12 +632,28 @@ void LspSession::fail(std::string error) {
     for (PendingCompletion& request : pending) {
         fail_pending(request, error_);
     }
+    std::vector<PendingResolve> resolves;
+    resolves.reserve(pending_resolves_.size());
+    for (auto& [id, request] : pending_resolves_) {
+        (void)id;
+        resolves.push_back(std::move(request));
+    }
+    pending_resolves_.clear();
+    for (PendingResolve& request : resolves) {
+        fail_pending(request, error_);
+    }
     if (process_.valid()) {
         (void)runtime_->terminate(process_);
     }
 }
 
 void LspSession::fail_pending(const PendingCompletion& pending, std::string error) {
+    if (pending.failed) {
+        pending.failed(std::move(error));
+    }
+}
+
+void LspSession::fail_pending(const PendingResolve& pending, std::string error) {
     if (pending.failed) {
         pending.failed(std::move(error));
     }

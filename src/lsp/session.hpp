@@ -44,12 +44,14 @@ struct LspSessionSnapshot {
     std::string root;
     std::size_t pending_requests = 0;
     std::size_t open_documents = 0;
+    bool completion_resolve = false;
     std::string error;
 };
 
 class LspSession {
 public:
     using Completed = std::function<void(LspCompletionResponse)>;
+    using ResolveCompleted = std::function<void(LspCompletionItem)>;
     using Failed = std::function<void(std::string)>;
     using Cancelled = std::function<void()>;
     using Cancel = std::function<void()>;
@@ -67,6 +69,11 @@ public:
     std::expected<Cancel, std::string> request_completion(LspCompletionRequest request,
                                                           Completed completed, Failed failed,
                                                           Cancelled cancelled);
+    std::expected<Cancel, std::string> request_completion_resolve(std::string item,
+                                                                  ResolveCompleted completed,
+                                                                  Failed failed,
+                                                                  Cancelled cancelled);
+    bool supports_completion_resolve() const { return completion_resolve_; }
     bool cancel_request(std::uint64_t request);
     bool close_document(std::string_view uri);
     void stop() noexcept;
@@ -76,6 +83,15 @@ private:
         std::uint64_t id = 0;
         LspCompletionRequest request;
         Completed completed;
+        Failed failed;
+        Cancelled cancelled;
+        bool sent = false;
+    };
+
+    struct PendingResolve {
+        std::uint64_t id = 0;
+        std::string item;
+        ResolveCompleted completed;
         Failed failed;
         Cancelled cancelled;
         bool sent = false;
@@ -94,10 +110,12 @@ private:
     void handle_message(std::string_view message);
     void initialize_completed(std::string_view message);
     bool send_pending(PendingCompletion& pending);
+    bool send_pending(PendingResolve& pending);
     void sync_document(const LspCompletionRequest& request);
     bool send_json(const std::string& json);
     void fail(std::string error);
     void fail_pending(const PendingCompletion& pending, std::string error);
+    void fail_pending(const PendingResolve& pending, std::string error);
     static std::string exception_message(const std::exception_ptr& failure);
 
     LspSessionId id_;
@@ -109,10 +127,12 @@ private:
     std::uint64_t next_request_ = 0;
     std::uint64_t initialize_request_ = 0;
     std::unordered_map<std::uint64_t, PendingCompletion> pending_;
+    std::unordered_map<std::uint64_t, PendingResolve> pending_resolves_;
     std::unordered_map<std::string, OpenDocument> documents_;
     std::string standard_error_;
     std::string error_;
     bool stopping_ = false;
+    bool completion_resolve_ = false;
 };
 
 } // namespace cind
