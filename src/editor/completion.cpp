@@ -89,9 +89,10 @@ std::string completion_provider_name(CompletionProvider provider) {
 }
 
 CompletionPipeline::CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime,
-                                       Dispatch dispatch, Resolve resolve, Applied applied)
+                                       Dispatch dispatch, Resolve resolve, Applied applied,
+                                       Changed changed)
     : runtime_(&runtime), async_runtime_(&async_runtime), dispatch_(std::move(dispatch)),
-      resolve_(std::move(resolve)), applied_(std::move(applied)) {
+      resolve_(std::move(resolve)), applied_(std::move(applied)), changed_(std::move(changed)) {
     if (!dispatch_) {
         throw std::invalid_argument("completion pipeline requires a provider dispatcher");
     }
@@ -116,7 +117,11 @@ CompletionPipeline::start(CommandContext& context, TextOffset anchor,
         return std::unexpected("completion query must remain on one line");
     }
 
-    cancel_pending();
+    if (state_) {
+        (void)cancel();
+    } else {
+        cancel_pending();
+    }
     const std::uint64_t generation = ++next_generation_;
     CompletionRequest request{
         .target = {.window = context.window_id(),
@@ -139,14 +144,15 @@ CompletionPipeline::start(CommandContext& context, TextOffset anchor,
                            .is_incomplete = false,
                            .error = {}});
     }
-    state_.emplace(CompletionState{
-        .request = request, .providers = std::move(sources), .matches = {}, .selected = 0});
+    state_.emplace(
+        CompletionState{.request = request, .providers = std::move(sources), .matches = {}});
     dispatching_batch_ = true;
     for (CompletionProvider provider : providers) {
         request_provider(provider, request);
     }
     dispatching_batch_ = false;
     settle_automatic();
+    notify_changed();
     return {};
 }
 
@@ -221,30 +227,20 @@ std::expected<void, std::string> CompletionPipeline::update(CommandContext& cont
     dispatching_batch_ = false;
     rebuild_matches();
     settle_automatic();
+    notify_changed();
     return {};
 }
 
-bool CompletionPipeline::select(std::size_t index) {
+bool CompletionPipeline::focus(std::size_t index) {
     if (!state_ || index >= state_->matches.size()) {
         return false;
     }
-    state_->selected = index;
-    resolve_visible(index, 1);
+    resolve_visible(index, 1, index);
     return true;
 }
 
-bool CompletionPipeline::select_relative(std::int64_t delta) {
-    if (!state_ || state_->matches.empty() || delta == 0) {
-        return false;
-    }
-    const std::int64_t count = static_cast<std::int64_t>(state_->matches.size());
-    const std::int64_t selected = static_cast<std::int64_t>(state_->selected);
-    state_->selected = static_cast<std::size_t>(((selected + delta) % count + count) % count);
-    resolve_visible(state_->selected, 1);
-    return true;
-}
-
-void CompletionPipeline::resolve_visible(std::size_t first, std::size_t count) {
+void CompletionPipeline::resolve_visible(std::size_t first, std::size_t count,
+                                         std::optional<std::size_t> selected) {
     if (!state_ || state_->matches.empty() || !resolve_) {
         return;
     }
@@ -255,17 +251,20 @@ void CompletionPipeline::resolve_visible(std::size_t first, std::size_t count) {
     for (std::size_t index = first; index < end; ++index) {
         items.push_back(state_->matches[index].item.id);
     }
-    const std::uint64_t selected = state_->matches[state_->selected].item.id;
-    if (std::ranges::find(items, selected) == items.end()) {
-        items.push_back(selected);
+    if (selected && *selected < state_->matches.size()) {
+        const std::uint64_t selected_id = state_->matches[*selected].item.id;
+        if (std::ranges::find(items, selected_id) == items.end()) {
+            items.push_back(selected_id);
+        }
     }
     for (const std::uint64_t id : items) {
         resolve_item(id);
     }
 }
 
-std::expected<void, std::string> CompletionPipeline::apply(CompletionApplyOptions options) {
-    if (!state_ || state_->matches.empty()) {
+std::expected<void, std::string> CompletionPipeline::apply(std::size_t selected,
+                                                           CompletionApplyOptions options) {
+    if (!state_ || selected >= state_->matches.size()) {
         return std::unexpected("no completion candidate is selected");
     }
     const CompletionState state = *state_;
@@ -279,7 +278,7 @@ std::expected<void, std::string> CompletionPipeline::apply(CompletionApplyOption
         (void)cancel();
         return std::unexpected("completion request is stale");
     }
-    const CompletionItem& item = state.matches[state.selected].item;
+    const CompletionItem& item = state.matches[selected].item;
     if (!item.resolved) {
         if (!resolve_) {
             return std::unexpected("completion candidate must be resolved before application");
@@ -353,6 +352,7 @@ bool CompletionPipeline::cancel() noexcept {
     }
     cancel_pending();
     state_.reset();
+    notify_changed();
     return true;
 }
 
@@ -476,11 +476,8 @@ void CompletionPipeline::publish(std::uint64_t generation, CompletionProviderRes
     provider->is_incomplete = response.is_incomplete;
     provider->error.clear();
     rebuild_matches();
-    const CompletionState* active = state();
-    if (active != nullptr && !active->matches.empty()) {
-        resolve_visible(active->selected, 1);
-    }
     settle_automatic();
+    notify_changed();
 }
 
 void CompletionPipeline::fail(std::uint64_t generation, CompletionProvider provider,
@@ -493,6 +490,7 @@ void CompletionPipeline::fail(std::uint64_t generation, CompletionProvider provi
         found->error = std::move(error);
     }
     settle_automatic();
+    notify_changed();
 }
 
 void CompletionPipeline::cancelled(std::uint64_t generation, CompletionProvider provider) {
@@ -503,15 +501,12 @@ void CompletionPipeline::cancelled(std::uint64_t generation, CompletionProvider 
         found->pending = false;
     }
     settle_automatic();
+    notify_changed();
 }
 
 void CompletionPipeline::rebuild_matches() {
     if (!state_) {
         return;
-    }
-    std::optional<std::uint64_t> selected;
-    if (state_->selected < state_->matches.size()) {
-        selected = state_->matches[state_->selected].item.id;
     }
     std::vector<CompletionMatch> matches;
     for (const CompletionProviderState& provider : state_->providers) {
@@ -533,13 +528,15 @@ void CompletionPipeline::rebuild_matches() {
                               right.item.label, right.item.id);
         });
     state_->matches = std::move(matches);
-    state_->selected = 0;
-    if (selected) {
-        const auto found = std::ranges::find(
-            state_->matches, *selected, [](const CompletionMatch& match) { return match.item.id; });
-        if (found != state_->matches.end()) {
-            state_->selected = static_cast<std::size_t>(found - state_->matches.begin());
+}
+
+void CompletionPipeline::notify_changed() noexcept {
+    try {
+        if (changed_) {
+            changed_(state_ ? &*state_ : nullptr);
         }
+    } catch (...) {
+        return;
     }
 }
 
@@ -561,6 +558,7 @@ void CompletionPipeline::resolve_item(std::uint64_t id) {
     item->resolving = true;
     item->resolve_error.clear();
     rebuild_matches();
+    notify_changed();
     item = source_item(id);
     CompletionState* active = state();
     if (item == nullptr || active == nullptr) {
@@ -626,10 +624,23 @@ void CompletionPipeline::publish_resolved(std::uint64_t generation, std::uint64_
     *current = std::move(response.items.front());
     resolve_cancellations_.erase(id);
     rebuild_matches();
+    notify_changed();
     if (pending_apply_ && pending_apply_->generation == generation && pending_apply_->item == id) {
         const CompletionApplyOptions options = pending_apply_->options;
         pending_apply_.reset();
-        if (std::expected<void, std::string> applied = apply(options); !applied) {
+        CompletionState* active = state();
+        if (active == nullptr) {
+            return;
+        }
+        const auto selected = std::ranges::find(
+            active->matches, id, [](const CompletionMatch& match) { return match.item.id; });
+        if (selected == active->matches.end()) {
+            resolve_failed(generation, id, "resolved completion candidate no longer matches");
+            return;
+        }
+        const std::size_t selected_index =
+            static_cast<std::size_t>(selected - active->matches.begin());
+        if (std::expected<void, std::string> applied = apply(selected_index, options); !applied) {
             resolve_failed(generation, id, std::move(applied.error()));
         }
     }
@@ -645,6 +656,7 @@ void CompletionPipeline::resolve_failed(std::uint64_t generation, std::uint64_t 
         item->resolve_error = std::move(error);
         resolve_cancellations_.erase(id);
         rebuild_matches();
+        notify_changed();
     }
     if (pending_apply_ && pending_apply_->generation == generation && pending_apply_->item == id) {
         pending_apply_.reset();
@@ -659,6 +671,7 @@ void CompletionPipeline::resolve_cancelled(std::uint64_t generation, std::uint64
         item->resolving = false;
         resolve_cancellations_.erase(id);
         rebuild_matches();
+        notify_changed();
     }
     if (pending_apply_ && pending_apply_->generation == generation && pending_apply_->item == id) {
         pending_apply_.reset();
@@ -741,14 +754,28 @@ CompletionPipeline::validate_response(CompletionProviderResponse& response) {
         return std::unexpected("completion response targets a stale revision");
     }
     const std::uint32_t text_size = buffer->snapshot().content().size_bytes();
+    std::set<std::uint64_t> other_provider_ids;
+    for (const CompletionProviderState& provider : active->providers) {
+        if (provider.provider == response.provider) {
+            continue;
+        }
+        for (const CompletionItem& item : provider.items) {
+            other_provider_ids.insert(item.id);
+        }
+    }
     std::set<std::uint64_t> response_ids;
     for (CompletionItem& item : response.items) {
         item.provider = response.provider;
         if (item.id == 0) {
-            item.id = ++next_item_id_;
+            do {
+                item.id = ++next_item_id_;
+            } while (other_provider_ids.contains(item.id) || response_ids.contains(item.id));
         }
         if (!response_ids.insert(item.id).second) {
             return std::unexpected("completion response contains duplicate item ids");
+        }
+        if (other_provider_ids.contains(item.id)) {
+            return std::unexpected("completion item id collides across providers");
         }
         if (item.label.empty()) {
             return std::unexpected("completion item label must not be empty");
@@ -759,11 +786,14 @@ CompletionPipeline::validate_response(CompletionProviderResponse& response) {
         if (item.sort_text.empty()) {
             item.sort_text = item.label;
         }
-        if (item.edit && (item.edit->insert_range.start > item.edit->insert_range.end ||
-                          item.edit->replace_range.start > item.edit->replace_range.end ||
-                          item.edit->insert_range.end.value > text_size ||
-                          item.edit->replace_range.end.value > text_size)) {
-            return std::unexpected("completion item edit is outside the request snapshot");
+        if (item.edit) {
+            const CompletionEdit edit = item.edit.value_or(CompletionEdit{});
+            if (edit.insert_range.start > edit.insert_range.end ||
+                edit.replace_range.start > edit.replace_range.end ||
+                edit.insert_range.end.value > text_size ||
+                edit.replace_range.end.value > text_size) {
+                return std::unexpected("completion item edit is outside the request snapshot");
+            }
         }
     }
     return {};

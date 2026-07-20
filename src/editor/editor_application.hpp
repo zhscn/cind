@@ -173,6 +173,7 @@ public:
     }
     CompletionPipeline& completion() { return *completion_; }
     const CompletionPipeline& completion() const { return *completion_; }
+    std::optional<std::size_t> completion_selection() const;
     std::vector<LspSessionSnapshot> lsp_sessions() const { return lsp_sessions_->snapshots(); }
     GuileRuntimeSnapshot scripting() const { return guile_.snapshot(); }
     void refresh_default_keymap();
@@ -185,11 +186,11 @@ public:
     std::expected<void, std::string> start_completion(CommandTarget target, TextOffset anchor,
                                                       std::vector<CompletionProvider> providers,
                                                       CompletionTrigger trigger = {});
-    bool move_completion(std::int64_t delta);
+    bool focus_completion(std::size_t selected);
     void resolve_completion_window(std::size_t first, std::size_t count) {
-        completion_->resolve_visible(first, count);
+        completion_->resolve_visible(first, count, completion_selection());
     }
-    std::expected<void, std::string> apply_completion(bool replace = false);
+    std::expected<void, std::string> apply_completion(std::size_t selected, bool replace = false);
     bool cancel_completion();
     const InputStateRegistry::Definition& input_state() const;
     const InputStateRegistry::Definition& input_state(WindowId window) const;

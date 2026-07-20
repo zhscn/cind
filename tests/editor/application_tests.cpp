@@ -1848,14 +1848,16 @@ TEST_CASE("completion pipeline resolves visible candidates in place by stable id
 
     REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
     REQUIRE(pipeline.state() != nullptr);
-    CHECK(resolve_requests == 1);
+    CHECK(resolve_requests == 0);
     REQUIRE(pipeline.state()->matches.size() == 2);
     const std::uint64_t selected_id = pipeline.state()->matches.front().item.id;
+    REQUIRE(pipeline.focus(0));
+    CHECK(resolve_requests == 1);
     CHECK(pipeline.state()->matches.front().item.resolved);
     CHECK(pipeline.state()->matches.front().item.documentation ==
           std::format("documentation for {}", pipeline.state()->matches.front().item.label));
 
-    pipeline.resolve_visible(0, 2);
+    pipeline.resolve_visible(0, 2, 0);
     CHECK(resolve_requests == 2);
     REQUIRE(pipeline.state() != nullptr);
     CHECK(pipeline.state()->matches.front().item.id == selected_id);
@@ -1908,6 +1910,7 @@ TEST_CASE("completion pipeline cancels outstanding item resolution with its sess
 
     REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
     REQUIRE(pipeline.state() != nullptr);
+    REQUIRE(pipeline.focus(0));
     CHECK(pipeline.state()->matches.front().item.resolving);
     CHECK(pipeline.cancel());
     CHECK(cancellations == 1);
@@ -1967,8 +1970,8 @@ TEST_CASE("completion application waits for resolve and commits the resolved edi
         });
 
     REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
+    REQUIRE(pipeline.apply(0).has_value());
     REQUIRE(resolve_completed);
-    REQUIRE(pipeline.apply().has_value());
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "fo\n");
     CHECK(applied == 0);
 
@@ -2078,7 +2081,7 @@ TEST_CASE("completion application merges primary and additional edits into one u
                 .is_incomplete = false};
         });
     REQUIRE(pipeline.start(context, TextOffset{9}, {CompletionProvider::word()}).has_value());
-    REQUIRE(pipeline.apply().has_value());
+    REQUIRE(pipeline.apply(0).has_value());
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() ==
           "using X;\n#include\nfoo");
     CHECK(runtime.views().caret(view) == TextOffset{21});

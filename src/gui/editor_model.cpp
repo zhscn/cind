@@ -26,11 +26,12 @@ std::vector<ChromeItem> completion_items(const EditorApplication& application) {
     return items;
 }
 
-std::optional<std::string_view> completion_documentation(const CompletionState* completion) {
-    if (completion == nullptr || completion->selected >= completion->matches.size()) {
+std::optional<std::string_view> completion_documentation(const CompletionState* completion,
+                                                         std::optional<std::size_t> selected) {
+    if (completion == nullptr || !selected || *selected >= completion->matches.size()) {
         return std::nullopt;
     }
-    const std::string& documentation = completion->matches[completion->selected].item.documentation;
+    const std::string& documentation = completion->matches[*selected].item.documentation;
     return documentation.empty() ? std::nullopt : std::optional<std::string_view>(documentation);
 }
 
@@ -48,10 +49,7 @@ EditorModel::EditorModel(std::string path, std::optional<std::string> initial,
 void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
     const ChromeContent chrome = application_.chrome_content(preedit_);
     const std::vector<ChromeItem> completions = completion_items(application_);
-    const CompletionState* completion = application_.completion().state();
-    const std::optional<std::size_t> completion_selection =
-        completion != nullptr && !completion->matches.empty() ? std::optional(completion->selected)
-                                                              : std::nullopt;
+    const std::optional<std::size_t> completion_selection = application_.completion_selection();
     application_.resolve_completion_window(completion_viewport_.first_item(), 8);
 
     if (application_.window_layout().leaves().size() > 1) {
@@ -162,12 +160,11 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     application_.resolve_completion_window(completion_viewport_.first_item(), 8);
     const std::vector<ChromeItem> completions = completion_items(application_);
     const CompletionState* completion = application_.completion().state();
-    const std::optional<std::size_t> completion_selection =
-        completion != nullptr && !completion->matches.empty() ? std::optional(completion->selected)
-                                                              : std::nullopt;
+    const std::optional<std::size_t> completion_selection = application_.completion_selection();
     const std::optional<TextOffset> completion_anchor =
         completion != nullptr ? std::optional(completion->request.anchor) : std::nullopt;
-    const std::optional<std::string_view> completion_docs = completion_documentation(completion);
+    const std::optional<std::string_view> completion_docs =
+        completion_documentation(completion, completion_selection);
     const std::optional<std::string_view> popup_input =
         chrome.popup_input ? std::optional<std::string_view>(*chrome.popup_input) : std::nullopt;
     const InputStateRegistry::Definition& active_input_state = application_.input_state();
@@ -494,7 +491,7 @@ EditorStateSnapshot EditorModel::inspect() {
         completion_state.anchor = completion->request.anchor;
         completion_state.caret = completion->request.caret;
         completion_state.query = completion->request.query;
-        completion_state.selected = completion->selected;
+        completion_state.selected = application_.completion_selection().value_or(0);
         for (const CompletionProviderState& provider : completion->providers) {
             if (provider.pending) {
                 completion_state.pending_providers.push_back(

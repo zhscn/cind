@@ -295,8 +295,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return start_completion(target, anchor, std::move(providers),
                                            std::move(trigger));
                },
-           .move_completion = [this](std::int64_t delta) { return move_completion(delta); },
-           .apply_completion = [this](bool replace) { return apply_completion(replace); },
+           .focus_completion = [this](std::size_t selected) { return focus_completion(selected); },
+           .apply_completion = [this](std::size_t selected,
+                                      bool replace) { return apply_completion(selected, replace); },
            .cancel_completion = [this] { return cancel_completion(); },
            .cancel_pending_input = [this] { command_loop_.cancel_pending(); },
            .view_position =
@@ -722,6 +723,25 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
         [this](CommandTarget target) {
             after_edit(target.view);
             sync_keymaps();
+        },
+        [this](const CompletionState* state) {
+            if (state == nullptr) {
+                if (std::expected<void, std::string> finished = guile_.completion_finished();
+                    !finished) {
+                    set_message(finished.error());
+                }
+                return;
+            }
+            std::vector<std::uint64_t> item_ids;
+            item_ids.reserve(state->matches.size());
+            for (const CompletionMatch& match : state->matches) {
+                item_ids.push_back(match.item.id);
+            }
+            if (std::expected<std::optional<std::size_t>, std::string> reconciled =
+                    guile_.completion_reconcile(item_ids);
+                !reconciled) {
+                set_message(reconciled.error());
+            }
         });
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {
@@ -1116,12 +1136,19 @@ EditorApplication::start_completion(CommandTarget target, TextOffset anchor,
     return completion_->start(context, anchor, std::move(providers), std::move(trigger));
 }
 
-bool EditorApplication::move_completion(std::int64_t delta) {
-    return completion_->select_relative(delta);
+std::optional<std::size_t> EditorApplication::completion_selection() const {
+    const std::expected<std::optional<std::size_t>, std::string> selected =
+        guile_.completion_selection();
+    return selected ? *selected : std::nullopt;
 }
 
-std::expected<void, std::string> EditorApplication::apply_completion(bool replace) {
-    return completion_->apply({.replace = replace});
+bool EditorApplication::focus_completion(std::size_t selected) {
+    return completion_->focus(selected);
+}
+
+std::expected<void, std::string> EditorApplication::apply_completion(std::size_t selected,
+                                                                     bool replace) {
+    return completion_->apply(selected, {.replace = replace});
 }
 
 bool EditorApplication::cancel_completion() {

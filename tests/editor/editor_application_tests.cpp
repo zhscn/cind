@@ -3578,7 +3578,7 @@ TEST_CASE("completion commands use the completion-active keymap and apply buffer
     }));
 
     send_keys(application, "C-n");
-    CHECK(application.completion().state()->selected == 1);
+    CHECK(application.completion_selection() == 1);
     send_keys(application, "RET");
     CHECK_FALSE(application.completion().active());
     const std::string text = application.session().snapshot().content().to_string();
@@ -3622,8 +3622,10 @@ TEST_CASE("Scheme buffer completion uses Ares bindings and Scheme symbol ranges"
     CHECK(match->item.edit->insert_range == make_range(1, 14));
     CHECK(match->item.kind == "function");
 
-    REQUIRE(
-        application.completion().select(static_cast<std::size_t>(match - state->matches.begin())));
+    const std::size_t selected = static_cast<std::size_t>(match - state->matches.begin());
+    for (std::size_t index = 0; index < selected; ++index) {
+        send_keys(application, "C-n");
+    }
     send_keys(application, "RET");
     CHECK(application.session().snapshot().content().to_string() == "(cind-live-binding");
 }
@@ -3659,7 +3661,7 @@ TEST_CASE("Scheme typing starts Ares completion and deletion refilters cached bi
     REQUIRE(unresolved != scripted->items.end());
     CHECK(unresolved->documentation.empty());
 
-    REQUIRE(application.completion().select(
+    REQUIRE(application.focus_completion(
         static_cast<std::size_t>(define_match - state->matches.begin())));
     state = application.completion().state();
     REQUIRE(state != nullptr);

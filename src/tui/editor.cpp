@@ -261,17 +261,15 @@ private:
                                             .kind = match.item.kind});
             }
         }
-        const std::optional<std::size_t> completion_selection =
-            completion != nullptr && !completion->matches.empty()
-                ? std::optional(completion->selected)
-                : std::nullopt;
+        const std::optional<std::size_t> completion_selection = application_.completion_selection();
         const std::optional<TextOffset> completion_anchor =
             completion != nullptr ? std::optional(completion->request.anchor) : std::nullopt;
         const std::optional<std::string_view> completion_documentation =
-            completion != nullptr && completion->selected < completion->matches.size() &&
-                    !completion->matches[completion->selected].item.documentation.empty()
+            completion != nullptr && completion_selection &&
+                    *completion_selection < completion->matches.size() &&
+                    !completion->matches[*completion_selection].item.documentation.empty()
                 ? std::optional<std::string_view>(
-                      completion->matches[completion->selected].item.documentation)
+                      completion->matches[*completion_selection].item.documentation)
                 : std::nullopt;
         const std::optional<std::string_view> popup_input =
             chrome_content.popup_input

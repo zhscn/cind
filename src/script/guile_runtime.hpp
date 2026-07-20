@@ -275,8 +275,8 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(
         CommandTarget, TextOffset, std::vector<CompletionProvider>, CompletionTrigger)>
         start_completion;
-    std::function<bool(std::int64_t)> move_completion;
-    std::function<std::expected<void, std::string>(bool)> apply_completion;
+    std::function<bool(std::size_t)> focus_completion;
+    std::function<std::expected<void, std::string>(std::size_t, bool)> apply_completion;
     std::function<bool()> cancel_completion;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
@@ -424,6 +424,10 @@ public:
     std::expected<std::optional<GuileInteractionPolicyState>, std::string>
     interaction_policy_state() const;
     std::expected<std::optional<std::size_t>, std::string> interaction_selection() const;
+    std::expected<std::optional<std::size_t>, std::string>
+    completion_reconcile(const std::vector<std::uint64_t>& item_ids);
+    std::expected<void, std::string> completion_finished();
+    std::expected<std::optional<std::size_t>, std::string> completion_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
     std::expected<GuileApplicationState, std::string> application_state() const;
     std::expected<void, std::string> set_caret_reveal(bool reveal);

@@ -294,6 +294,24 @@ TEST_CASE("Guile minibuffer history storage is scoped to the editor host") {
     CHECK(result->values == std::vector<std::string>{"#(\"first\" \"second\")"});
 }
 
+TEST_CASE("Guile completion selection follows stable item ids") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> result =
+        guile.evaluate({.source = R"((use-modules (cind application))
+(list (reconcile-completion! host #(11 22 33))
+      (move-completion-selection! host 1)
+      (reconcile-completion! host #(44 22 33))
+      (completion-selection host)
+      (move-completion-selection! host -1)
+      (begin (finish-completion! host) (completion-selection host))))",
+                        .source_name = "completion-selection-test.scm"});
+    REQUIRE(result.has_value());
+    CHECK_FALSE(result->error.has_value());
+    CHECK(result->values == std::vector<std::string>{"(0 1 1 1 0 #f)"});
+}
+
 TEST_CASE("Guile command feedback owns message and command input state") {
     EditorRuntime runtime;
     std::size_t completion_refreshes = 0;
@@ -1311,7 +1329,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .start_completion = {},
-         .move_completion = {},
+         .focus_completion = {},
          .apply_completion = {},
          .cancel_completion = {},
          .cancel_pending_input = {},

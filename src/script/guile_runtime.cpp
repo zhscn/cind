@@ -5286,34 +5286,38 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
     return SCM_UNSPECIFIED;
 }
 
-SCM move_completion(SCM host_object, SCM delta_value) {
-    if (scm_is_integer(delta_value) == 0) {
-        scm_wrong_type_arg_msg("move-completion!", 2, delta_value, "integer");
+SCM focus_completion(SCM host_object, SCM selected_value) {
+    if (scm_is_unsigned_integer(selected_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("focus-completion!", 2, selected_value,
+                               "non-negative candidate index");
     }
-    HostLease& host = require_host(host_object, "move-completion!");
-    if (!host.services.move_completion) {
-        scm_misc_error("move-completion!", "completion navigation capability is unavailable",
-                       SCM_EOL);
+    HostLease& host = require_host(host_object, "focus-completion!");
+    if (!host.services.focus_completion) {
+        scm_misc_error("focus-completion!", "completion focus capability is unavailable", SCM_EOL);
     }
     try {
-        return scm_from_bool(host.services.move_completion(scm_to_int64(delta_value)));
+        return scm_from_bool(host.services.focus_completion(scm_to_size_t(selected_value)));
     } catch (const std::exception& exception) {
-        raise_host_error("move-completion!", exception.what());
+        raise_host_error("focus-completion!", exception.what());
     } catch (...) {
-        scm_misc_error("move-completion!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("focus-completion!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
 
-SCM apply_completion(SCM host_object, SCM replace_value) {
+SCM apply_completion(SCM host_object, SCM selected_value, SCM replace_value) {
+    if (scm_is_unsigned_integer(selected_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("apply-completion!", 2, selected_value,
+                               "non-negative candidate index");
+    }
     HostLease& host = require_host(host_object, "apply-completion!");
     if (!host.services.apply_completion) {
         scm_misc_error("apply-completion!", "completion application capability is unavailable",
                        SCM_EOL);
     }
     try {
-        std::expected<void, std::string> applied =
-            host.services.apply_completion(scheme_true(replace_value));
+        std::expected<void, std::string> applied = host.services.apply_completion(
+            scm_to_size_t(selected_value), scheme_true(replace_value));
         if (!applied) {
             raise_host_error("apply-completion!", applied.error());
         }
@@ -5751,9 +5755,9 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(synchronize_lsp_session));
     (void)scm_c_define_gsubr("start-completion!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
-    (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(move_completion));
-    (void)scm_c_define_gsubr("apply-completion!", 2, 0, 0,
+    (void)scm_c_define_gsubr("focus-completion!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(focus_completion));
+    (void)scm_c_define_gsubr("apply-completion!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(apply_completion));
     (void)scm_c_define_gsubr("cancel-completion!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_completion));
@@ -5866,7 +5870,7 @@ void initialize_host_module(void*) {
         "submit-interaction-mechanism!", "replace-interaction-input!",
         "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
         "refresh-completion!", "ensure-lsp-session!", "attach-lsp-diagnostics!",
-        "synchronize-lsp-session!", "start-completion!", "move-completion!", "apply-completion!",
+        "synchronize-lsp-session!", "start-completion!", "focus-completion!", "apply-completion!",
         "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
         "view-identifier-words", "location-list-item-target", "position-buffer-view!",
         "project-index-state", "request-project-index!", "normalize-resource-path",
@@ -6658,6 +6662,9 @@ struct GuileCall {
         InteractionPolicyState,
         MinibufferHistoryState,
         InteractionSelection,
+        CompletionReconcile,
+        CompletionFinished,
+        CompletionSelection,
         CommandFeedbackState,
         ApplicationState,
         SetCaretReveal,
@@ -6797,6 +6804,8 @@ struct GuileCall {
     GuileMinibufferHistoryState minibuffer_history;
     std::optional<GuileInteractionPolicyState> interaction_policy_state;
     std::optional<std::size_t> interaction_selection;
+    std::vector<std::uint64_t> completion_item_ids;
+    std::optional<std::size_t> completion_selection;
     GuileCommandFeedbackState command_feedback;
     GuileApplicationState application_state;
     std::uint32_t page_rows = 1;
@@ -7522,6 +7531,40 @@ SCM call_body(void* data) {
                                    "selection must be a non-negative integer or #f", SCM_EOL);
                 }
                 call.interaction_selection = scm_to_size_t(call.result);
+            }
+            break;
+        case GuileCall::Operation::CompletionReconcile: {
+            SCM item_ids = scm_c_make_vector(call.completion_item_ids.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.completion_item_ids.size(); ++index) {
+                scm_c_vector_set_x(item_ids, index,
+                                   scm_from_uint64(call.completion_item_ids[index]));
+            }
+            call.result = scm_call_2(scm_c_public_ref("cind application", "reconcile-completion!"),
+                                     call.host, item_ids);
+            if (!scheme_false(call.result)) {
+                if (scm_is_unsigned_integer(call.result, 0,
+                                            std::numeric_limits<std::size_t>::max()) == 0) {
+                    scm_misc_error("reconcile-completion!",
+                                   "selection must be a non-negative integer or #f", SCM_EOL);
+                }
+                call.completion_selection = scm_to_size_t(call.result);
+            }
+            break;
+        }
+        case GuileCall::Operation::CompletionFinished:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind application", "finish-completion!"), call.host);
+            break;
+        case GuileCall::Operation::CompletionSelection:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind application", "completion-selection"), call.host);
+            if (!scheme_false(call.result)) {
+                if (scm_is_unsigned_integer(call.result, 0,
+                                            std::numeric_limits<std::size_t>::max()) == 0) {
+                    scm_misc_error("completion-selection",
+                                   "selection must be a non-negative integer or #f", SCM_EOL);
+                }
+                call.completion_selection = scm_to_size_t(call.result);
             }
             break;
         case GuileCall::Operation::CommandFeedbackState:
@@ -9129,6 +9172,48 @@ public:
         return call.interaction_selection;
     }
 
+    std::expected<std::optional<std::size_t>, std::string>
+    completion_reconcile(const std::vector<std::uint64_t>& item_ids) {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::CompletionReconcile;
+        call.host = host_;
+        call.completion_item_ids = item_ids;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return call.completion_selection;
+    }
+
+    std::expected<void, std::string> completion_finished() {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::CompletionFinished;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
+    std::expected<std::optional<std::size_t>, std::string> completion_selection() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::CompletionSelection;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.completion_selection;
+    }
+
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -10607,6 +10692,19 @@ GuileRuntime::minibuffer_history_state(BufferId buffer, std::string_view history
 
 std::expected<std::optional<std::size_t>, std::string> GuileRuntime::interaction_selection() const {
     return impl_->interaction_selection();
+}
+
+std::expected<std::optional<std::size_t>, std::string>
+GuileRuntime::completion_reconcile(const std::vector<std::uint64_t>& item_ids) {
+    return impl_->completion_reconcile(item_ids);
+}
+
+std::expected<void, std::string> GuileRuntime::completion_finished() {
+    return impl_->completion_finished();
+}
+
+std::expected<std::optional<std::size_t>, std::string> GuileRuntime::completion_selection() const {
+    return impl_->completion_selection();
 }
 
 std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {

@@ -132,7 +132,6 @@ struct CompletionState {
     CompletionRequest request;
     std::vector<CompletionProviderState> providers;
     std::vector<CompletionMatch> matches;
-    std::size_t selected = 0;
 };
 
 struct CompletionApplyOptions {
@@ -151,9 +150,10 @@ public:
         const CompletionRequest&, const CompletionItem&, ResolveCompleted,
         CompletionProviderAsync::Failed, CompletionProviderAsync::Cancelled)>;
     using Applied = std::function<void(CommandTarget)>;
+    using Changed = std::function<void(const CompletionState*)>;
 
     CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime, Dispatch dispatch,
-                       Resolve resolve = {}, Applied applied = {});
+                       Resolve resolve = {}, Applied applied = {}, Changed changed = {});
     ~CompletionPipeline() noexcept { (void)cancel(); }
 
     CompletionPipeline(const CompletionPipeline&) = delete;
@@ -170,10 +170,11 @@ public:
     // prefix extension. Incomplete sources are re-requested and replace only
     // their own entries.
     std::expected<void, std::string> update(CommandContext& context);
-    bool select(std::size_t index);
-    bool select_relative(std::int64_t delta);
-    void resolve_visible(std::size_t first, std::size_t count);
-    std::expected<void, std::string> apply(CompletionApplyOptions options = {});
+    bool focus(std::size_t index);
+    void resolve_visible(std::size_t first, std::size_t count,
+                         std::optional<std::size_t> selected = std::nullopt);
+    std::expected<void, std::string> apply(std::size_t selected,
+                                           CompletionApplyOptions options = {});
     bool cancel() noexcept;
     bool invalidate_if_stale();
 
@@ -183,6 +184,7 @@ private:
     void fail(std::uint64_t generation, CompletionProvider provider, std::string error);
     void cancelled(std::uint64_t generation, CompletionProvider provider);
     void rebuild_matches();
+    void notify_changed() noexcept;
     void settle_automatic();
     void resolve_item(std::uint64_t id);
     void publish_resolved(std::uint64_t generation, std::uint64_t id, CompletionItem item);
@@ -199,6 +201,7 @@ private:
     Dispatch dispatch_;
     Resolve resolve_;
     Applied applied_;
+    Changed changed_;
     std::uint64_t next_generation_ = 0;
     std::uint64_t next_item_id_ = 0;
     bool dispatching_batch_ = false;

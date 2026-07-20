@@ -2228,12 +2228,17 @@
 
 (define (completion-move host delta)
   (lambda (context invocation)
-    (move-completion! host delta)
+    (let ((selected (move-completion-selection! host delta)))
+      (when selected
+        (focus-completion! host selected)))
     (request-redraw! host)
     (command-completed/preserve)))
 
 (define (completion-accept host context invocation)
-  (apply-completion! host #f)
+  (let ((selected (completion-selection host)))
+    (if selected
+        (apply-completion! host selected #f)
+        (set-message! host "no completion candidate is selected")))
   (request-redraw! host)
   (command-completed/preserve))
 
