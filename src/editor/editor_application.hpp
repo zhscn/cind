@@ -19,7 +19,6 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -384,13 +383,11 @@ private:
                                 CompletionPipeline::ResolveCompleted completed,
                                 CompletionProviderAsync::Failed failed,
                                 CompletionProviderAsync::Cancelled cancelled);
-    std::expected<CompletionProvider, std::string>
-    resolve_lsp_completion_provider(CommandTarget target, ScriptLspProviderSpec provider);
-    std::expected<LspSessionId, std::string>
-    resolve_lsp_session(CommandTarget target, const ScriptLspProviderSpec& provider);
-    void attach_lsp_diagnostics(LspSessionId session);
+    std::expected<std::uint64_t, std::string> ensure_lsp_session(CommandTarget target,
+                                                                 ScriptLspProviderSpec provider);
+    std::expected<void, std::string> attach_lsp_diagnostics(LspSessionId session);
+    std::expected<void, std::string> synchronize_lsp_session(BufferId buffer, LspSessionId session);
     void publish_lsp_diagnostics(LspSessionId session, LspPublishedDiagnostics published);
-    void synchronize_lsp_buffer(BufferId buffer);
     std::expected<ScriptAsyncExternalServices::Cancel, std::string>
     start_lsp_navigation(const ScriptLspNavigationRequest& request,
                          ScriptExternalAsyncCallbacks callbacks);
@@ -416,7 +413,6 @@ private:
     std::unique_ptr<LspSessionRegistry> lsp_sessions_;
     AsyncScriptHost script_async_;
     std::unique_ptr<CompletionPipeline> completion_;
-    std::map<BufferId, LspSessionId> lsp_buffer_sessions_;
     std::set<std::uint64_t> lsp_diagnostic_sessions_;
 };
 

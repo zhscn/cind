@@ -252,9 +252,11 @@ struct GuileHostServices {
     std::function<bool()> cancel_interaction;
     std::function<bool()> completion_active;
     std::function<std::expected<void, std::string>()> refresh_completion;
-    std::function<std::expected<CompletionProvider, std::string>(CommandTarget,
-                                                                 ScriptLspProviderSpec)>
-        resolve_lsp_completion_provider;
+    std::function<std::expected<std::uint64_t, std::string>(CommandTarget, ScriptLspProviderSpec)>
+        ensure_lsp_session;
+    std::function<std::expected<void, std::string>(std::uint64_t)> attach_lsp_diagnostics;
+    std::function<std::expected<void, std::string>(BufferId, std::uint64_t)>
+        synchronize_lsp_session;
     std::function<std::expected<void, std::string>(
         CommandTarget, TextOffset, std::vector<CompletionProvider>, CompletionTrigger)>
         start_completion;
@@ -428,6 +430,9 @@ public:
     std::expected<GuileApplicationState, std::string> application_state() const;
     std::expected<void, std::string> set_caret_reveal(bool reveal);
     std::expected<void, std::string> set_page_rows(std::uint32_t rows);
+    std::expected<bool, std::string> lsp_session_bound(BufferId buffer,
+                                                       std::uint64_t session) const;
+    std::expected<void, std::string> lsp_buffer_released(BufferId buffer);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
     std::expected<void, std::string>

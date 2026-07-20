@@ -94,6 +94,7 @@
    (lambda (host buffer view revision)
      (set-message! host "")
      (request-redraw! host)
+     (lsp-buffer-edited! host buffer)
      (let ((status (interaction-status host)))
        (when (and (vector-ref status 0)
                   (equal? buffer (vector-ref status 6))
@@ -2009,8 +2010,14 @@
     (if (= index (vector-length providers))
         (list->vector (reverse result))
         (let* ((name (vector-ref providers index))
-               (provider (or (resolve-lsp-provider host context name) name)))
-          (loop (+ index 1) (cons provider result))))))
+               (provider (resolve-lsp-provider host context name)))
+          (loop (+ index 1)
+                (cons (if provider
+                          (if (lsp-provider-supports? provider "completion")
+                              (bind-lsp-provider! host context provider)
+                              (error "LSP provider does not support completion" name))
+                          name)
+                      result))))))
 
 (define (completion-suppressed? host context caret)
   (and (> caret 0)
@@ -2522,13 +2529,14 @@
   (let ((provider (lsp-navigation-provider host context)))
     (if (not provider)
         (command-error "LSP navigation is unavailable for the current mode")
-        (let ((task
+        (let* ((session (bind-lsp-provider! host context provider))
+               (task
                (start-async-task!
                 host
                 (async-lsp-navigation (context-window context)
                                       (context-buffer context)
                                       (context-view context)
-                                      kind provider)
+                                      kind session)
                 (lambda (completed-task result)
                   (complete-lsp-navigation! host completed-task result))
                 #:failed

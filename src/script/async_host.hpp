@@ -84,7 +84,7 @@ struct ScriptLspProviderSpec {
 struct ScriptLspNavigationRequest {
     CommandTarget target;
     std::string kind;
-    ScriptLspProviderSpec provider;
+    std::uint64_t session = 0;
 };
 
 using ScriptAsyncRequest =

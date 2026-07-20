@@ -83,12 +83,12 @@
     (error "async process working directory must be a string" working-directory))
   (vector 'process file arguments working-directory))
 
-(define (async-lsp-navigation window buffer view kind provider)
+(define (async-lsp-navigation window buffer view kind session)
   (unless (symbol? kind)
     (error "LSP navigation kind must be a symbol" kind))
-  (unless (lsp-provider? provider)
-    (error "LSP navigation provider must be a provider specification" provider))
-  (vector 'lsp-navigation window buffer view kind provider))
+  (unless (lsp-session? session)
+    (error "LSP navigation requires a bound session" session))
+  (vector 'lsp-navigation window buffer view kind (lsp-session-id session)))
 
 (define* (start-async-task! host request completed
                             #:key (failed #f) (cancelled #f))

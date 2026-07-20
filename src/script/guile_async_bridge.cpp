@@ -299,17 +299,18 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                                     .working_directory = scheme_string(scm_c_vector_ref(value, 3))};
     }
     if (symbol_is(tag, "lsp-navigation")) {
-        if (size != 6 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 4)))) {
+        if (size != 6 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 4))) ||
+            scm_is_unsigned_integer(scm_c_vector_ref(value, 5), 1,
+                                    std::numeric_limits<std::uint64_t>::max()) == 0) {
             scm_wrong_type_arg_msg(caller, position, value,
-                                   "#(lsp-navigation window buffer view kind provider) request");
+                                   "#(lsp-navigation window buffer view kind session) request");
         }
         return ScriptLspNavigationRequest{
             .target = {.window = entity_id<WindowTag>(scm_c_vector_ref(value, 1), caller, position),
                        .buffer = entity_id<BufferTag>(scm_c_vector_ref(value, 2), caller, position),
                        .view = entity_id<ViewTag>(scm_c_vector_ref(value, 3), caller, position)},
             .kind = scheme_name(scm_c_vector_ref(value, 4), caller, position),
-            .provider =
-                script_lsp_provider_from_scheme(scm_c_vector_ref(value, 5), caller, position)};
+            .session = scm_to_uint64(scm_c_vector_ref(value, 5))};
     }
     scm_misc_error(caller, "unknown async request kind", SCM_EOL);
     return ScriptFileReadRequest{};

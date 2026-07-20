@@ -26,10 +26,6 @@ namespace {
 
 constexpr std::size_t default_jump_graph_limit = 4096;
 
-bool lsp_feature_enabled(const ScriptLspProviderSpec& provider, std::string_view feature) {
-    return std::ranges::find(provider.features, feature) != provider.features.end();
-}
-
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
     const TextOffset content_end = text.line_content_end(line);
@@ -281,9 +277,17 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                },
            .completion_active = [this] { return completion_ && completion_->active(); },
            .refresh_completion = [this] { return refresh_completion(); },
-           .resolve_lsp_completion_provider =
+           .ensure_lsp_session =
                [this](CommandTarget target, ScriptLspProviderSpec provider) {
-                   return resolve_lsp_completion_provider(target, std::move(provider));
+                   return ensure_lsp_session(target, std::move(provider));
+               },
+           .attach_lsp_diagnostics =
+               [this](std::uint64_t session) {
+                   return attach_lsp_diagnostics(LspSessionId{session});
+               },
+           .synchronize_lsp_session =
+               [this](BufferId buffer, std::uint64_t session) {
+                   return synchronize_lsp_session(buffer, LspSessionId{session});
                },
            .start_completion =
                [this](CommandTarget target, TextOffset anchor,
@@ -2294,12 +2298,15 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         released != nullptr && released->resource_uri()) {
         (void)lsp_sessions_->close_document(path_to_file_uri(*released->resource_uri()));
     }
-    lsp_buffer_sessions_.erase(buffer);
     buffers_.erase(found);
     if (!runtime_.buffers().erase(buffer)) {
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
     workbenches_.forget_buffer(buffer);
+    if (const std::expected<void, std::string> released = guile_.lsp_buffer_released(buffer);
+        !released) {
+        set_message(std::format("LSP binding release failed: {}", released.error()));
+    }
     show_caret();
     sync_keymaps();
     return {};
@@ -3273,25 +3280,12 @@ std::expected<void, std::string> EditorApplication::refresh_completion() {
     return {};
 }
 
-std::expected<CompletionProvider, std::string>
-EditorApplication::resolve_lsp_completion_provider(CommandTarget target,
-                                                   ScriptLspProviderSpec provider) {
-    if (!lsp_feature_enabled(provider, "completion")) {
-        return std::unexpected(
-            std::format("LSP provider '{}' does not support completion", provider.name));
-    }
-    std::expected<LspSessionId, std::string> session = resolve_lsp_session(target, provider);
-    if (!session) {
-        return std::unexpected(std::move(session.error()));
-    }
-    return CompletionProvider::lsp(session->value);
-}
-
-std::expected<LspSessionId, std::string>
-EditorApplication::resolve_lsp_session(CommandTarget target,
-                                       const ScriptLspProviderSpec& provider) {
+std::expected<std::uint64_t, std::string>
+EditorApplication::ensure_lsp_session(CommandTarget target, ScriptLspProviderSpec provider) {
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
-    if (buffer == nullptr || !buffer->resource_uri()) {
+    const View* view = runtime_.views().try_get(target.view);
+    if (buffer == nullptr || view == nullptr || view->buffer_id() != target.buffer ||
+        runtime_.windows().try_get(target.window) == nullptr || !buffer->resource_uri()) {
         return std::unexpected("LSP provider requires a file-backed buffer");
     }
     std::vector<std::string> capabilities;
@@ -3317,21 +3311,18 @@ EditorApplication::resolve_lsp_session(CommandTarget target,
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }
-    lsp_buffer_sessions_.insert_or_assign(target.buffer, *session);
-    if (lsp_feature_enabled(provider, "diagnostics")) {
-        attach_lsp_diagnostics(*session);
-    }
-    return *session;
+    return session->value;
 }
 
-void EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
+std::expected<void, std::string>
+EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
     if (!lsp_diagnostic_sessions_.insert(session_id.value).second) {
-        return;
+        return {};
     }
     LspSession* session = lsp_sessions_->find(session_id);
     if (session == nullptr) {
         lsp_diagnostic_sessions_.erase(session_id.value);
-        return;
+        return std::unexpected("unknown LSP diagnostics session");
     }
     LspDiagnosticsFeature::attach(
         *session,
@@ -3341,6 +3332,7 @@ void EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
         [this](std::string error) {
             set_message(std::format("LSP diagnostics failed: {}", std::move(error)));
         });
+    return {};
 }
 
 void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
@@ -3354,8 +3346,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
     if (!buffer_id) {
         return;
     }
-    const auto owned = lsp_buffer_sessions_.find(*buffer_id);
-    if (owned == lsp_buffer_sessions_.end() || owned->second != session_id) {
+    if (!guile_.lsp_session_bound(*buffer_id, session_id.value).value_or(false)) {
         return;
     }
     const DocumentSnapshot snapshot = runtime_.buffers().get(*buffer_id).snapshot();
@@ -3385,16 +3376,12 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
     }
 }
 
-void EditorApplication::synchronize_lsp_buffer(BufferId buffer_id) {
-    const auto found = lsp_buffer_sessions_.find(buffer_id);
-    if (found == lsp_buffer_sessions_.end()) {
-        return;
-    }
+std::expected<void, std::string>
+EditorApplication::synchronize_lsp_session(BufferId buffer_id, LspSessionId session_id) {
     Buffer* buffer = runtime_.buffers().try_get(buffer_id);
-    LspSession* session = lsp_sessions_->find(found->second);
+    LspSession* session = lsp_sessions_->find(session_id);
     if (buffer == nullptr || session == nullptr || !buffer->resource_uri()) {
-        lsp_buffer_sessions_.erase(found);
-        return;
+        return std::unexpected("LSP synchronization target is unavailable");
     }
     const DocumentSnapshot snapshot = buffer->snapshot();
     if (std::expected<void, std::string> synchronized =
@@ -3403,8 +3390,9 @@ void EditorApplication::synchronize_lsp_buffer(BufferId buffer_id) {
                                            .revision = snapshot.revision(),
                                            .text = snapshot.content()});
         !synchronized) {
-        set_message(std::format("LSP synchronization failed: {}", synchronized.error()));
+        return std::unexpected(std::move(synchronized.error()));
     }
+    return {};
 }
 
 std::expected<ScriptAsyncExternalServices::Cancel, std::string>
@@ -3422,10 +3410,6 @@ EditorApplication::start_lsp_navigation(const ScriptLspNavigationRequest& reques
     } else {
         return std::unexpected(std::format("unknown LSP navigation kind '{}'", request.kind));
     }
-    if (!lsp_feature_enabled(request.provider, "navigation")) {
-        return std::unexpected(
-            std::format("LSP provider '{}' does not support navigation", request.provider.name));
-    }
     const CommandTarget target = request.target;
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
     const View* view = runtime_.views().try_get(target.view);
@@ -3433,12 +3417,7 @@ EditorApplication::start_lsp_navigation(const ScriptLspNavigationRequest& reques
         runtime_.windows().try_get(target.window) == nullptr || !buffer->resource_uri()) {
         return std::unexpected("LSP navigation target is unavailable");
     }
-    std::expected<LspSessionId, std::string> session_id =
-        resolve_lsp_session(target, request.provider);
-    if (!session_id) {
-        return std::unexpected(std::move(session_id.error()));
-    }
-    LspSession* lsp = lsp_sessions_->find(*session_id);
+    LspSession* lsp = lsp_sessions_->find(LspSessionId{request.session});
     if (lsp == nullptr) {
         return std::unexpected("LSP navigation session is unavailable");
     }
@@ -3629,7 +3608,6 @@ void EditorApplication::after_edit(ViewId view) {
         !notified) {
         set_message(notified.error());
     }
-    synchronize_lsp_buffer(buffer);
 }
 
 } // namespace cind

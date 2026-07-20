@@ -1207,6 +1207,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::vector<ScriptAsyncRequest> async_requests;
     std::vector<std::uint64_t> cancelled_async_tasks;
     std::uint64_t next_async_task = 1;
+    std::optional<CommandTarget> ensured_lsp_target;
+    std::optional<ScriptLspProviderSpec> ensured_lsp_provider;
+    std::size_t lsp_sessions_ensured = 0;
+    std::vector<std::uint64_t> attached_lsp_sessions;
+    std::vector<std::pair<BufferId, std::uint64_t>> synchronized_lsp_sessions;
     std::optional<GuileBufferCreation> created_buffer;
     bool only_buffer = false;
     BufferId released_buffer;
@@ -1288,7 +1293,22 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .cancel_interaction = {},
          .completion_active = {},
          .refresh_completion = {},
-         .resolve_lsp_completion_provider = {},
+         .ensure_lsp_session = [&](CommandTarget target, ScriptLspProviderSpec provider)
+             -> std::expected<std::uint64_t, std::string> {
+             ++lsp_sessions_ensured;
+             ensured_lsp_target = target;
+             ensured_lsp_provider = std::move(provider);
+             return 41;
+         },
+         .attach_lsp_diagnostics = [&](std::uint64_t session) -> std::expected<void, std::string> {
+             attached_lsp_sessions.push_back(session);
+             return {};
+         },
+         .synchronize_lsp_session = [&](BufferId target,
+                                        std::uint64_t session) -> std::expected<void, std::string> {
+             synchronized_lsp_sessions.emplace_back(target, session);
+             return {};
+         },
          .start_completion = {},
          .move_completion = {},
          .apply_completion = {},
@@ -1569,13 +1589,23 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(navigation->target.buffer == buffer);
     CHECK(navigation->target.view == view);
     CHECK(navigation->kind == "definition");
-    CHECK(navigation->provider.name == "clangd");
-    CHECK(navigation->provider.language_id == "cpp");
-    CHECK(navigation->provider.command == "clangd");
-    CHECK(navigation->provider.arguments.empty());
-    CHECK(navigation->provider.root == "/tmp");
-    CHECK(navigation->provider.features ==
+    CHECK(navigation->session == 41);
+    REQUIRE(ensured_lsp_target.has_value());
+    CHECK(*ensured_lsp_target == CommandTarget{.window = window, .buffer = buffer, .view = view});
+    REQUIRE(ensured_lsp_provider.has_value());
+    CHECK(ensured_lsp_provider->name == "clangd");
+    CHECK(ensured_lsp_provider->language_id == "cpp");
+    CHECK(ensured_lsp_provider->command == "clangd");
+    CHECK(ensured_lsp_provider->arguments.empty());
+    CHECK(ensured_lsp_provider->root == "/tmp");
+    CHECK(ensured_lsp_provider->features ==
           std::vector<std::string>{"completion", "diagnostics", "navigation"});
+    CHECK(attached_lsp_sessions == std::vector<std::uint64_t>{41});
+    REQUIRE(guile.lsp_session_bound(buffer, 41).value_or(false));
+    REQUIRE(guile.buffer_edited(buffer, view, runtime.buffers().get(buffer).snapshot().revision())
+                .has_value());
+    CHECK(synchronized_lsp_sessions ==
+          std::vector<std::pair<BufferId, std::uint64_t>>{{buffer, 41}});
     const std::uint64_t definition_task = next_async_task - 1;
     const CommandResult references =
         runtime.commands().invoke(require_command(runtime, "lsp.references"), context);
@@ -1588,9 +1618,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         std::get_if<ScriptLspNavigationRequest>(&references_request);
     REQUIRE(references_navigation != nullptr);
     CHECK(references_navigation->kind == "references");
+    CHECK(lsp_sessions_ensured == 2);
+    CHECK(attached_lsp_sessions == std::vector<std::uint64_t>{41});
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptLspNavigationResult{.locations = {}});
     CHECK(feedback_message() == "no LSP references found");
+    REQUIRE(guile.lsp_buffer_released(buffer).has_value());
+    CHECK_FALSE(guile.lsp_session_bound(buffer, 41).value_or(true));
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const std::uint32_t save_generation = runtime.buffers().get(buffer).save_generation();

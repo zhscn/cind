@@ -5375,6 +5375,83 @@ SCM refresh_completion(SCM host_object) {
     return SCM_BOOL_F;
 }
 
+SCM ensure_lsp_session(SCM host_object, SCM context_value, SCM provider_value) {
+    HostLease& host = require_host(host_object, "ensure-lsp-session!");
+    if (!host.services.ensure_lsp_session) {
+        scm_misc_error("ensure-lsp-session!", "LSP session capability is unavailable", SCM_EOL);
+    }
+    try {
+        const CommandContext context =
+            command_context_from_scheme(host, context_value, "ensure-lsp-session!");
+        std::expected<std::uint64_t, std::string> session = host.services.ensure_lsp_session(
+            {.window = context.window_id(),
+             .buffer = context.buffer_id(),
+             .view = context.view_id()},
+            script_lsp_provider_from_scheme(provider_value, "ensure-lsp-session!", 3));
+        if (!session) {
+            raise_host_error("ensure-lsp-session!", session.error());
+        }
+        return scm_from_uint64(*session);
+    } catch (const std::exception& exception) {
+        raise_host_error("ensure-lsp-session!", exception.what());
+    } catch (...) {
+        scm_misc_error("ensure-lsp-session!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM attach_lsp_diagnostics(SCM host_object, SCM session_value) {
+    HostLease& host = require_host(host_object, "attach-lsp-diagnostics!");
+    if (scm_is_unsigned_integer(session_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("attach-lsp-diagnostics!", 2, session_value,
+                               "positive LSP session identifier");
+    }
+    if (!host.services.attach_lsp_diagnostics) {
+        scm_misc_error("attach-lsp-diagnostics!", "LSP diagnostics capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> attached =
+            host.services.attach_lsp_diagnostics(scm_to_uint64(session_value));
+        if (!attached) {
+            raise_host_error("attach-lsp-diagnostics!", attached.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("attach-lsp-diagnostics!", exception.what());
+    } catch (...) {
+        scm_misc_error("attach-lsp-diagnostics!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
+SCM synchronize_lsp_session(SCM host_object, SCM buffer_value, SCM session_value) {
+    HostLease& host = require_host(host_object, "synchronize-lsp-session!");
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "synchronize-lsp-session!", 2);
+    if (scm_is_unsigned_integer(session_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("synchronize-lsp-session!", 3, session_value,
+                               "positive LSP session identifier");
+    }
+    if (!host.services.synchronize_lsp_session) {
+        scm_misc_error("synchronize-lsp-session!", "LSP synchronization capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        const std::expected<void, std::string> synchronized =
+            host.services.synchronize_lsp_session(buffer, scm_to_uint64(session_value));
+        if (!synchronized) {
+            raise_host_error("synchronize-lsp-session!", synchronized.error());
+        }
+        return SCM_UNSPECIFIED;
+    } catch (const std::exception& exception) {
+        raise_host_error("synchronize-lsp-session!", exception.what());
+    } catch (...) {
+        scm_misc_error("synchronize-lsp-session!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_UNSPECIFIED;
+}
+
 SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM providers_value,
                      SCM trigger_value) {
     HostLease& host = require_host(host_object, "start-completion!");
@@ -5416,21 +5493,15 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
                     raise_host_error("start-completion!",
                                      std::format("unknown completion provider '{}'", name));
                 }
-            } else if (scm_is_vector(value)) {
-                if (!host.services.resolve_lsp_completion_provider) {
-                    raise_host_error("start-completion!",
-                                     "LSP completion capability is unavailable");
-                }
-                std::expected<CompletionProvider, std::string> resolved =
-                    host.services.resolve_lsp_completion_provider(
-                        target, script_lsp_provider_from_scheme(value, "start-completion!", 4));
-                if (!resolved) {
-                    raise_host_error("start-completion!", resolved.error());
-                }
-                providers.push_back(*resolved);
+            } else if (scm_is_vector(value) && scm_c_vector_length(value) == 4 &&
+                       symbol_is(scm_c_vector_ref(value, 0), "lsp-session") &&
+                       scm_is_unsigned_integer(scm_c_vector_ref(value, 1), 1,
+                                               std::numeric_limits<std::uint64_t>::max()) != 0) {
+                providers.push_back(
+                    CompletionProvider::lsp(scm_to_uint64(scm_c_vector_ref(value, 1))));
             } else {
                 scm_wrong_type_arg_msg("start-completion!", 4, value,
-                                       "completion provider name or LSP provider specification");
+                                       "completion provider name or bound LSP session");
             }
         }
         std::expected<void, std::string> started = host.services.start_completion(
@@ -5987,6 +6058,12 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(completion_active));
     (void)scm_c_define_gsubr("refresh-completion!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(refresh_completion));
+    (void)scm_c_define_gsubr("ensure-lsp-session!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(ensure_lsp_session));
+    (void)scm_c_define_gsubr("attach-lsp-diagnostics!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(attach_lsp_diagnostics));
+    (void)scm_c_define_gsubr("synchronize-lsp-session!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(synchronize_lsp_session));
     (void)scm_c_define_gsubr("start-completion!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
     (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
@@ -6111,7 +6188,8 @@ void initialize_host_module(void*) {
         "interaction-origin-project", "refresh-interaction-mechanism!",
         "submit-interaction-mechanism!", "replace-interaction-input!",
         "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
-        "refresh-completion!", "start-completion!", "move-completion!", "apply-completion!",
+        "refresh-completion!", "ensure-lsp-session!", "attach-lsp-diagnostics!",
+        "synchronize-lsp-session!", "start-completion!", "move-completion!", "apply-completion!",
         "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
         "view-identifier-words", "location-navigation", "set-location-navigation!",
         "location-list-target", "move-location-list!", "position-buffer-view!",
@@ -6885,6 +6963,8 @@ struct GuileCall {
         ApplicationState,
         SetCaretReveal,
         SetPageRows,
+        LspSessionBound,
+        LspBufferReleased,
         BufferSavingState,
         CommandInput,
         CommandResultFeedback,
@@ -6969,6 +7049,7 @@ struct GuileCall {
     GuileCommandFeedbackState command_feedback;
     GuileApplicationState application_state;
     std::uint32_t page_rows = 1;
+    std::uint64_t lsp_session = 0;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
     Operation operation = Operation::Load;
@@ -7719,6 +7800,20 @@ SCM call_body(void* data) {
         case GuileCall::Operation::SetPageRows:
             call.result = scm_call_2(scm_c_public_ref("cind application", "set-page-rows!"),
                                      call.host, scm_from_uint32(call.page_rows));
+            break;
+        case GuileCall::Operation::LspSessionBound:
+            call.result = scm_call_3(scm_c_public_ref("cind lsp", "lsp-session-bound?"), call.host,
+                                     entity_id(call.buffer.slot, call.buffer.generation),
+                                     scm_from_uint64(call.lsp_session));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("lsp-session-bound?", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::LspBufferReleased:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind lsp", "lsp-buffer-released!"), call.host,
+                           entity_id(call.buffer.slot, call.buffer.generation));
             break;
         case GuileCall::Operation::BufferSavingState:
             call.result =
@@ -8884,6 +8979,41 @@ public:
         return {};
     }
 
+    std::expected<bool, std::string> lsp_session_bound(BufferId buffer,
+                                                       std::uint64_t session) const {
+        require_owner_thread();
+        if (session == 0) {
+            return false;
+        }
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::LspSessionBound;
+        call.host = host_;
+        call.buffer = buffer;
+        call.lsp_session = session;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
+    std::expected<void, std::string> lsp_buffer_released(BufferId buffer) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::LspBufferReleased;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const {
         require_owner_thread();
         (void)lease_->runtime->buffers().get(buffer);
@@ -9583,6 +9713,15 @@ std::expected<void, std::string> GuileRuntime::set_caret_reveal(bool reveal) {
 
 std::expected<void, std::string> GuileRuntime::set_page_rows(std::uint32_t rows) {
     return impl_->set_page_rows(rows);
+}
+
+std::expected<bool, std::string> GuileRuntime::lsp_session_bound(BufferId buffer,
+                                                                 std::uint64_t session) const {
+    return impl_->lsp_session_bound(buffer, session);
+}
+
+std::expected<void, std::string> GuileRuntime::lsp_buffer_released(BufferId buffer) {
+    return impl_->lsp_buffer_released(buffer);
 }
 
 std::expected<bool, std::string> GuileRuntime::buffer_saving(BufferId buffer) const {
