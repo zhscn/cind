@@ -6979,6 +6979,7 @@ struct GuileCall {
         ModelineContent,
         PresentationProfile,
         DisplayPlan,
+        FallbackDisplayPlan,
         ProjectSearchRunning,
         ProjectIndexUpdated,
         InvokeCommand,
@@ -7741,6 +7742,11 @@ SCM call_body(void* data) {
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-display-plan"),
                                      call.host, display_facts_value(*call.display_facts));
             call.display_plan = display_plan_from_scheme(call.result, "resolve-display-plan");
+            break;
+        case GuileCall::Operation::FallbackDisplayPlan:
+            call.result = scm_call_2(scm_c_public_ref("cind core", "fallback-display-plan"),
+                                     call.host, display_facts_value(*call.display_facts));
+            call.display_plan = display_plan_from_scheme(call.result, "fallback-display-plan");
             break;
         case GuileCall::Operation::ProjectSearchRunning:
             call.result =
@@ -8958,6 +8964,21 @@ public:
         return call.display_plan;
     }
 
+    std::expected<GuileDisplayPlan, std::string>
+    fallback_display_plan(const GuileDisplayFacts& facts) const {
+        require_owner_thread();
+        GuileCall call;
+        call.operation = GuileCall::Operation::FallbackDisplayPlan;
+        call.host = host_;
+        call.display_facts = &facts;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(result.error());
+        }
+        state_->last_error.reset();
+        return call.display_plan;
+    }
+
     void project_index_updated(ProjectId project) {
         require_owner_thread();
         GuileCall call;
@@ -9318,6 +9339,11 @@ std::expected<PresentationProfile, std::string> GuileRuntime::presentation_profi
 std::expected<GuileDisplayPlan, std::string>
 GuileRuntime::display_plan(const GuileDisplayFacts& facts) const {
     return impl_->display_plan(facts);
+}
+
+std::expected<GuileDisplayPlan, std::string>
+GuileRuntime::fallback_display_plan(const GuileDisplayFacts& facts) const {
+    return impl_->fallback_display_plan(facts);
 }
 
 void GuileRuntime::project_index_updated(ProjectId project) {

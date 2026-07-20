@@ -427,6 +427,8 @@ public:
                                                                  const ModelineFacts& facts) const;
     std::expected<PresentationProfile, std::string> presentation_profile() const;
     std::expected<GuileDisplayPlan, std::string> display_plan(const GuileDisplayFacts& facts) const;
+    std::expected<GuileDisplayPlan, std::string>
+    fallback_display_plan(const GuileDisplayFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
     std::expected<CompletionProviderResponse, std::string>

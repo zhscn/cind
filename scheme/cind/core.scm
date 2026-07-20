@@ -29,6 +29,7 @@
             install-pointer-policies!
             install-presentation-policies!
             install-display-policy!
+            fallback-display-plan
             define-major-mode!
             define-minor-mode!
             install-default-keymaps!
@@ -198,6 +199,9 @@
 (define (install-display-policy! host)
   (configure-display-policy! host default-display-policy)
   1)
+
+(define (fallback-display-plan host facts)
+  (default-display-policy host facts))
 
 (define (last-string-argument invocation)
   (let ((arguments (invocation-arguments invocation)))

@@ -2706,7 +2706,7 @@ TEST_CASE("jump replay asynchronously reopens a released buffer without recordin
           std::optional{target_path.string()});
 }
 
-TEST_CASE("invalid scripted display plans fall back to the built-in policy") {
+TEST_CASE("invalid display plans fall back to the default Scheme policy") {
     TemporaryFile init(std::format("cind-display-fallback-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-display-policy!
  host

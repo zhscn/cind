@@ -36,73 +36,6 @@ TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     return caret < line_end ? TextRange{caret, line_end} : TextRange{caret, caret};
 }
 
-GuileDisplayPlan reuse_display_plan(WindowId window) {
-    return {.action = GuileDisplayPlan::Action::Reuse,
-            .target = window,
-            .axis = WindowSplitAxis::Columns,
-            .ratio = 0.5F,
-            .role = std::nullopt};
-}
-
-GuileDisplayPlan split_display_plan(WindowId window, WindowSplitAxis axis, float ratio,
-                                    std::optional<std::string> role = std::nullopt) {
-    return {.action = GuileDisplayPlan::Action::Split,
-            .target = window,
-            .axis = axis,
-            .ratio = ratio,
-            .role = std::move(role)};
-}
-
-GuileDisplayPlan built_in_display_plan(const GuileDisplayFacts& facts) {
-    const auto window = [&](WindowId id) -> const GuileDisplayWindow* {
-        const auto found = std::ranges::find(facts.windows, id, &GuileDisplayWindow::window);
-        return found == facts.windows.end() ? nullptr : &*found;
-    };
-    const auto pinned = [&](WindowId id) {
-        const GuileDisplayWindow* summary = window(id);
-        return summary != nullptr && summary->pinned;
-    };
-    const auto slot = [&]() -> std::optional<WindowId> {
-        const auto found = std::ranges::find(facts.slots, facts.intent, &GuileDisplaySlot::role);
-        return found != facts.slots.end() && !pinned(found->window) ? std::optional(found->window)
-                                                                    : std::nullopt;
-    };
-    const auto adjacent = [&]() -> std::optional<WindowId> {
-        const auto found =
-            std::ranges::find(facts.windows, facts.active, &GuileDisplayWindow::window);
-        if (found == facts.windows.end() || facts.windows.size() < 2) {
-            return std::nullopt;
-        }
-        const std::size_t index =
-            static_cast<std::size_t>(std::distance(facts.windows.begin(), found));
-        return facts.windows[(index + 1) % facts.windows.size()].window;
-    };
-
-    if (facts.intent == "explicit") {
-        return reuse_display_plan(facts.origin);
-    }
-    if (const std::optional<WindowId> target = slot()) {
-        return reuse_display_plan(*target);
-    }
-    if (facts.intent == "tools" || facts.intent == "doc") {
-        return split_display_plan(facts.active, WindowSplitAxis::Rows, 0.72F, facts.intent);
-    }
-    if (facts.intent == "pop") {
-        return split_display_plan(facts.active, WindowSplitAxis::Columns, 0.5F);
-    }
-    const GuileDisplayWindow* active = window(facts.active);
-    const bool jump_from_tool =
-        active != nullptr && active->role && (*active->role == "tools" || *active->role == "doc");
-    if (facts.intent == "jump" && (pinned(facts.active) || jump_from_tool)) {
-        if (const std::optional<WindowId> target = adjacent(); target && !pinned(*target)) {
-            return reuse_display_plan(*target);
-        }
-        return split_display_plan(facts.active, WindowSplitAxis::Columns, 0.5F, "jump");
-    }
-    return !pinned(facts.active) ? reuse_display_plan(facts.active)
-                                 : split_display_plan(facts.origin, WindowSplitAxis::Columns, 0.5F);
-}
-
 CompletionProviderResponse completion_response_from_lsp(CompletionProvider provider,
                                                         const CompletionRequest& request,
                                                         const Text& text,
@@ -1402,11 +1335,16 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
         policy_error = validate_plan(*resolved);
     }
     if (policy_error) {
-        set_message(std::format("display policy failed: {}; using built-in policy", *policy_error));
-        resolved = built_in_display_plan(facts);
+        set_message(
+            std::format("display policy failed: {}; using default Scheme policy", *policy_error));
+        resolved = guile_.fallback_display_plan(facts);
+        if (!resolved) {
+            return std::unexpected(
+                std::format("default Scheme display policy failed: {}", resolved.error()));
+        }
         if (const std::optional<std::string> fallback_error = validate_plan(*resolved)) {
             return std::unexpected(
-                std::format("built-in display policy failed: {}", *fallback_error));
+                std::format("default Scheme display policy failed: {}", *fallback_error));
         }
     }
     const GuileDisplayPlan& plan = *resolved;

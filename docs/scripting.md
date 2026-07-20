@@ -875,7 +875,9 @@ ownership. `workbench-list` returns `#(id name active?)` summaries; scope and MR
 generational Project and Buffer IDs. The scoped Buffer queries optionally widen to the global
 Buffer pool. Lifecycle mutations validate names and registry membership in native code while the
 bundled commands own picker interaction and feedback. Window roles, pinning, policy provenance and
-named slots are explicit mechanisms used by the Scheme display policy.
+named slots are explicit mechanisms used by the Scheme display policy. Native code validates and
+applies display plans. A failed or invalid extension policy is retried through the bundled default
+Scheme policy, so placement decisions have a single implementation.
 
 `workbench-session-state` returns the versioned serialization of every workbench.
 `prepare-workbench-session-restore!` validates and atomically installs the serialized topology,
