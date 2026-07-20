@@ -56,36 +56,6 @@ bool Workbench::expel_project(ProjectId project) {
     return true;
 }
 
-bool Workbench::contains_buffer(BufferId buffer) const {
-    return std::ranges::find(mru_, buffer) != mru_.end();
-}
-
-void Workbench::visit_buffer(BufferId buffer) {
-    if (!buffer) {
-        throw std::invalid_argument("cannot visit an invalid buffer");
-    }
-    std::erase(mru_, buffer);
-    mru_.insert(mru_.begin(), buffer);
-}
-
-bool Workbench::expel_buffer(BufferId buffer) {
-    return std::erase(mru_, buffer) != 0;
-}
-
-void Workbench::replace_mru(const std::vector<BufferId>& buffers) {
-    std::vector<BufferId> unique;
-    unique.reserve(buffers.size());
-    for (const BufferId buffer : buffers) {
-        if (!buffer) {
-            throw std::invalid_argument("workbench MRU contains an invalid buffer");
-        }
-        if (std::ranges::find(unique, buffer) == unique.end()) {
-            unique.push_back(buffer);
-        }
-    }
-    mru_ = std::move(unique);
-}
-
 std::optional<WindowId> Workbench::slot(std::string_view role) const {
     const auto found = slots_.find(std::string(role));
     return found == slots_.end() ? std::nullopt : std::optional(found->second);
@@ -257,12 +227,6 @@ std::optional<WorkbenchId> WorkbenchRegistry::next(WorkbenchId id, int delta) co
     const auto count = static_cast<std::ptrdiff_t>(ids.size());
     const auto wrapped = ((current + static_cast<std::ptrdiff_t>(delta)) % count + count) % count;
     return ids[static_cast<std::size_t>(wrapped)];
-}
-
-void WorkbenchRegistry::forget_buffer(BufferId buffer) {
-    for (const WorkbenchId id : all()) {
-        (void)get(id).expel_buffer(buffer);
-    }
 }
 
 void WorkbenchRegistry::forget_project(ProjectId project) {

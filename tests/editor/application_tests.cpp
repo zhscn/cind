@@ -74,26 +74,18 @@ InputStateId define_test_input_state(EditorRuntime& runtime, std::string name) {
 
 } // namespace
 
-TEST_CASE("workbench registry preserves layouts scopes and recency independently") {
+TEST_CASE("workbench registry preserves layouts and scopes independently") {
     WorkbenchRegistry registry;
     const WindowId first_window{0, 1};
     const WindowId second_window{1, 1};
     const WindowId third_window{2, 1};
     const ProjectId backend{0, 1};
     const ProjectId frontend{1, 1};
-    const BufferId source{0, 1};
-    const BufferId visitor{1, 1};
 
     const WorkbenchId first = registry.create(
         {.name = "shop", .root_window = first_window, .scope = {backend, frontend, backend}});
     CHECK(registry.active_id() == first);
     CHECK(registry.get(first).scope().size() == 2);
-    registry.get(first).visit_buffer(source);
-    registry.get(first).visit_buffer(visitor);
-    registry.get(first).visit_buffer(source);
-    REQUIRE(registry.get(first).mru().size() == 2);
-    CHECK(registry.get(first).mru()[0] == source);
-    CHECK(registry.get(first).mru()[1] == visitor);
     REQUIRE(registry.get(first).layout().split(
         {.target = first_window, .new_window = third_window, .axis = WindowSplitAxis::Columns}));
     registry.get(first).set_slot("tools", third_window);
@@ -119,8 +111,6 @@ TEST_CASE("workbench registry preserves layouts scopes and recency independently
     CHECK(registry.activate(second));
     CHECK(registry.active().layout().contains(second_window));
 
-    registry.forget_buffer(visitor);
-    CHECK_FALSE(registry.get(first).contains_buffer(visitor));
     registry.forget_project(backend);
     CHECK_FALSE(registry.get(first).contains_project(backend));
     CHECK(registry.erase(first));

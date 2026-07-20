@@ -29,10 +29,10 @@ namespace cind {
 
 namespace {
 
-constexpr std::array<std::string_view, 20> bundled_guile_modules = {
-    "application", "command",    "input",       "lsp",  "async",      "lifecycle", "pointer",
-    "extension",   "emacs",      "toy-modal",   "meow", "vim",        "helix",     "structural",
-    "paredit",     "minibuffer", "development", "ares", "introspect", "core",
+constexpr std::array<std::string_view, 21> bundled_guile_modules = {
+    "application", "command",   "input",      "lsp",         "async", "workbench",  "lifecycle",
+    "pointer",     "extension", "emacs",      "toy-modal",   "meow",  "vim",        "helix",
+    "structural",  "paredit",   "minibuffer", "development", "ares",  "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
@@ -6967,6 +6967,12 @@ struct GuileCall {
         BufferCreated,
         BufferStyleOrigin,
         BufferReleased,
+        WorkbenchCreated,
+        WorkbenchVisitBuffer,
+        WorkbenchExpelBuffer,
+        WorkbenchReleased,
+        WorkbenchMru,
+        ReplaceWorkbenchMru,
         LspDiagnosticsFailed,
         BufferSavingState,
         CommandInput,
@@ -7040,6 +7046,8 @@ struct GuileCall {
     ViewId view;
     RevisionId revision = 0;
     ProjectId project;
+    WorkbenchId workbench;
+    std::vector<BufferId> buffers;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
     std::string intent;
@@ -7832,6 +7840,58 @@ SCM call_body(void* data) {
                 scm_call_2(scm_c_public_ref("cind lifecycle", "buffer-released!"), call.host,
                            entity_id(call.buffer.slot, call.buffer.generation));
             break;
+        case GuileCall::Operation::WorkbenchCreated:
+            call.result = scm_call_3(
+                scm_c_public_ref("cind workbench", "workbench-created!"), call.host,
+                entity_id(call.workbench.slot, call.workbench.generation),
+                call.buffer ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::WorkbenchVisitBuffer:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-visit-buffer!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            break;
+        case GuileCall::Operation::WorkbenchExpelBuffer:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-expel-buffer!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-expel-buffer!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchReleased:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-released!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            break;
+        case GuileCall::Operation::WorkbenchMru:
+            call.result = scm_call_2(scm_c_public_ref("cind workbench", "workbench-mru"), call.host,
+                                     entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_vector(call.result)) {
+                scm_wrong_type_arg_msg("workbench-mru", 0, call.result, "vector");
+            }
+            call.buffers.clear();
+            call.buffers.reserve(scm_c_vector_length(call.result));
+            for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
+                call.buffers.push_back(entity_id_from_scheme<BufferTag>(
+                    scm_c_vector_ref(call.result, index), "workbench-mru", 0));
+            }
+            break;
+        case GuileCall::Operation::ReplaceWorkbenchMru: {
+            SCM buffers = scm_c_make_vector(call.buffers.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.buffers.size(); ++index) {
+                scm_c_vector_set_x(
+                    buffers, index,
+                    entity_id(call.buffers[index].slot, call.buffers[index].generation));
+            }
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "replace-workbench-mru!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation), buffers);
+            break;
+        }
         case GuileCall::Operation::LspDiagnosticsFailed:
             call.result =
                 scm_call_2(scm_c_public_ref("cind lsp", "lsp-diagnostics-failed!"), call.host,
@@ -9068,6 +9128,104 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> workbench_created(WorkbenchId workbench,
+                                                       std::optional<BufferId> initial_buffer) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchCreated;
+        call.host = host_;
+        call.workbench = workbench;
+        call.buffer = initial_buffer.value_or(BufferId{});
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench,
+                                                            BufferId buffer) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchVisitBuffer;
+        call.host = host_;
+        call.workbench = workbench;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<bool, std::string> workbench_expel_buffer(WorkbenchId workbench,
+                                                            BufferId buffer) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchExpelBuffer;
+        call.host = host_;
+        call.workbench = workbench;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
+    std::expected<void, std::string> workbench_released(WorkbenchId workbench) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchReleased;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<std::vector<BufferId>, std::string> workbench_mru(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchMru;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.buffers);
+    }
+
+    std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
+                                                           const std::vector<BufferId>& buffers) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::ReplaceWorkbenchMru;
+        call.host = host_;
+        call.workbench = workbench;
+        call.buffers = buffers;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -9800,6 +9958,35 @@ std::expected<std::string, std::string> GuileRuntime::buffer_style_origin(Buffer
 
 std::expected<void, std::string> GuileRuntime::buffer_released(BufferId buffer) {
     return impl_->buffer_released(buffer);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_created(WorkbenchId workbench, std::optional<BufferId> initial_buffer) {
+    return impl_->workbench_created(workbench, initial_buffer);
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_visit_buffer(WorkbenchId workbench,
+                                                                      BufferId buffer) {
+    return impl_->workbench_visit_buffer(workbench, buffer);
+}
+
+std::expected<bool, std::string> GuileRuntime::workbench_expel_buffer(WorkbenchId workbench,
+                                                                      BufferId buffer) {
+    return impl_->workbench_expel_buffer(workbench, buffer);
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_released(WorkbenchId workbench) {
+    return impl_->workbench_released(workbench);
+}
+
+std::expected<std::vector<BufferId>, std::string>
+GuileRuntime::workbench_mru(WorkbenchId workbench) const {
+    return impl_->workbench_mru(workbench);
+}
+
+std::expected<void, std::string>
+GuileRuntime::replace_workbench_mru(WorkbenchId workbench, const std::vector<BufferId>& buffers) {
+    return impl_->replace_workbench_mru(workbench, buffers);
 }
 
 std::expected<void, std::string> GuileRuntime::lsp_diagnostics_failed(std::string_view message) {

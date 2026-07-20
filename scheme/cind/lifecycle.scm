@@ -1,6 +1,7 @@
 (define-module (cind lifecycle)
   #:use-module (cind host)
   #:use-module (cind lsp)
+  #:use-module (cind workbench)
   #:export (configure-startup-policy!
             resolve-startup-plan
             configure-session-policy!
@@ -68,7 +69,8 @@
     (if (null? remaining)
         (hashq-remove! buffer-style-origins host)
         (hashq-set! buffer-style-origins host remaining)))
-  (lsp-buffer-released! host buffer))
+  (lsp-buffer-released! host buffer)
+  (workbench-forget-buffer! host buffer))
 
 (define (observe-buffer-edits! host procedure)
   (unless (procedure? procedure)

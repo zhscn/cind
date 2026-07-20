@@ -435,6 +435,14 @@ public:
     std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin);
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);
+    std::expected<void, std::string> workbench_created(WorkbenchId workbench,
+                                                       std::optional<BufferId> initial_buffer);
+    std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench, BufferId buffer);
+    std::expected<bool, std::string> workbench_expel_buffer(WorkbenchId workbench, BufferId buffer);
+    std::expected<void, std::string> workbench_released(WorkbenchId workbench);
+    std::expected<std::vector<BufferId>, std::string> workbench_mru(WorkbenchId workbench) const;
+    std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
+                                                           const std::vector<BufferId>& buffers);
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);

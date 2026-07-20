@@ -24,10 +24,9 @@ struct WorkbenchSpec {
     std::vector<ProjectId> scope;
 };
 
-// A workbench is one durable editing surface over the application's global
-// Buffer and Project pools. It owns presentation/focus state, declared
-// project visibility and the recency footprint accumulated by displaying
-// Buffers. It does not own Buffer contents or project tooling state.
+// Native workbench data binds a window layout and declared project scope over
+// the application's global Buffer and Project pools. Guile owns recency and
+// other feature policy; this object owns only layout, focus and slot mechanics.
 class Workbench {
 public:
     WorkbenchId id() const { return id_; }
@@ -43,12 +42,6 @@ public:
     bool contains_project(ProjectId project) const;
     bool adopt_project(ProjectId project);
     bool expel_project(ProjectId project);
-
-    std::span<const BufferId> mru() const { return mru_; }
-    bool contains_buffer(BufferId buffer) const;
-    void visit_buffer(BufferId buffer);
-    bool expel_buffer(BufferId buffer);
-    void replace_mru(const std::vector<BufferId>& buffers);
 
     const std::unordered_map<std::string, WindowId>& slots() const { return slots_; }
     std::optional<WindowId> slot(std::string_view role) const;
@@ -73,7 +66,6 @@ private:
     std::vector<ProjectId> scope_;
     WindowLayout layout_;
     WindowId active_window_;
-    std::vector<BufferId> mru_;
     std::unordered_map<std::string, WindowId> slots_;
     JumpGraph jumps_;
     LocationListStack location_lists_;
@@ -104,7 +96,6 @@ public:
     bool activate(WorkbenchId id);
     std::optional<WorkbenchId> next(WorkbenchId id, int delta = 1) const;
 
-    void forget_buffer(BufferId buffer);
     void forget_project(ProjectId project);
     std::size_t size() const { return size_; }
 

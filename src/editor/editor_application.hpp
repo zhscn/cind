@@ -330,6 +330,7 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     bool show_buffer(WindowId window, BufferId buffer);
     bool focus_window(WorkbenchId workbench, WindowId window);
+    void discard_workbench_state(WorkbenchId workbench);
     Workbench& active_workbench() { return workbenches_.active(); }
     const Workbench& active_workbench() const { return workbenches_.active(); }
     std::expected<WindowId, std::string> display_generated_buffer(WindowId origin, std::string name,

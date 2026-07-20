@@ -161,6 +161,8 @@ set(CIND_STRUCTURAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/structural.
 set(CIND_STRUCTURAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/structural.scm")
 set(CIND_VIM_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/vim.scm")
 set(CIND_VIM_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/vim.scm")
+set(CIND_WORKBENCH_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/workbench.scm")
+set(CIND_WORKBENCH_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/workbench.scm")
 set(CIND_TOY_MODAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/toy-modal.scm")
 set(CIND_TOY_MODAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/toy-modal.scm")
 add_custom_command(
@@ -179,6 +181,7 @@ add_custom_command(
          "${CIND_PAREDIT_SCHEME_OUTPUT}"
          "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
          "${CIND_VIM_SCHEME_OUTPUT}"
+         "${CIND_WORKBENCH_SCHEME_OUTPUT}"
          "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CIND_SCHEME_OUTPUT_DIR}/cind"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -220,6 +223,8 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_VIM_SCHEME_SOURCE}" "${CIND_VIM_SCHEME_OUTPUT}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${CIND_WORKBENCH_SCHEME_SOURCE}" "${CIND_WORKBENCH_SCHEME_OUTPUT}"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
           "${CIND_TOY_MODAL_SCHEME_SOURCE}" "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
   DEPENDS "${CIND_APPLICATION_SCHEME_SOURCE}"
           "${CIND_ARES_SCHEME_SOURCE}" "${CIND_ASYNC_SCHEME_SOURCE}"
@@ -235,6 +240,7 @@ add_custom_command(
           "${CIND_PAREDIT_SCHEME_SOURCE}"
           "${CIND_STRUCTURAL_SCHEME_SOURCE}"
           "${CIND_VIM_SCHEME_SOURCE}"
+          "${CIND_WORKBENCH_SCHEME_SOURCE}"
           "${CIND_TOY_MODAL_SCHEME_SOURCE}"
   VERBATIM
 )
@@ -254,6 +260,7 @@ add_custom_target(cind_scheme_resources
           "${CIND_PAREDIT_SCHEME_OUTPUT}"
           "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
           "${CIND_VIM_SCHEME_OUTPUT}"
+          "${CIND_WORKBENCH_SCHEME_OUTPUT}"
           "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
 )
 

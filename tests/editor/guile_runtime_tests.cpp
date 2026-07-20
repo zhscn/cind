@@ -771,12 +771,13 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
     CHECK(snapshot.modules ==
-          std::vector<std::string>{
-              "cind application", "cind command",    "cind input",      "cind lsp",
-              "cind async",       "cind lifecycle",  "cind pointer",    "cind extension",
-              "cind emacs",       "cind toy-modal",  "cind meow",       "cind vim",
-              "cind helix",       "cind structural", "cind paredit",    "cind minibuffer",
-              "cind development", "cind ares",       "cind introspect", "cind core"});
+          std::vector<std::string>{"cind application", "cind command",    "cind input",
+                                   "cind lsp",         "cind async",      "cind workbench",
+                                   "cind lifecycle",   "cind pointer",    "cind extension",
+                                   "cind emacs",       "cind toy-modal",  "cind meow",
+                                   "cind vim",         "cind helix",      "cind structural",
+                                   "cind paredit",     "cind minibuffer", "cind development",
+                                   "cind ares",        "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -1556,6 +1557,16 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     REQUIRE(guile.buffer_created(buffer, "test style").has_value());
     CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
+    const BufferId visitor{buffer.slot + 1, buffer.generation};
+    REQUIRE(guile.workbench_created(workbench, buffer).has_value());
+    REQUIRE(guile.workbench_visit_buffer(workbench, visitor).has_value());
+    REQUIRE(guile.workbench_visit_buffer(workbench, buffer).has_value());
+    CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}) ==
+          std::vector<BufferId>{buffer, visitor});
+    REQUIRE(guile.replace_workbench_mru(workbench, {visitor, visitor, buffer}).has_value());
+    CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}) ==
+          std::vector<BufferId>{visitor, buffer});
+    CHECK(guile.workbench_expel_buffer(workbench, visitor).value_or(false));
     const std::expected<GuileEvaluationResult, std::string> lsp_provider =
         guile.evaluate({.source = R"((use-modules (cind lsp))
 (define-lsp-provider! host "clangd" "cpp" "clangd" '()
@@ -1630,6 +1641,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.buffer_released(buffer).has_value());
     CHECK_FALSE(guile.lsp_session_bound(buffer, 41).value_or(true));
     CHECK_FALSE(guile.buffer_style_origin(buffer).has_value());
+    CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}).empty());
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const std::uint32_t save_generation = runtime.buffers().get(buffer).save_generation();

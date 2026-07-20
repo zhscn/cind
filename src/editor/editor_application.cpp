@@ -543,8 +543,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .replace_workbench_mru =
                [this](WorkbenchId workbench,
                       const std::vector<BufferId>& buffers) -> std::expected<void, std::string> {
-               Workbench* target = workbenches_.try_get(workbench);
-               if (target == nullptr) {
+               if (workbenches_.try_get(workbench) == nullptr) {
                    return std::unexpected("unknown workbench");
                }
                for (const BufferId buffer : buffers) {
@@ -552,8 +551,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        return std::unexpected("workbench MRU contains an unknown buffer");
                    }
                }
-               target->replace_mru(buffers);
-               return {};
+               return guile_.replace_workbench_mru(workbench, buffers);
            },
            .window_buffer = [this](WindowId window) { return buffer_id(window); },
            .create_buffer =
@@ -884,7 +882,11 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     view_state_for(initial_view).window = initial_window;
     const WorkbenchId initial_workbench =
         workbenches_.create(WorkbenchSpec{.name = {}, .root_window = initial_window, .scope = {}});
-    workbenches_.get(initial_workbench).visit_buffer(initial);
+    if (const std::expected<void, std::string> created =
+            guile_.workbench_created(initial_workbench, initial);
+        !created) {
+        throw std::runtime_error(std::format("Guile workbench state failed: {}", created.error()));
+    }
     if (spec.initial_line > 0 && !startup->resource_to_open) {
         apply_position(initial_window, {.line = spec.initial_line - 1, .byte_column = 0});
     }
@@ -1375,7 +1377,11 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
                 return std::unexpected(assigned.error());
             }
         }
-        workbench.visit_buffer(buffer);
+        if (const std::expected<void, std::string> visited =
+                guile_.workbench_visit_buffer(workbench_id, buffer);
+            !visited) {
+            return std::unexpected(visited.error());
+        }
         if (!focus_window(workbench_id, window)) {
             return std::unexpected("display policy window cannot receive focus");
         }
@@ -1497,7 +1503,9 @@ bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) 
         command_loop_.cancel_pending();
     }
     workbench.set_active_window(window);
-    workbench.visit_buffer(buffer_id(window));
+    if (!guile_.workbench_visit_buffer(workbench_id, buffer_id(window))) {
+        return false;
+    }
     if (active) {
         show_caret();
         sync_keymaps();
@@ -1663,12 +1671,21 @@ WorkbenchId EditorApplication::create_workbench(std::string name,
         }
         workbench = workbenches_.create(WorkbenchSpec{
             .name = std::move(name), .root_window = window, .scope = std::move(scope)});
-        workbenches_.get(workbench).visit_buffer(buffer);
+        if (const std::expected<void, std::string> created =
+                guile_.workbench_created(workbench, buffer);
+            !created) {
+            throw std::runtime_error(created.error());
+        }
     } catch (...) {
+        if (workbench) {
+            discard_workbench_state(workbench);
+            (void)workbenches_.erase(workbench);
+        }
         destroy_window(window);
         throw;
     }
     if (!switch_workbench(workbench)) {
+        discard_workbench_state(workbench);
         (void)workbenches_.erase(workbench);
         destroy_window(window);
         throw std::logic_error("created workbench cannot be activated");
@@ -1687,10 +1704,19 @@ bool EditorApplication::switch_workbench(WorkbenchId workbench) {
         return false;
     }
     Workbench& selected = workbenches_.active();
-    selected.visit_buffer(buffer_id(selected.active_window()));
+    if (!guile_.workbench_visit_buffer(workbench, buffer_id(selected.active_window()))) {
+        return false;
+    }
     show_caret();
     sync_keymaps();
     return true;
+}
+
+void EditorApplication::discard_workbench_state(WorkbenchId workbench) {
+    const std::expected<void, std::string> released = guile_.workbench_released(workbench);
+    if (!released) {
+        return;
+    }
 }
 
 bool EditorApplication::close_workbench(WorkbenchId workbench) {
@@ -1709,6 +1735,9 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
     }
     release_jump_anchors(*closing);
     release_location_anchors(*closing);
+    if (!guile_.workbench_released(workbench)) {
+        return false;
+    }
     if (!workbenches_.erase(workbench)) {
         return false;
     }
@@ -1717,7 +1746,10 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
     }
     if (was_active) {
         Workbench& selected = workbenches_.active();
-        selected.visit_buffer(buffer_id(selected.active_window()));
+        if (!guile_.workbench_visit_buffer(workbenches_.active_id(),
+                                           buffer_id(selected.active_window()))) {
+            return false;
+        }
         command_loop_.cancel_pending();
         show_caret();
         sync_keymaps();
@@ -1733,8 +1765,8 @@ bool EditorApplication::adopt_project(WorkbenchId workbench, ProjectId project) 
 
 bool EditorApplication::expel_buffer(WorkbenchId workbench, BufferId buffer) {
     (void)runtime_.buffers().get(buffer);
-    Workbench* target = workbenches_.try_get(workbench);
-    return target != nullptr && target->expel_buffer(buffer);
+    return workbenches_.try_get(workbench) != nullptr &&
+           guile_.workbench_expel_buffer(workbench, buffer).value_or(false);
 }
 
 std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench,
@@ -1754,7 +1786,11 @@ std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench
         }
         return result;
     }
-    for (const BufferId buffer : target.mru()) {
+    const std::expected<std::vector<BufferId>, std::string> mru = guile_.workbench_mru(workbench);
+    if (!mru) {
+        throw std::runtime_error(mru.error());
+    }
+    for (const BufferId buffer : *mru) {
         append(buffer);
     }
     for (const std::unique_ptr<BufferState>& state : buffers_) {
@@ -1784,6 +1820,10 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
     };
     for (const WorkbenchId id : workbenches_.all()) {
         const Workbench& workbench = workbenches_.get(id);
+        const std::expected<std::vector<BufferId>, std::string> mru = guile_.workbench_mru(id);
+        if (!mru) {
+            throw std::runtime_error(mru.error());
+        }
         std::vector<std::pair<std::string, WindowId>> slots(workbench.slots().begin(),
                                                             workbench.slots().end());
         std::ranges::sort(slots, {},
@@ -1792,7 +1832,7 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
             {.workbench = id,
              .name = workbench.name(),
              .scope = std::vector<ProjectId>(workbench.scope().begin(), workbench.scope().end()),
-             .mru = std::vector<BufferId>(workbench.mru().begin(), workbench.mru().end()),
+             .mru = *mru,
              .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
                                               workbench.layout().leaves().end()),
              .active_window = workbench.active_window(),
@@ -1890,7 +1930,12 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                 entry.scope_roots.push_back(definition.roots().front());
             }
         }
-        for (const BufferId buffer : workbench.mru()) {
+        const std::expected<std::vector<BufferId>, std::string> mru =
+            guile_.workbench_mru(ids[index]);
+        if (!mru) {
+            throw std::runtime_error(mru.error());
+        }
+        for (const BufferId buffer : *mru) {
             const Buffer* definition = runtime_.buffers().try_get(buffer);
             if (definition != nullptr && definition->resource_uri()) {
                 entry.mru_resources.push_back(*definition->resource_uri());
@@ -2102,6 +2147,14 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
             const WorkbenchId id = workbenches_.create({.name = std::move(temporary),
                                                         .root_window = root_window,
                                                         .scope = std::move(scope)});
+            if (const std::expected<void, std::string> registered =
+                    guile_.workbench_created(id, fallback);
+                !registered) {
+                discard_workbench_state(id);
+                (void)workbenches_.erase(id);
+                destroy_window(root_window);
+                throw std::runtime_error(registered.error());
+            }
             created.push_back(id);
             Workbench& workbench = workbenches_.get(id);
             std::vector<JumpNode> restored_nodes;
@@ -2192,6 +2245,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                 const std::vector<WindowId> windows(workbench->layout().leaves().begin(),
                                                     workbench->layout().leaves().end());
                 release_jump_anchors(*workbench);
+                discard_workbench_state(id);
                 (void)workbenches_.erase(id);
                 for (const WindowId window : windows) {
                     destroy_window(window);
@@ -2211,6 +2265,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
         const std::vector<WindowId> windows(old.layout().leaves().begin(),
                                             old.layout().leaves().end());
         release_jump_anchors(old);
+        discard_workbench_state(id);
         (void)workbenches_.erase(id);
         for (const WindowId window : windows) {
             destroy_window(window);
@@ -2302,7 +2357,6 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
     if (!runtime_.buffers().erase(buffer)) {
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
-    workbenches_.forget_buffer(buffer);
     if (const std::expected<void, std::string> released = guile_.buffer_released(buffer);
         !released) {
         set_message(std::format("buffer lifecycle release failed: {}", released.error()));
@@ -2737,7 +2791,9 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     }
     runtime_.windows().set_view(window, view->view);
     if (const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window)) {
-        workbenches_.get(*owner).visit_buffer(buffer);
+        if (!guile_.workbench_visit_buffer(*owner, buffer)) {
+            return false;
+        }
     }
     show_caret();
     if (window == window_id()) {
