@@ -3695,13 +3695,16 @@ TEST_CASE("include completion selects the asynchronous path provider") {
     send_keys(application, "C-M-i");
     REQUIRE(application.completion().state() != nullptr);
     REQUIRE(application.completion().state()->providers.size() == 1);
-    CHECK(application.completion().state()->providers.front().provider ==
-          CompletionProvider::path());
+    CHECK(application.completion().state()->providers.front().provider.kind ==
+          CompletionProviderKind::Scripted);
+    CHECK(application.completion().state()->providers.front().pending);
     REQUIRE(wake.wait());
     CHECK(application.poll_background_work());
     REQUIRE(application.completion().state() != nullptr);
     REQUIRE(application.completion().state()->matches.size() == 1);
     CHECK(application.completion().state()->matches.front().item.label == "foo.hpp");
+    CHECK(application.completion().state()->matches.front().item.kind == "file");
+    CHECK(application.completion().state()->matches.front().item.detail == "path");
 }
 
 TEST_CASE("Scheme completion policy owns syntax gating and UTF-8 byte anchors") {

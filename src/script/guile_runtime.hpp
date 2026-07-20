@@ -431,7 +431,7 @@ public:
     fallback_display_plan(const GuileDisplayFacts& facts) const;
     std::expected<void, std::string> load_extension(const std::string& path);
     std::expected<GuileEvaluationResult, std::string> evaluate(GuileEvaluationRequest request);
-    std::expected<CompletionProviderResponse, std::string>
+    std::expected<CompletionProviderResult, std::string>
     complete(const CompletionProvider& provider, const CompletionRequest& request);
     std::expected<CompletionItem, std::string> resolve(const CompletionProvider& provider,
                                                        const CompletionRequest& request,

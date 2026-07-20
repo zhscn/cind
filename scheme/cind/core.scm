@@ -2089,6 +2089,87 @@
                                              #:end end)
                             items))))))))
 
+(define (path-completion-source host context request)
+  (let* ((line (view-line-prefix host (context-view context)))
+         (line-start (vector-ref line 0))
+         (prefix (vector-ref line 2))
+         (delimiter
+          (completion-last-character-index prefix
+                                           (lambda (character)
+                                             (or (char=? character #\")
+                                                 (char=? character #\<)))))
+         (anchor (completion-request-anchor request)))
+    (if (not delimiter)
+        #f
+        (let* ((directory-start
+                (+ line-start
+                   (string-utf8-length
+                    (substring prefix 0 (+ delimiter 1)))))
+               (relative-directory
+                (buffer-substring host (context-buffer context)
+                                  directory-start anchor))
+               (system? (char=? (string-ref prefix delimiter) #\<))
+               (roots (if system?
+                          '("/usr/local/include" "/usr/include")
+                          (list (context-default-directory host context))))
+               (directories
+                (map (lambda (root)
+                       (path-resolve host relative-directory root))
+                     roots)))
+          (async-directory-list-many directories)))))
+
+(define (path-completion-result request result)
+  (let ((query (completion-request-query request))
+        (start (completion-request-anchor request))
+        (end (completion-request-caret request)))
+    (if (not (and (vector? result)
+                  (= (vector-length result) 2)
+                  (eq? (vector-ref result 0) 'directory-list-many)))
+        (error "invalid directory-list-many result" result)
+        (let ((listings (vector-ref result 1)))
+          (let collect-listings ((listing-index 0)
+                                 (names '()))
+            (if (= listing-index (vector-length listings))
+                (completion-result
+                 (map (lambda (entry)
+                        (let ((name (car entry))
+                              (directory? (cdr entry)))
+                          (completion-item name
+                                           #:kind (if directory? "directory" "file")
+                                           #:detail "path"
+                                           #:start start
+                                           #:end end)))
+                      (sort names
+                            (lambda (left right)
+                              (string<? (car left) (car right))))))
+                (let* ((listing (vector-ref listings listing-index))
+                       (entries (vector-ref listing 2)))
+                  (let collect-entries ((entry-index 0)
+                                        (collected names))
+                    (if (= entry-index (vector-length entries))
+                        (collect-listings (+ listing-index 1) collected)
+                        (let* ((entry (vector-ref entries entry-index))
+                               (base-name (vector-ref entry 1))
+                               (directory? (vector-ref entry 2))
+                               (name (if directory?
+                                         (string-append base-name "/")
+                                         base-name)))
+                          (collect-entries
+                           (+ entry-index 1)
+                           (if (and (string-prefix?* query base-name)
+                                    (not (assoc name collected)))
+                               (cons (cons name directory?) collected)
+                               collected))))))))))))
+
+(define (path-completion-provider host context request)
+  (let ((source (path-completion-source host context request)))
+    (if source
+        (completion-provider-task
+         source
+         (lambda (result)
+           (path-completion-result request result)))
+        (completion-result '()))))
+
 (define (completion-move host delta)
   (lambda (context invocation)
     (move-completion! host delta)
@@ -3321,10 +3402,14 @@
 (define (install-core-providers! host)
   (let ((providers (core-providers host))
         (completion-providers
-         (cons (list "word"
-                     (lambda (context request)
-                       (word-completion-provider host context request)))
-               (ares-completion-provider-definitions host))))
+         (append
+          (list (list "word"
+                      (lambda (context request)
+                        (word-completion-provider host context request)))
+                (list "path"
+                      (lambda (context request)
+                        (path-completion-provider host context request))))
+          (ares-completion-provider-definitions host))))
     (for-each (lambda (provider)
                 (define-interaction-provider!
                  host (car provider)

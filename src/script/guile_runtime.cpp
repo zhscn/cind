@@ -5490,8 +5490,6 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
             if (const auto provider = host.state->completion_providers_by_name.find(name);
                 provider != host.state->completion_providers_by_name.end()) {
                 providers.push_back(CompletionProvider::scripted(provider->second));
-            } else if (name == "path") {
-                providers.push_back(CompletionProvider::path());
             } else if (name == "snippet") {
                 providers.push_back(CompletionProvider::snippet());
             } else if (host.services.resolve_completion_provider) {
@@ -6987,6 +6985,7 @@ struct GuileCall {
         InvokeCompletionProvider,
         InvokeCompletionResolver,
         TransformProviderResult,
+        TransformCompletionProviderResult,
         InvokeInputHandler,
         InvokePositionHints,
         InvokeInputStateObserver,
@@ -7770,9 +7769,12 @@ SCM call_body(void* data) {
         case GuileCall::Operation::InvokeCompletionProvider:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
                                      completion_request_value(*call.completion_request));
-            call.completion_response = completion_response_from_scheme(
-                call.result, call.completion_provider, *call.completion_request,
-                call.completion_needs_resolution);
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) == 0 ||
+                !symbol_is(scm_c_vector_ref(call.result, 0), "async-completion-provider")) {
+                call.completion_response = completion_response_from_scheme(
+                    call.result, call.completion_provider, *call.completion_request,
+                    call.completion_needs_resolution);
+            }
             break;
         case GuileCall::Operation::InvokeCompletionResolver: {
             call.result = scm_call_3(call.procedure, command_context_value(*call.context),
@@ -7792,6 +7794,12 @@ SCM call_body(void* data) {
         case GuileCall::Operation::TransformProviderResult:
             call.result = scm_call_1(call.procedure, call.argument);
             call.provider_candidates = provider_candidates_from_scheme(call.result);
+            break;
+        case GuileCall::Operation::TransformCompletionProviderResult:
+            call.result = scm_call_1(call.procedure, call.argument);
+            call.completion_response = completion_response_from_scheme(
+                call.result, call.completion_provider, *call.completion_request,
+                call.completion_needs_resolution);
             break;
         case GuileCall::Operation::InvokeInputHandler:
             call.result = scm_call_2(call.procedure, command_context_value(*call.context),
@@ -8029,6 +8037,53 @@ CommandResult invoke_script_command(const std::shared_ptr<GuileState>& state,
     return std::move(*call.command_result);
 }
 
+struct GuileAsyncTransformTask {
+    GuileAsyncTransformTask(std::weak_ptr<GuileState> runtime_value,
+                            ScriptAsyncRequest request_value, SCM transform_value,
+                            GuileAsyncBridge* bridge_value, std::thread::id owner_value)
+        : runtime(std::move(runtime_value)), request(std::move(request_value)),
+          transform(transform_value), bridge(bridge_value), owner(owner_value) {}
+
+    GuileAsyncTransformTask(const GuileAsyncTransformTask&) = delete;
+    GuileAsyncTransformTask& operator=(const GuileAsyncTransformTask&) = delete;
+
+    std::weak_ptr<GuileState> runtime;
+    std::optional<ScriptAsyncRequest> request;
+    SCM transform = SCM_UNDEFINED;
+    GuileAsyncBridge* bridge = nullptr;
+    std::thread::id owner;
+
+    ~GuileAsyncTransformTask() {
+        if (std::this_thread::get_id() != owner) {
+            std::terminate();
+        }
+        (void)scm_gc_unprotect_object(transform);
+    }
+};
+
+struct GuileCompletionTransformTask {
+    std::shared_ptr<GuileAsyncTransformTask> async;
+    CompletionProvider provider;
+    CompletionRequest request;
+    bool needs_resolution = false;
+};
+
+std::shared_ptr<GuileAsyncTransformTask>
+make_guile_async_transform_task(const std::shared_ptr<GuileState>& state, SCM value,
+                                const char* caller, GuileAsyncBridge* async_bridge) {
+    ScriptAsyncRequest request =
+        script_async_request_from_scheme(scm_c_vector_ref(value, 1), caller, 1);
+    SCM transform = scm_c_vector_ref(value, 2);
+    (void)scm_gc_protect_object(transform);
+    try {
+        return std::make_shared<GuileAsyncTransformTask>(state, std::move(request), transform,
+                                                         async_bridge, state->owner);
+    } catch (...) {
+        (void)scm_gc_unprotect_object(transform);
+        throw;
+    }
+}
+
 InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileState>& state,
                                                  std::size_t provider_index,
                                                  CommandContext& context, std::string_view query,
@@ -8060,36 +8115,8 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
             "Guile async provider result must be #(async-provider request transform)");
     }
 
-    struct AsyncProviderState {
-        AsyncProviderState(std::weak_ptr<GuileState> runtime_value,
-                           ScriptAsyncRequest request_value, SCM transform_value,
-                           GuileAsyncBridge* bridge_value, std::thread::id owner_value)
-            : runtime(std::move(runtime_value)), request(std::move(request_value)),
-              transform(transform_value), bridge(bridge_value), owner(owner_value) {}
-
-        AsyncProviderState(const AsyncProviderState&) = delete;
-        AsyncProviderState& operator=(const AsyncProviderState&) = delete;
-
-        std::weak_ptr<GuileState> runtime;
-        std::optional<ScriptAsyncRequest> request;
-        SCM transform = SCM_UNDEFINED;
-        GuileAsyncBridge* bridge = nullptr;
-        std::thread::id owner;
-
-        ~AsyncProviderState() {
-            if (std::this_thread::get_id() != owner) {
-                std::terminate();
-            }
-            (void)scm_gc_unprotect_object(transform);
-        }
-    };
-
-    ScriptAsyncRequest request = script_async_request_from_scheme(scm_c_vector_ref(*result, 1),
-                                                                  "interaction-provider-task", 1);
-    SCM transform = scm_c_vector_ref(*result, 2);
-    (void)scm_gc_protect_object(transform);
-    auto task = std::make_shared<AsyncProviderState>(state, std::move(request), transform,
-                                                     async_bridge, state->owner);
+    auto task =
+        make_guile_async_transform_task(state, *result, "interaction-provider-task", async_bridge);
     return InteractionCandidateAsync{
         .start = [task](InteractionCandidateAsync::Completed completed,
                         InteractionCandidateAsync::Failed failed,
@@ -8144,6 +8171,121 @@ InteractionProviderResult invoke_script_provider(const std::shared_ptr<GuileStat
             }
             const std::uint64_t id = *started;
             return InteractionCandidateAsync::Cancel{[task, id] {
+                const std::shared_ptr<GuileState> runtime = task->runtime.lock();
+                if (runtime && runtime->active && task->bridge != nullptr) {
+                    (void)task->bridge->cancel_native_task(id);
+                }
+            }};
+        }};
+}
+
+CompletionProviderResult invoke_script_completion_provider(
+    const std::shared_ptr<GuileState>& state, std::size_t provider_index, CommandContext& context,
+    const CompletionProvider& provider, const CompletionRequest& completion_request,
+    GuileAsyncBridge* async_bridge) {
+    if (std::this_thread::get_id() != state->owner) {
+        throw std::logic_error("Guile completion provider invoked outside its editor thread");
+    }
+    if (!state->active || provider_index >= state->completion_providers.size()) {
+        throw std::runtime_error("Guile completion provider runtime has expired");
+    }
+    const ScriptCompletionProvider& definition = state->completion_providers[provider_index];
+    GuileCall call;
+    call.operation = GuileCall::Operation::InvokeCompletionProvider;
+    call.procedure = definition.complete;
+    call.context = &context;
+    call.completion_request = &completion_request;
+    call.completion_provider = provider;
+    call.completion_needs_resolution = !scheme_false(definition.resolve);
+    std::expected<SCM, std::string> result = run_guile_call(call);
+    if (!result) {
+        state->last_error = result.error();
+        throw std::runtime_error(
+            std::format("Guile completion provider failed: {}", result.error()));
+    }
+    state->last_error.reset();
+    if (!scm_is_vector(*result) || scm_c_vector_length(*result) == 0 ||
+        !symbol_is(scm_c_vector_ref(*result, 0), "async-completion-provider")) {
+        return std::move(call.completion_response);
+    }
+    if (scm_c_vector_length(*result) != 3 ||
+        !scheme_true(scm_procedure_p(scm_c_vector_ref(*result, 2)))) {
+        throw std::invalid_argument("Guile async completion provider result must be "
+                                    "#(async-completion-provider request transform)");
+    }
+
+    auto task =
+        make_guile_async_transform_task(state, *result, "completion-provider-task", async_bridge);
+    auto completion_task = std::make_shared<GuileCompletionTransformTask>(
+        GuileCompletionTransformTask{.async = std::move(task),
+                                     .provider = provider,
+                                     .request = completion_request,
+                                     .needs_resolution = !scheme_false(definition.resolve)});
+    return CompletionProviderAsync{
+        .start = [completion_task](CompletionProviderAsync::Completed completed,
+                                   CompletionProviderAsync::Failed failed,
+                                   CompletionProviderAsync::Cancelled cancelled)
+            -> std::expected<CompletionProviderAsync::Cancel, std::string> {
+            const std::shared_ptr<GuileAsyncTransformTask>& task = completion_task->async;
+            const std::shared_ptr<GuileState> runtime = task->runtime.lock();
+            if (!runtime || !runtime->active || std::this_thread::get_id() != task->owner) {
+                return std::unexpected("Guile completion provider runtime has expired");
+            }
+            if (!task->request) {
+                return std::unexpected("Guile async completion provider task was already started");
+            }
+            if (task->bridge == nullptr) {
+                return std::unexpected(
+                    "Guile async completion provider host capability is unavailable");
+            }
+            std::expected<std::uint64_t, std::string> started = task->bridge->start_native_task(
+                std::move(*task->request),
+                {.completed =
+                     [completion_task, completed = std::move(completed),
+                      failed](std::uint64_t, ScriptAsyncResult async_result) mutable {
+                         const std::shared_ptr<GuileAsyncTransformTask>& task =
+                             completion_task->async;
+                         const std::shared_ptr<GuileState> state = task->runtime.lock();
+                         if (!state || !state->active ||
+                             std::this_thread::get_id() != task->owner) {
+                             failed("Guile completion provider runtime has expired");
+                             return;
+                         }
+                         GuileCall transform_call;
+                         transform_call.operation =
+                             GuileCall::Operation::TransformCompletionProviderResult;
+                         transform_call.procedure = task->transform;
+                         transform_call.argument =
+                             script_async_result_to_scheme(std::move(async_result));
+                         transform_call.completion_provider = completion_task->provider;
+                         transform_call.completion_request = &completion_task->request;
+                         transform_call.completion_needs_resolution =
+                             completion_task->needs_resolution;
+                         std::expected<SCM, std::string> transformed =
+                             run_guile_call(transform_call);
+                         if (!transformed) {
+                             state->last_error = transformed.error();
+                             failed(
+                                 std::format("Guile async completion provider transform failed: {}",
+                                             transformed.error()));
+                             return;
+                         }
+                         state->last_error.reset();
+                         completed(std::move(transform_call.completion_response));
+                     },
+                 .cancelled = [cancelled =
+                                   std::move(cancelled)](std::uint64_t) mutable { cancelled(); },
+                 .failed =
+                     [failed = std::move(failed)](std::uint64_t, std::string message) mutable {
+                         failed(std::move(message));
+                     }});
+            task->request.reset();
+            if (!started) {
+                return std::unexpected(std::move(started.error()));
+            }
+            const std::uint64_t id = *started;
+            return CompletionProviderAsync::Cancel{[completion_task, id] {
+                const std::shared_ptr<GuileAsyncTransformTask>& task = completion_task->async;
                 const std::shared_ptr<GuileState> runtime = task->runtime.lock();
                 if (runtime && runtime->active && task->bridge != nullptr) {
                     (void)task->bridge->cancel_native_task(id);
@@ -9071,7 +9213,7 @@ public:
         return evaluate_source(*lease_, request);
     }
 
-    std::expected<CompletionProviderResponse, std::string>
+    std::expected<CompletionProviderResult, std::string>
     complete(const CompletionProvider& provider, const CompletionRequest& request) {
         require_owner_thread();
         if (provider.kind != CompletionProviderKind::Scripted ||
@@ -9080,21 +9222,16 @@ public:
         }
         CommandContext context(*lease_->runtime, request.target.window, request.target.buffer,
                                request.target.view);
-        GuileCall call;
-        call.operation = GuileCall::Operation::InvokeCompletionProvider;
-        call.procedure = state_->completion_providers[provider.session].complete;
-        call.context = &context;
-        call.completion_request = &request;
-        call.completion_provider = provider;
-        call.completion_needs_resolution =
-            !scheme_false(state_->completion_providers[provider.session].resolve);
-        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
-            state_->last_error = result.error();
-            return std::unexpected(
-                std::format("Guile completion provider failed: {}", result.error()));
+        try {
+            return invoke_script_completion_provider(state_, provider.session, context, provider,
+                                                     request, &async_bridge_);
+        } catch (const std::exception& exception) {
+            state_->last_error = exception.what();
+            return std::unexpected(*state_->last_error);
+        } catch (...) {
+            state_->last_error = "unknown Guile completion provider failure";
+            return std::unexpected(*state_->last_error);
         }
-        state_->last_error.reset();
-        return std::move(call.completion_response);
     }
 
     std::expected<CompletionItem, std::string> resolve(const CompletionProvider& provider,
@@ -9359,7 +9496,7 @@ GuileRuntime::evaluate(GuileEvaluationRequest request) {
     return impl_->evaluate(request);
 }
 
-std::expected<CompletionProviderResponse, std::string>
+std::expected<CompletionProviderResult, std::string>
 GuileRuntime::complete(const CompletionProvider& provider, const CompletionRequest& request) {
     return impl_->complete(provider, request);
 }

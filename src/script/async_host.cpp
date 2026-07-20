@@ -292,6 +292,78 @@ std::expected<std::uint64_t, std::string> AsyncScriptHost::start(ScriptAsyncRequ
                                              });
                              }});
                     return {.kind = ScriptAsyncTaskKind::DirectoryList, .native = native};
+                } else if constexpr (std::is_same_v<Request, ScriptDirectoryListManyRequest>) {
+                    if (operation.paths.empty() ||
+                        std::ranges::any_of(operation.paths,
+                                            [](const std::string& path) { return path.empty(); })) {
+                        throw std::invalid_argument("directory-list-many requires non-empty paths");
+                    }
+                    const std::vector<std::string> paths = operation.paths;
+                    const std::size_t maximum_entries = operation.maximum_entries;
+                    // Throwing reports worker failures through AsyncRuntime::failed.
+                    // NOLINTNEXTLINE(bugprone-exception-escape)
+                    AsyncWork work = [paths, maximum_entries, weak_state, id,
+                                      completed = callbacks.completed](
+                                         const std::stop_token& cancellation) mutable {
+                        ScriptDirectoryListManyResult result;
+                        result.listings.reserve(paths.size());
+                        for (const std::string& path : paths) {
+                            if (cancellation.stop_requested()) {
+                                throw AsyncTaskCancelled{};
+                            }
+                            std::expected<DirectoryListing, std::error_code> listing =
+                                list_directory(std::filesystem::path(path), maximum_entries,
+                                               cancellation);
+                            if (!listing) {
+                                if (listing.error() ==
+                                    std::make_error_code(std::errc::operation_canceled)) {
+                                    throw AsyncTaskCancelled{};
+                                }
+                                continue;
+                            }
+                            ScriptDirectoryListResult directory{.path = listing->directory.string(),
+                                                                .entries = {}};
+                            directory.entries.reserve(listing->entries.size());
+                            for (DirectoryEntry& entry : listing->entries) {
+                                directory.entries.push_back({.path = entry.path.string(),
+                                                             .name = std::move(entry.name),
+                                                             .directory = entry.directory});
+                            }
+                            result.listings.push_back(std::move(directory));
+                        }
+                        ScriptAsyncResult async_result = std::move(result);
+                        return [weak_state, id, completed = std::move(completed),
+                                result = std::move(async_result)]() mutable {
+                            finish_task(weak_state, id,
+                                        [id, completed = std::move(completed),
+                                         result = std::move(result)]() mutable {
+                                            completed(id, std::move(result));
+                                        });
+                        };
+                    };
+                    const AsyncTaskId native = state_->runtime->submit(
+                        {.work = std::move(work),
+                         .cancelled =
+                             [weak_state, id, cancelled = callbacks.cancelled]() mutable {
+                                 finish_task(weak_state, id,
+                                             [id, cancelled = std::move(cancelled)] {
+                                                 if (cancelled) {
+                                                     cancelled(id);
+                                                 }
+                                             });
+                             },
+                         .failed =
+                             [weak_state, id, failed = callbacks.failed](
+                                 const std::exception_ptr& failure) mutable {
+                                 const std::string message = exception_message(failure);
+                                 finish_task(weak_state, id,
+                                             [id, failed = std::move(failed), message] {
+                                                 if (failed) {
+                                                     failed(id, message);
+                                                 }
+                                             });
+                             }});
+                    return {.kind = ScriptAsyncTaskKind::DirectoryList, .native = native};
                 } else if constexpr (std::is_same_v<Request, ScriptClangFormatStyleRequest>) {
                     if (operation.path.empty()) {
                         throw std::invalid_argument("clang-format-style path is empty");

@@ -43,6 +43,11 @@ struct ScriptDirectoryListRequest {
     std::size_t maximum_entries = 4096;
 };
 
+struct ScriptDirectoryListManyRequest {
+    std::vector<std::string> paths;
+    std::size_t maximum_entries = 4096;
+};
+
 struct ScriptClangFormatStyleRequest {
     std::string path;
     std::string fallback_preset;
@@ -73,8 +78,9 @@ struct ScriptLspNavigationRequest {
 
 using ScriptAsyncRequest =
     std::variant<ScriptFileReadRequest, ScriptFileWriteRequest, ScriptDirectoryListRequest,
-                 ScriptClangFormatStyleRequest, ScriptProjectDiscoveryRequest,
-                 ScriptRgResultParseRequest, ScriptProcessRequest, ScriptLspNavigationRequest>;
+                 ScriptDirectoryListManyRequest, ScriptClangFormatStyleRequest,
+                 ScriptProjectDiscoveryRequest, ScriptRgResultParseRequest, ScriptProcessRequest,
+                 ScriptLspNavigationRequest>;
 
 struct ScriptFileReadResult {
     std::string path;
@@ -95,6 +101,10 @@ struct ScriptDirectoryEntry {
 struct ScriptDirectoryListResult {
     std::string path;
     std::vector<ScriptDirectoryEntry> entries;
+};
+
+struct ScriptDirectoryListManyResult {
+    std::vector<ScriptDirectoryListResult> listings;
 };
 
 struct ScriptClangFormatStyleResult {
@@ -135,8 +145,9 @@ struct ScriptLspNavigationResult {
 
 using ScriptAsyncResult =
     std::variant<ScriptFileReadResult, ScriptFileWriteResult, ScriptDirectoryListResult,
-                 ScriptClangFormatStyleResult, ScriptProjectDiscoveryResult,
-                 ScriptRgResultParseResult, ScriptProcessResult, ScriptLspNavigationResult>;
+                 ScriptDirectoryListManyResult, ScriptClangFormatStyleResult,
+                 ScriptProjectDiscoveryResult, ScriptRgResultParseResult, ScriptProcessResult,
+                 ScriptLspNavigationResult>;
 
 struct ScriptAsyncCallbacks {
     std::function<void(std::uint64_t, ScriptAsyncResult)> completed;

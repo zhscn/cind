@@ -4,6 +4,7 @@
   #:export (async-file-read
             async-file-write
             async-directory-list
+            async-directory-list-many
             async-clang-format-style
             async-project-discovery
             async-rg-result-parse
@@ -32,6 +33,22 @@
     (error "async directory-list limit must be a non-negative integer"
            maximum-entries))
   (vector 'directory-list path maximum-entries))
+
+(define* (async-directory-list-many paths #:optional (maximum-entries 4096))
+  (unless (or (list? paths) (vector? paths))
+    (error "async directory-list-many paths must be a list or vector" paths))
+  (let ((path-vector (if (vector? paths) paths (list->vector paths))))
+    (when (zero? (vector-length path-vector))
+      (error "async directory-list-many paths must not be empty" paths))
+    (let loop ((index 0))
+      (when (< index (vector-length path-vector))
+        (unless (string? (vector-ref path-vector index))
+          (error "async directory-list-many paths must contain strings" paths))
+        (loop (+ index 1))))
+    (unless (and (integer? maximum-entries) (>= maximum-entries 0))
+      (error "async directory-list-many limit must be a non-negative integer"
+             maximum-entries))
+    (vector 'directory-list-many path-vector maximum-entries)))
 
 (define (async-clang-format-style path fallback-preset fallback-origin)
   (unless (string? path)

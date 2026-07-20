@@ -208,6 +208,29 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                                           .maximum_entries =
                                               scm_to_size_t(scm_c_vector_ref(value, 2))};
     }
+    if (symbol_is(tag, "directory-list-many")) {
+        if (size != 3 || !scm_is_vector(scm_c_vector_ref(value, 1)) ||
+            scm_is_unsigned_integer(scm_c_vector_ref(value, 2), 0,
+                                    std::numeric_limits<std::size_t>::max()) == 0) {
+            scm_wrong_type_arg_msg(
+                caller, position, value,
+                "#(directory-list-many path-vector non-negative-maximum-entries) request");
+        }
+        const SCM paths_value = scm_c_vector_ref(value, 1);
+        std::vector<std::string> paths;
+        paths.reserve(scm_c_vector_length(paths_value));
+        for (std::size_t index = 0; index < scm_c_vector_length(paths_value); ++index) {
+            const SCM path = scm_c_vector_ref(paths_value, index);
+            if (!scm_is_string(path)) {
+                scm_wrong_type_arg_msg(caller, position, value,
+                                       "directory-list-many string path vector");
+            }
+            paths.push_back(scheme_string(path));
+        }
+        return ScriptDirectoryListManyRequest{.paths = std::move(paths),
+                                              .maximum_entries =
+                                                  scm_to_size_t(scm_c_vector_ref(value, 2))};
+    }
     if (symbol_is(tag, "clang-format-style")) {
         if (size != 4 || !scm_is_string(scm_c_vector_ref(value, 1)) ||
             !scm_is_string(scm_c_vector_ref(value, 2)) ||
@@ -349,6 +372,34 @@ SCM script_async_result_to_scheme(ScriptAsyncResult result) {
                 scm_c_vector_set_x(converted, 0, name_symbol("directory-list"));
                 scm_c_vector_set_x(converted, 1, scm_from_utf8_string(value.path.c_str()));
                 scm_c_vector_set_x(converted, 2, entries);
+                return converted;
+            } else if constexpr (std::is_same_v<Result, ScriptDirectoryListManyResult>) {
+                SCM listings = scm_c_make_vector(value.listings.size(), SCM_UNSPECIFIED);
+                for (std::size_t listing_index = 0; listing_index < value.listings.size();
+                     ++listing_index) {
+                    const ScriptDirectoryListResult& listing = value.listings[listing_index];
+                    SCM entries = scm_c_make_vector(listing.entries.size(), SCM_UNSPECIFIED);
+                    for (std::size_t entry_index = 0; entry_index < listing.entries.size();
+                         ++entry_index) {
+                        const ScriptDirectoryEntry& entry = listing.entries[entry_index];
+                        SCM converted_entry = scm_c_make_vector(3, SCM_UNSPECIFIED);
+                        scm_c_vector_set_x(converted_entry, 0,
+                                           scm_from_utf8_string(entry.path.c_str()));
+                        scm_c_vector_set_x(converted_entry, 1,
+                                           scm_from_utf8_string(entry.name.c_str()));
+                        scm_c_vector_set_x(converted_entry, 2, scm_from_bool(entry.directory));
+                        scm_c_vector_set_x(entries, entry_index, converted_entry);
+                    }
+                    SCM converted_listing = scm_c_make_vector(3, SCM_UNSPECIFIED);
+                    scm_c_vector_set_x(converted_listing, 0, name_symbol("directory-list"));
+                    scm_c_vector_set_x(converted_listing, 1,
+                                       scm_from_utf8_string(listing.path.c_str()));
+                    scm_c_vector_set_x(converted_listing, 2, entries);
+                    scm_c_vector_set_x(listings, listing_index, converted_listing);
+                }
+                SCM converted = scm_c_make_vector(2, SCM_UNSPECIFIED);
+                scm_c_vector_set_x(converted, 0, name_symbol("directory-list-many"));
+                scm_c_vector_set_x(converted, 1, listings);
                 return converted;
             } else if constexpr (std::is_same_v<Result, ScriptClangFormatStyleResult>) {
                 SCM converted = scm_c_make_vector(5, SCM_UNSPECIFIED);

@@ -16,6 +16,7 @@
             interaction
             interaction-candidate
             interaction-provider-task
+            completion-provider-task
             completion-item
             completion-item-label
             completion-item-kind
@@ -163,6 +164,11 @@
   (unless (procedure? transform)
     (error "interaction provider transform must be a procedure" transform))
   (vector 'async-provider request transform))
+
+(define (completion-provider-task request transform)
+  (unless (procedure? transform)
+    (error "completion provider transform must be a procedure" transform))
+  (vector 'async-completion-provider request transform))
 
 (define* (completion-item label
                           #:key

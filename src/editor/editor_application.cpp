@@ -3500,7 +3500,7 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
     }
     const DocumentSnapshot snapshot = buffer->snapshot();
     if (provider.kind == CompletionProviderKind::Scripted) {
-        std::expected<CompletionProviderResponse, std::string> response =
+        std::expected<CompletionProviderResult, std::string> response =
             guile_.complete(provider, request);
         if (!response) {
             throw std::runtime_error(response.error());
@@ -3568,71 +3568,6 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                 } catch (...) {
                     return std::unexpected("unknown LSP completion startup failure");
                 }
-            }};
-    }
-    if (provider.kind == CompletionProviderKind::Path) {
-        std::string query = request.query;
-        std::filesystem::path base = std::filesystem::current_path();
-        if (buffer->resource_uri()) {
-            base = std::filesystem::path(*buffer->resource_uri()).parent_path();
-        }
-        const TextRange line_range = snapshot.content().line_content_range(request.line);
-        const std::string line = snapshot.content().substring(line_range);
-        const std::size_t anchor_in_line = request.anchor.value - line_range.start.value;
-        const std::string before = line.substr(0, std::min(anchor_in_line, line.size()));
-        const std::size_t delimiter = before.find_last_of("\"<");
-        const bool system = delimiter != std::string::npos && before[delimiter] == '<';
-        std::filesystem::path relative = delimiter == std::string::npos
-                                             ? std::filesystem::path{}
-                                             : std::filesystem::path(before.substr(delimiter + 1));
-        const TextRange replacement{request.anchor, request.caret};
-        return CompletionProviderWork{
-            [provider, replacement, query = std::move(query), base = std::move(base),
-             relative = std::move(relative),
-             system](const std::stop_token& stop) -> CompletionProviderResponse {
-                std::vector<std::filesystem::path> roots{base};
-                if (system) {
-                    roots = {"/usr/local/include", "/usr/include"};
-                }
-                std::set<std::string, std::less<>> names;
-                for (const std::filesystem::path& root : roots) {
-                    std::error_code error;
-                    const std::filesystem::path directory = root / relative;
-                    for (std::filesystem::directory_iterator iterator(directory, error), end;
-                         !error && iterator != end; iterator.increment(error)) {
-                        if (stop.stop_requested()) {
-                            throw AsyncTaskCancelled();
-                        }
-                        std::string name = iterator->path().filename().string();
-                        if (!name.starts_with(query)) {
-                            continue;
-                        }
-                        if (iterator->is_directory(error)) {
-                            name.push_back('/');
-                        }
-                        names.insert(std::move(name));
-                    }
-                }
-                std::vector<CompletionItem> items;
-                items.reserve(names.size());
-                for (const std::string& name : names) {
-                    items.push_back({.provider = provider,
-                                     .filter_text = name,
-                                     .label = name,
-                                     .kind = name.ends_with('/') ? "directory" : "file",
-                                     .detail = "path",
-                                     .edit = CompletionEdit{.insert_range = replacement,
-                                                            .replace_range = replacement,
-                                                            .new_text = name},
-                                     .sort_text = name,
-                                     .resolved = true,
-                                     .resolving = false,
-                                     .resolve_error = {},
-                                     .documentation = {},
-                                     .additional_edits = {},
-                                     .raw = {}});
-                }
-                return {.provider = provider, .items = std::move(items), .is_incomplete = false};
             }};
     }
     return CompletionProviderResponse{.provider = provider, .items = {}, .is_incomplete = false};

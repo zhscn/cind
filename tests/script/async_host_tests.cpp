@@ -119,6 +119,50 @@ TEST_CASE("script async host delivers file and directory results on its owner") 
     CHECK(host.tasks().empty());
 }
 
+TEST_CASE("script async host lists several available directories in one task") {
+    TemporaryDirectory directory;
+    const std::filesystem::path first = directory.path() / "first";
+    const std::filesystem::path second = directory.path() / "second";
+    std::filesystem::create_directories(first);
+    std::filesystem::create_directories(second);
+    std::ofstream(first / "alpha.hpp") << "";
+    std::filesystem::create_directories(second / "beta");
+
+    AsyncRuntime runtime;
+    AsyncScriptHost host(runtime);
+    ScriptAsyncResult result;
+    bool completed = false;
+    std::string failure;
+    const auto started = host.start(
+        ScriptDirectoryListManyRequest{
+            .paths = {first.string(), (directory.path() / "missing").string(), second.string()},
+            .maximum_entries = 32},
+        {.completed =
+             [&](std::uint64_t, ScriptAsyncResult value) {
+                 result = std::move(value);
+                 completed = true;
+             },
+         .cancelled = {},
+         .failed = [&](std::uint64_t, std::string message) { failure = std::move(message); }});
+
+    REQUIRE(started.has_value());
+    drain_until(runtime, [&] { return completed || !failure.empty(); });
+    CHECK(failure.empty());
+    REQUIRE(std::holds_alternative<ScriptDirectoryListManyResult>(result));
+    const auto& listings = std::get<ScriptDirectoryListManyResult>(result).listings;
+    REQUIRE(listings.size() == 2);
+    CHECK(std::ranges::any_of(listings, [](const ScriptDirectoryListResult& listing) {
+        return std::ranges::any_of(listing.entries, [](const ScriptDirectoryEntry& entry) {
+            return entry.name == "alpha.hpp" && !entry.directory;
+        });
+    }));
+    CHECK(std::ranges::any_of(listings, [](const ScriptDirectoryListResult& listing) {
+        return std::ranges::any_of(listing.entries, [](const ScriptDirectoryEntry& entry) {
+            return entry.name == "beta" && entry.directory;
+        });
+    }));
+}
+
 TEST_CASE("script async host discovers language style and project metadata") {
     TemporaryDirectory directory;
     std::filesystem::create_directories(directory.path() / ".git");

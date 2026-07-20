@@ -246,6 +246,7 @@ The native module exports:
 (async-file-read path)
 (async-file-write path contents)
 (async-directory-list path [maximum-entries])
+(async-directory-list-many paths [maximum-entries])
 (async-clang-format-style path fallback-preset fallback-origin)
 (async-project-discovery path provider-definitions)
 (async-rg-result-parse project-root output)
@@ -260,6 +261,10 @@ The native module exports:
 typed result. File reads produce `#(file-read path exists? contents)` and atomic writes produce
 `#(file-write path)`. Directory enumeration produces
 `#(directory-list normalized-path entries)`, where each entry is `#(path name directory?)`.
+Multi-directory enumeration produces `#(directory-list-many listings)`, where every listing has
+the single-directory result shape. Each available directory is enumerated independently and
+unavailable directories are omitted. This supports ordered search roots without moving root
+selection or result merging into native worker code.
 Clang-format discovery applies the Scheme-selected fallback preset when no configuration exists
 and produces `#(clang-format-style path found? cpp-indent-style origin)`. Project discovery produces
 `#(project-discovery path root-or-#f provider-or-#f marker-or-#f)` from the immutable provider
@@ -652,6 +657,9 @@ the caret. `view-syntax-token` returns the language token kind and byte range co
 offset, or `#f` when the active language has no token there. Completion policy composes these generic
 snapshots to recognize include paths, suppress ordinary candidates in literals and comments, and
 find the query anchor without placing language-specific decisions in `EditorApplication`.
+The bundled `path` provider derives local or system include roots from these snapshots, submits a
+multi-directory enumeration task, and constructs, filters, deduplicates, and labels path candidates
+in Scheme.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
@@ -1068,6 +1076,15 @@ immediate results or an asynchronous result transform. The bundled provider regi
 that policy explicitly. `InteractionController` preserves provider order and owns only absolute
 candidate selection, generation-safe provider completion, cancellation and transient minibuffer
 object lifetimes.
+
+## Asynchronous document completion providers
+
+`completion-provider-task` from `(cind command)` constructs an asynchronous document-completion
+result from an `(cind async)` request and a one-argument result transform. The transform runs on the
+editor thread and returns the same `completion-result` accepted from an immediate scripted
+provider. The completion pipeline owns generations, cancellation, response validation, filtering,
+selection, and application; the provider owns request policy and candidate semantics. Native
+workers receive immutable task values and never enter Guile.
 
 ## Editor self-description
 
