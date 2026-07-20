@@ -239,7 +239,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return editing_mechanisms_.edit_structure(view, *edit);
                },
-           .page_rows = [this] { return command_page_rows_; },
            .interaction_mechanism_status =
                [this] {
                    const InteractionMechanismState* state = interaction_.state();
@@ -964,8 +963,12 @@ void EditorApplication::refresh_default_keymap() {
 }
 
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
-    command_page_rows_ = std::max(1, page_rows);
     record_command_input(format_key_stroke(key), true);
+    if (const std::expected<void, std::string> updated =
+            guile_.set_page_rows(static_cast<std::uint32_t>(std::max(1, page_rows)));
+        !updated) {
+        set_message(std::format("page geometry state failed: {}", updated.error()));
+    }
     const ViewId focused_view = interaction_.active() ? interaction_.state()->view : view_id();
     runtime_.views().clear_input_feedback(focused_view);
     sync_keymaps();

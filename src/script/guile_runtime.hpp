@@ -242,7 +242,6 @@ struct GuileHostServices {
     std::function<std::optional<std::string>(ViewId)> indent;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> type_text;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> structural_edit;
-    std::function<int()> page_rows;
     std::function<GuileInteractionMechanismStatus()> interaction_mechanism_status;
     std::function<std::optional<ProjectId>()> interaction_origin_project;
     std::function<std::expected<void, std::string>(std::string_view)> refresh_interaction;
@@ -378,6 +377,7 @@ struct GuileRuntimeSnapshot {
 struct GuileApplicationState {
     bool exit_requested = false;
     bool reveal_caret = true;
+    std::uint32_t page_rows = 1;
 };
 
 // Owns the editor-thread Guile policy environment. C++ registries and
@@ -427,6 +427,7 @@ public:
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
     std::expected<GuileApplicationState, std::string> application_state() const;
     std::expected<void, std::string> set_caret_reveal(bool reveal);
+    std::expected<void, std::string> set_page_rows(std::uint32_t rows);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
     std::expected<void, std::string>

@@ -408,7 +408,6 @@ private:
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
     CommandLoop command_loop_;
-    int command_page_rows_ = 1;
     PresentationProfile presentation_profile_;
     EditorPlatformServices platform_services_;
     // These are declared last in dependency order. Completion and script tasks

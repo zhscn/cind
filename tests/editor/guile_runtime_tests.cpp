@@ -1280,7 +1280,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .indent = {},
          .type_text = {},
          .structural_edit = {},
-         .page_rows = {},
          .interaction_mechanism_status = {},
          .interaction_origin_project = {},
          .refresh_interaction = {},
@@ -1529,6 +1528,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return true;
              },
          .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
+    REQUIRE(guile.application_state().has_value());
+    CHECK(guile.application_state()->page_rows == 1);
+    CHECK_FALSE(guile.set_page_rows(0).has_value());
+    REQUIRE(guile.set_page_rows(17).has_value());
+    CHECK(guile.application_state()->page_rows == 17);
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
     const std::expected<GuileEvaluationResult, std::string> lsp_provider =
         guile.evaluate({.source = R"((use-modules (cind lsp))

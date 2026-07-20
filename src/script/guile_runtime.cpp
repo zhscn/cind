@@ -4569,21 +4569,6 @@ SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM page_rows(SCM host_object) {
-    HostLease& host = require_host(host_object, "page-rows");
-    if (!host.services.page_rows) {
-        scm_misc_error("page-rows", "page geometry capability is unavailable", SCM_EOL);
-    }
-    try {
-        return scm_from_int(std::max(1, host.services.page_rows()));
-    } catch (const std::exception& exception) {
-        raise_host_error("page-rows", exception.what());
-    } catch (...) {
-        scm_misc_error("page-rows", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
 SCM project_index_state(SCM host_object, SCM project_value) {
     HostLease& host = require_host(host_object, "project-index-state");
     const ProjectId project =
@@ -5986,7 +5971,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("type-text!", 3, 0, 0, reinterpret_cast<scm_t_subr>(type_text));
     (void)scm_c_define_gsubr("structural-edit!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(structural_edit));
-    (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
     (void)scm_c_define_gsubr("interaction-mechanism-status", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_mechanism_status));
     (void)scm_c_define_gsubr("interaction-origin-project", 1, 0, 0,
@@ -6123,7 +6107,7 @@ void initialize_host_module(void*) {
         "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
         "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "undo!",
         "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!",
-        "indent!", "type-text!", "structural-edit!", "page-rows", "interaction-mechanism-status",
+        "indent!", "type-text!", "structural-edit!", "interaction-mechanism-status",
         "interaction-origin-project", "refresh-interaction-mechanism!",
         "submit-interaction-mechanism!", "replace-interaction-input!",
         "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
@@ -6900,6 +6884,7 @@ struct GuileCall {
         CommandFeedbackState,
         ApplicationState,
         SetCaretReveal,
+        SetPageRows,
         BufferSavingState,
         CommandInput,
         CommandResultFeedback,
@@ -6983,6 +6968,7 @@ struct GuileCall {
     std::optional<std::size_t> interaction_selection;
     GuileCommandFeedbackState command_feedback;
     GuileApplicationState application_state;
+    std::uint32_t page_rows = 1;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
     Operation operation = Operation::Load;
@@ -7712,19 +7698,27 @@ SCM call_body(void* data) {
         case GuileCall::Operation::ApplicationState:
             call.result =
                 scm_call_1(scm_c_public_ref("cind application", "application-state"), call.host);
-            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 2 ||
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 3 ||
                 !scheme_boolean(scm_c_vector_ref(call.result, 0)) ||
-                !scheme_boolean(scm_c_vector_ref(call.result, 1))) {
+                !scheme_boolean(scm_c_vector_ref(call.result, 1)) ||
+                scm_is_unsigned_integer(scm_c_vector_ref(call.result, 2), 1,
+                                        std::numeric_limits<std::uint32_t>::max()) == 0) {
                 scm_misc_error("application-state",
-                               "application state must be #(exit-requested? reveal-caret?)",
+                               "application state must be "
+                               "#(exit-requested? reveal-caret? positive-page-rows)",
                                SCM_EOL);
             }
             call.application_state.exit_requested = scheme_true(scm_c_vector_ref(call.result, 0));
             call.application_state.reveal_caret = scheme_true(scm_c_vector_ref(call.result, 1));
+            call.application_state.page_rows = scm_to_uint32(scm_c_vector_ref(call.result, 2));
             break;
         case GuileCall::Operation::SetCaretReveal:
             call.result = scm_call_2(scm_c_public_ref("cind application", "set-caret-reveal!"),
                                      call.host, scm_from_bool(call.enabled));
+            break;
+        case GuileCall::Operation::SetPageRows:
+            call.result = scm_call_2(scm_c_public_ref("cind application", "set-page-rows!"),
+                                     call.host, scm_from_uint32(call.page_rows));
             break;
         case GuileCall::Operation::BufferSavingState:
             call.result =
@@ -8872,6 +8866,24 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> set_page_rows(std::uint32_t rows) {
+        require_owner_thread();
+        if (rows == 0) {
+            return std::unexpected("page rows must be positive");
+        }
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetPageRows;
+        call.host = host_;
+        call.page_rows = rows;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const {
         require_owner_thread();
         (void)lease_->runtime->buffers().get(buffer);
@@ -9567,6 +9579,10 @@ std::expected<GuileApplicationState, std::string> GuileRuntime::application_stat
 
 std::expected<void, std::string> GuileRuntime::set_caret_reveal(bool reveal) {
     return impl_->set_caret_reveal(reveal);
+}
+
+std::expected<void, std::string> GuileRuntime::set_page_rows(std::uint32_t rows) {
+    return impl_->set_page_rows(rows);
 }
 
 std::expected<bool, std::string> GuileRuntime::buffer_saving(BufferId buffer) const {
