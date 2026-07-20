@@ -56,13 +56,21 @@ struct GuileTextRange {
 
 struct GuileInteractionMechanismStatus {
     bool active = false;
-    bool picker = false;
-    bool has_history = false;
-    std::optional<std::string> history;
     std::size_t candidate_count = 0;
     std::optional<BufferId> buffer;
     std::optional<ViewId> view;
     std::uint64_t candidate_revision = 0;
+};
+
+struct GuileInteractionPolicyState {
+    InteractionKind kind = InteractionKind::Text;
+    std::string keymap;
+    std::string input_state;
+    std::string buffer_name;
+    std::string prompt;
+    std::string history;
+    bool allow_custom_input = false;
+    std::string provider;
 };
 
 struct GuileMinibufferHistoryState {
@@ -75,11 +83,6 @@ struct GuileCommandFeedbackState {
     std::string message;
     std::string last_key;
     std::string last_command;
-};
-
-struct GuileInteractionSubmission {
-    CommandDispatch dispatch;
-    std::string history;
 };
 
 struct GuileViewPosition {
@@ -241,12 +244,9 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> structural_edit;
     std::function<int()> page_rows;
     std::function<GuileInteractionMechanismStatus()> interaction_mechanism_status;
-    std::function<std::optional<std::string>()> interaction_provider;
-    std::function<std::expected<void, std::string>(std::string)> set_interaction_provider;
     std::function<std::optional<ProjectId>()> interaction_origin_project;
-    std::function<void()> refresh_interaction;
-    std::function<std::expected<GuileInteractionSubmission, std::string>(
-        std::optional<std::size_t>)>
+    std::function<std::expected<void, std::string>(std::string_view)> refresh_interaction;
+    std::function<std::expected<std::string, std::string>(std::optional<std::size_t>, bool)>
         submit_interaction;
     std::function<std::expected<RevisionId, std::string>(std::string_view)>
         replace_interaction_input;
@@ -415,8 +415,12 @@ public:
     std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
     std::expected<void, std::string> buffer_edited(BufferId buffer, ViewId view,
                                                    RevisionId revision);
+    std::expected<void, std::string> interaction_started(const InteractionRequest& request,
+                                                         CommandTarget origin);
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const;
+    std::expected<std::optional<GuileInteractionPolicyState>, std::string>
+    interaction_policy_state() const;
     std::expected<std::optional<std::size_t>, std::string> interaction_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;

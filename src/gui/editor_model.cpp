@@ -438,11 +438,14 @@ EditorStateSnapshot EditorModel::inspect() {
         .outstanding_async_tasks = guile.outstanding_async_tasks,
         .last_error = std::move(guile.last_error)};
     InteractionStateSnapshot interaction_state;
-    if (const InteractionState* interaction = application_.interaction().state()) {
+    if (const InteractionMechanismState* interaction = application_.interaction().state()) {
         const std::string input = application_.interaction().input_text();
+        const std::optional<GuileInteractionPolicyState> policy =
+            application_.interaction_policy_state().value_or(std::nullopt);
         const std::expected<GuileMinibufferHistoryState, std::string> history_state =
             application_.minibuffer_history_state(interaction->buffer,
-                                                  interaction->request.history);
+                                                  policy ? std::string_view(policy->history)
+                                                         : std::string_view{});
         const std::expected<std::optional<std::size_t>, std::string> selection =
             application_.interaction_selection();
         interaction_state = {.active = true,
@@ -458,20 +461,20 @@ EditorStateSnapshot EditorModel::inspect() {
                              .origin_buffer_generation = interaction->origin.buffer.generation,
                              .origin_view_slot = interaction->origin.view.slot,
                              .origin_view_generation = interaction->origin.view.generation,
-                             .kind = interaction->request.kind == InteractionKind::Picker ? "picker"
-                                                                                          : "text",
-                             .keymap = interaction->request.keymap,
-                             .input_state = interaction->request.input_state,
-                             .buffer_name = interaction->request.buffer_name,
-                             .prompt = interaction->request.prompt,
+                             .kind = policy && policy->kind == InteractionKind::Picker ? "picker"
+                                                                                       : "text",
+                             .keymap = policy ? policy->keymap : std::string{},
+                             .input_state = policy ? policy->input_state : std::string{},
+                             .buffer_name = policy ? policy->buffer_name : std::string{},
+                             .prompt = policy ? policy->prompt : std::string{},
                              .input = input,
                              .input_cursor = application_.interaction().input_caret().value,
-                             .history = interaction->request.history,
+                             .history = policy ? policy->history : std::string{},
                              .history_entries = history_state ? history_state->entries : 0,
                              .history_index = history_state ? history_state->index : std::nullopt,
                              .history_draft = history_state ? history_state->draft : std::string{},
-                             .provider = interaction->request.provider,
-                             .allow_custom_input = interaction->request.allow_custom_input,
+                             .provider = policy ? policy->provider : std::string{},
+                             .allow_custom_input = policy && policy->allow_custom_input,
                              .generation = interaction->generation,
                              .loading = interaction->loading,
                              .selected = selection.value_or(std::nullopt).value_or(0),

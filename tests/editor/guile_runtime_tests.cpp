@@ -374,16 +374,40 @@ TEST_CASE("Guile buffer edit observers own post-edit policy") {
     GuileHostServices services;
     services.interaction_mechanism_status = [=] {
         return GuileInteractionMechanismStatus{.active = true,
-                                               .picker = true,
-                                               .has_history = false,
-                                               .history = std::nullopt,
                                                .candidate_count = 0,
                                                .buffer = buffer,
                                                .view = view,
                                                .candidate_revision = 0};
     };
-    services.refresh_interaction = [&] { ++refreshes; };
+    services.refresh_interaction =
+        [&](std::string_view provider) -> std::expected<void, std::string> {
+        CHECK(provider == "test");
+        ++refreshes;
+        return {};
+    };
     GuileRuntime guile(runtime, std::move(services));
+    const CommandId accept = define_command(runtime, "edit-observer.accept");
+    REQUIRE(guile
+                .interaction_started(
+                    {.kind = InteractionKind::Picker,
+                     .keymap = "interaction.picker",
+                     .input_state = "emacs",
+                     .buffer_name = " *minibuffer*",
+                     .prompt = "Pick: ",
+                     .initial_input = {},
+                     .history = {},
+                     .provider = "test",
+                     .allow_custom_input = false,
+                     .accept_command = accept,
+                     .arguments = {}},
+                    {.window = runtime.windows().create(view), .buffer = buffer, .view = view})
+                .has_value());
+    const std::expected<std::optional<GuileInteractionPolicyState>, std::string> policy =
+        guile.interaction_policy_state();
+    REQUIRE(policy.has_value());
+    REQUIRE(policy->has_value());
+    CHECK((*policy)->provider == "test");
+    CHECK((*policy)->prompt == "Pick: ");
     const std::expected<void, std::string> installed = guile.install_buffer_lifecycle_policies();
     INFO(installed.error_or(""));
     REQUIRE(installed.has_value());
@@ -1214,7 +1238,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::vector<ProjectId> workbench_scope;
     const std::string workbench_session = "serialized workbench session";
     std::optional<std::string> restored_workbench_session;
-    std::string interaction_provider;
     GuileRuntime guile(
         runtime,
         {.display_buffer =
@@ -1260,11 +1283,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .structural_edit = {},
          .page_rows = {},
          .interaction_mechanism_status = {},
-         .interaction_provider = {},
-         .set_interaction_provider = [&](std::string provider) -> std::expected<void, std::string> {
-             interaction_provider = std::move(provider);
-             return {};
-         },
          .interaction_origin_project = {},
          .refresh_interaction = {},
          .submit_interaction = {},

@@ -160,14 +160,18 @@ public:
     const WindowLayout& window_layout() const { return workbenches_.active().layout(); }
     CommandLoop& command_loop() { return command_loop_; }
     const CommandLoop& command_loop() const { return command_loop_; }
-    InteractionController& interaction() { return interaction_; }
-    const InteractionController& interaction() const { return interaction_; }
+    InteractionMechanisms& interaction() { return interaction_; }
+    const InteractionMechanisms& interaction() const { return interaction_; }
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const {
         return guile_.minibuffer_history_state(buffer, history);
     }
     std::expected<std::optional<std::size_t>, std::string> interaction_selection() const {
         return guile_.interaction_selection();
+    }
+    std::expected<std::optional<GuileInteractionPolicyState>, std::string>
+    interaction_policy_state() const {
+        return guile_.interaction_policy_state();
     }
     CompletionPipeline& completion() { return *completion_; }
     const CompletionPipeline& completion() const { return *completion_; }
@@ -400,7 +404,7 @@ private:
     std::vector<std::unique_ptr<ViewState>> views_;
     std::unique_ptr<ProjectService> project_service_;
     WorkbenchRegistry workbenches_;
-    InteractionController interaction_;
+    InteractionMechanisms interaction_;
     std::unique_ptr<EditSession> interaction_session_;
     EditingMechanisms editing_mechanisms_;
     CommandLoop command_loop_;

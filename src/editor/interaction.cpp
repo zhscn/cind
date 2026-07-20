@@ -52,7 +52,7 @@ InteractionProviderResult InteractionProviderRegistry::complete(std::string_view
     return found->second(context, query);
 }
 
-std::expected<void, std::string> InteractionController::start(InteractionRequest request,
+std::expected<void, std::string> InteractionMechanisms::start(InteractionRequest request,
                                                               CommandContext& context) {
     if (!request.accept_command) {
         return std::unexpected("interaction request has no accept command");
@@ -105,49 +105,37 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
         }
         return std::unexpected(exception.what());
     }
-    state_.emplace(InteractionState{.request = std::move(request),
-                                    .origin = origin,
-                                    .window = window,
-                                    .buffer = buffer,
-                                    .view = view,
-                                    .candidates = {},
-                                    .candidate_revision = 0,
-                                    .generation = 0,
-                                    .loading = false,
-                                    .error = {}});
-    refresh();
+    state_.emplace(
+        InteractionMechanismState{.uses_candidates = request.kind == InteractionKind::Picker,
+                                  .origin = origin,
+                                  .window = window,
+                                  .buffer = buffer,
+                                  .view = view,
+                                  .candidates = {},
+                                  .candidate_revision = 0,
+                                  .generation = 0,
+                                  .loading = false,
+                                  .error = {}});
+    refresh(request.provider);
     return {};
 }
 
-std::string InteractionController::input_text() const {
+std::string InteractionMechanisms::input_text() const {
     return state_ ? runtime_->buffers().get(state_->buffer).snapshot().content().to_string()
                   : std::string();
 }
 
-TextOffset InteractionController::input_caret() const {
+TextOffset InteractionMechanisms::input_caret() const {
     return state_ ? runtime_->views().caret(state_->view) : TextOffset{};
 }
 
-RevisionId InteractionController::input_revision() const {
+RevisionId InteractionMechanisms::input_revision() const {
     return state_ ? runtime_->buffers().get(state_->buffer).snapshot().revision() : 0;
 }
 
-std::expected<void, std::string> InteractionController::set_provider(std::string provider) {
-    InteractionState* active = state();
-    if (active == nullptr || active->request.kind != InteractionKind::Picker) {
-        return std::unexpected("no picker interaction is active");
-    }
-    if (provider.empty() || !providers_->contains(provider)) {
-        return std::unexpected(std::format("unknown interaction provider '{}'", provider));
-    }
-    active->request.provider = std::move(provider);
-    refresh();
-    return {};
-}
-
 std::expected<RevisionId, std::string>
-InteractionController::replace_input(std::string_view input) {
-    InteractionState* active = state();
+InteractionMechanisms::replace_input(std::string_view input) {
+    InteractionMechanismState* active = state();
     if (active == nullptr) {
         return std::unexpected("no interaction is active");
     }
@@ -160,48 +148,48 @@ InteractionController::replace_input(std::string_view input) {
     return revision;
 }
 
-void InteractionController::refresh_candidates() {
-    refresh();
+std::expected<void, std::string>
+InteractionMechanisms::refresh_candidates(std::string_view provider) {
+    const InteractionMechanismState* active = state();
+    if (active == nullptr) {
+        return std::unexpected("no interaction is active");
+    }
+    if (active->uses_candidates && (provider.empty() || !providers_->contains(provider))) {
+        return std::unexpected(std::format("unknown interaction provider '{}'", provider));
+    }
+    refresh(provider);
+    return {};
 }
 
-std::expected<InteractionSubmission, std::string>
-InteractionController::submit(std::optional<std::size_t> selected) {
-    InteractionState* active = state();
+std::expected<std::string, std::string>
+InteractionMechanisms::submit(std::optional<std::size_t> selected, bool allow_custom_input) {
+    InteractionMechanismState* active = state();
     if (active == nullptr) {
         return std::unexpected("no interaction is active");
     }
     std::string value = input_text();
-    if (active->request.kind == InteractionKind::Picker && !active->loading &&
-        !active->candidates.empty()) {
+    if (active->uses_candidates && !active->loading && !active->candidates.empty()) {
         if (!selected || *selected >= active->candidates.size()) {
             active->error = "interaction selection is unavailable";
             return std::unexpected(active->error);
         }
         value = active->candidates[*selected].value;
-    } else if (active->request.kind == InteractionKind::Picker &&
-               !active->request.allow_custom_input) {
+    } else if (active->uses_candidates && !allow_custom_input) {
         active->error = active->loading ? "candidates are still loading" : "no matching candidate";
         return std::unexpected(active->error);
     }
 
-    InteractionSubmission submission{
-        .accept_command = active->request.accept_command,
-        .invocation = {.arguments = std::move(active->request.arguments), .prefix = {}},
-        .target = active->origin,
-        .history = active->request.history,
-    };
-    submission.invocation.arguments.emplace_back(value);
     cancel_pending();
     const WindowId window = active->window;
     const ViewId view = active->view;
     const BufferId buffer = active->buffer;
     state_.reset();
     destroy_surface(window, view, buffer);
-    return submission;
+    return value;
 }
 
-bool InteractionController::cancel() noexcept {
-    InteractionState* active = state();
+bool InteractionMechanisms::cancel() noexcept {
+    InteractionMechanismState* active = state();
     if (active == nullptr) {
         return false;
     }
@@ -214,7 +202,7 @@ bool InteractionController::cancel() noexcept {
     return true;
 }
 
-void InteractionController::destroy_surface(WindowId window, ViewId view,
+void InteractionMechanisms::destroy_surface(WindowId window, ViewId view,
                                             BufferId buffer) noexcept {
     try {
         (void)runtime_->windows().erase(window);
@@ -225,18 +213,18 @@ void InteractionController::destroy_surface(WindowId window, ViewId view,
     }
 }
 
-void InteractionController::refresh() {
-    InteractionState* active = state();
+void InteractionMechanisms::refresh(std::string_view provider) {
+    InteractionMechanismState* active = state();
     if (active == nullptr) {
         return;
     }
     cancel_pending();
-    InteractionState& state = *active;
+    InteractionMechanismState& state = *active;
     const std::uint64_t generation = ++next_generation_;
     state.generation = generation;
     state.loading = false;
     state.error.clear();
-    if (state.request.kind != InteractionKind::Picker) {
+    if (!state.uses_candidates) {
         state.candidates.clear();
         ++state.candidate_revision;
         return;
@@ -245,8 +233,7 @@ void InteractionController::refresh() {
         const std::string query = input_text();
         CommandContext context(*runtime_, state.origin.window, state.origin.buffer,
                                state.origin.view);
-        InteractionProviderResult result =
-            providers_->complete(state.request.provider, context, query);
+        InteractionProviderResult result = providers_->complete(provider, context, query);
         if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
             state.candidates = std::move(*candidates);
             ++state.candidate_revision;
@@ -307,7 +294,7 @@ void InteractionController::refresh() {
         struct Job {
             std::uint64_t generation = 0;
             InteractionCandidateWork work;
-            InteractionController* controller = nullptr;
+            InteractionMechanisms* controller = nullptr;
         };
         auto job =
             std::make_shared<Job>(Job{.generation = generation,
@@ -345,7 +332,7 @@ void InteractionController::refresh() {
     }
 }
 
-void InteractionController::cancel_pending() noexcept {
+void InteractionMechanisms::cancel_pending() noexcept {
     if (cancel_pending_task_) {
         try {
             cancel_pending_task_();
@@ -358,7 +345,7 @@ void InteractionController::cancel_pending() noexcept {
     cancel_pending_task_ = {};
 }
 
-void InteractionController::apply_candidates(std::uint64_t generation,
+void InteractionMechanisms::apply_candidates(std::uint64_t generation,
                                              std::vector<InteractionCandidate> candidates) {
     if (!state_ || state_->generation != generation) {
         return;
@@ -370,7 +357,7 @@ void InteractionController::apply_candidates(std::uint64_t generation,
     cancel_pending_task_ = {};
 }
 
-void InteractionController::apply_failure(std::uint64_t generation,
+void InteractionMechanisms::apply_failure(std::uint64_t generation,
                                           const std::exception_ptr& failure) {
     if (!state_ || state_->generation != generation) {
         return;

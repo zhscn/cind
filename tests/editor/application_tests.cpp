@@ -50,9 +50,9 @@ private:
     bool notified_ = false;
 };
 
-void insert_interaction_text(EditorRuntime& runtime, const InteractionController& interaction,
+void insert_interaction_text(EditorRuntime& runtime, const InteractionMechanisms& interaction,
                              std::string_view text) {
-    const InteractionState* state = interaction.state();
+    const InteractionMechanismState* state = interaction.state();
     REQUIRE(state != nullptr);
     EditTransaction transaction = runtime.buffers().get(state->buffer).begin_transaction();
     transaction.insert(runtime.views().caret(state->view), text);
@@ -1456,12 +1456,8 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
 
-    std::string submitted;
     const CommandId accept = runtime.commands().define(
-        "prompt.accept",
-        [&](CommandContext&, const CommandInvocation& invocation) -> CommandResult {
-            REQUIRE(invocation.arguments.size() == 1);
-            submitted = std::get<std::string>(invocation.arguments.front());
+        "prompt.accept", [](CommandContext&, const CommandInvocation&) -> CommandResult {
             return CommandCompleted{};
         });
     const CommandId start = runtime.commands().define(
@@ -1491,7 +1487,7 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const KeymapId interaction_keymap = runtime.keymaps().define("interaction-test");
     const InputStateId interaction_input =
         define_test_input_state(runtime, "interaction-input-test");
-    InteractionController interaction(runtime, runtime.interaction_providers());
+    InteractionMechanisms interaction(runtime, runtime.interaction_providers());
     REQUIRE(interaction.start(*started.interaction, context).has_value());
     REQUIRE(interaction.state() != nullptr);
     const BufferId minibuffer = interaction.state()->buffer;
@@ -1516,17 +1512,15 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     CHECK(interaction.input_text() == "needle");
     CHECK(interaction.input_caret() == TextOffset{6});
     insert_interaction_text(runtime, interaction, "-next");
-    const std::expected<InteractionSubmission, std::string> submission = interaction.submit();
+    const std::expected<std::string, std::string> submission =
+        interaction.submit(std::nullopt, true);
     REQUIRE(submission.has_value());
-    CHECK(submission->target == CommandTarget{.window = window, .buffer = buffer, .view = view});
+    CHECK(*submission == "needle-next");
     CHECK(runtime.buffers().try_get(minibuffer) == nullptr);
     CHECK(runtime.views().try_get(minibuffer_view) == nullptr);
     CHECK(runtime.windows().try_get(minibuffer_window) == nullptr);
     CHECK(runtime.buffers().all().size() == initial_buffers);
     CHECK(runtime.windows().all().size() == initial_windows);
-    CHECK(loop.execute(submission->accept_command, context, submission->invocation).status ==
-          CommandLoopStatus::Executed);
-    CHECK(submitted == "needle-next");
     CHECK_FALSE(interaction.active());
 }
 
@@ -1546,7 +1540,7 @@ TEST_CASE("interaction input replacement is a native minibuffer text mechanism")
         });
     (void)runtime.keymaps().define("history-interaction-test");
     (void)define_test_input_state(runtime, "history-interaction-input-test");
-    InteractionController interaction(runtime, runtime.interaction_providers());
+    InteractionMechanisms interaction(runtime, runtime.interaction_providers());
     const auto request = [&](std::string initial_input) {
         return InteractionRequest{.kind = InteractionKind::Text,
                                   .keymap = "history-interaction-test",
@@ -1612,7 +1606,7 @@ TEST_CASE("async interaction providers discard cancelled generations") {
     AsyncRuntime async([&wake] { wake.notify(); });
     (void)runtime.keymaps().define("async-interaction-test");
     (void)define_test_input_state(runtime, "async-interaction-input-test");
-    InteractionController interaction(runtime, runtime.interaction_providers());
+    InteractionMechanisms interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
@@ -1633,7 +1627,7 @@ TEST_CASE("async interaction providers discard cancelled generations") {
     first_started.wait();
 
     insert_interaction_text(runtime, interaction, "b");
-    interaction.refresh_candidates();
+    REQUIRE(interaction.refresh_candidates("async").has_value());
     REQUIRE(wake.wait());
     CHECK(async.drain() == 1);
     REQUIRE(interaction.state() != nullptr);
@@ -1685,7 +1679,7 @@ TEST_CASE("callback interaction providers support synchronous completion") {
         });
     (void)runtime.keymaps().define("callback-interaction-test");
     (void)define_test_input_state(runtime, "callback-interaction-input-test");
-    InteractionController interaction(runtime, runtime.interaction_providers());
+    InteractionMechanisms interaction(runtime, runtime.interaction_providers());
 
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
@@ -1748,7 +1742,7 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
     AsyncRuntime async([&wake] { wake.notify(); });
     (void)runtime.keymaps().define("retained-interaction-test");
     (void)define_test_input_state(runtime, "retained-interaction-input-test");
-    InteractionController interaction(runtime, runtime.interaction_providers());
+    InteractionMechanisms interaction(runtime, runtime.interaction_providers());
     interaction.attach_async_runtime(async);
     REQUIRE(interaction
                 .start({.kind = InteractionKind::Picker,
@@ -1769,7 +1763,7 @@ TEST_CASE("async interaction refresh retains candidates until replacement is rea
     CHECK(interaction.state()->candidates.front().value == "old");
 
     insert_interaction_text(runtime, interaction, "new");
-    interaction.refresh_candidates();
+    REQUIRE(interaction.refresh_candidates("retained").has_value());
     replacement_started.wait();
     REQUIRE(interaction.state() != nullptr);
     CHECK(interaction.state()->loading);

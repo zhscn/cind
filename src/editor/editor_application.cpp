@@ -242,14 +242,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .page_rows = [this] { return command_page_rows_; },
            .interaction_mechanism_status =
                [this] {
-                   const InteractionState* state = interaction_.state();
+                   const InteractionMechanismState* state = interaction_.state();
                    return GuileInteractionMechanismStatus{
                        .active = state != nullptr,
-                       .picker = state != nullptr && state->request.kind == InteractionKind::Picker,
-                       .has_history = state != nullptr && !state->request.history.empty(),
-                       .history = state != nullptr && !state->request.history.empty()
-                                      ? std::optional(state->request.history)
-                                      : std::nullopt,
                        .candidate_count =
                            state != nullptr ? state->candidates.size() : std::size_t{0},
                        .buffer = state != nullptr ? std::optional(state->buffer) : std::nullopt,
@@ -257,37 +252,27 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .candidate_revision =
                            state != nullptr ? state->candidate_revision : std::uint64_t{0}};
                },
-           .interaction_provider = [this]() -> std::optional<std::string> {
-               const InteractionState* state = interaction_.state();
-               return state != nullptr ? std::optional(state->request.provider) : std::nullopt;
-           },
-           .set_interaction_provider =
-               [this](std::string provider) {
-                   return interaction_.set_provider(std::move(provider));
-               },
            .interaction_origin_project = [this]() -> std::optional<ProjectId> {
-               const InteractionState* state = interaction_.state();
+               const InteractionMechanismState* state = interaction_.state();
                if (state == nullptr) {
                    return std::nullopt;
                }
                const Buffer* buffer = runtime_.buffers().try_get(state->origin.buffer);
                return buffer != nullptr ? buffer->project_id() : std::nullopt;
            },
-           .refresh_interaction = [this] { interaction_.refresh_candidates(); },
-           .submit_interaction = [this](std::optional<std::size_t> selected)
-               -> std::expected<GuileInteractionSubmission, std::string> {
-               std::expected<InteractionSubmission, std::string> submission =
-                   interaction_.submit(selected);
-               if (!submission) {
-                   return std::unexpected(std::move(submission.error()));
-               }
-               interaction_session_.reset();
-               return GuileInteractionSubmission{
-                   .dispatch = {.command = submission->accept_command,
-                                .invocation = std::move(submission->invocation),
-                                .target = submission->target},
-                   .history = std::move(submission->history)};
-           },
+           .refresh_interaction =
+               [this](std::string_view provider) {
+                   return interaction_.refresh_candidates(provider);
+               },
+           .submit_interaction =
+               [this](std::optional<std::size_t> selected, bool allow_custom_input) {
+                   std::expected<std::string, std::string> submission =
+                       interaction_.submit(selected, allow_custom_input);
+                   if (submission) {
+                       interaction_session_.reset();
+                   }
+                   return submission;
+               },
            .replace_interaction_input =
                [this](std::string_view input) { return interaction_.replace_input(input); },
            .cancel_interaction =
@@ -1078,11 +1063,13 @@ ChromeContent EditorApplication::chrome_content(std::string_view preedit) {
     facts.preedit = preedit;
     facts.pending_sequence = pending_key_sequence_text();
     facts.pending_prefix = pending_prefix_text();
-    if (const InteractionState* interaction = interaction_.state()) {
-        facts.interaction = interaction->request.kind == InteractionKind::Picker
+    if (const InteractionMechanismState* interaction = interaction_.state()) {
+        const std::optional<GuileInteractionPolicyState> policy =
+            guile_.interaction_policy_state().value_or(std::nullopt);
+        facts.interaction = policy && policy->kind == InteractionKind::Picker
                                 ? ChromeInteractionKind::Picker
                                 : ChromeInteractionKind::Text;
-        facts.prompt = interaction->request.prompt;
+        facts.prompt = policy ? policy->prompt : std::string{};
         facts.input = interaction_.input_text();
         facts.input_caret = interaction_.input_caret().value;
         facts.selection = guile_.interaction_selection().value_or(std::nullopt);
@@ -1194,7 +1181,7 @@ TextInputPolicy EditorApplication::text_input_policy() const {
 }
 
 const InputStateRegistry::Definition& EditorApplication::input_state() const {
-    if (const InteractionState* interaction = interaction_.state()) {
+    if (const InteractionMechanismState* interaction = interaction_.state()) {
         const std::optional<InputStateId> state =
             runtime_.views().get(interaction->view).input_states().top();
         if (!state) {
@@ -3212,12 +3199,19 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
     bool interaction_started = false;
     if (result.interaction) {
         CommandContext context = command_context();
-        std::expected<void, std::string> started =
-            interaction_.start(std::move(*result.interaction), context);
+        interaction_session_.reset();
+        std::expected<void, std::string> started = interaction_.start(*result.interaction, context);
         if (!started) {
             set_message(started.error());
         } else {
-            const InteractionState& state = *interaction_.state();
+            const InteractionMechanismState& state = *interaction_.state();
+            if (std::expected<void, std::string> registered =
+                    guile_.interaction_started(*result.interaction, state.origin);
+                !registered) {
+                (void)interaction_.cancel();
+                set_message(registered.error());
+                return result.consumed;
+            }
             interaction_session_ =
                 std::make_unique<EditSession>(runtime_, state.buffer, state.view, CppIndentStyle{});
             interaction_started = true;
@@ -3232,7 +3226,7 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
 }
 
 CommandContext EditorApplication::command_context() {
-    if (const InteractionState* interaction = interaction_.state()) {
+    if (const InteractionMechanismState* interaction = interaction_.state()) {
         return CommandContext(runtime_, interaction->window, interaction->buffer,
                               interaction->view);
     }

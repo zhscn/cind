@@ -5278,20 +5278,16 @@ SCM interaction_mechanism_status(SCM host_object) {
             host.services.interaction_mechanism_status
                 ? host.services.interaction_mechanism_status()
                 : GuileInteractionMechanismStatus{};
-        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
-        scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
-        scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
-        scm_c_vector_set_x(
-            result, 3, status.history ? scm_from_utf8_string(status.history->c_str()) : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 4, scm_from_size_t(status.candidate_count));
-        scm_c_vector_set_x(result, 5,
+        scm_c_vector_set_x(result, 1, scm_from_size_t(status.candidate_count));
+        scm_c_vector_set_x(result, 2,
                            status.buffer ? entity_id(status.buffer->slot, status.buffer->generation)
                                          : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 6,
+        scm_c_vector_set_x(result, 3,
                            status.view ? entity_id(status.view->slot, status.view->generation)
                                        : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 7, scm_from_uint64(status.candidate_revision));
+        scm_c_vector_set_x(result, 4, scm_from_uint64(status.candidate_revision));
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("interaction-mechanism-status", exception.what());
@@ -5299,45 +5295,6 @@ SCM interaction_mechanism_status(SCM host_object) {
         scm_misc_error("interaction-mechanism-status", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-SCM interaction_provider(SCM host_object) {
-    HostLease& host = require_host(host_object, "interaction-provider");
-    try {
-        const std::optional<std::string> provider = host.services.interaction_provider
-                                                        ? host.services.interaction_provider()
-                                                        : std::nullopt;
-        return provider ? scm_from_utf8_string(provider->c_str()) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("interaction-provider", exception.what());
-    } catch (...) {
-        scm_misc_error("interaction-provider", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_interaction_provider(SCM host_object, SCM provider_value) {
-    if (!scm_is_string(provider_value)) {
-        scm_wrong_type_arg_msg("set-interaction-provider!", 2, provider_value, "string");
-    }
-    HostLease& host = require_host(host_object, "set-interaction-provider!");
-    if (!host.services.set_interaction_provider) {
-        scm_misc_error("set-interaction-provider!",
-                       "interaction provider mutation capability is unavailable", SCM_EOL);
-    }
-    try {
-        const std::expected<void, std::string> changed =
-            host.services.set_interaction_provider(scheme_string(provider_value));
-        if (!changed) {
-            raise_host_error("set-interaction-provider!", changed.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-interaction-provider!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-interaction-provider!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
 }
 
 SCM interaction_origin_project(SCM host_object) {
@@ -5355,30 +5312,42 @@ SCM interaction_origin_project(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM refresh_interaction(SCM host_object) {
-    HostLease& host = require_host(host_object, "refresh-interaction!");
+SCM refresh_interaction_mechanism(SCM host_object, SCM provider_value) {
+    if (!scm_is_string(provider_value)) {
+        scm_wrong_type_arg_msg("refresh-interaction-mechanism!", 2, provider_value, "string");
+    }
+    HostLease& host = require_host(host_object, "refresh-interaction-mechanism!");
     if (!host.services.refresh_interaction) {
-        scm_misc_error("refresh-interaction!", "interaction refresh capability is unavailable",
-                       SCM_EOL);
+        scm_misc_error("refresh-interaction-mechanism!",
+                       "interaction refresh capability is unavailable", SCM_EOL);
     }
     try {
-        host.services.refresh_interaction();
+        const std::expected<void, std::string> refreshed =
+            host.services.refresh_interaction(scheme_string(provider_value));
+        if (!refreshed) {
+            raise_host_error("refresh-interaction-mechanism!", refreshed.error());
+        }
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
-        raise_host_error("refresh-interaction!", exception.what());
+        raise_host_error("refresh-interaction-mechanism!", exception.what());
     } catch (...) {
-        scm_misc_error("refresh-interaction!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("refresh-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
 
-SCM submit_interaction_mechanism(SCM host_object, SCM selected_value) {
+SCM submit_interaction_mechanism(SCM host_object, SCM selected_value,
+                                 SCM allow_custom_input_value) {
     HostLease& host = require_host(host_object, "submit-interaction-mechanism!");
     if (!host.services.submit_interaction) {
         scm_misc_error("submit-interaction-mechanism!",
                        "interaction submission capability is unavailable", SCM_EOL);
     }
     try {
+        if (!scheme_boolean(allow_custom_input_value)) {
+            scm_wrong_type_arg_msg("submit-interaction-mechanism!", 3, allow_custom_input_value,
+                                   "boolean");
+        }
         std::optional<std::size_t> selected;
         if (!scheme_false(selected_value)) {
             if (scm_is_unsigned_integer(selected_value, 0,
@@ -5388,39 +5357,12 @@ SCM submit_interaction_mechanism(SCM host_object, SCM selected_value) {
             }
             selected = scm_to_size_t(selected_value);
         }
-        std::expected<GuileInteractionSubmission, std::string> submitted =
-            host.services.submit_interaction(selected);
+        std::expected<std::string, std::string> submitted =
+            host.services.submit_interaction(selected, scheme_true(allow_custom_input_value));
         if (!submitted) {
             raise_host_error("submit-interaction-mechanism!", submitted.error());
         }
-        CommandDispatch& dispatch = submitted->dispatch;
-        if (!dispatch.target) {
-            scm_misc_error("submit-interaction-mechanism!", "interaction submission has no target",
-                           SCM_EOL);
-        }
-        SCM arguments = scm_c_make_vector(dispatch.invocation.arguments.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < dispatch.invocation.arguments.size(); ++index) {
-            scm_c_vector_set_x(arguments, index,
-                               setting_value(dispatch.invocation.arguments[index]));
-        }
-        const CommandTarget& target = *dispatch.target;
-        SCM target_value = scm_c_make_vector(3, SCM_UNSPECIFIED);
-        scm_c_vector_set_x(target_value, 0,
-                           entity_id(target.window.slot, target.window.generation));
-        scm_c_vector_set_x(target_value, 1,
-                           entity_id(target.buffer.slot, target.buffer.generation));
-        scm_c_vector_set_x(target_value, 2, entity_id(target.view.slot, target.view.generation));
-
-        SCM result = scm_c_make_vector(4, SCM_UNSPECIFIED);
-        const std::string& name = host.runtime->commands().definition(dispatch.command).name;
-        scm_c_vector_set_x(result, 0, scm_from_utf8_string(name.c_str()));
-        scm_c_vector_set_x(result, 1, arguments);
-        scm_c_vector_set_x(result, 2, target_value);
-        scm_c_vector_set_x(result, 3,
-                           submitted->history.empty()
-                               ? SCM_BOOL_F
-                               : scm_from_utf8_string(submitted->history.c_str()));
-        return result;
+        return scm_from_utf8_stringn(submitted->data(), submitted->size());
     } catch (const std::exception& exception) {
         raise_host_error("submit-interaction-mechanism!", exception.what());
     } catch (...) {
@@ -5453,18 +5395,18 @@ SCM replace_interaction_input(SCM host_object, SCM input_value) {
     return scm_from_uint64(0);
 }
 
-SCM cancel_interaction(SCM host_object) {
-    HostLease& host = require_host(host_object, "cancel-interaction!");
+SCM cancel_interaction_mechanism(SCM host_object) {
+    HostLease& host = require_host(host_object, "cancel-interaction-mechanism!");
     if (!host.services.cancel_interaction) {
-        scm_misc_error("cancel-interaction!", "interaction cancellation capability is unavailable",
-                       SCM_EOL);
+        scm_misc_error("cancel-interaction-mechanism!",
+                       "interaction cancellation capability is unavailable", SCM_EOL);
     }
     try {
         return scm_from_bool(host.services.cancel_interaction());
     } catch (const std::exception& exception) {
-        raise_host_error("cancel-interaction!", exception.what());
+        raise_host_error("cancel-interaction-mechanism!", exception.what());
     } catch (...) {
-        scm_misc_error("cancel-interaction!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("cancel-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -6101,20 +6043,16 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
     (void)scm_c_define_gsubr("interaction-mechanism-status", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_mechanism_status));
-    (void)scm_c_define_gsubr("interaction-provider", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(interaction_provider));
-    (void)scm_c_define_gsubr("set-interaction-provider!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_interaction_provider));
     (void)scm_c_define_gsubr("interaction-origin-project", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_origin_project));
-    (void)scm_c_define_gsubr("refresh-interaction!", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(refresh_interaction));
-    (void)scm_c_define_gsubr("submit-interaction-mechanism!", 2, 0, 0,
+    (void)scm_c_define_gsubr("refresh-interaction-mechanism!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(refresh_interaction_mechanism));
+    (void)scm_c_define_gsubr("submit-interaction-mechanism!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(submit_interaction_mechanism));
     (void)scm_c_define_gsubr("replace-interaction-input!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(replace_interaction_input));
-    (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(cancel_interaction));
+    (void)scm_c_define_gsubr("cancel-interaction-mechanism!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(cancel_interaction_mechanism));
     (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(completion_active));
     (void)scm_c_define_gsubr("refresh-completion!", 1, 0, 0,
@@ -6243,9 +6181,9 @@ void initialize_host_module(void*) {
         "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
         "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
         "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!", "page-rows",
-        "interaction-mechanism-status", "interaction-provider", "set-interaction-provider!",
-        "interaction-origin-project", "refresh-interaction!", "submit-interaction-mechanism!",
-        "replace-interaction-input!", "cancel-interaction!", "cancel-pending-input!",
+        "interaction-mechanism-status", "interaction-origin-project",
+        "refresh-interaction-mechanism!", "submit-interaction-mechanism!",
+        "replace-interaction-input!", "cancel-interaction-mechanism!", "cancel-pending-input!",
         "completion-active?", "refresh-completion!", "start-completion!", "move-completion!",
         "apply-completion!", "cancel-completion!", "view-position", "view-line-prefix",
         "view-syntax-token", "view-identifier-words", "location-navigation",
@@ -7013,6 +6951,8 @@ struct GuileCall {
         OpenResource,
         RestoreWorkbenchSession,
         BufferEdited,
+        InteractionStarted,
+        InteractionPolicyState,
         MinibufferHistoryState,
         InteractionSelection,
         CommandFeedbackState,
@@ -7062,6 +7002,7 @@ struct GuileCall {
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
     const GuileDisplayFacts* display_facts = nullptr;
+    const InteractionRequest* interaction_request = nullptr;
     std::exception_ptr cpp_failure;
     ScrollInput scroll_input;
     std::string path;
@@ -7094,6 +7035,7 @@ struct GuileCall {
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
     GuileMinibufferHistoryState minibuffer_history;
+    std::optional<GuileInteractionPolicyState> interaction_policy_state;
     std::optional<std::size_t> interaction_selection;
     GuileCommandFeedbackState command_feedback;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
@@ -7105,6 +7047,7 @@ struct GuileCall {
     bool enabled = false;
     bool clear_message = false;
     bool interaction_started = false;
+    CommandTarget interaction_origin;
 };
 
 void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
@@ -7702,6 +7645,76 @@ SCM call_body(void* data) {
                                      entity_id(call.view.slot, call.view.generation),
                                      scm_from_uint64(call.revision));
             break;
+        case GuileCall::Operation::InteractionStarted: {
+            const InteractionRequest& request = *call.interaction_request;
+            SCM arguments = scm_c_make_vector(request.arguments.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < request.arguments.size(); ++index) {
+                scm_c_vector_set_x(arguments, index, setting_value(request.arguments[index]));
+            }
+            SCM target = scm_c_make_vector(3, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(target, 0,
+                               entity_id(call.interaction_origin.window.slot,
+                                         call.interaction_origin.window.generation));
+            scm_c_vector_set_x(target, 1,
+                               entity_id(call.interaction_origin.buffer.slot,
+                                         call.interaction_origin.buffer.generation));
+            scm_c_vector_set_x(target, 2,
+                               entity_id(call.interaction_origin.view.slot,
+                                         call.interaction_origin.view.generation));
+            SCM state = scm_c_make_vector(11, SCM_UNSPECIFIED);
+            scm_c_vector_set_x(
+                state, 0,
+                scm_from_utf8_symbol(request.kind == InteractionKind::Picker ? "picker" : "text"));
+            scm_c_vector_set_x(state, 1, scm_from_utf8_string(request.keymap.c_str()));
+            scm_c_vector_set_x(state, 2, scm_from_utf8_string(request.input_state.c_str()));
+            scm_c_vector_set_x(state, 3, scm_from_utf8_string(request.buffer_name.c_str()));
+            scm_c_vector_set_x(state, 4, scm_from_utf8_string(request.prompt.c_str()));
+            scm_c_vector_set_x(state, 5, scm_from_utf8_string(request.history.c_str()));
+            scm_c_vector_set_x(state, 6, scm_from_bool(request.allow_custom_input));
+            scm_c_vector_set_x(state, 7, scm_from_utf8_string(request.provider.c_str()));
+            const std::string& accept_name =
+                call.runtime->commands().definition(request.accept_command).name;
+            scm_c_vector_set_x(state, 8, scm_from_utf8_string(accept_name.c_str()));
+            scm_c_vector_set_x(state, 9, arguments);
+            scm_c_vector_set_x(state, 10, target);
+            call.result = scm_call_2(scm_c_public_ref("cind minibuffer", "interaction-started!"),
+                                     call.host, state);
+            break;
+        }
+        case GuileCall::Operation::InteractionPolicyState: {
+            call.result = scm_call_1(
+                scm_c_public_ref("cind minibuffer", "interaction-policy-state"), call.host);
+            if (scheme_false(call.result)) {
+                call.interaction_policy_state.reset();
+                break;
+            }
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 8 ||
+                !scheme_true(scm_symbol_p(scm_c_vector_ref(call.result, 0))) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 1)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 2)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 3)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 4)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 5)) ||
+                !scheme_boolean(scm_c_vector_ref(call.result, 6)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 7))) {
+                scm_misc_error("interaction-policy-state", "interaction policy state is malformed",
+                               SCM_EOL);
+            }
+            const SCM kind = scm_c_vector_ref(call.result, 0);
+            if (!symbol_is(kind, "text") && !symbol_is(kind, "picker")) {
+                scm_misc_error("interaction-policy-state", "interaction kind is unknown", SCM_EOL);
+            }
+            call.interaction_policy_state = GuileInteractionPolicyState{
+                .kind = symbol_is(kind, "picker") ? InteractionKind::Picker : InteractionKind::Text,
+                .keymap = scheme_string(scm_c_vector_ref(call.result, 1)),
+                .input_state = scheme_string(scm_c_vector_ref(call.result, 2)),
+                .buffer_name = scheme_string(scm_c_vector_ref(call.result, 3)),
+                .prompt = scheme_string(scm_c_vector_ref(call.result, 4)),
+                .history = scheme_string(scm_c_vector_ref(call.result, 5)),
+                .allow_custom_input = scheme_true(scm_c_vector_ref(call.result, 6)),
+                .provider = scheme_string(scm_c_vector_ref(call.result, 7))};
+            break;
+        }
         case GuileCall::Operation::MinibufferHistoryState: {
             call.result =
                 scm_call_3(scm_c_public_ref("cind minibuffer", "minibuffer-history-state"),
@@ -8787,6 +8800,41 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> interaction_started(const InteractionRequest& request,
+                                                         CommandTarget origin) {
+        require_owner_thread();
+        (void)lease_->runtime->windows().get(origin.window);
+        (void)lease_->runtime->buffers().get(origin.buffer);
+        (void)lease_->runtime->views().get(origin.view);
+        GuileCall call;
+        call.operation = GuileCall::Operation::InteractionStarted;
+        call.host = host_;
+        call.runtime = lease_->runtime;
+        call.interaction_request = &request;
+        call.interaction_origin = origin;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
+    std::expected<std::optional<GuileInteractionPolicyState>, std::string>
+    interaction_policy_state() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InteractionPolicyState;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.interaction_policy_state);
+    }
+
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const {
         require_owner_thread();
@@ -9497,6 +9545,16 @@ GuileRuntime::restore_workbench_session(std::string_view serialized) {
 std::expected<void, std::string> GuileRuntime::buffer_edited(BufferId buffer, ViewId view,
                                                              RevisionId revision) {
     return impl_->buffer_edited(buffer, view, revision);
+}
+
+std::expected<void, std::string>
+GuileRuntime::interaction_started(const InteractionRequest& request, CommandTarget origin) {
+    return impl_->interaction_started(request, origin);
+}
+
+std::expected<std::optional<GuileInteractionPolicyState>, std::string>
+GuileRuntime::interaction_policy_state() const {
+    return impl_->interaction_policy_state();
 }
 
 std::expected<GuileMinibufferHistoryState, std::string>

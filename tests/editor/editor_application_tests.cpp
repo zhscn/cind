@@ -141,6 +141,18 @@ void send_keys(EditorApplication& application, std::string_view notation) {
     }
 }
 
+GuileInteractionPolicyState interaction_policy(const EditorApplication& application) {
+    const std::expected<std::optional<GuileInteractionPolicyState>, std::string> state =
+        application.interaction_policy_state();
+    if (!state) {
+        throw std::runtime_error(state.error());
+    }
+    if (!*state) {
+        throw std::runtime_error("no interaction policy state is active");
+    }
+    return **state;
+}
+
 CommandId require_command(const EditorRuntime& runtime, std::string_view name) {
     const std::optional<CommandId> command = runtime.commands().find(name);
     if (!command) {
@@ -178,8 +190,8 @@ TEST_CASE("editor application owns normalized interaction dispatch") {
 
     send_keys(application, "C-s");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "search: ");
-    CHECK(application.interaction().state()->request.buffer_name == " *minibuffer*");
+    CHECK(interaction_policy(application).prompt == "search: ");
+    CHECK(interaction_policy(application).buffer_name == " *minibuffer*");
     CHECK(application.runtime().buffers().get(application.interaction().state()->buffer).name() ==
           " *minibuffer*");
     CHECK(application.last_command() == "search.prompt");
@@ -291,7 +303,7 @@ TEST_CASE("query replace is a shared scripted command") {
     send_keys(application, "M-%");
     CHECK(application.last_command() == "search.replace");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Replace: ");
+    CHECK(interaction_policy(application).prompt == "Replace: ");
     CHECK(application.runtime()
               .commands()
               .definition(require_command(application.runtime(), "search.replace"))
@@ -365,7 +377,7 @@ TEST_CASE("query replace composes minibuffer and single-key input policy") {
     application.insert_text("é");
     send_keys(application, "RET");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Replace é with: ");
+    CHECK(interaction_policy(application).prompt == "Replace é with: ");
 
     application.insert_text("e");
     send_keys(application, "RET");
@@ -427,7 +439,7 @@ TEST_CASE("resource policy selects file modes without making scratch buffers C++
 
     send_keys(scheme, "C-c C-e");
     REQUIRE(scheme.interaction().state() != nullptr);
-    CHECK(scheme.interaction().state()->request.prompt == "Eval: ");
+    CHECK(interaction_policy(scheme).prompt == "Eval: ");
 
     EditorApplication plain_scheme = make_application("plain.scm", "{");
     plain_scheme.session().set_caret(TextOffset{1});
@@ -1137,12 +1149,12 @@ TEST_CASE("Guile meow keypad supports literal and transparent base-layer fallbac
 
     send_keys(application, "x b");
     REQUIRE(application.interaction().active());
-    CHECK(application.interaction().state()->request.prompt == "Switch buffer: ");
+    CHECK(interaction_policy(application).prompt == "Switch buffer: ");
     send_keys(application, "C-g");
 
     send_keys(application, "m x");
     REQUIRE(application.interaction().active());
-    CHECK(application.interaction().state()->request.prompt == "Command: ");
+    CHECK(interaction_policy(application).prompt == "Command: ");
     send_keys(application, "C-g");
 
     int transparent_calls = 0;
@@ -1636,7 +1648,7 @@ TEST_CASE("scripted save-as policy configures and saves a file buffer") {
                          }});
     send_keys(application, "C-x C-w");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Write file: ");
+    CHECK(interaction_policy(application).prompt == "Write file: ");
     CHECK(application.interaction().input_text().empty());
     application.insert_text(path.string());
     send_keys(application, "RET");
@@ -1799,7 +1811,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
 
         send_keys(application, "C-x p f");
         REQUIRE(application.interaction().state() != nullptr);
-        CHECK(application.interaction().state()->request.provider == "project-files");
+        CHECK(interaction_policy(application).provider == "project-files");
         {
             std::ofstream output(root / "src" / "watched.cpp");
             output << "int watched() {}\n";
@@ -1830,7 +1842,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
 
         send_keys(application, "C-x p g");
         REQUIRE(application.interaction().state() != nullptr);
-        CHECK(application.interaction().state()->request.prompt == "Project search: ");
+        CHECK(interaction_policy(application).prompt == "Project search: ");
         application.insert_text("int");
         send_keys(application, "RET");
         CHECK(application.project_search_running());
@@ -1935,13 +1947,13 @@ TEST_CASE("default keymap follows Emacs movement search undo and prefix conventi
     CHECK(application.session().caret().value == 1);
     send_keys(application, "C-s");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "search: ");
+    CHECK(interaction_policy(application).prompt == "search: ");
     send_keys(application, "C-g");
     CHECK_FALSE(application.interaction().active());
 
     send_keys(application, "C-r");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "search backward: ");
+    CHECK(interaction_policy(application).prompt == "search backward: ");
     send_keys(application, "C-g");
 
     application.insert_text("x");
@@ -2498,7 +2510,7 @@ TEST_CASE("workbench session commands persist and restore through the async runt
 
     send_keys(application, "C-x w S");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Save workbench session: ");
+    CHECK(interaction_policy(application).prompt == "Save workbench session: ");
     application.insert_text(session_path.string());
     send_keys(application, "RET");
     while (application.has_background_work()) {
@@ -2515,7 +2527,7 @@ TEST_CASE("workbench session commands persist and restore through the async runt
 
     send_keys(application, "C-x w R");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Restore workbench session: ");
+    CHECK(interaction_policy(application).prompt == "Restore workbench session: ");
     application.insert_text(session_path.string());
     send_keys(application, "RET");
     while (application.has_background_work()) {
@@ -2560,7 +2572,7 @@ TEST_CASE("window roles pinning and policy provenance stay frontend independent"
     REQUIRE(application.focus_window(second));
     send_keys(application, "C-x w r");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "window-roles");
+    CHECK(interaction_policy(application).provider == "window-roles");
     application.insert_text("doc");
     send_keys(application, "RET");
     CHECK(application.workbench_slot(application.workbench_id(), "doc") == std::optional{second});
@@ -2740,7 +2752,7 @@ TEST_CASE("workbench commands manage named editing surfaces") {
 
     send_keys(application, "C-x w n");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "New workbench: ");
+    CHECK(interaction_policy(application).prompt == "New workbench: ");
     application.insert_text("notes");
     send_keys(application, "RET");
 
@@ -2754,7 +2766,7 @@ TEST_CASE("workbench commands manage named editing surfaces") {
 
     send_keys(application, "C-x w s");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "workbenches");
+    CHECK(interaction_policy(application).provider == "workbenches");
     CHECK(application.interaction().state()->candidates.size() == 2);
     application.insert_text("default");
     send_keys(application, "RET");
@@ -2796,24 +2808,24 @@ TEST_CASE("buffer picker defaults to the active workbench and can widen globally
 
     send_keys(application, "C-x b");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "buffers");
+    CHECK(interaction_policy(application).provider == "buffers");
     CHECK(std::ranges::none_of(
         application.interaction().state()->candidates,
         [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
 
     send_keys(application, "C-x b");
-    CHECK(application.interaction().state()->request.provider == "buffers-global");
+    CHECK(interaction_policy(application).provider == "buffers-global");
     CHECK(std::ranges::any_of(
         application.interaction().state()->candidates,
         [&](const InteractionCandidate& candidate) { return candidate.value == first_only_name; }));
     send_keys(application, "C-x b");
-    CHECK(application.interaction().state()->request.provider == "buffers");
+    CHECK(interaction_policy(application).provider == "buffers");
     send_keys(application, "C-g");
 
     CHECK(application.buffer_id() == help);
     send_keys(application, "C-x b C-x b");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "buffers-global");
+    CHECK(interaction_policy(application).provider == "buffers-global");
     application.insert_text(first_only_name);
     send_keys(application, "RET");
     CHECK(application.buffer_id() == first_only);
@@ -2923,7 +2935,7 @@ TEST_CASE("describe bindings and command palette use shared command state") {
 
     send_keys(application, "M-x");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.provider == "commands");
+    CHECK(interaction_policy(application).provider == "commands");
     REQUIRE(application.interaction().state()->candidates.size() > 2);
     CHECK(application.input_focus() == "minibuffer");
     REQUIRE(application.active_keymap_layers().size() == 2);
@@ -3076,8 +3088,8 @@ TEST_CASE("Scheme expression evaluation uses the shared minibuffer command loop"
 
     send_keys(application, "M-:");
     REQUIRE(application.interaction().state() != nullptr);
-    CHECK(application.interaction().state()->request.prompt == "Eval: ");
-    CHECK(application.interaction().state()->request.history == "scheme-expression");
+    CHECK(interaction_policy(application).prompt == "Eval: ");
+    CHECK(interaction_policy(application).history == "scheme-expression");
     application.insert_text("(+ 1 2)");
     send_keys(application, "RET");
 

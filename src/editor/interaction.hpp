@@ -59,8 +59,11 @@ private:
     bool sealed_ = false;
 };
 
-struct InteractionState {
-    InteractionRequest request;
+// Native state for the transient editor surface and provider execution. Guile
+// owns the interaction policy record, including prompts, history, submission,
+// and candidate selection.
+struct InteractionMechanismState {
+    bool uses_candidates = false;
     CommandTarget origin;
     WindowId window;
     BufferId buffer;
@@ -72,44 +75,36 @@ struct InteractionState {
     std::string error;
 };
 
-struct InteractionSubmission {
-    CommandId accept_command;
-    CommandInvocation invocation;
-    CommandTarget target;
-    std::string history;
-};
-
 // Owns a transient minibuffer Buffer/View/Window while an interaction is
 // active. The input is ordinary editor state; providers and frontends observe
 // it through the same registries as every other editable surface.
-class InteractionController {
+class InteractionMechanisms {
 public:
-    InteractionController(EditorRuntime& runtime, InteractionProviderRegistry& providers)
+    InteractionMechanisms(EditorRuntime& runtime, InteractionProviderRegistry& providers)
         : runtime_(&runtime), providers_(&providers) {}
-    ~InteractionController() noexcept { (void)cancel(); }
+    ~InteractionMechanisms() noexcept { (void)cancel(); }
 
-    InteractionController(const InteractionController&) = delete;
-    InteractionController& operator=(const InteractionController&) = delete;
+    InteractionMechanisms(const InteractionMechanisms&) = delete;
+    InteractionMechanisms& operator=(const InteractionMechanisms&) = delete;
 
     void attach_async_runtime(AsyncRuntime& runtime) { async_runtime_ = &runtime; }
 
     bool active() const { return state_.has_value(); }
-    InteractionState* state() { return state_ ? &*state_ : nullptr; }
-    const InteractionState* state() const { return state_ ? &*state_ : nullptr; }
+    InteractionMechanismState* state() { return state_ ? &*state_ : nullptr; }
+    const InteractionMechanismState* state() const { return state_ ? &*state_ : nullptr; }
 
     std::expected<void, std::string> start(InteractionRequest request, CommandContext& context);
     std::string input_text() const;
     TextOffset input_caret() const;
     RevisionId input_revision() const;
-    std::expected<void, std::string> set_provider(std::string provider);
     std::expected<RevisionId, std::string> replace_input(std::string_view input);
-    void refresh_candidates();
-    std::expected<InteractionSubmission, std::string>
-    submit(std::optional<std::size_t> selected = std::nullopt);
+    std::expected<void, std::string> refresh_candidates(std::string_view provider);
+    std::expected<std::string, std::string> submit(std::optional<std::size_t> selected,
+                                                   bool allow_custom_input);
     bool cancel() noexcept;
 
 private:
-    void refresh();
+    void refresh(std::string_view provider);
     void destroy_surface(WindowId window, ViewId view, BufferId buffer) noexcept;
     void cancel_pending() noexcept;
     void apply_candidates(std::uint64_t generation, std::vector<InteractionCandidate> candidates);
@@ -120,7 +115,7 @@ private:
     AsyncRuntime* async_runtime_ = nullptr;
     std::function<void()> cancel_pending_task_;
     std::uint64_t next_generation_ = 0;
-    std::optional<InteractionState> state_;
+    std::optional<InteractionMechanismState> state_;
 };
 
 } // namespace cind
