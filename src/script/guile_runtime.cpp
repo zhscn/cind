@@ -29,10 +29,11 @@ namespace cind {
 
 namespace {
 
-constexpr std::array<std::string_view, 21> bundled_guile_modules = {
-    "application", "command",   "input",      "lsp",         "async", "workbench",  "lifecycle",
-    "pointer",     "extension", "emacs",      "toy-modal",   "meow",  "vim",        "helix",
-    "structural",  "paredit",   "minibuffer", "development", "ares",  "introspect", "core",
+constexpr std::array<std::string_view, 22> bundled_guile_modules = {
+    "application", "command",   "completion", "input",      "lsp",     "async",
+    "workbench",   "lifecycle", "pointer",    "extension",  "emacs",   "toy-modal",
+    "meow",        "vim",       "helix",      "structural", "paredit", "minibuffer",
+    "development", "ares",      "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
@@ -7541,7 +7542,7 @@ SCM call_body(void* data) {
                 scm_c_vector_set_x(item_ids, index,
                                    scm_from_uint64(call.completion_item_ids[index]));
             }
-            call.result = scm_call_4(scm_c_public_ref("cind application", "completion-transition!"),
+            call.result = scm_call_4(scm_c_public_ref("cind completion", "completion-transition!"),
                                      call.host, item_ids, scm_from_bool(call.completion_automatic),
                                      scm_from_bool(call.completion_pending));
             if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 2 ||
@@ -7561,11 +7562,11 @@ SCM call_body(void* data) {
         }
         case GuileCall::Operation::CompletionFinished:
             call.result =
-                scm_call_1(scm_c_public_ref("cind application", "finish-completion!"), call.host);
+                scm_call_1(scm_c_public_ref("cind completion", "finish-completion!"), call.host);
             break;
         case GuileCall::Operation::CompletionSelection:
             call.result =
-                scm_call_1(scm_c_public_ref("cind application", "completion-selection"), call.host);
+                scm_call_1(scm_c_public_ref("cind completion", "completion-selection"), call.host);
             if (!scheme_false(call.result)) {
                 if (scm_is_unsigned_integer(call.result, 0,
                                             std::numeric_limits<std::size_t>::max()) == 0) {

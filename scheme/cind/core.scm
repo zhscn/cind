@@ -7,6 +7,7 @@
   #:use-module (cind ares)
   #:use-module (cind async)
   #:use-module (cind command)
+  #:use-module (cind completion)
   #:use-module (cind development)
   #:use-module (cind emacs)
   #:use-module (cind helix)

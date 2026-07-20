@@ -299,7 +299,7 @@ TEST_CASE("Guile completion selection follows stable item ids") {
     GuileRuntime guile(runtime);
 
     const std::expected<GuileEvaluationResult, std::string> result =
-        guile.evaluate({.source = R"((use-modules (cind application))
+        guile.evaluate({.source = R"((use-modules (cind completion))
 (list (reconcile-completion! host #(11 22 33))
       (move-completion-selection! host 1)
       (reconcile-completion! host #(44 22 33))
@@ -792,13 +792,13 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
     CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind application", "cind command",    "cind input",
-                                   "cind lsp",         "cind async",      "cind workbench",
-                                   "cind lifecycle",   "cind pointer",    "cind extension",
-                                   "cind emacs",       "cind toy-modal",  "cind meow",
-                                   "cind vim",         "cind helix",      "cind structural",
-                                   "cind paredit",     "cind minibuffer", "cind development",
-                                   "cind ares",        "cind introspect", "cind core"});
+          std::vector<std::string>{
+              "cind application", "cind command",    "cind completion",  "cind input",
+              "cind lsp",         "cind async",      "cind workbench",   "cind lifecycle",
+              "cind pointer",     "cind extension",  "cind emacs",       "cind toy-modal",
+              "cind meow",        "cind vim",        "cind helix",       "cind structural",
+              "cind paredit",     "cind minibuffer", "cind development", "cind ares",
+              "cind introspect",  "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
