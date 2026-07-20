@@ -14,7 +14,8 @@
             lsp-session-id
             lsp-session-bound?
             lsp-buffer-edited!
-            lsp-buffer-released!))
+            lsp-buffer-released!
+            lsp-diagnostics-failed!))
 
 (define provider-tables (make-weak-key-hash-table))
 (define session-bindings (make-weak-key-hash-table))
@@ -210,3 +211,8 @@
     (if (null? remaining)
         (hashq-remove! session-bindings host)
         (hashq-set! session-bindings host remaining))))
+
+(define (lsp-diagnostics-failed! host message)
+  (unless (string? message)
+    (error "LSP diagnostics failure must be a string" message))
+  (set-message! host (format #f "LSP diagnostics failed: ~a" message)))

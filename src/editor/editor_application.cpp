@@ -3316,12 +3316,8 @@ EditorApplication::ensure_lsp_session(CommandTarget target, ScriptLspProviderSpe
 
 std::expected<void, std::string>
 EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
-    if (!lsp_diagnostic_sessions_.insert(session_id.value).second) {
-        return {};
-    }
     LspSession* session = lsp_sessions_->find(session_id);
     if (session == nullptr) {
-        lsp_diagnostic_sessions_.erase(session_id.value);
         return std::unexpected("unknown LSP diagnostics session");
     }
     LspDiagnosticsFeature::attach(
@@ -3329,17 +3325,22 @@ EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
         [this, session_id](LspPublishedDiagnostics published) {
             publish_lsp_diagnostics(session_id, std::move(published));
         },
-        [this](std::string error) {
-            set_message(std::format("LSP diagnostics failed: {}", std::move(error)));
-        });
+        [this](const std::string& error) { report_lsp_diagnostics_failure(error); });
     return {};
+}
+
+void EditorApplication::report_lsp_diagnostics_failure(std::string_view message) {
+    const std::expected<void, std::string> reported = guile_.lsp_diagnostics_failed(message);
+    if (!reported) {
+        return;
+    }
 }
 
 void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
                                                 LspPublishedDiagnostics published) {
     const std::expected<std::string, std::string> resource = file_uri_to_path(published.uri);
     if (!resource) {
-        set_message(std::format("LSP diagnostics failed: {}", resource.error()));
+        report_lsp_diagnostics_failure(resource.error());
         return;
     }
     const std::optional<BufferId> buffer_id = runtime_.buffers().find_by_resource(*resource);
@@ -3359,7 +3360,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
         const std::optional<TextRange> range =
             text_range_from_lsp(snapshot.content(), source.range);
         if (!range) {
-            set_message("LSP diagnostics failed: server returned an invalid range");
+            report_lsp_diagnostics_failure("server returned an invalid range");
             return;
         }
         diagnostics.push_back({.range = *range,
@@ -3372,7 +3373,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
         runtime_.buffers().set_diagnostics(*buffer_id, std::format("lsp:{}", session_id.value),
                                            snapshot.revision(), std::move(diagnostics));
     } catch (const std::exception& exception) {
-        set_message(std::format("LSP diagnostics failed: {}", exception.what()));
+        report_lsp_diagnostics_failure(exception.what());
     }
 }
 

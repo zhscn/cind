@@ -6965,6 +6965,7 @@ struct GuileCall {
         SetPageRows,
         LspSessionBound,
         LspBufferReleased,
+        LspDiagnosticsFailed,
         BufferSavingState,
         CommandInput,
         CommandResultFeedback,
@@ -7814,6 +7815,11 @@ SCM call_body(void* data) {
             call.result =
                 scm_call_2(scm_c_public_ref("cind lsp", "lsp-buffer-released!"), call.host,
                            entity_id(call.buffer.slot, call.buffer.generation));
+            break;
+        case GuileCall::Operation::LspDiagnosticsFailed:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind lsp", "lsp-diagnostics-failed!"), call.host,
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
         case GuileCall::Operation::BufferSavingState:
             call.result =
@@ -9014,6 +9020,21 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::LspDiagnosticsFailed;
+        call.host = host_;
+        call.source = message;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const {
         require_owner_thread();
         (void)lease_->runtime->buffers().get(buffer);
@@ -9722,6 +9743,10 @@ std::expected<bool, std::string> GuileRuntime::lsp_session_bound(BufferId buffer
 
 std::expected<void, std::string> GuileRuntime::lsp_buffer_released(BufferId buffer) {
     return impl_->lsp_buffer_released(buffer);
+}
+
+std::expected<void, std::string> GuileRuntime::lsp_diagnostics_failed(std::string_view message) {
+    return impl_->lsp_diagnostics_failed(message);
 }
 
 std::expected<bool, std::string> GuileRuntime::buffer_saving(BufferId buffer) const {

@@ -21,7 +21,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -387,6 +386,7 @@ private:
                                                                  ScriptLspProviderSpec provider);
     std::expected<void, std::string> attach_lsp_diagnostics(LspSessionId session);
     std::expected<void, std::string> synchronize_lsp_session(BufferId buffer, LspSessionId session);
+    void report_lsp_diagnostics_failure(std::string_view message);
     void publish_lsp_diagnostics(LspSessionId session, LspPublishedDiagnostics published);
     std::expected<ScriptAsyncExternalServices::Cancel, std::string>
     start_lsp_navigation(const ScriptLspNavigationRequest& request,
@@ -413,7 +413,6 @@ private:
     std::unique_ptr<LspSessionRegistry> lsp_sessions_;
     AsyncScriptHost script_async_;
     std::unique_ptr<CompletionPipeline> completion_;
-    std::set<std::uint64_t> lsp_diagnostic_sessions_;
 };
 
 } // namespace cind

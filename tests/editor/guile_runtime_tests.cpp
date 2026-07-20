@@ -1573,6 +1573,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         REQUIRE(state.has_value());
         return state->message;
     };
+    REQUIRE(guile.lsp_diagnostics_failed("invalid response").has_value());
+    CHECK(feedback_message() == "LSP diagnostics failed: invalid response");
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 

@@ -433,6 +433,7 @@ public:
     std::expected<bool, std::string> lsp_session_bound(BufferId buffer,
                                                        std::uint64_t session) const;
     std::expected<void, std::string> lsp_buffer_released(BufferId buffer);
+    std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
     std::expected<void, std::string>
