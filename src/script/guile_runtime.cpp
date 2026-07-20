@@ -29,10 +29,10 @@ namespace cind {
 
 namespace {
 
-constexpr std::array<std::string_view, 19> bundled_guile_modules = {
-    "command",    "input",       "lsp",  "async",      "lifecycle", "pointer",    "extension",
-    "emacs",      "toy-modal",   "meow", "vim",        "helix",     "structural", "paredit",
-    "minibuffer", "development", "ares", "introspect", "core",
+constexpr std::array<std::string_view, 20> bundled_guile_modules = {
+    "application", "command",    "input",       "lsp",  "async",      "lifecycle", "pointer",
+    "extension",   "emacs",      "toy-modal",   "meow", "vim",        "helix",     "structural",
+    "paredit",     "minibuffer", "development", "ares", "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
@@ -4377,26 +4377,6 @@ SCM scroll_view_lines(SCM host_object, SCM view_value, SCM lines_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM set_caret_reveal(SCM host_object, SCM reveal_value) {
-    HostLease& host = require_host(host_object, "set-caret-reveal!");
-    if (!scheme_boolean(reveal_value)) {
-        scm_wrong_type_arg_msg("set-caret-reveal!", 2, reveal_value, "boolean");
-    }
-    if (!host.services.set_caret_reveal) {
-        scm_misc_error("set-caret-reveal!", "caret presentation capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        host.services.set_caret_reveal(scheme_true(reveal_value));
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-caret-reveal!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-caret-reveal!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 SCM undo_edit(SCM host_object, SCM view_value) {
     HostLease& host = require_host(host_object, "undo!");
     const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "undo!", 2);
@@ -4988,22 +4968,6 @@ SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM exit_editor(SCM host_object) {
-    HostLease& host = require_host(host_object, "exit-editor!");
-    if (!host.services.request_exit) {
-        scm_misc_error("exit-editor!", "application-exit capability is unavailable", SCM_EOL);
-    }
-    try {
-        host.services.request_exit();
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("exit-editor!", exception.what());
-    } catch (...) {
-        scm_misc_error("exit-editor!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 SCM split_window(SCM host_object, SCM window_value, SCM axis_value) {
@@ -5253,22 +5217,6 @@ SCM focus_window(SCM host_object, SCM window_value) {
         scm_misc_error("focus-window!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-SCM request_redraw(SCM host_object) {
-    HostLease& host = require_host(host_object, "request-redraw!");
-    if (!host.services.request_redraw) {
-        scm_misc_error("request-redraw!", "redraw capability is unavailable", SCM_EOL);
-    }
-    try {
-        host.services.request_redraw();
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("request-redraw!", exception.what());
-    } catch (...) {
-        scm_misc_error("request-redraw!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
 }
 
 SCM interaction_mechanism_status(SCM host_object) {
@@ -6025,8 +5973,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(move_caret_to_line));
     (void)scm_c_define_gsubr("scroll-view-lines!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(scroll_view_lines));
-    (void)scm_c_define_gsubr("set-caret-reveal!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_caret_reveal));
     (void)scm_c_define_gsubr("undo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(undo_edit));
     (void)scm_c_define_gsubr("redo!", 2, 0, 0, reinterpret_cast<scm_t_subr>(redo_edit));
     (void)scm_c_define_gsubr("move-caret-lines!", 3, 0, 0,
@@ -6119,7 +6065,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(buffer_modified_p));
     (void)scm_c_define_gsubr("release-buffer!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(release_buffer));
-    (void)scm_c_define_gsubr("exit-editor!", 1, 0, 0, reinterpret_cast<scm_t_subr>(exit_editor));
     (void)scm_c_define_gsubr("split-window!", 3, 0, 0, reinterpret_cast<scm_t_subr>(split_window));
     (void)scm_c_define_gsubr("delete-window!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(delete_window));
@@ -6144,8 +6089,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("workbench-slot", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(workbench_slot));
     (void)scm_c_define_gsubr("focus-window!", 2, 0, 0, reinterpret_cast<scm_t_subr>(focus_window));
-    (void)scm_c_define_gsubr("request-redraw!", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(request_redraw));
     scm_c_export(
         "define-command!", "set-command-documentation!", "define-interaction-provider!",
         "define-completion-provider!", "define-keymap!", "bind-key!", "bind-key-if-command!",
@@ -6178,26 +6121,25 @@ void initialize_host_module(void*) {
         "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
         "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
         "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
-        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
-        "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
-        "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!", "page-rows",
-        "interaction-mechanism-status", "interaction-origin-project",
-        "refresh-interaction-mechanism!", "submit-interaction-mechanism!",
-        "replace-interaction-input!", "cancel-interaction-mechanism!", "cancel-pending-input!",
-        "completion-active?", "refresh-completion!", "start-completion!", "move-completion!",
-        "apply-completion!", "cancel-completion!", "view-position", "view-line-prefix",
-        "view-syntax-token", "view-identifier-words", "location-navigation",
-        "set-location-navigation!", "location-list-target", "move-location-list!",
-        "position-buffer-view!", "project-index-state", "request-project-index!",
-        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
-        "buffer-id-by-resource", "resource-mode", "project-for-resource",
-        "project-provider-definitions", "project-id-by-root", "create-project!",
-        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
-        "create-buffer!", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",
+        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "undo!",
+        "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!",
+        "indent!", "type-text!", "structural-edit!", "page-rows", "interaction-mechanism-status",
+        "interaction-origin-project", "refresh-interaction-mechanism!",
+        "submit-interaction-mechanism!", "replace-interaction-input!",
+        "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
+        "refresh-completion!", "start-completion!", "move-completion!", "apply-completion!",
+        "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
+        "view-identifier-words", "location-navigation", "set-location-navigation!",
+        "location-list-target", "move-location-list!", "position-buffer-view!",
+        "project-index-state", "request-project-index!", "normalize-resource-path",
+        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
+        "project-for-resource", "project-provider-definitions", "project-id-by-root",
+        "create-project!", "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!",
+        "open-buffer-ids", "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!",
         "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
         "window-view-id", "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
         "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
-        "request-redraw!", nullptr);
+        nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -6956,6 +6898,8 @@ struct GuileCall {
         MinibufferHistoryState,
         InteractionSelection,
         CommandFeedbackState,
+        ApplicationState,
+        SetCaretReveal,
         BufferSavingState,
         CommandInput,
         CommandResultFeedback,
@@ -7038,6 +6982,7 @@ struct GuileCall {
     std::optional<GuileInteractionPolicyState> interaction_policy_state;
     std::optional<std::size_t> interaction_selection;
     GuileCommandFeedbackState command_feedback;
+    GuileApplicationState application_state;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
     Operation operation = Operation::Load;
@@ -7763,6 +7708,23 @@ SCM call_body(void* data) {
             call.command_feedback.message = scheme_string(scm_c_vector_ref(call.result, 0));
             call.command_feedback.last_key = scheme_string(scm_c_vector_ref(call.result, 1));
             call.command_feedback.last_command = scheme_string(scm_c_vector_ref(call.result, 2));
+            break;
+        case GuileCall::Operation::ApplicationState:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind application", "application-state"), call.host);
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 2 ||
+                !scheme_boolean(scm_c_vector_ref(call.result, 0)) ||
+                !scheme_boolean(scm_c_vector_ref(call.result, 1))) {
+                scm_misc_error("application-state",
+                               "application state must be #(exit-requested? reveal-caret?)",
+                               SCM_EOL);
+            }
+            call.application_state.exit_requested = scheme_true(scm_c_vector_ref(call.result, 0));
+            call.application_state.reveal_caret = scheme_true(scm_c_vector_ref(call.result, 1));
+            break;
+        case GuileCall::Operation::SetCaretReveal:
+            call.result = scm_call_2(scm_c_public_ref("cind application", "set-caret-reveal!"),
+                                     call.host, scm_from_bool(call.enabled));
             break;
         case GuileCall::Operation::BufferSavingState:
             call.result =
@@ -8881,6 +8843,35 @@ public:
         return std::move(call.command_feedback);
     }
 
+    std::expected<GuileApplicationState, std::string> application_state() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::ApplicationState;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.application_state;
+    }
+
+    std::expected<void, std::string> set_caret_reveal(bool reveal) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetCaretReveal;
+        call.host = host_;
+        call.enabled = reveal;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const {
         require_owner_thread();
         (void)lease_->runtime->buffers().get(buffer);
@@ -9568,6 +9559,14 @@ std::expected<std::optional<std::size_t>, std::string> GuileRuntime::interaction
 
 std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {
     return impl_->command_feedback_state();
+}
+
+std::expected<GuileApplicationState, std::string> GuileRuntime::application_state() const {
+    return impl_->application_state();
+}
+
+std::expected<void, std::string> GuileRuntime::set_caret_reveal(bool reveal) {
+    return impl_->set_caret_reveal(reveal);
 }
 
 std::expected<bool, std::string> GuileRuntime::buffer_saving(BufferId buffer) const {

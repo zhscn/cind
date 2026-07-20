@@ -300,7 +300,6 @@ struct GuileHostServices {
     std::function<BufferId(WindowId)> window_buffer;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;
-    std::function<void()> request_exit;
     std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
@@ -311,8 +310,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, bool)> set_window_pinned;
     std::function<std::optional<WindowId>(WorkbenchId, std::string_view)> workbench_slot;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
-    std::function<void()> request_redraw;
-    std::function<void(bool)> set_caret_reveal;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<void(ViewId, ViewSelection)> set_selection;
     std::function<void(ViewId)> clear_selection;
@@ -378,6 +375,11 @@ struct GuileRuntimeSnapshot {
     std::optional<std::string> last_error;
 };
 
+struct GuileApplicationState {
+    bool exit_requested = false;
+    bool reveal_caret = true;
+};
+
 // Owns the editor-thread Guile policy environment. C++ registries and
 // generational editor objects remain authoritative; Scheme receives only
 // explicit host capabilities and never a process-global current editor.
@@ -423,6 +425,8 @@ public:
     interaction_policy_state() const;
     std::expected<std::optional<std::size_t>, std::string> interaction_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
+    std::expected<GuileApplicationState, std::string> application_state() const;
+    std::expected<void, std::string> set_caret_reveal(bool reveal);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
     std::expected<void, std::string>

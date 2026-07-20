@@ -770,12 +770,13 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
-    CHECK(snapshot.modules == std::vector<std::string>{
-                                  "cind command", "cind input", "cind lsp", "cind async",
-                                  "cind lifecycle", "cind pointer", "cind extension", "cind emacs",
-                                  "cind toy-modal", "cind meow", "cind vim", "cind helix",
-                                  "cind structural", "cind paredit", "cind minibuffer",
-                                  "cind development", "cind ares", "cind introspect", "cind core"});
+    CHECK(snapshot.modules ==
+          std::vector<std::string>{
+              "cind application", "cind command",    "cind input",      "cind lsp",
+              "cind async",       "cind lifecycle",  "cind pointer",    "cind extension",
+              "cind emacs",       "cind toy-modal",  "cind meow",       "cind vim",
+              "cind helix",       "cind structural", "cind paredit",    "cind minibuffer",
+              "cind development", "cind ares",       "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -1212,7 +1213,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     BufferId replacement_buffer;
     bool buffer_released = false;
     std::string release_error;
-    bool quit_requested = false;
     WindowId split_target;
     WindowSplitAxis split_axis = WindowSplitAxis::Rows;
     bool window_split = false;
@@ -1222,7 +1222,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool other_windows_deleted = false;
     WindowId focused_window;
     bool other_window_selected = false;
-    bool redraw_requested = false;
     std::string window_error;
     std::string clipboard;
     std::string clipboard_error;
@@ -1370,7 +1369,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              buffer_released = true;
              return {};
          },
-         .request_exit = [&] { quit_requested = true; },
          .split_window = [&](WindowId target,
                              WindowSplitAxis axis) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
@@ -1410,8 +1408,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              other_window_selected = true;
              return {};
          },
-         .request_redraw = [&] { redraw_requested = true; },
-         .set_caret_reveal = {},
          .active_key_bindings =
              [] {
                  return std::vector<GuileKeyBindingSummary>{
@@ -1787,13 +1783,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK_FALSE(std::get<bool>(backward_search_prompt->arguments.front()));
 
     const CommandId search_accept = require_command(runtime, "search.accept");
+    REQUIRE(guile.set_caret_reveal(false).has_value());
     const CommandResult buffer_search_result = runtime.commands().invoke(
         search_accept, context,
         CommandInvocation{.arguments = {true, std::string("bc")}, .prefix = {}});
     REQUIRE(buffer_search_result.has_value());
     CHECK(runtime.views().caret(view) == TextOffset{1});
     CHECK(feedback_message().empty());
-    CHECK(redraw_requested);
+    REQUIRE(guile.application_state().has_value());
+    CHECK(guile.application_state()->reveal_caret);
     CHECK(runtime.commands().definition(search_accept).source == "scheme:(cind core)");
 
     REQUIRE(guile.set_message("").has_value());
@@ -1971,12 +1969,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     (void)restore.commit();
     restored_buffer.mark_saved(restored_buffer.snapshot().content());
 
-    const CommandResult quit =
-        runtime.commands().invoke(require_command(runtime, "application.quit"), context);
-    REQUIRE(quit.has_value());
-    REQUIRE(quit_requested);
-
-    quit_requested = false;
     EditTransaction modify_for_quit = restored_buffer.begin_transaction();
     modify_for_quit.insert(restored_buffer.snapshot().content().end_offset(), "changed");
     (void)modify_for_quit.commit();
@@ -1988,26 +1980,26 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(confirmation->prompt == "1 modified buffer; exit anyway? (yes or no) ");
     CHECK(runtime.commands().definition(confirmation->accept_command).name ==
           "application.quit.accept");
-    CHECK_FALSE(quit_requested);
+    REQUIRE(guile.application_state().has_value());
+    CHECK_FALSE(guile.application_state()->exit_requested);
 
     const CommandResult declined = runtime.commands().invoke(
         require_command(runtime, "application.quit.accept"), context,
         CommandInvocation{.arguments = {std::string("no")}, .prefix = {}});
     REQUIRE(declined.has_value());
-    CHECK_FALSE(quit_requested);
+    CHECK_FALSE(guile.application_state()->exit_requested);
     CHECK(feedback_message() == "quit cancelled");
 
     const CommandResult confirmed = runtime.commands().invoke(
         require_command(runtime, "application.quit.accept"), context,
         CommandInvocation{.arguments = {std::string("yes")}, .prefix = {}});
     REQUIRE(confirmed.has_value());
-    CHECK(quit_requested);
+    CHECK(guile.application_state()->exit_requested);
 
-    quit_requested = false;
     const CommandResult force_quit =
         runtime.commands().invoke(require_command(runtime, "application.force-quit"), context);
     REQUIRE(force_quit.has_value());
-    REQUIRE(quit_requested);
+    REQUIRE(guile.application_state()->exit_requested);
 
     EditTransaction restore_after_quit = restored_buffer.begin_transaction();
     restore_after_quit.replace(
@@ -2041,12 +2033,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(other_window_selected);
     CHECK(focused_window == alternate_window);
 
+    REQUIRE(guile.set_caret_reveal(false).has_value());
     const CommandResult redraw =
         runtime.commands().invoke(require_command(runtime, "editor.redraw"), context);
     REQUIRE(redraw.has_value());
-    CHECK(redraw_requested);
+    CHECK(guile.application_state()->reveal_caret);
 
-    redraw_requested = false;
+    REQUIRE(guile.set_caret_reveal(false).has_value());
     const ViewSelection motion_source{.ranges = {{.anchor = TextOffset{0},
                                                   .head = TextOffset{0},
                                                   .granularity = SelectionGranularity::Character}},
@@ -2065,7 +2058,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK_FALSE(requested_motion_extend);
     CHECK(runtime.views().caret(view) == TextOffset{2});
     CHECK_FALSE(runtime.views().get(view).viewport().preferred_column.has_value());
-    CHECK(redraw_requested);
+    CHECK(guile.application_state()->reveal_caret);
 
     CHECK(motion_loop.execute(require_command(runtime, "cursor.backward-expression"), context)
               .status == CommandLoopStatus::Executed);

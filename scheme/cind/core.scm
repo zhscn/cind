@@ -3,6 +3,7 @@
   #:use-module (ice-9 optargs)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
+  #:use-module (cind application)
   #:use-module (cind ares)
   #:use-module (cind async)
   #:use-module (cind command)
@@ -92,6 +93,7 @@
    host
    (lambda (host buffer view revision)
      (set-message! host "")
+     (request-redraw! host)
      (let ((status (interaction-status host)))
        (when (and (vector-ref status 0)
                   (equal? buffer (vector-ref status 6))

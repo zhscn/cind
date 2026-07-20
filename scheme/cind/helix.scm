@@ -1,4 +1,5 @@
 (define-module (cind helix)
+  #:use-module (cind application)
   #:use-module (cind command)
   #:use-module (cind host)
   #:use-module (cind input)

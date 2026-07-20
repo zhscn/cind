@@ -184,7 +184,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .set_view_caret =
                [this](ViewId view, std::uint32_t offset) {
                    session_for(view).set_caret(TextOffset{offset});
-                   reveal_caret_ = true;
+                   show_caret();
                },
            .move_caret_lines =
                [this](ViewId view, std::int64_t delta) {
@@ -570,7 +570,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                [this](BufferId buffer, BufferId replacement) {
                    return release_buffer(buffer, replacement);
                },
-           .request_exit = [this] { quit_ = true; },
            .split_window = [this](WindowId window,
                                   WindowSplitAxis axis) -> std::expected<void, std::string> {
                return split_window(window, axis) ? std::expected<void, std::string>{}
@@ -604,8 +603,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
            },
-           .request_redraw = [this] { reveal_caret_ = true; },
-           .set_caret_reveal = [this](bool reveal) { reveal_caret_ = reveal; },
            .active_key_bindings =
                [this] {
                    std::vector<GuileKeyBindingSummary> result;
@@ -633,7 +630,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .set_selection =
                [this](ViewId view, ViewSelection selection) {
                    session_for(view).set_selection(std::move(selection));
-                   reveal_caret_ = true;
+                   show_caret();
                },
            .clear_selection = [this](ViewId view) { session_for(view).clear_selection(); },
            .replace_selection = [this](ViewId view, ViewSelection selection,
@@ -800,7 +797,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
       interaction_(runtime_, runtime_.interaction_providers()),
       editing_mechanisms_([this](ViewId view) -> EditSession& { return session_for(view); },
                           {.edited = [this](ViewId view) { after_edit(view); },
-                           .caret_moved = [this](ViewId) { reveal_caret_ = true; }}),
+                           .caret_moved = [this](ViewId) { show_caret(); }}),
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)),
       script_async_(async_runtime_, {.start = [this](ScriptAsyncRequest request,
@@ -1050,6 +1047,26 @@ GuileCommandFeedbackState EditorApplication::command_feedback() const {
     const std::expected<GuileCommandFeedbackState, std::string> state =
         guile_.command_feedback_state();
     return state.value_or(GuileCommandFeedbackState{});
+}
+
+bool EditorApplication::reveal_caret() const {
+    return guile_.application_state().value_or(GuileApplicationState{}).reveal_caret;
+}
+
+void EditorApplication::show_caret() {
+    if (const std::expected<void, std::string> updated = guile_.set_caret_reveal(true); !updated) {
+        set_message(std::format("caret presentation state failed: {}", updated.error()));
+    }
+}
+
+void EditorApplication::hide_caret() {
+    if (const std::expected<void, std::string> updated = guile_.set_caret_reveal(false); !updated) {
+        set_message(std::format("caret presentation state failed: {}", updated.error()));
+    }
+}
+
+bool EditorApplication::should_quit() const {
+    return guile_.application_state().value_or(GuileApplicationState{}).exit_requested;
 }
 
 void EditorApplication::set_message(std::string_view message) {
@@ -1475,7 +1492,7 @@ bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) 
     workbench.set_active_window(window);
     workbench.visit_buffer(buffer_id(window));
     if (active) {
-        reveal_caret_ = true;
+        show_caret();
         sync_keymaps();
     }
     return true;
@@ -1507,7 +1524,7 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
     if (const std::optional<JumpNodeId> start = capture_jump(workbench, window)) {
         (void)runtime_.windows().get(window).jump_walk().record(*start);
     }
-    reveal_caret_ = true;
+    show_caret();
     return true;
 }
 
@@ -1525,7 +1542,7 @@ bool EditorApplication::delete_window(WindowId target) {
         workbench.set_active_window(*replacement);
     }
     destroy_window(target);
-    reveal_caret_ = true;
+    show_caret();
     sync_keymaps();
     return true;
 }
@@ -1602,7 +1619,7 @@ bool EditorApplication::delete_other_windows(WindowId retained) {
         }
     }
     workbench.set_active_window(retained);
-    reveal_caret_ = true;
+    show_caret();
     sync_keymaps();
     return true;
 }
@@ -1664,7 +1681,7 @@ bool EditorApplication::switch_workbench(WorkbenchId workbench) {
     }
     Workbench& selected = workbenches_.active();
     selected.visit_buffer(buffer_id(selected.active_window()));
-    reveal_caret_ = true;
+    show_caret();
     sync_keymaps();
     return true;
 }
@@ -1695,7 +1712,7 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
         Workbench& selected = workbenches_.active();
         selected.visit_buffer(buffer_id(selected.active_window()));
         command_loop_.cancel_pending();
-        reveal_caret_ = true;
+        show_caret();
         sync_keymaps();
     }
     return true;
@@ -2197,7 +2214,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
             return std::unexpected("cannot restore workbench name");
         }
     }
-    reveal_caret_ = true;
+    show_caret();
     sync_keymaps();
     GuileWorkbenchRestorePlan plan{.resources = {}, .mru = std::move(mru)};
     plan.resources.reserve(resources.size());
@@ -2280,7 +2297,7 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
     workbenches_.forget_buffer(buffer);
-    reveal_caret_ = true;
+    show_caret();
     sync_keymaps();
     return {};
 }
@@ -2713,7 +2730,7 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
     if (const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window)) {
         workbenches_.get(*owner).visit_buffer(buffer);
     }
-    reveal_caret_ = true;
+    show_caret();
     if (window == window_id()) {
         sync_keymaps();
     }
@@ -2787,7 +2804,7 @@ EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
                  display_column, static_cast<std::uint32_t>(std::numeric_limits<int>::max())))},
             target.style().tab_width));
         editing_mechanisms_.reset_preferred_column(view);
-        reveal_caret_ = true;
+        show_caret();
         return {};
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
@@ -2982,7 +2999,7 @@ void EditorApplication::apply_position(WindowId window, LinePosition position) {
         std::min(position.byte_column, text.line_content_range(position.line).length());
     target.set_caret(text.offset(position));
     editing_mechanisms_.reset_preferred_column(target.view_id());
-    reveal_caret_ = true;
+    show_caret();
 }
 
 std::optional<JumpNodeId> EditorApplication::capture_jump(Workbench& workbench, WindowId window) {
@@ -3603,7 +3620,6 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
 
 void EditorApplication::after_edit(ViewId view) {
     const BufferId buffer = runtime_.views().get(view).buffer_id();
-    reveal_caret_ = true;
     const RevisionId revision = runtime_.buffers().get(buffer).snapshot().revision();
     if (const std::expected<void, std::string> notified =
             guile_.buffer_edited(buffer, view, revision);

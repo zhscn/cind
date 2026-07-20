@@ -286,14 +286,14 @@ public:
     std::string last_key() const { return command_feedback().last_key; }
     std::string last_command() const { return command_feedback().last_command; }
 
-    bool reveal_caret() const { return reveal_caret_; }
-    void show_caret() { reveal_caret_ = true; }
-    void hide_caret() { reveal_caret_ = false; }
+    bool reveal_caret() const;
+    void show_caret();
+    void hide_caret();
 
     bool has_background_work() const;
     bool project_search_running() const { return guile_.project_search_running(); }
     bool poll_background_work();
-    bool should_quit() const { return quit_; }
+    bool should_quit() const;
 
 private:
     struct BufferState {
@@ -411,8 +411,6 @@ private:
     int command_page_rows_ = 1;
     PresentationProfile presentation_profile_;
     EditorPlatformServices platform_services_;
-    bool reveal_caret_ = true;
-    bool quit_ = false;
     // These are declared last in dependency order. Completion and script tasks
     // cancel while LSP sessions remain live, then the native runtime joins.
     AsyncRuntime async_runtime_;

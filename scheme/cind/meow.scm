@@ -1,5 +1,6 @@
 (define-module (cind meow)
   #:use-module (srfi srfi-13)
+  #:use-module (cind application)
   #:use-module (cind command)
   #:use-module (cind host)
   #:use-module (cind input)

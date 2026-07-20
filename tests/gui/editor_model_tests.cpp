@@ -138,10 +138,11 @@ TEST_CASE("wheel scrolling moves the viewport without moving the caret") {
     CHECK(state.scripting.engine == "guile");
     CHECK(state.scripting.modules ==
           std::vector<std::string>{
-              "cind command", "cind input", "cind lsp", "cind async", "cind lifecycle",
-              "cind pointer", "cind extension", "cind emacs", "cind toy-modal", "cind meow",
-              "cind vim", "cind helix", "cind structural", "cind paredit", "cind minibuffer",
-              "cind development", "cind ares", "cind introspect", "cind core"});
+              "cind application", "cind command",    "cind input",      "cind lsp",
+              "cind async",       "cind lifecycle",  "cind pointer",    "cind extension",
+              "cind emacs",       "cind toy-modal",  "cind meow",       "cind vim",
+              "cind helix",       "cind structural", "cind paredit",    "cind minibuffer",
+              "cind development", "cind ares",       "cind introspect", "cind core"});
     CHECK(state.scripting.command_revision == 1);
     CHECK(state.scripting.scripted_commands == 233);
     CHECK(state.scripting.provider_revision == 1);
