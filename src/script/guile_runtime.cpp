@@ -5271,32 +5271,32 @@ SCM request_redraw(SCM host_object) {
     return SCM_UNSPECIFIED;
 }
 
-SCM interaction_status(SCM host_object) {
-    HostLease& host = require_host(host_object, "interaction-status");
+SCM interaction_mechanism_status(SCM host_object) {
+    HostLease& host = require_host(host_object, "interaction-mechanism-status");
     try {
-        const GuileInteractionStatus status = host.services.interaction_status
-                                                  ? host.services.interaction_status()
-                                                  : GuileInteractionStatus{};
+        const GuileInteractionMechanismStatus status =
+            host.services.interaction_mechanism_status
+                ? host.services.interaction_mechanism_status()
+                : GuileInteractionMechanismStatus{};
         SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
         scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
         scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
         scm_c_vector_set_x(
             result, 3, status.history ? scm_from_utf8_string(status.history->c_str()) : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 4,
-                           status.selected ? scm_from_size_t(*status.selected) : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 5, scm_from_size_t(status.candidate_count));
-        scm_c_vector_set_x(result, 6,
+        scm_c_vector_set_x(result, 4, scm_from_size_t(status.candidate_count));
+        scm_c_vector_set_x(result, 5,
                            status.buffer ? entity_id(status.buffer->slot, status.buffer->generation)
                                          : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 7,
+        scm_c_vector_set_x(result, 6,
                            status.view ? entity_id(status.view->slot, status.view->generation)
                                        : SCM_BOOL_F);
+        scm_c_vector_set_x(result, 7, scm_from_uint64(status.candidate_revision));
         return result;
     } catch (const std::exception& exception) {
-        raise_host_error("interaction-status", exception.what());
+        raise_host_error("interaction-mechanism-status", exception.what());
     } catch (...) {
-        scm_misc_error("interaction-status", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("interaction-mechanism-status", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -5372,21 +5372,31 @@ SCM refresh_interaction(SCM host_object) {
     return SCM_UNSPECIFIED;
 }
 
-SCM submit_interaction(SCM host_object) {
-    HostLease& host = require_host(host_object, "submit-interaction!");
+SCM submit_interaction_mechanism(SCM host_object, SCM selected_value) {
+    HostLease& host = require_host(host_object, "submit-interaction-mechanism!");
     if (!host.services.submit_interaction) {
-        scm_misc_error("submit-interaction!", "interaction submission capability is unavailable",
-                       SCM_EOL);
+        scm_misc_error("submit-interaction-mechanism!",
+                       "interaction submission capability is unavailable", SCM_EOL);
     }
     try {
+        std::optional<std::size_t> selected;
+        if (!scheme_false(selected_value)) {
+            if (scm_is_unsigned_integer(selected_value, 0,
+                                        std::numeric_limits<std::size_t>::max()) == 0) {
+                scm_wrong_type_arg_msg("submit-interaction-mechanism!", 2, selected_value,
+                                       "non-negative integer or #f");
+            }
+            selected = scm_to_size_t(selected_value);
+        }
         std::expected<GuileInteractionSubmission, std::string> submitted =
-            host.services.submit_interaction();
+            host.services.submit_interaction(selected);
         if (!submitted) {
-            raise_host_error("submit-interaction!", submitted.error());
+            raise_host_error("submit-interaction-mechanism!", submitted.error());
         }
         CommandDispatch& dispatch = submitted->dispatch;
         if (!dispatch.target) {
-            scm_misc_error("submit-interaction!", "interaction submission has no target", SCM_EOL);
+            scm_misc_error("submit-interaction-mechanism!", "interaction submission has no target",
+                           SCM_EOL);
         }
         SCM arguments = scm_c_make_vector(dispatch.invocation.arguments.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < dispatch.invocation.arguments.size(); ++index) {
@@ -5412,30 +5422,9 @@ SCM submit_interaction(SCM host_object) {
                                : scm_from_utf8_string(submitted->history.c_str()));
         return result;
     } catch (const std::exception& exception) {
-        raise_host_error("submit-interaction!", exception.what());
+        raise_host_error("submit-interaction-mechanism!", exception.what());
     } catch (...) {
-        scm_misc_error("submit-interaction!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM select_interaction_candidate(SCM host_object, SCM index_value) {
-    if (scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
-        scm_wrong_type_arg_msg("select-interaction-candidate!", 2, index_value,
-                               "non-negative integer");
-    }
-    HostLease& host = require_host(host_object, "select-interaction-candidate!");
-    if (!host.services.select_interaction_candidate) {
-        scm_misc_error("select-interaction-candidate!",
-                       "interaction candidate capability is unavailable", SCM_EOL);
-    }
-    try {
-        return scm_from_bool(
-            host.services.select_interaction_candidate(scm_to_size_t(index_value)));
-    } catch (const std::exception& exception) {
-        raise_host_error("select-interaction-candidate!", exception.what());
-    } catch (...) {
-        scm_misc_error("select-interaction-candidate!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("submit-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -6110,8 +6099,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("structural-edit!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(structural_edit));
     (void)scm_c_define_gsubr("page-rows", 1, 0, 0, reinterpret_cast<scm_t_subr>(page_rows));
-    (void)scm_c_define_gsubr("interaction-status", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(interaction_status));
+    (void)scm_c_define_gsubr("interaction-mechanism-status", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_mechanism_status));
     (void)scm_c_define_gsubr("interaction-provider", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_provider));
     (void)scm_c_define_gsubr("set-interaction-provider!", 2, 0, 0,
@@ -6120,10 +6109,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(interaction_origin_project));
     (void)scm_c_define_gsubr("refresh-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(refresh_interaction));
-    (void)scm_c_define_gsubr("submit-interaction!", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(submit_interaction));
-    (void)scm_c_define_gsubr("select-interaction-candidate!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(select_interaction_candidate));
+    (void)scm_c_define_gsubr("submit-interaction-mechanism!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(submit_interaction_mechanism));
     (void)scm_c_define_gsubr("replace-interaction-input!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(replace_interaction_input));
     (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
@@ -6256,12 +6243,12 @@ void initialize_host_module(void*) {
         "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!",
         "set-caret-reveal!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
         "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!", "page-rows",
-        "interaction-status", "interaction-provider", "set-interaction-provider!",
-        "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
-        "select-interaction-candidate!", "replace-interaction-input!", "cancel-interaction!",
-        "cancel-pending-input!", "completion-active?", "refresh-completion!", "start-completion!",
-        "move-completion!", "apply-completion!", "cancel-completion!", "view-position",
-        "view-line-prefix", "view-syntax-token", "view-identifier-words", "location-navigation",
+        "interaction-mechanism-status", "interaction-provider", "set-interaction-provider!",
+        "interaction-origin-project", "refresh-interaction!", "submit-interaction-mechanism!",
+        "replace-interaction-input!", "cancel-interaction!", "cancel-pending-input!",
+        "completion-active?", "refresh-completion!", "start-completion!", "move-completion!",
+        "apply-completion!", "cancel-completion!", "view-position", "view-line-prefix",
+        "view-syntax-token", "view-identifier-words", "location-navigation",
         "set-location-navigation!", "location-list-target", "move-location-list!",
         "position-buffer-view!", "project-index-state", "request-project-index!",
         "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
@@ -7027,6 +7014,7 @@ struct GuileCall {
         RestoreWorkbenchSession,
         BufferEdited,
         MinibufferHistoryState,
+        InteractionSelection,
         CommandFeedbackState,
         BufferSavingState,
         CommandInput,
@@ -7106,6 +7094,7 @@ struct GuileCall {
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
     GuileMinibufferHistoryState minibuffer_history;
+    std::optional<std::size_t> interaction_selection;
     GuileCommandFeedbackState command_feedback;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
@@ -7735,6 +7724,18 @@ SCM call_body(void* data) {
             call.minibuffer_history.draft = scheme_string(scm_c_vector_ref(call.result, 2));
             break;
         }
+        case GuileCall::Operation::InteractionSelection:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind minibuffer", "interaction-selection"), call.host);
+            if (!scheme_false(call.result)) {
+                if (scm_is_unsigned_integer(call.result, 0,
+                                            std::numeric_limits<std::size_t>::max()) == 0) {
+                    scm_misc_error("interaction-selection",
+                                   "selection must be a non-negative integer or #f", SCM_EOL);
+                }
+                call.interaction_selection = scm_to_size_t(call.result);
+            }
+            break;
         case GuileCall::Operation::CommandFeedbackState:
             call.result =
                 scm_call_1(scm_c_public_ref("cind command", "command-feedback-state"), call.host);
@@ -8804,6 +8805,20 @@ public:
         return std::move(call.minibuffer_history);
     }
 
+    std::expected<std::optional<std::size_t>, std::string> interaction_selection() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::InteractionSelection;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.interaction_selection;
+    }
+
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -9487,6 +9502,10 @@ std::expected<void, std::string> GuileRuntime::buffer_edited(BufferId buffer, Vi
 std::expected<GuileMinibufferHistoryState, std::string>
 GuileRuntime::minibuffer_history_state(BufferId buffer, std::string_view history) const {
     return impl_->minibuffer_history_state(buffer, history);
+}
+
+std::expected<std::optional<std::size_t>, std::string> GuileRuntime::interaction_selection() const {
+    return impl_->interaction_selection();
 }
 
 std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {

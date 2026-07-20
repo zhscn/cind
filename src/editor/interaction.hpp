@@ -66,7 +66,7 @@ struct InteractionState {
     BufferId buffer;
     ViewId view;
     std::vector<InteractionCandidate> candidates;
-    std::size_t selected = 0;
+    std::uint64_t candidate_revision = 0;
     std::uint64_t generation = 0;
     bool loading = false;
     std::string error;
@@ -101,11 +101,11 @@ public:
     std::string input_text() const;
     TextOffset input_caret() const;
     RevisionId input_revision() const;
-    bool select(std::size_t index);
     std::expected<void, std::string> set_provider(std::string provider);
     std::expected<RevisionId, std::string> replace_input(std::string_view input);
     void refresh_candidates();
-    std::expected<InteractionSubmission, std::string> submit();
+    std::expected<InteractionSubmission, std::string>
+    submit(std::optional<std::size_t> selected = std::nullopt);
     bool cancel() noexcept;
 
 private:

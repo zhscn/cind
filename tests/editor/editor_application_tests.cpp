@@ -2937,18 +2937,19 @@ TEST_CASE("describe bindings and command palette use shared command state") {
               .name == "application.global");
 
     send_keys(application, "C-n");
-    CHECK(application.interaction().state()->selected == 1);
+    CHECK(application.interaction_selection().value() == 1);
     CHECK(application.last_command() == "interaction.next-candidate");
     send_keys(application, "C-p");
-    CHECK(application.interaction().state()->selected == 0);
+    CHECK(application.interaction_selection().value() == 0);
     send_keys(application, "Down");
-    CHECK(application.interaction().state()->selected == 1);
+    CHECK(application.interaction_selection().value() == 1);
     send_keys(application, "Up");
-    CHECK(application.interaction().state()->selected == 0);
+    CHECK(application.interaction_selection().value() == 0);
 
     application.insert_text("buffer next");
     REQUIRE_FALSE(application.interaction().state()->candidates.empty());
     CHECK(application.interaction().state()->candidates.front().value == "buffer.next");
+    CHECK(application.interaction_selection().value() == 0);
     send_keys(application, "C-g");
     CHECK_FALSE(application.interaction().active());
     CHECK(application.input_focus() == "window");

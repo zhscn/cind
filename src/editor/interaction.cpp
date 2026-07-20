@@ -111,7 +111,7 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
                                     .buffer = buffer,
                                     .view = view,
                                     .candidates = {},
-                                    .selected = 0,
+                                    .candidate_revision = 0,
                                     .generation = 0,
                                     .loading = false,
                                     .error = {}});
@@ -130,14 +130,6 @@ TextOffset InteractionController::input_caret() const {
 
 RevisionId InteractionController::input_revision() const {
     return state_ ? runtime_->buffers().get(state_->buffer).snapshot().revision() : 0;
-}
-
-bool InteractionController::select(std::size_t index) {
-    if (!state_ || index >= state_->candidates.size()) {
-        return false;
-    }
-    state_->selected = index;
-    return true;
 }
 
 std::expected<void, std::string> InteractionController::set_provider(std::string provider) {
@@ -172,7 +164,8 @@ void InteractionController::refresh_candidates() {
     refresh();
 }
 
-std::expected<InteractionSubmission, std::string> InteractionController::submit() {
+std::expected<InteractionSubmission, std::string>
+InteractionController::submit(std::optional<std::size_t> selected) {
     InteractionState* active = state();
     if (active == nullptr) {
         return std::unexpected("no interaction is active");
@@ -180,7 +173,11 @@ std::expected<InteractionSubmission, std::string> InteractionController::submit(
     std::string value = input_text();
     if (active->request.kind == InteractionKind::Picker && !active->loading &&
         !active->candidates.empty()) {
-        value = active->candidates[active->selected].value;
+        if (!selected || *selected >= active->candidates.size()) {
+            active->error = "interaction selection is unavailable";
+            return std::unexpected(active->error);
+        }
+        value = active->candidates[*selected].value;
     } else if (active->request.kind == InteractionKind::Picker &&
                !active->request.allow_custom_input) {
         active->error = active->loading ? "candidates are still loading" : "no matching candidate";
@@ -240,8 +237,8 @@ void InteractionController::refresh() {
     state.loading = false;
     state.error.clear();
     if (state.request.kind != InteractionKind::Picker) {
-        state.selected = 0;
         state.candidates.clear();
+        ++state.candidate_revision;
         return;
     }
     try {
@@ -252,7 +249,7 @@ void InteractionController::refresh() {
             providers_->complete(state.request.provider, context, query);
         if (auto* candidates = std::get_if<std::vector<InteractionCandidate>>(&result)) {
             state.candidates = std::move(*candidates);
-            state.selected = 0;
+            ++state.candidate_revision;
             return;
         }
         state.loading = true;
@@ -367,7 +364,7 @@ void InteractionController::apply_candidates(std::uint64_t generation,
         return;
     }
     state_->candidates = std::move(candidates);
-    state_->selected = 0;
+    ++state_->candidate_revision;
     state_->loading = false;
     state_->error.clear();
     cancel_pending_task_ = {};

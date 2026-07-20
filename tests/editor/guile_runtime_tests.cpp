@@ -372,15 +372,15 @@ TEST_CASE("Guile buffer edit observers own post-edit policy") {
     const RevisionId revision = runtime.buffers().get(buffer).snapshot().revision();
     std::size_t refreshes = 0;
     GuileHostServices services;
-    services.interaction_status = [=] {
-        return GuileInteractionStatus{.active = true,
-                                      .picker = true,
-                                      .has_history = false,
-                                      .history = std::nullopt,
-                                      .selected = std::nullopt,
-                                      .candidate_count = 0,
-                                      .buffer = buffer,
-                                      .view = view};
+    services.interaction_mechanism_status = [=] {
+        return GuileInteractionMechanismStatus{.active = true,
+                                               .picker = true,
+                                               .has_history = false,
+                                               .history = std::nullopt,
+                                               .candidate_count = 0,
+                                               .buffer = buffer,
+                                               .view = view,
+                                               .candidate_revision = 0};
     };
     services.refresh_interaction = [&] { ++refreshes; };
     GuileRuntime guile(runtime, std::move(services));
@@ -1259,7 +1259,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .type_text = {},
          .structural_edit = {},
          .page_rows = {},
-         .interaction_status = {},
+         .interaction_mechanism_status = {},
          .interaction_provider = {},
          .set_interaction_provider = [&](std::string provider) -> std::expected<void, std::string> {
              interaction_provider = std::move(provider);
@@ -1268,7 +1268,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .interaction_origin_project = {},
          .refresh_interaction = {},
          .submit_interaction = {},
-         .select_interaction_candidate = {},
          .replace_interaction_input = {},
          .cancel_interaction = {},
          .completion_active = {},

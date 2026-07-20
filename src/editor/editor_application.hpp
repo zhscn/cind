@@ -166,6 +166,9 @@ public:
     minibuffer_history_state(BufferId buffer, std::string_view history) const {
         return guile_.minibuffer_history_state(buffer, history);
     }
+    std::expected<std::optional<std::size_t>, std::string> interaction_selection() const {
+        return guile_.interaction_selection();
+    }
     CompletionPipeline& completion() { return *completion_; }
     const CompletionPipeline& completion() const { return *completion_; }
     std::vector<LspSessionSnapshot> lsp_sessions() const { return lsp_sessions_->snapshots(); }

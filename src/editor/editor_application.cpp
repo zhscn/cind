@@ -240,23 +240,22 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return editing_mechanisms_.edit_structure(view, *edit);
                },
            .page_rows = [this] { return command_page_rows_; },
-           .interaction_status =
+           .interaction_mechanism_status =
                [this] {
                    const InteractionState* state = interaction_.state();
-                   return GuileInteractionStatus{
+                   return GuileInteractionMechanismStatus{
                        .active = state != nullptr,
                        .picker = state != nullptr && state->request.kind == InteractionKind::Picker,
                        .has_history = state != nullptr && !state->request.history.empty(),
                        .history = state != nullptr && !state->request.history.empty()
                                       ? std::optional(state->request.history)
                                       : std::nullopt,
-                       .selected = state != nullptr && !state->candidates.empty()
-                                       ? std::optional(state->selected)
-                                       : std::nullopt,
                        .candidate_count =
                            state != nullptr ? state->candidates.size() : std::size_t{0},
                        .buffer = state != nullptr ? std::optional(state->buffer) : std::nullopt,
-                       .view = state != nullptr ? std::optional(state->view) : std::nullopt};
+                       .view = state != nullptr ? std::optional(state->view) : std::nullopt,
+                       .candidate_revision =
+                           state != nullptr ? state->candidate_revision : std::uint64_t{0}};
                },
            .interaction_provider = [this]() -> std::optional<std::string> {
                const InteractionState* state = interaction_.state();
@@ -275,9 +274,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return buffer != nullptr ? buffer->project_id() : std::nullopt;
            },
            .refresh_interaction = [this] { interaction_.refresh_candidates(); },
-           .submit_interaction =
-               [this]() -> std::expected<GuileInteractionSubmission, std::string> {
-               std::expected<InteractionSubmission, std::string> submission = interaction_.submit();
+           .submit_interaction = [this](std::optional<std::size_t> selected)
+               -> std::expected<GuileInteractionSubmission, std::string> {
+               std::expected<InteractionSubmission, std::string> submission =
+                   interaction_.submit(selected);
                if (!submission) {
                    return std::unexpected(std::move(submission.error()));
                }
@@ -288,8 +288,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                 .target = submission->target},
                    .history = std::move(submission->history)};
            },
-           .select_interaction_candidate =
-               [this](std::size_t index) { return interaction_.select(index); },
            .replace_interaction_input =
                [this](std::string_view input) { return interaction_.replace_input(input); },
            .cancel_interaction =
@@ -1087,9 +1085,7 @@ ChromeContent EditorApplication::chrome_content(std::string_view preedit) {
         facts.prompt = interaction->request.prompt;
         facts.input = interaction_.input_text();
         facts.input_caret = interaction_.input_caret().value;
-        if (!interaction->candidates.empty()) {
-            facts.selection = interaction->selected;
-        }
+        facts.selection = guile_.interaction_selection().value_or(std::nullopt);
         facts.candidates.reserve(interaction->candidates.size());
         for (const InteractionCandidate& candidate : interaction->candidates) {
             facts.candidates.push_back(

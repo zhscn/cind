@@ -54,15 +54,15 @@ struct GuileTextRange {
     std::uint32_t end = 0;
 };
 
-struct GuileInteractionStatus {
+struct GuileInteractionMechanismStatus {
     bool active = false;
     bool picker = false;
     bool has_history = false;
     std::optional<std::string> history;
-    std::optional<std::size_t> selected;
     std::size_t candidate_count = 0;
     std::optional<BufferId> buffer;
     std::optional<ViewId> view;
+    std::uint64_t candidate_revision = 0;
 };
 
 struct GuileMinibufferHistoryState {
@@ -240,13 +240,14 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> type_text;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> structural_edit;
     std::function<int()> page_rows;
-    std::function<GuileInteractionStatus()> interaction_status;
+    std::function<GuileInteractionMechanismStatus()> interaction_mechanism_status;
     std::function<std::optional<std::string>()> interaction_provider;
     std::function<std::expected<void, std::string>(std::string)> set_interaction_provider;
     std::function<std::optional<ProjectId>()> interaction_origin_project;
     std::function<void()> refresh_interaction;
-    std::function<std::expected<GuileInteractionSubmission, std::string>()> submit_interaction;
-    std::function<bool(std::size_t)> select_interaction_candidate;
+    std::function<std::expected<GuileInteractionSubmission, std::string>(
+        std::optional<std::size_t>)>
+        submit_interaction;
     std::function<std::expected<RevisionId, std::string>(std::string_view)>
         replace_interaction_input;
     std::function<bool()> cancel_interaction;
@@ -416,6 +417,7 @@ public:
                                                    RevisionId revision);
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const;
+    std::expected<std::optional<std::size_t>, std::string> interaction_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);

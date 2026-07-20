@@ -12,15 +12,66 @@
             minibuffer-history
             set-minibuffer-history!
             minibuffer-history-state
+            interaction-status
+            interaction-selection
             minibuffer-input-changed!
             clear-minibuffer-navigation!
             record-minibuffer-history!
             move-minibuffer-candidate!
-            move-minibuffer-history!))
+            move-minibuffer-history!
+            submit-interaction!))
 
 (define history-policies (make-weak-key-hash-table))
 (define histories (make-weak-key-hash-table))
 (define minibuffer-navigations (make-weak-key-hash-table))
+(define minibuffer-selections (make-weak-key-hash-table))
+
+(define (interaction-selection-for host revision count)
+  (let ((state (hashq-ref minibuffer-selections host)))
+    (cond
+     ((zero? count)
+      (hashq-remove! minibuffer-selections host)
+      #f)
+     ((or (not state) (not (= revision (vector-ref state 0))))
+      (hashq-set! minibuffer-selections host (vector revision 0))
+      0)
+     ((>= (vector-ref state 1) count)
+      (vector-set! state 1 0)
+      0)
+     (else (vector-ref state 1)))))
+
+(define (interaction-status host)
+  (let ((mechanism (interaction-mechanism-status host)))
+    (if (vector-ref mechanism 0)
+        (let* ((count (vector-ref mechanism 4))
+               (selected (and (vector-ref mechanism 1)
+                              (interaction-selection-for
+                               host (vector-ref mechanism 7) count))))
+          (vector #t
+                  (vector-ref mechanism 1)
+                  (vector-ref mechanism 2)
+                  (vector-ref mechanism 3)
+                  selected
+                  count
+                  (vector-ref mechanism 5)
+                  (vector-ref mechanism 6)))
+        (begin
+          (hashq-remove! minibuffer-selections host)
+          (vector #f #f #f #f #f 0 #f #f)))))
+
+(define (interaction-selection host)
+  (vector-ref (interaction-status host) 4))
+
+(define (set-interaction-selection! host index)
+  (let* ((mechanism (interaction-mechanism-status host))
+         (count (vector-ref mechanism 4)))
+    (and (vector-ref mechanism 0)
+         (vector-ref mechanism 1)
+         (< index count)
+         (begin
+           (hashq-set! minibuffer-selections host
+                       (vector (vector-ref mechanism 7) index))
+           #t))))
 
 (define (host-histories host)
   (or (hashq-ref histories host)
@@ -113,8 +164,14 @@
     (and selected
          (> count 0)
          (not (zero? delta))
-         (select-interaction-candidate!
+         (set-interaction-selection!
           host (modulo (+ selected delta) count)))))
+
+(define (submit-interaction! host)
+  (let ((submission
+         (submit-interaction-mechanism! host (interaction-selection host))))
+    (hashq-remove! minibuffer-selections host)
+    submission))
 
 (define (move-minibuffer-history! host context delta)
   (let* ((status (interaction-status host))

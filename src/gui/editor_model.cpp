@@ -443,6 +443,8 @@ EditorStateSnapshot EditorModel::inspect() {
         const std::expected<GuileMinibufferHistoryState, std::string> history_state =
             application_.minibuffer_history_state(interaction->buffer,
                                                   interaction->request.history);
+        const std::expected<std::optional<std::size_t>, std::string> selection =
+            application_.interaction_selection();
         interaction_state = {.active = true,
                              .window_slot = interaction->window.slot,
                              .window_generation = interaction->window.generation,
@@ -472,7 +474,7 @@ EditorStateSnapshot EditorModel::inspect() {
                              .allow_custom_input = interaction->request.allow_custom_input,
                              .generation = interaction->generation,
                              .loading = interaction->loading,
-                             .selected = interaction->selected,
+                             .selected = selection.value_or(std::nullopt).value_or(0),
                              .error = interaction->error,
                              .candidates = {}};
         interaction_state.candidates.reserve(interaction->candidates.size());
