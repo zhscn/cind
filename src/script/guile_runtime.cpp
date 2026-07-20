@@ -3691,29 +3691,40 @@ SCM set_buffer_locations(SCM host_object, SCM buffer_value, SCM locations_value)
     return SCM_UNSPECIFIED;
 }
 
-SCM set_location_list(SCM host_object, SCM window_value, SCM buffer_value, SCM source_value,
-                      SCM locations_value) {
-    HostLease& host = require_host(host_object, "set-location-list!");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "set-location-list!", 2);
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "set-location-list!", 3);
-    const std::string source = scheme_name(source_value, "set-location-list!", 4);
+SCM publish_location_list_data(SCM host_object, SCM window_value, SCM buffer_value,
+                               SCM source_value, SCM locations_value) {
+    HostLease& host = require_host(host_object, "publish-location-list-data!");
+    const WindowId window =
+        entity_id_from_scheme<WindowTag>(window_value, "publish-location-list-data!", 2);
+    const BufferId buffer =
+        entity_id_from_scheme<BufferTag>(buffer_value, "publish-location-list-data!", 3);
+    const std::string source = scheme_name(source_value, "publish-location-list-data!", 4);
     if (!host.services.publish_location_list) {
-        scm_misc_error("set-location-list!", "location list capability is unavailable", SCM_EOL);
+        scm_misc_error("publish-location-list-data!", "location list capability is unavailable",
+                       SCM_EOL);
     }
     try {
-        std::expected<void, std::string> published = host.services.publish_location_list(
-            window, buffer, source,
-            locations_from_scheme(locations_value, "set-location-list!", 5));
+        std::expected<GuilePublishedLocationList, std::string> published =
+            host.services.publish_location_list(
+                window, buffer, source,
+                locations_from_scheme(locations_value, "publish-location-list-data!", 5));
         if (!published) {
-            raise_host_error("set-location-list!", published.error());
+            raise_host_error("publish-location-list-data!", published.error());
         }
-        return SCM_UNSPECIFIED;
+        SCM result = scm_c_make_vector(4, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0,
+                           entity_id(published->workbench.slot, published->workbench.generation));
+        scm_c_vector_set_x(result, 1, scm_from_uint64(published->list));
+        scm_c_vector_set_x(result, 2,
+                           entity_id(published->buffer.slot, published->buffer.generation));
+        scm_c_vector_set_x(result, 3, scm_from_size_t(published->item_count));
+        return result;
     } catch (const std::exception& exception) {
-        raise_host_error("set-location-list!", exception.what());
+        raise_host_error("publish-location-list-data!", exception.what());
     } catch (...) {
-        scm_misc_error("set-location-list!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("publish-location-list-data!", "unknown C++ host failure", SCM_EOL);
     }
-    return SCM_UNSPECIFIED;
+    return SCM_BOOL_F;
 }
 
 SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
@@ -5434,78 +5445,24 @@ SCM view_identifier_words(SCM host_object, SCM view_value) {
     return SCM_BOOL_F;
 }
 
-SCM location_navigation(SCM host_object) {
-    HostLease& host = require_host(host_object, "location-navigation");
-    if (!host.services.location_navigation) {
-        SCM empty = scm_c_make_vector(3, SCM_BOOL_F);
-        scm_c_vector_set_x(empty, 2, scm_from_size_t(0));
-        return empty;
-    }
-    try {
-        const GuileLocationNavigation navigation = host.services.location_navigation();
-        SCM result = scm_c_make_vector(3, SCM_BOOL_F);
-        if (navigation.buffer) {
-            scm_c_vector_set_x(result, 0,
-                               entity_id(navigation.buffer->slot, navigation.buffer->generation));
-        }
-        if (navigation.selected_index) {
-            scm_c_vector_set_x(result, 1, scm_from_size_t(*navigation.selected_index));
-        }
-        scm_c_vector_set_x(result, 2, scm_from_size_t(navigation.location_count));
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("location-navigation", exception.what());
-    } catch (...) {
-        scm_misc_error("location-navigation", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_location_navigation(SCM host_object, SCM buffer_value, SCM selected_value) {
-    HostLease& host = require_host(host_object, "set-location-navigation!");
-    if (!host.services.set_location_navigation) {
-        scm_misc_error("set-location-navigation!", "location navigation capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        std::optional<BufferId> buffer;
-        if (!scheme_false(buffer_value)) {
-            buffer = entity_id_from_scheme<BufferTag>(buffer_value, "set-location-navigation!", 2);
-        }
-        std::optional<std::size_t> selected;
-        if (!scheme_false(selected_value)) {
-            selected = scm_to_size_t(selected_value);
-        }
-        const std::expected<void, std::string> updated =
-            host.services.set_location_navigation(buffer, selected);
-        if (!updated) {
-            raise_host_error("set-location-navigation!", updated.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-location-navigation!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-location-navigation!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM location_list_target(SCM host_object, SCM buffer_value, SCM index_value) {
-    HostLease& host = require_host(host_object, "location-list-target");
-    std::optional<BufferId> buffer;
-    if (!scheme_false(buffer_value)) {
-        buffer = entity_id_from_scheme<BufferTag>(buffer_value, "location-list-target", 2);
+SCM location_list_item_target(SCM host_object, SCM workbench_value, SCM list_value,
+                              SCM index_value) {
+    HostLease& host = require_host(host_object, "location-list-item-target");
+    const WorkbenchId workbench =
+        entity_id_from_scheme<WorkbenchTag>(workbench_value, "location-list-item-target", 2);
+    if (scm_is_unsigned_integer(list_value, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+        scm_wrong_type_arg_msg("location-list-item-target", 3, list_value, "positive integer");
     }
     if (scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
-        scm_wrong_type_arg_msg("location-list-target", 3, index_value, "non-negative integer");
+        scm_wrong_type_arg_msg("location-list-item-target", 4, index_value, "non-negative integer");
     }
     if (!host.services.location_target) {
-        scm_misc_error("location-list-target", "location target capability is unavailable",
+        scm_misc_error("location-list-item-target", "location target capability is unavailable",
                        SCM_EOL);
     }
     try {
-        const std::optional<GuileLocationTarget> target =
-            host.services.location_target(buffer, scm_to_size_t(index_value));
+        const std::optional<GuileLocationTarget> target = host.services.location_target(
+            workbench, scm_to_uint64(list_value), scm_to_size_t(index_value));
         if (!target) {
             return SCM_BOOL_F;
         }
@@ -5517,24 +5474,11 @@ SCM location_list_target(SCM host_object, SCM buffer_value, SCM index_value) {
         scm_c_vector_set_x(result, 4, position_encoding_value(target->position.encoding));
         return result;
     } catch (const std::exception& exception) {
-        raise_host_error("location-list-target", exception.what());
+        raise_host_error("location-list-item-target", exception.what());
     } catch (...) {
-        scm_misc_error("location-list-target", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("location-list-item-target", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-SCM move_location_list(SCM host_object, SCM delta_value) {
-    HostLease& host = require_host(host_object, "move-location-list!");
-    if (scm_is_signed_integer(delta_value, std::numeric_limits<int>::min(),
-                              std::numeric_limits<int>::max()) == 0) {
-        scm_wrong_type_arg_msg("move-location-list!", 2, delta_value, "integer");
-    }
-    if (!host.services.move_location_list) {
-        scm_misc_error("move-location-list!", "location list stack capability is unavailable",
-                       SCM_EOL);
-    }
-    return scm_from_bool(host.services.move_location_list(scm_to_int(delta_value)));
 }
 
 SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SCM offset_value) {
@@ -5739,8 +5683,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(buffer_diagnostics));
     (void)scm_c_define_gsubr("set-buffer-locations!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_locations));
-    (void)scm_c_define_gsubr("set-location-list!", 5, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_location_list));
+    (void)scm_c_define_gsubr("publish-location-list-data!", 5, 0, 0,
+                             reinterpret_cast<scm_t_subr>(publish_location_list_data));
     (void)scm_c_define_gsubr("buffer-read-only?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_read_only_p));
     (void)scm_c_define_gsubr("path-parent", 2, 0, 0, reinterpret_cast<scm_t_subr>(path_parent));
@@ -5822,14 +5766,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(view_syntax_token));
     (void)scm_c_define_gsubr("view-identifier-words", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(view_identifier_words));
-    (void)scm_c_define_gsubr("location-navigation", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(location_navigation));
-    (void)scm_c_define_gsubr("set-location-navigation!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_location_navigation));
-    (void)scm_c_define_gsubr("location-list-target", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(location_list_target));
-    (void)scm_c_define_gsubr("move-location-list!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(move_location_list));
+    (void)scm_c_define_gsubr("location-list-item-target", 4, 0, 0,
+                             reinterpret_cast<scm_t_subr>(location_list_item_target));
     (void)scm_c_define_gsubr("position-buffer-view!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(position_buffer_view));
     (void)scm_c_define_gsubr("project-index-state", 2, 0, 0,
@@ -5911,34 +5849,33 @@ void initialize_host_module(void*) {
         "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-project-id", "buffer-text",
         "buffer-byte-size", "buffer-editable-start", "set-buffer-editable-start!",
         "create-buffer-marker!", "buffer-marker-offset", "remove-buffer-marker!",
-        "buffer-locations", "buffer-diagnostics", "set-buffer-locations!", "set-location-list!",
-        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
-        "view-mark", "view-selection", "set-selection!", "clear-selection!",
-        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
-        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
-        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
-        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
-        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
-        "display-buffer-position-at!", "display-generated-buffer!", "navigate-jump!", "mark-jump!",
-        "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!", "move-caret-to-line!",
-        "scroll-view-lines!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
-        "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!",
-        "interaction-mechanism-status", "interaction-origin-project",
-        "refresh-interaction-mechanism!", "submit-interaction-mechanism!",
-        "replace-interaction-input!", "cancel-interaction-mechanism!", "cancel-pending-input!",
-        "completion-active?", "refresh-completion!", "ensure-lsp-session!",
-        "attach-lsp-diagnostics!", "synchronize-lsp-session!", "start-completion!",
-        "move-completion!", "apply-completion!", "cancel-completion!", "view-position",
-        "view-line-prefix", "view-syntax-token", "view-identifier-words", "location-navigation",
-        "set-location-navigation!", "location-list-target", "move-location-list!",
-        "position-buffer-view!", "project-index-state", "request-project-index!",
-        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
-        "buffer-id-by-resource", "resource-mode", "project-for-resource",
-        "project-provider-definitions", "project-id-by-root", "create-project!",
-        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
-        "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
-        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
-        "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
+        "buffer-locations", "buffer-diagnostics", "set-buffer-locations!",
+        "publish-location-list-data!", "buffer-read-only?", "path-parent", "directory-path?",
+        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
+        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "clear-selection-history!", "selection-history-depth", "replace-selection!",
+        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
+        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
+        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
+        "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
+        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
+        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "undo!",
+        "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!",
+        "indent!", "type-text!", "structural-edit!", "interaction-mechanism-status",
+        "interaction-origin-project", "refresh-interaction-mechanism!",
+        "submit-interaction-mechanism!", "replace-interaction-input!",
+        "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
+        "refresh-completion!", "ensure-lsp-session!", "attach-lsp-diagnostics!",
+        "synchronize-lsp-session!", "start-completion!", "move-completion!", "apply-completion!",
+        "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
+        "view-identifier-words", "location-list-item-target", "position-buffer-view!",
+        "project-index-state", "request-project-index!", "normalize-resource-path",
+        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
+        "project-for-resource", "project-provider-definitions", "project-id-by-root",
+        "create-project!", "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!",
+        "open-buffer-ids", "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!",
+        "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
+        "window-view-id", "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
         "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
         nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
@@ -6717,6 +6654,8 @@ struct GuileCall {
         WorkbenchReleased,
         WorkbenchMru,
         WorkbenchBuffers,
+        WorkbenchLocationNavigation,
+        WorkbenchLocationListStates,
         ReplaceWorkbenchMru,
         WorkbenchName,
         WorkbenchFindByName,
@@ -6807,6 +6746,8 @@ struct GuileCall {
     WorkbenchId workbench;
     std::vector<BufferId> buffers;
     std::vector<ProjectId> projects;
+    GuileLocationNavigation location_navigation;
+    std::vector<GuileLocationListPolicyState> location_list_states;
     GuileWorkbenchWindowState workbench_window_state;
     std::vector<GuileDisplaySlot> display_slots;
     std::optional<std::string> role;
@@ -7698,6 +7639,55 @@ SCM call_body(void* data) {
             for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
                 call.buffers.push_back(entity_id_from_scheme<BufferTag>(
                     scm_c_vector_ref(call.result, index), "workbench-buffer-ids", 0));
+            }
+            break;
+        case GuileCall::Operation::WorkbenchLocationNavigation: {
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-location-navigation"),
+                           call.host, entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 3) {
+                scm_wrong_type_arg_msg("workbench-location-navigation", 0, call.result,
+                                       "#(buffer-or-#f selected-or-#f item-count)");
+            }
+            const SCM buffer = scm_c_vector_ref(call.result, 0);
+            const SCM selected = scm_c_vector_ref(call.result, 1);
+            const SCM count = scm_c_vector_ref(call.result, 2);
+            if (scm_is_unsigned_integer(count, 0, std::numeric_limits<std::size_t>::max()) == 0) {
+                scm_wrong_type_arg_msg("workbench-location-navigation", 0, count,
+                                       "non-negative item count");
+            }
+            call.location_navigation = {
+                .buffer = scheme_false(buffer) ? std::nullopt
+                                               : std::optional(entity_id_from_scheme<BufferTag>(
+                                                     buffer, "workbench-location-navigation", 0)),
+                .selected_index =
+                    optional_size_from_scheme(selected, "workbench-location-navigation"),
+                .location_count = scm_to_size_t(count)};
+            break;
+        }
+        case GuileCall::Operation::WorkbenchLocationListStates:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-location-list-states"),
+                           call.host, entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_vector(call.result)) {
+                scm_wrong_type_arg_msg("workbench-location-list-states", 0, call.result, "vector");
+            }
+            call.location_list_states.clear();
+            call.location_list_states.reserve(scm_c_vector_length(call.result));
+            for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
+                const SCM state = scm_c_vector_ref(call.result, index);
+                if (!scm_is_vector(state) || scm_c_vector_length(state) != 3 ||
+                    scm_is_unsigned_integer(scm_c_vector_ref(state, 0), 1,
+                                            std::numeric_limits<std::uint64_t>::max()) == 0 ||
+                    !scheme_boolean(scm_c_vector_ref(state, 2))) {
+                    scm_wrong_type_arg_msg("workbench-location-list-states", 0, state,
+                                           "#(list-id selected-or-#f current?)");
+                }
+                call.location_list_states.push_back(
+                    {.list = scm_to_uint64(scm_c_vector_ref(state, 0)),
+                     .selected_index = optional_size_from_scheme(scm_c_vector_ref(state, 1),
+                                                                 "workbench-location-list-states"),
+                     .current = scheme_true(scm_c_vector_ref(state, 2))});
             }
             break;
         case GuileCall::Operation::ReplaceWorkbenchMru: {
@@ -9275,6 +9265,38 @@ public:
         return std::move(call.buffers);
     }
 
+    std::expected<GuileLocationNavigation, std::string>
+    workbench_location_navigation(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchLocationNavigation;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.location_navigation;
+    }
+
+    std::expected<std::vector<GuileLocationListPolicyState>, std::string>
+    workbench_location_list_states(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchLocationListStates;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.location_list_states);
+    }
+
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers) {
         require_owner_thread();
@@ -10292,6 +10314,16 @@ GuileRuntime::workbench_mru(WorkbenchId workbench) const {
 std::expected<std::vector<BufferId>, std::string>
 GuileRuntime::workbench_buffers(WorkbenchId workbench, bool widen) const {
     return impl_->workbench_buffers(workbench, widen);
+}
+
+std::expected<GuileLocationNavigation, std::string>
+GuileRuntime::workbench_location_navigation(WorkbenchId workbench) const {
+    return impl_->workbench_location_navigation(workbench);
+}
+
+std::expected<std::vector<GuileLocationListPolicyState>, std::string>
+GuileRuntime::workbench_location_list_states(WorkbenchId workbench) const {
+    return impl_->workbench_location_list_states(workbench);
 }
 
 std::expected<void, std::string>

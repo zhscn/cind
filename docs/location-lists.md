@@ -26,7 +26,7 @@ while locations are revision-bound document data owned by a particular generated
 - `M-p` moves to the previous location.
 - `RET` opens the location at point in the current window.
 
-The application retains one current location list independently of the buffer displayed in a
+Each Guile workbench retains one current location list independently of the buffer displayed in a
 window. `M-g n` and `` C-x ` `` visit the next location, while `M-g p` visits the previous location.
 These commands continue to use the retained list after a visit replaces the result buffer with a
 source buffer. Selecting a location also moves the result View cached for that navigation window;
@@ -42,9 +42,13 @@ Opening a location uses the same asynchronous file workflow as ordinary file ope
 buffers are reused, pending opens retain the latest requested destination and its encoding, and the
 final caret is converted to a UTF-8 byte position only after the target Buffer is available.
 
-The current-list reference and selected index are application navigation state rather than Buffer
-or View state. Killing the referenced buffer clears that state; creating a new search result makes
-the new location list current without coupling the navigation commands to the search producer.
+The native `LocationListStack` owns durable list identity, items, resolved Buffer anchors and
+resource fallback positions. `(cind workbench)` owns publication order, the current-list reference,
+the selected index and the association with a generated Buffer. `publish-location-list-data!`
+atomically installs native data and returns the workbench, list identity, Buffer and item count;
+Scheme records those facts as navigation policy. Killing the generated Buffer clears only its
+association, so the durable list and its selected location remain navigable. Creating a new result
+makes its list current without coupling navigation commands to a producer.
 
 ## Search producer
 

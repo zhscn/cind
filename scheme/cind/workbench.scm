@@ -20,6 +20,12 @@
             workbench-mru
             workbench-buffer-ids
             workbench-buffer-summaries
+            workbench-location-list-published!
+            workbench-location-navigation
+            workbench-set-location-navigation!
+            workbench-location-list-key
+            workbench-move-location-list!
+            workbench-location-list-states
             replace-workbench-mru!
             workbench-name
             workbench-find-by-name
@@ -36,10 +42,14 @@
             workbench-slot
             workbench-slots))
 
-;; Entries are #(workbench name mru-list scope-list window-list active-window).
+;; Entries are
+;; #(workbench name mru-list scope-list window-list active-window
+;;   location-list-records current-location-list-or-#f).
 ;; Window records are #(window role-or-#f pinned? created-by-policy?). Window
-;; layouts and entity lifetimes are native data-plane state; selection,
-;; descriptive, membership and display policy state is owned by Guile.
+;; layouts, LocationList items, anchors and entity lifetimes are native
+;; data-plane state. Selection, descriptive, membership, navigation and
+;; display policy state is owned by Guile. Location records are
+;; #(list-id materialized-buffer-or-#f item-count selected-index-or-#f).
 (define workbench-states (make-weak-key-hash-table))
 (define active-workbenches (make-weak-key-hash-table))
 
@@ -123,7 +133,9 @@
                               (if initial-buffer (list initial-buffer) '())
                               (unique-values (vector->list scope))
                               (list (vector root-window #f #f #f))
-                              root-window)
+                              root-window
+                              '()
+                              #f)
                       entries))
     (when (null? entries)
       (hashq-set! active-workbenches host workbench)))
@@ -187,7 +199,13 @@
 (define (workbench-forget-buffer! host buffer)
   (for-each
    (lambda (entry)
-     (vector-set! entry 2 (without-buffer (vector-ref entry 2) buffer)))
+     (vector-set! entry 2 (without-buffer (vector-ref entry 2) buffer))
+     (for-each
+      (lambda (record)
+        (when (and (vector-ref record 1)
+                   (equal? buffer (vector-ref record 1)))
+          (vector-set! record 1 #f)))
+      (vector-ref entry 6)))
    (host-workbench-states host)))
 
 (define (workbench-released! host workbench)
@@ -252,6 +270,109 @@
                                 (buffer-modified? host buffer)
                                 (not (and project (member project scope))))
                         summaries)))))))
+
+(define (location-record-by-id entry list-id)
+  (let loop ((records (vector-ref entry 6)))
+    (and (pair? records)
+         (if (= list-id (vector-ref (car records) 0))
+             (car records)
+             (loop (cdr records))))))
+
+(define (location-record-by-buffer entry buffer)
+  (let loop ((records (vector-ref entry 6)))
+    (and (pair? records)
+         (if (and (vector-ref (car records) 1)
+                  (equal? buffer (vector-ref (car records) 1)))
+             (car records)
+             (loop (cdr records))))))
+
+(define (current-location-record entry)
+  (let ((current (vector-ref entry 7)))
+    (and current (location-record-by-id entry current))))
+
+(define (workbench-location-list-published! host workbench list-id buffer item-count)
+  (unless (and (integer? list-id) (> list-id 0))
+    (error "location list ID must be a positive integer" list-id))
+  (unless (and (integer? item-count) (>= item-count 0))
+    (error "location list item count must be a non-negative integer" item-count))
+  (buffer-name host buffer)
+  (let ((entry (require-workbench-entry host workbench)))
+    (when (location-record-by-id entry list-id)
+      (error "location list policy state already exists" list-id))
+    (vector-set! entry 6
+                 (append (vector-ref entry 6)
+                         (list (vector list-id buffer item-count #f))))
+    (vector-set! entry 7 list-id))
+  list-id)
+
+(define (workbench-location-navigation host workbench)
+  (let ((record (current-location-record
+                 (require-workbench-entry host workbench))))
+    (if record
+        (vector (vector-ref record 1)
+                (vector-ref record 3)
+                (vector-ref record 2))
+        (vector #f #f 0))))
+
+(define (require-selected-index record selected)
+  (unless (or (not selected)
+              (and (integer? selected)
+                   (>= selected 0)
+                   (< selected (vector-ref record 2))))
+    (error "location index is out of range" selected))
+  selected)
+
+(define (workbench-set-location-navigation! host workbench buffer selected)
+  (let* ((entry (require-workbench-entry host workbench))
+         (record (if buffer
+                     (location-record-by-buffer entry buffer)
+                     (current-location-record entry))))
+    (if (not record)
+        (if (and (not buffer) (not selected))
+            #f
+            (error "location list is no longer available" buffer))
+        (begin
+          (require-selected-index record selected)
+          (vector-set! entry 7 (vector-ref record 0))
+          (vector-set! record 3 selected)
+          (vector-ref record 0)))))
+
+(define (workbench-location-list-key host workbench buffer)
+  (let* ((entry (require-workbench-entry host workbench))
+         (record (if buffer
+                     (location-record-by-buffer entry buffer)
+                     (current-location-record entry))))
+    (and record (vector workbench (vector-ref record 0)))))
+
+(define (workbench-move-location-list! host workbench delta)
+  (unless (integer? delta)
+    (error "location list movement must be an integer" delta))
+  (let* ((entry (require-workbench-entry host workbench))
+         (records (vector-ref entry 6))
+         (current (vector-ref entry 7)))
+    (if (or (not current) (= delta 0))
+        #f
+        (let loop ((remaining records) (index 0))
+          (cond ((null? remaining) #f)
+                ((= current (vector-ref (car remaining) 0))
+                 (let ((target (+ index delta)))
+                   (if (or (< target 0) (>= target (length records)))
+                       #f
+                       (begin
+                         (vector-set! entry 7
+                                      (vector-ref (list-ref records target) 0))
+                         #t))))
+                (else (loop (cdr remaining) (+ index 1))))))))
+
+(define (workbench-location-list-states host workbench)
+  (let* ((entry (require-workbench-entry host workbench))
+         (current (vector-ref entry 7)))
+    (list->vector
+     (map (lambda (record)
+            (vector (vector-ref record 0)
+                    (vector-ref record 3)
+                    (and current (= current (vector-ref record 0)))))
+          (vector-ref entry 6)))))
 
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)

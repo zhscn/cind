@@ -368,43 +368,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return publish_location_list(window, buffer, std::move(source),
                                                 std::move(locations));
                },
-           .location_navigation =
-               [this] {
-                   const LocationNavigationSnapshot navigation = location_navigation();
-                   return GuileLocationNavigation{.buffer = navigation.buffer,
-                                                  .selected_index = navigation.selected_index,
-                                                  .location_count = navigation.location_count};
-               },
-           .set_location_navigation =
-               [this](std::optional<BufferId> buffer,
-                      std::optional<std::size_t> selected) -> std::expected<void, std::string> {
-               if (!buffer) {
-                   if (active_workbench().location_lists().current() == nullptr && !selected) {
-                       return {};
-                   }
-                   return active_workbench().location_lists().select(selected)
-                              ? std::expected<void, std::string>{}
-                              : std::unexpected("location index is out of range");
-               }
-               Workbench* owner = nullptr;
-               for (const WorkbenchId workbench : workbenches_.all()) {
-                   Workbench& candidate = workbenches_.get(workbench);
-                   if (candidate.location_lists().find_by_buffer(*buffer) != nullptr) {
-                       owner = &candidate;
-                       break;
-                   }
-               }
-               if (owner == nullptr || !owner->location_lists().set_current_by_buffer(*buffer)) {
-                   return std::unexpected("location list is no longer available");
-               }
-               if (!owner->location_lists().select(selected)) {
-                   return std::unexpected("location index is out of range");
-               }
-               return {};
-           },
-           .location_target = [this](std::optional<BufferId> buffer,
+           .location_target = [this](WorkbenchId workbench, std::uint64_t list,
                                      std::size_t index) -> std::optional<GuileLocationTarget> {
-               const std::optional<LocationItem> item = location_item(buffer, index);
+               const std::optional<LocationItem> item = location_item(workbench, list, index);
                if (!item) {
                    return std::nullopt;
                }
@@ -422,8 +388,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                return GuileLocationTarget{
                    .resource = item->resource, .position = position, .stale = stale};
            },
-           .move_location_list =
-               [this](int delta) { return active_workbench().location_lists().move(delta); },
            .position_buffer_view = [this](WindowId window, BufferId buffer, std::uint32_t offset)
                -> std::expected<void, std::string> {
                try {
@@ -2505,17 +2469,14 @@ OpenWindowSnapshot EditorApplication::window_snapshot(WindowId window) const {
 }
 
 LocationNavigationSnapshot EditorApplication::location_navigation() const {
-    const LocationList* list = active_workbench().location_lists().current();
-    if (list == nullptr) {
-        return {};
+    const std::expected<GuileLocationNavigation, std::string> navigation =
+        guile_.workbench_location_navigation(workbench_id());
+    if (!navigation) {
+        throw std::runtime_error(navigation.error());
     }
-    std::optional<std::size_t> selected_index = list->selected;
-    if (selected_index && *selected_index >= list->items.size()) {
-        selected_index.reset();
-    }
-    return {.buffer = list->materialized_buffer,
-            .selected_index = selected_index,
-            .location_count = list->items.size()};
+    return {.buffer = navigation->buffer,
+            .selected_index = navigation->selected_index,
+            .location_count = navigation->location_count};
 }
 
 std::vector<LocationListSnapshot> EditorApplication::location_lists(WorkbenchId workbench) const {
@@ -2523,23 +2484,26 @@ std::vector<LocationListSnapshot> EditorApplication::location_lists(WorkbenchId 
     if (target == nullptr) {
         return {};
     }
-    const LocationList* current = target->location_lists().current();
+    const std::expected<std::vector<GuileLocationListPolicyState>, std::string> states =
+        guile_.workbench_location_list_states(workbench);
+    if (!states) {
+        throw std::runtime_error(states.error());
+    }
     std::vector<LocationListSnapshot> result;
     result.reserve(target->location_lists().lists().size());
     for (const LocationList& list : target->location_lists().lists()) {
-        result.push_back({.list = list.id,
-                          .source = list.source,
-                          .materialized_buffer = list.materialized_buffer,
-                          .selected_index = list.selected,
-                          .item_count = list.items.size(),
-                          .version = list.version,
-                          .current = current != nullptr && current->id == list.id});
+        const auto policy =
+            std::ranges::find(*states, list.id, &GuileLocationListPolicyState::list);
+        result.push_back(
+            {.list = list.id,
+             .source = list.source,
+             .materialized_buffer = list.materialized_buffer,
+             .selected_index = policy != states->end() ? policy->selected_index : std::nullopt,
+             .item_count = list.items.size(),
+             .version = list.version,
+             .current = policy != states->end() && policy->current});
     }
     return result;
-}
-
-bool EditorApplication::move_location_list(int delta) {
-    return active_workbench().location_lists().move(delta);
 }
 
 TransactionGroupId
@@ -2958,7 +2922,7 @@ EditorApplication::move_caret_to_line(ViewId view, std::uint32_t line,
     }
 }
 
-std::expected<void, std::string>
+std::expected<GuilePublishedLocationList, std::string>
 EditorApplication::publish_location_list(WindowId window, BufferId buffer, std::string source,
                                          std::vector<BufferLocation> locations) {
     const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
@@ -2977,36 +2941,33 @@ EditorApplication::publish_location_list(WindowId window, BufferId buffer, std::
                              .resolved = std::nullopt});
         }
         Workbench& workbench = workbenches_.get(*owner);
-        (void)workbench.location_lists().publish(std::move(source), std::move(items), buffer);
+        const std::size_t item_count = items.size();
+        const LocationListId list =
+            workbench.location_lists().publish(std::move(source), std::move(items), buffer);
         for (const std::unique_ptr<BufferState>& state : buffers_) {
             const Buffer& candidate = runtime_.buffers().get(state->buffer);
             if (candidate.resource_uri()) {
                 resolve_location_lists(state->buffer);
             }
         }
-        return {};
+        return GuilePublishedLocationList{
+            .workbench = *owner, .list = list, .buffer = buffer, .item_count = item_count};
     } catch (const std::exception& exception) {
         return std::unexpected(exception.what());
     }
 }
 
-std::optional<LocationItem> EditorApplication::location_item(std::optional<BufferId> materialized,
+std::optional<LocationItem> EditorApplication::location_item(WorkbenchId workbench,
+                                                             LocationListId list,
                                                              std::size_t index) const {
-    if (!materialized) {
-        const LocationList* list = active_workbench().location_lists().current();
-        return list != nullptr && index < list->items.size()
-                   ? std::optional<LocationItem>{list->items[index]}
-                   : std::nullopt;
+    const Workbench* owner = workbenches_.try_get(workbench);
+    if (owner == nullptr) {
+        return std::nullopt;
     }
-    for (const WorkbenchId workbench : workbenches_.all()) {
-        const LocationList* list =
-            workbenches_.get(workbench).location_lists().find_by_buffer(*materialized);
-        if (list == nullptr || index >= list->items.size()) {
-            continue;
-        }
-        return list->items[index];
-    }
-    return std::nullopt;
+    const LocationList* target = owner->location_lists().find(list);
+    return target != nullptr && index < target->items.size()
+               ? std::optional<LocationItem>{target->items[index]}
+               : std::nullopt;
 }
 
 void EditorApplication::resolve_location_lists(BufferId buffer_id) {

@@ -1319,10 +1319,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .view_syntax_token = {},
          .view_identifier_words = {},
          .publish_location_list = {},
-         .location_navigation = {},
-         .set_location_navigation = {},
          .location_target = {},
-         .move_location_list = {},
          .position_buffer_view = {},
          .request_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
@@ -1533,6 +1530,28 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.workbench_created(workbench, "code", window, buffer, {}).has_value());
     CHECK(guile.active_workbench().value_or(WorkbenchId{}) == workbench);
     CHECK(guile.workbench_active_window(workbench).value_or(WindowId{}) == window);
+    const std::expected<GuileEvaluationResult, std::string> location_policy =
+        guile.evaluate({.source = R"((use-modules (cind workbench))
+(workbench-location-list-published! host '#(0 1) 1 '#(0 1) 3)
+(workbench-location-list-published! host '#(0 1) 2 '#(1 1) 2)
+(workbench-set-location-navigation! host '#(0 1) '#(0 1) 1)
+(workbench-move-location-list! host '#(0 1) 1))",
+                        .source_name = "location-policy-test.scm"});
+    REQUIRE(location_policy.has_value());
+    REQUIRE_FALSE(location_policy->error.has_value());
+    const GuileLocationNavigation location_navigation =
+        guile.workbench_location_navigation(workbench).value();
+    CHECK(location_navigation.buffer == std::optional{other});
+    CHECK_FALSE(location_navigation.selected_index.has_value());
+    CHECK(location_navigation.location_count == 2);
+    const std::vector<GuileLocationListPolicyState> location_states =
+        guile.workbench_location_list_states(workbench).value();
+    REQUIRE(location_states.size() == 2);
+    CHECK(location_states[0].list == 1);
+    CHECK(location_states[0].selected_index == 1);
+    CHECK_FALSE(location_states[0].current);
+    CHECK(location_states[1].list == 2);
+    CHECK(location_states[1].current);
     {
         EditorRuntime parallel_runtime;
         GuileRuntime parallel(parallel_runtime);

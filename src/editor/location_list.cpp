@@ -24,19 +24,9 @@ LocationListId LocationListStack::publish(std::string source, std::vector<Locati
                       .source = std::move(source),
                       .items = std::move(items),
                       .materialized_buffer = materialized_buffer,
-                      .selected = std::nullopt,
                       .created_at = ++clock_,
                       .version = 1});
-    cursor_ = lists_.size() - 1;
     return id;
-}
-
-LocationList* LocationListStack::current() {
-    return cursor_ ? &lists_[*cursor_] : nullptr;
-}
-
-const LocationList* LocationListStack::current() const {
-    return const_cast<LocationListStack*>(this)->current();
 }
 
 LocationList* LocationListStack::find(LocationListId id) {
@@ -57,42 +47,6 @@ LocationList* LocationListStack::find_by_buffer(BufferId buffer) {
 
 const LocationList* LocationListStack::find_by_buffer(BufferId buffer) const {
     return const_cast<LocationListStack*>(this)->find_by_buffer(buffer);
-}
-
-bool LocationListStack::set_current(LocationListId id) {
-    const auto found =
-        std::ranges::find_if(lists_, [id](const LocationList& list) { return list.id == id; });
-    if (found == lists_.end()) {
-        return false;
-    }
-    cursor_ = static_cast<std::size_t>(std::distance(lists_.begin(), found));
-    return true;
-}
-
-bool LocationListStack::set_current_by_buffer(BufferId buffer) {
-    const LocationList* list = find_by_buffer(buffer);
-    return list != nullptr && set_current(list->id);
-}
-
-bool LocationListStack::select(std::optional<std::size_t> index) {
-    LocationList* list = current();
-    if (list == nullptr || (index && *index >= list->items.size())) {
-        return false;
-    }
-    list->selected = index;
-    return true;
-}
-
-bool LocationListStack::move(int delta) {
-    if (!cursor_ || delta == 0) {
-        return false;
-    }
-    const std::int64_t target = static_cast<std::int64_t>(*cursor_) + delta;
-    if (target < 0 || target >= static_cast<std::int64_t>(lists_.size())) {
-        return false;
-    }
-    cursor_ = static_cast<std::size_t>(target);
-    return true;
 }
 
 void LocationListStack::resolve_resource(std::string_view resource, const Resolver& resolver) {

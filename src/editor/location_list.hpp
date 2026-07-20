@@ -45,7 +45,6 @@ struct LocationList {
     std::string source;
     std::vector<LocationItem> items;
     std::optional<BufferId> materialized_buffer;
-    std::optional<std::size_t> selected;
     std::uint64_t created_at = 0;
     std::uint64_t version = 1;
 };
@@ -54,19 +53,11 @@ class LocationListStack {
 public:
     LocationListId publish(std::string source, std::vector<LocationItem> items,
                            std::optional<BufferId> materialized_buffer = std::nullopt);
-    LocationList* current();
-    const LocationList* current() const;
     LocationList* find(LocationListId id);
     const LocationList* find(LocationListId id) const;
     LocationList* find_by_buffer(BufferId buffer);
     const LocationList* find_by_buffer(BufferId buffer) const;
-    bool set_current(LocationListId id);
-    bool set_current_by_buffer(BufferId buffer);
-    bool select(std::optional<std::size_t> index);
-    bool move(int delta);
-
     std::span<const LocationList> lists() const { return lists_; }
-    std::optional<std::size_t> cursor() const { return cursor_; }
 
     using Resolver = std::function<ResolvedLocation(const LocationItem&)>;
     void resolve_resource(std::string_view resource, const Resolver& resolver);
@@ -77,7 +68,6 @@ public:
 
 private:
     std::vector<LocationList> lists_;
-    std::optional<std::size_t> cursor_;
     LocationListId next_id_ = 0;
     std::uint64_t clock_ = 0;
 };

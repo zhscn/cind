@@ -31,7 +31,12 @@
                           workbench-expel-buffer!
                           replace-workbench-mru!
                           workbench-buffer-ids
-                          workbench-buffer-summaries))
+                          workbench-buffer-summaries
+                          workbench-location-list-published!
+                          workbench-location-navigation
+                          workbench-set-location-navigation!
+                          workbench-location-list-key
+                          workbench-move-location-list!))
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
@@ -1610,6 +1615,16 @@
     (cancel-project-search-tasks! host search)
     (set-message! host "project search cancelled")))
 
+(define (publish-location-list! host window buffer source locations)
+  (let ((published
+         (publish-location-list-data! host window buffer source locations)))
+    (workbench-location-list-published!
+     host
+     (vector-ref published 0)
+     (vector-ref published 1)
+     (vector-ref published 2)
+     (vector-ref published 3))))
+
 (define (finish-project-search! host search result)
   (when (project-search-live? host search)
     (catch #t
@@ -1623,9 +1638,8 @@
                 (create-buffer! host (string-append "*project grep: " query "*")
                                 contents 'process #f #t 'cind.location-list #f
                                 "location-list")))
-          (set-location-list! host (pending-project-search-window search)
-                              buffer 'search (vector-ref result 2))
-          (set-location-navigation! host buffer #f)
+          (publish-location-list! host (pending-project-search-window search)
+                                  buffer 'search (vector-ref result 2))
           (let ((projects (pending-project-search-projects search)))
             (set-buffer-project! host buffer
                                  (and (= (vector-length projects) 1)
@@ -2270,6 +2284,23 @@
   (eq? (vector-ref (buffer-mode-summary host (context-buffer context)) 0)
        'cind.location-list))
 
+(define (location-navigation host)
+  (workbench-location-navigation host (active-workbench host)))
+
+(define (set-location-navigation! host buffer selected)
+  (workbench-set-location-navigation! host (active-workbench host) buffer selected))
+
+(define (location-list-target host buffer index)
+  (let ((key (workbench-location-list-key host (active-workbench host) buffer)))
+    (and key
+         (location-list-item-target host
+                                    (vector-ref key 0)
+                                    (vector-ref key 1)
+                                    index))))
+
+(define (move-location-list! host delta)
+  (workbench-move-location-list! host (active-workbench host) delta))
+
 (define (location-navigation-available? host context)
   (or (> (vector-length (buffer-locations host (context-buffer context))) 0)
       (> (vector-ref (location-navigation host) 2) 0)))
@@ -2467,8 +2498,7 @@
              (buffer (create-buffer! host name (vector-ref data 0)
                                      'process #f #t 'cind.location-list #f
                                      "location-list")))
-        (set-location-list! host window buffer source (vector-ref data 1))
-        (set-location-navigation! host buffer #f)
+        (publish-location-list! host window buffer source (vector-ref data 1))
         (display-buffer! host window buffer 'tools)
         (set-message! host
                       (format #f "LSP ~a: ~a location~a"
@@ -2611,9 +2641,8 @@
                   (buffer (create-buffer! host "*Diagnostics*" (vector-ref data 0)
                                           'process #f #t 'cind.location-list #f
                                           "location-list")))
-             (set-location-list! host (context-window context) buffer 'diagnostics
-                                 (vector-ref data 1))
-             (set-location-navigation! host buffer #f)
+             (publish-location-list! host (context-window context) buffer 'diagnostics
+                                     (vector-ref data 1))
              (display-buffer! host (context-window context) buffer 'tools)
              (set-message! host
                            (format #f "~a diagnostic~a"

@@ -162,6 +162,9 @@ The native module exports:
 (buffer-locations host buffer-id)
 (buffer-diagnostics host buffer-id)
 (set-buffer-locations! host buffer-id locations)
+(publish-location-list-data! host window-id buffer-id source locations)
+(location-list-item-target host workbench-id list-id index)
+(position-buffer-view! host window-id buffer-id byte-offset)
 (erase-range! host view-id start end)
 (insert-text! host view-id text-or-vector)
 (soft-kill-range host view-id 'plain-or-structural)
@@ -697,8 +700,11 @@ uses `#(source-start source-end resource target-line target-column excerpt encod
 contract and resolves it after the destination Buffer is available; `display-buffer-at!` is the
 byte-column convenience form.
 `set-buffer-locations!` validates ordered source ranges against the current document and atomically
-replaces that vector. Location-list navigation remains a native presentation mechanism; Scheme
-chooses when a generated buffer becomes the current navigation source.
+replaces that vector. `publish-location-list-data!` stores durable list items and resolved anchors
+in the native workbench data plane and returns `#(workbench-id list-id buffer-id item-count)`.
+`(cind workbench)` owns the publication order, current list and selected index.
+`location-list-item-target` resolves one explicit native list item; Scheme chooses the list and
+drives navigation independently of the displayed Buffer.
 
 `display-generated-buffer!` creates or replaces a named read-only generated buffer, applies the
 major mode and presentation origin selected by Scheme, resets its cached View to the beginning, and

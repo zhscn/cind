@@ -236,7 +236,6 @@ public:
     std::vector<OpenWindowSnapshot> open_windows() const;
     LocationNavigationSnapshot location_navigation() const;
     std::vector<LocationListSnapshot> location_lists(WorkbenchId workbench) const;
-    bool move_location_list(int delta);
     TransactionGroupId record_transaction_group(std::string source,
                                                 std::vector<TransactionGroupEntry> entries);
     std::optional<TransactionGroupResult> move_transaction_group(TransactionGroupId group,
@@ -343,10 +342,10 @@ private:
                                                                   std::string_view intent);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);
-    std::expected<void, std::string> publish_location_list(WindowId window, BufferId buffer,
-                                                           std::string source,
-                                                           std::vector<BufferLocation> locations);
-    std::optional<LocationItem> location_item(std::optional<BufferId> materialized,
+    std::expected<GuilePublishedLocationList, std::string>
+    publish_location_list(WindowId window, BufferId buffer, std::string source,
+                          std::vector<BufferLocation> locations);
+    std::optional<LocationItem> location_item(WorkbenchId workbench, LocationListId list,
                                               std::size_t index) const;
     void resolve_location_lists(BufferId buffer);
     void resolve_jump_nodes(BufferId buffer);

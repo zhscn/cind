@@ -111,6 +111,19 @@ struct GuileLocationNavigation {
     std::size_t location_count = 0;
 };
 
+struct GuilePublishedLocationList {
+    WorkbenchId workbench;
+    std::uint64_t list = 0;
+    BufferId buffer;
+    std::size_t item_count = 0;
+};
+
+struct GuileLocationListPolicyState {
+    std::uint64_t list = 0;
+    std::optional<std::size_t> selected_index;
+    bool current = false;
+};
+
 struct GuileLocationTarget {
     std::string resource;
     EncodedLinePosition position;
@@ -265,16 +278,11 @@ struct GuileHostServices {
     std::function<GuileViewLinePrefix(ViewId)> view_line_prefix;
     std::function<std::optional<GuileSyntaxToken>(ViewId, TextOffset)> view_syntax_token;
     std::function<std::vector<std::string>(ViewId)> view_identifier_words;
-    std::function<std::expected<void, std::string>(WindowId, BufferId, std::string,
-                                                   std::vector<BufferLocation>)>
+    std::function<std::expected<GuilePublishedLocationList, std::string>(
+        WindowId, BufferId, std::string, std::vector<BufferLocation>)>
         publish_location_list;
-    std::function<GuileLocationNavigation()> location_navigation;
-    std::function<std::expected<void, std::string>(std::optional<BufferId>,
-                                                   std::optional<std::size_t>)>
-        set_location_navigation;
-    std::function<std::optional<GuileLocationTarget>(std::optional<BufferId>, std::size_t)>
+    std::function<std::optional<GuileLocationTarget>(WorkbenchId, std::uint64_t, std::size_t)>
         location_target;
-    std::function<bool(int)> move_location_list;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
     std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
@@ -436,6 +444,10 @@ public:
     std::expected<std::vector<BufferId>, std::string> workbench_mru(WorkbenchId workbench) const;
     std::expected<std::vector<BufferId>, std::string> workbench_buffers(WorkbenchId workbench,
                                                                         bool widen = false) const;
+    std::expected<GuileLocationNavigation, std::string>
+    workbench_location_navigation(WorkbenchId workbench) const;
+    std::expected<std::vector<GuileLocationListPolicyState>, std::string>
+    workbench_location_list_states(WorkbenchId workbench) const;
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
     std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;
