@@ -3704,6 +3704,25 @@ TEST_CASE("include completion selects the asynchronous path provider") {
     CHECK(application.completion().state()->matches.front().item.label == "foo.hpp");
 }
 
+TEST_CASE("Scheme completion policy owns syntax gating and UTF-8 byte anchors") {
+    EditorApplication comment = make_application("comment.cc", "// fo");
+    comment.session().set_caret(TextOffset{5});
+
+    send_keys(comment, "C-M-i");
+    CHECK_FALSE(comment.completion().active());
+    CHECK(comment.message() == "completion is suppressed in the current syntax context");
+
+    EditorApplication unicode = make_application("unicode.cc", "😀foo fo");
+    unicode.session().set_caret(TextOffset{10});
+
+    send_keys(unicode, "C-M-i");
+    const CompletionState* state = unicode.completion().state();
+    REQUIRE(state != nullptr);
+    CHECK(state->request.anchor == TextOffset{8});
+    CHECK(state->request.caret == TextOffset{10});
+    CHECK(state->request.query == "fo");
+}
+
 TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
     TemporaryDirectory commands("cind-lsp-navigation-path");
     std::filesystem::create_symlink(CIND_LSP_TEST_SERVER, commands.path() / "clangd");

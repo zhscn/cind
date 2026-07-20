@@ -146,6 +146,8 @@ The native module exports:
 (path-as-directory host path)
 (window-buffer-id host window-id)
 (view-caret host view-id)
+(view-line-prefix host view-id)
+(view-syntax-token host view-id byte-offset)
 (view-identifier-words host view-id)
 (view-mark host view-id)
 (view-selection host view-id)
@@ -195,7 +197,7 @@ The native module exports:
 (select-interaction-candidate! host zero-based-index)
 (replace-interaction-input! host input)
 (completion-active? host)
-(start-completion! host context provider-names trigger)
+(start-completion! host context anchor-byte provider-names trigger)
 (move-completion! host delta)
 (apply-completion! host replace?)
 (cancel-completion! host)
@@ -612,8 +614,10 @@ retained in the scripting inspection snapshot.
 optional resolver. The
 procedure receives an immutable command context and a request value whose accessors are exported by
 `(cind command)`: query, generic anchor, caret, logical line, trigger kind, and trigger character.
-`start-completion!` creates that request from an ordered vector of provider names and either the
-`manual` or `automatic` trigger symbol. The provider procedure returns `completion-result`
+`start-completion!` creates that request from an explicit byte anchor, an ordered vector of provider
+names, and either the `manual` or `automatic` trigger symbol. Scheme mode policy derives the anchor,
+syntax gate, and effective providers before entering the native completion pipeline. The provider
+procedure returns `completion-result`
 containing `completion-item` values. Each item supplies display,
 filter, ordering, insertion, detail, kind, and documentation text, plus either two byte offsets for
 its replacement range or two `#f` values to use the generic query range. The completion pipeline
@@ -642,6 +646,12 @@ module inspection preserves application isolation.
 `view-identifier-words` returns the sorted unique identifier tokens from the View's current
 language analysis. The bundled `word` completion provider is Scheme code that turns this semantic
 snapshot into completion items; native code does not choose, label, or rank those candidates.
+
+`view-line-prefix` returns the current logical line's starting byte, caret byte, and UTF-8 text up to
+the caret. `view-syntax-token` returns the language token kind and byte range covering an explicit
+offset, or `#f` when the active language has no token there. Completion policy composes these generic
+snapshots to recognize include paths, suppress ordinary candidates in literals and comments, and
+find the query anchor without placing language-specific decisions in `EditorApplication`.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`

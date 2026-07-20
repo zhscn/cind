@@ -177,7 +177,7 @@ public:
     bool handle_scroll(ScrollInput input);
     bool request_close(bool force = false);
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
-    std::expected<void, std::string> start_completion(CommandTarget target,
+    std::expected<void, std::string> start_completion(CommandTarget target, TextOffset anchor,
                                                       std::vector<CompletionProvider> providers,
                                                       CompletionTrigger trigger = {});
     bool move_completion(std::int64_t delta);

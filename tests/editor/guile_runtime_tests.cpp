@@ -1180,6 +1180,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .cancel_completion = {},
          .cancel_pending_input = {},
          .view_position = {},
+         .view_line_prefix = {},
+         .view_syntax_token = {},
          .view_identifier_words = {},
          .publish_location_list = {},
          .location_navigation = {},

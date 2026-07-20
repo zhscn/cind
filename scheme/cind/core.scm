@@ -1949,14 +1949,103 @@
          (policy (vector-ref summary 2)))
     policy))
 
+(define (completion-substring-index text needle)
+  (let ((limit (- (string-length text) (string-length needle))))
+    (let loop ((index 0))
+      (cond ((> index limit) #f)
+            ((string=? needle
+                       (substring text index (+ index (string-length needle))))
+             index)
+            (else (loop (+ index 1)))))))
+
+(define (completion-last-character-index text predicate)
+  (let loop ((index (- (string-length text) 1)))
+    (cond ((< index 0) #f)
+          ((predicate (string-ref text index)) index)
+          (else (loop (- index 1))))))
+
+(define (completion-word-character? character)
+  (let ((codepoint (char->integer character)))
+    (and (< codepoint 128)
+         (or (char-alphabetic? character)
+             (char-numeric? character)
+             (char=? character #\_)))))
+
+(define (completion-word-start text)
+  (let loop ((index (string-length text)))
+    (if (and (> index 0)
+             (completion-word-character? (string-ref text (- index 1))))
+        (loop (- index 1))
+        index)))
+
+(define (completion-providers-without-path providers)
+  (let loop ((index 0)
+             (result '()))
+    (if (= index (vector-length providers))
+        (list->vector (reverse result))
+        (let ((provider (vector-ref providers index)))
+          (loop (+ index 1)
+                (if (string=? provider "path") result (cons provider result)))))))
+
+(define (completion-suppressed? host context caret)
+  (and (> caret 0)
+       (let ((token (view-syntax-token host (context-view context) (- caret 1))))
+         (and token
+              (memq (vector-ref token 0)
+                    '(LineComment BlockComment StringLiteral RawStringLiteral
+                                  CharacterLiteral))))))
+
+(define (completion-start-plan host context providers trigger)
+  (let* ((line (view-line-prefix host (context-view context)))
+         (line-start (vector-ref line 0))
+         (caret (vector-ref line 1))
+         (prefix (vector-ref line 2))
+         (include (completion-substring-index prefix "#include"))
+         (delimiter
+          (completion-last-character-index prefix
+                                           (lambda (character)
+                                             (or (char=? character #\")
+                                                 (char=? character #\<)))))
+         (include-path? (and include delimiter (> delimiter include))))
+    (cond
+     (include-path?
+      (let* ((slash (completion-last-character-index
+                     prefix
+                     (lambda (character)
+                       (or (char=? character #\/)
+                           (char=? character #\\)))))
+             (start (if (and slash (> slash delimiter)) (+ slash 1) (+ delimiter 1))))
+        (vector (+ line-start
+                   (string-utf8-length (substring prefix 0 start)))
+                (vector "path"))))
+     ((completion-suppressed? host context caret)
+      "completion is suppressed in the current syntax context")
+     (else
+      (let* ((start (completion-word-start prefix))
+             (anchor (+ line-start
+                        (string-utf8-length (substring prefix 0 start))))
+             (enabled (completion-providers-without-path providers)))
+        (cond ((zero? (vector-length enabled))
+               "no completion provider is enabled for this syntax context")
+              ((and (eq? trigger 'automatic) (= anchor caret)) #f)
+              (else (vector anchor enabled))))))))
+
 (define (start-mode-completion! host context trigger)
-  (let ((policy (mode-completion-policy host context)))
-    (start-completion! host context (vector-ref policy 3) trigger)))
+  (let* ((policy (mode-completion-policy host context))
+         (plan (completion-start-plan host context (vector-ref policy 3) trigger)))
+    (if (vector? plan)
+        (begin
+          (start-completion! host context (vector-ref plan 0) (vector-ref plan 1) trigger)
+          #t)
+        plan)))
 
 (define (completion-start host context invocation)
-  (start-mode-completion! host context 'manual)
-  (request-redraw! host)
-  (command-completed/preserve))
+  (let ((started (start-mode-completion! host context 'manual)))
+    (if (string? started)
+        (command-error started)
+        (begin
+          (request-redraw! host)
+          (command-completed/preserve)))))
 
 (define (automatic-completion-character? text)
   (and (> (string-length text) 0)
@@ -1973,7 +2062,7 @@
                (> (vector-length (vector-ref policy 3)) 0)
                (not (completion-active? host))
                (automatic-completion-character? text))
-      (start-completion! host context (vector-ref policy 3) 'automatic))))
+      (start-mode-completion! host context 'automatic))))
 
 (define (word-completion-provider host context request)
   (let ((words (view-identifier-words host (context-view context)))

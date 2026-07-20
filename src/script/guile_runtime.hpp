@@ -87,6 +87,18 @@ struct GuileViewPosition {
     std::uint32_t byte_count = 0;
 };
 
+struct GuileViewLinePrefix {
+    std::uint32_t line_start = 0;
+    std::uint32_t caret = 0;
+    std::string text;
+};
+
+struct GuileSyntaxToken {
+    std::string kind;
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
+};
+
 struct GuileLocationNavigation {
     std::optional<BufferId> buffer;
     std::optional<std::size_t> selected_index;
@@ -238,14 +250,16 @@ struct GuileHostServices {
     std::function<bool()> completion_active;
     std::function<std::expected<CompletionProvider, std::string>(CommandTarget, std::string_view)>
         resolve_completion_provider;
-    std::function<std::expected<void, std::string>(CommandTarget, std::vector<CompletionProvider>,
-                                                   CompletionTrigger)>
+    std::function<std::expected<void, std::string>(
+        CommandTarget, TextOffset, std::vector<CompletionProvider>, CompletionTrigger)>
         start_completion;
     std::function<bool(std::int64_t)> move_completion;
     std::function<std::expected<void, std::string>(bool)> apply_completion;
     std::function<bool()> cancel_completion;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
+    std::function<GuileViewLinePrefix(ViewId)> view_line_prefix;
+    std::function<std::optional<GuileSyntaxToken>(ViewId, TextOffset)> view_syntax_token;
     std::function<std::vector<std::string>(ViewId)> view_identifier_words;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::string,
                                                    std::vector<BufferLocation>)>

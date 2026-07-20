@@ -5466,7 +5466,8 @@ SCM completion_active(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM start_completion(SCM host_object, SCM context_value, SCM providers_value, SCM trigger_value) {
+SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM providers_value,
+                     SCM trigger_value) {
     HostLease& host = require_host(host_object, "start-completion!");
     if (!host.services.start_completion) {
         scm_misc_error("start-completion!", "completion capability is unavailable", SCM_EOL);
@@ -5474,17 +5475,18 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value, SC
     try {
         const CommandContext context =
             command_context_from_scheme(host, context_value, "start-completion!");
+        const TextOffset anchor = text_offset_from_scheme(anchor_value, "start-completion!", 3);
         CompletionTrigger trigger;
         if (symbol_is(trigger_value, "manual")) {
             trigger.kind = CompletionTriggerKind::Manual;
         } else if (symbol_is(trigger_value, "automatic")) {
             trigger.kind = CompletionTriggerKind::Automatic;
         } else {
-            scm_wrong_type_arg_msg("start-completion!", 4, trigger_value, "'manual or 'automatic");
+            scm_wrong_type_arg_msg("start-completion!", 5, trigger_value, "'manual or 'automatic");
         }
         std::vector<CompletionProvider> providers;
         for (const std::string& name :
-             string_sequence_from_scheme(providers_value, "start-completion!", 3)) {
+             string_sequence_from_scheme(providers_value, "start-completion!", 4)) {
             if (const auto provider = host.state->completion_providers_by_name.find(name);
                 provider != host.state->completion_providers_by_name.end()) {
                 providers.push_back(CompletionProvider::scripted(provider->second));
@@ -5510,8 +5512,8 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value, SC
         const CommandTarget target{.window = context.window_id(),
                                    .buffer = context.buffer_id(),
                                    .view = context.view_id()};
-        std::expected<void, std::string> started =
-            host.services.start_completion(target, std::move(providers), std::move(trigger));
+        std::expected<void, std::string> started = host.services.start_completion(
+            target, anchor, std::move(providers), std::move(trigger));
         if (!started) {
             raise_host_error("start-completion!", started.error());
         }
@@ -5615,6 +5617,53 @@ SCM view_position(SCM host_object, SCM view_value) {
         raise_host_error("view-position", exception.what());
     } catch (...) {
         scm_misc_error("view-position", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM view_line_prefix(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "view-line-prefix");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-line-prefix", 2);
+    if (!host.services.view_line_prefix) {
+        scm_misc_error("view-line-prefix", "view line query capability is unavailable", SCM_EOL);
+    }
+    try {
+        const GuileViewLinePrefix prefix = host.services.view_line_prefix(view);
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_uint32(prefix.line_start));
+        scm_c_vector_set_x(result, 1, scm_from_uint32(prefix.caret));
+        scm_c_vector_set_x(result, 2,
+                           scm_from_utf8_stringn(prefix.text.data(), prefix.text.size()));
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("view-line-prefix", exception.what());
+    } catch (...) {
+        scm_misc_error("view-line-prefix", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM view_syntax_token(SCM host_object, SCM view_value, SCM offset_value) {
+    HostLease& host = require_host(host_object, "view-syntax-token");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-syntax-token", 2);
+    const TextOffset offset = text_offset_from_scheme(offset_value, "view-syntax-token", 3);
+    if (!host.services.view_syntax_token) {
+        scm_misc_error("view-syntax-token", "syntax query capability is unavailable", SCM_EOL);
+    }
+    try {
+        const std::optional<GuileSyntaxToken> token = host.services.view_syntax_token(view, offset);
+        if (!token) {
+            return SCM_BOOL_F;
+        }
+        SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+        scm_c_vector_set_x(result, 0, scm_from_utf8_symbol(token->kind.c_str()));
+        scm_c_vector_set_x(result, 1, scm_from_uint32(token->start));
+        scm_c_vector_set_x(result, 2, scm_from_uint32(token->end));
+        return result;
+    } catch (const std::exception& exception) {
+        raise_host_error("view-syntax-token", exception.what());
+    } catch (...) {
+        scm_misc_error("view-syntax-token", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -6024,7 +6073,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
     (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(completion_active));
-    (void)scm_c_define_gsubr("start-completion!", 4, 0, 0,
+    (void)scm_c_define_gsubr("start-completion!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
     (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(move_completion));
@@ -6035,6 +6084,10 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_pending_input));
     (void)scm_c_define_gsubr("view-position", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_position));
+    (void)scm_c_define_gsubr("view-line-prefix", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_line_prefix));
+    (void)scm_c_define_gsubr("view-syntax-token", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_syntax_token));
     (void)scm_c_define_gsubr("view-identifier-words", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(view_identifier_words));
     (void)scm_c_define_gsubr("location-navigation", 1, 0, 0,
@@ -6148,11 +6201,12 @@ void initialize_host_module(void*) {
         "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
         "select-interaction-candidate!", "replace-interaction-input!", "cancel-interaction!",
         "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
-        "apply-completion!", "cancel-completion!", "view-position", "view-identifier-words",
-        "location-navigation", "set-location-navigation!", "location-list-target",
-        "move-location-list!", "position-buffer-view!", "project-index-state",
-        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
-        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "apply-completion!", "cancel-completion!", "view-position", "view-line-prefix",
+        "view-syntax-token", "view-identifier-words", "location-navigation",
+        "set-location-navigation!", "location-list-target", "move-location-list!",
+        "position-buffer-view!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
         "create-buffer!", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",

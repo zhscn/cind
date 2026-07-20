@@ -103,11 +103,6 @@ GuileDisplayPlan built_in_display_plan(const GuileDisplayFacts& facts) {
                                  : split_display_plan(facts.origin, WindowSplitAxis::Columns, 0.5F);
 }
 
-bool completion_word_byte(char byte) {
-    const auto value = static_cast<unsigned char>(byte);
-    return std::isalnum(value) != 0 || byte == '_';
-}
-
 CompletionProviderResponse completion_response_from_lsp(CompletionProvider provider,
                                                         const CompletionRequest& request,
                                                         const Text& text,
@@ -369,9 +364,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return resolve_completion_provider(target, name);
                },
            .start_completion =
-               [this](CommandTarget target, std::vector<CompletionProvider> providers,
-                      CompletionTrigger trigger) {
-                   return start_completion(target, std::move(providers), std::move(trigger));
+               [this](CommandTarget target, TextOffset anchor,
+                      std::vector<CompletionProvider> providers, CompletionTrigger trigger) {
+                   return start_completion(target, anchor, std::move(providers),
+                                           std::move(trigger));
                },
            .move_completion = [this](std::int64_t delta) { return move_completion(delta); },
            .apply_completion = [this](bool replace) { return apply_completion(replace); },
@@ -392,6 +388,37 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .byte = caret.value,
                        .byte_count = text.size_bytes()};
                },
+           .view_line_prefix =
+               [this](ViewId view) {
+                   const EditSession& active = session_for(view);
+                   const DocumentSnapshot snapshot = active.snapshot();
+                   const Text& text = snapshot.content();
+                   const TextOffset caret = active.caret();
+                   const TextOffset line_start = text.line_start(text.position(caret).line);
+                   return GuileViewLinePrefix{.line_start = line_start.value,
+                                              .caret = caret.value,
+                                              .text = text.substring({line_start, caret})};
+               },
+           .view_syntax_token = [this](ViewId view,
+                                       TextOffset offset) -> std::optional<GuileSyntaxToken> {
+               const EditSession& active = session_for(view);
+               const Buffer& buffer = active.buffer();
+               const DocumentSnapshot snapshot = active.snapshot();
+               if (offset.value > snapshot.content().size_bytes() ||
+                   !runtime_.language_provider(buffer.id(), LanguageFacet::Highlighting)) {
+                   return std::nullopt;
+               }
+               const TokenBuffer& tokens =
+                   active.analysis(LanguageFacet::Highlighting).tree.tokens();
+               const auto token = std::ranges::find_if(
+                   tokens, [offset](Token candidate) { return candidate.range.contains(offset); });
+               if (token == tokens.end()) {
+                   return std::nullopt;
+               }
+               return GuileSyntaxToken{.kind = std::string(token_kind_name(token->kind)),
+                                       .start = token->range.start.value,
+                                       .end = token->range.end.value};
+           },
            .view_identifier_words =
                [this](ViewId view) {
                    const EditSession& active = session_for(view);
@@ -1203,7 +1230,8 @@ bool EditorApplication::execute_command(CommandId command, const CommandInvocati
 }
 
 std::expected<void, std::string>
-EditorApplication::start_completion(CommandTarget target, std::vector<CompletionProvider> providers,
+EditorApplication::start_completion(CommandTarget target, TextOffset anchor,
+                                    std::vector<CompletionProvider> providers,
                                     CompletionTrigger trigger) {
     if (interaction_.active()) {
         return std::unexpected("completion is unavailable while the minibuffer owns focus");
@@ -1212,58 +1240,12 @@ EditorApplication::start_completion(CommandTarget target, std::vector<Completion
         return std::unexpected("completion target is not the active editor view");
     }
     EditSession& active = session_for(target.view);
-    const DocumentSnapshot snapshot = active.snapshot();
-    const Text& text = snapshot.content();
     const TextOffset caret = active.caret();
-    const std::uint32_t line = text.position(caret).line;
-    const TextOffset line_start = text.line_start(line);
-    const std::string prefix = text.substring({line_start, caret});
-
-    TextOffset anchor = caret;
-    bool include_path = false;
-    if (const std::size_t include = prefix.find("#include"); include != std::string::npos) {
-        const std::size_t quote = prefix.find_last_of("\"<");
-        if (quote != std::string::npos && quote > include) {
-            const std::size_t slash = prefix.find_last_of("/\\");
-            const std::size_t start =
-                slash != std::string::npos && slash > quote ? slash + 1 : quote + 1;
-            anchor = TextOffset{line_start.value + static_cast<std::uint32_t>(start)};
-            include_path = true;
-        }
-    }
-    if (include_path) {
-        providers = {CompletionProvider::path()};
-    } else {
-        if (caret.value > 0) {
-            const TextOffset probe{caret.value - 1};
-            const TokenBuffer& tokens = syntax_tokens(target.window);
-            const auto token = std::ranges::find_if(
-                tokens, [probe](Token candidate) { return candidate.range.contains(probe); });
-            if (token != tokens.end()) {
-                const TokenKind kind = (*token).kind;
-                if (kind == TokenKind::LineComment || kind == TokenKind::BlockComment ||
-                    kind == TokenKind::StringLiteral || kind == TokenKind::RawStringLiteral ||
-                    kind == TokenKind::CharacterLiteral) {
-                    return std::unexpected(
-                        "completion is suppressed in the current syntax context");
-                }
-            }
-        }
-        while (anchor > line_start &&
-               completion_word_byte(text.byte_at(TextOffset{anchor.value - 1}))) {
-            --anchor.value;
-        }
-        providers.erase(std::remove_if(providers.begin(), providers.end(),
-                                       [](CompletionProvider p) {
-                                           return p.kind == CompletionProviderKind::Path;
-                                       }),
-                        providers.end());
+    if (anchor > caret) {
+        return std::unexpected("completion anchor follows the caret");
     }
     if (providers.empty()) {
-        return std::unexpected("no completion provider is enabled for this syntax context");
-    }
-    if (trigger.kind == CompletionTriggerKind::Automatic && anchor == caret) {
-        return {};
+        return std::unexpected("completion requires at least one provider");
     }
     CommandContext context(runtime_, target.window, target.buffer, target.view);
     return completion_->start(context, anchor, std::move(providers), std::move(trigger));
