@@ -162,6 +162,10 @@ public:
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionController& interaction() { return interaction_; }
     const InteractionController& interaction() const { return interaction_; }
+    std::expected<GuileMinibufferHistoryState, std::string>
+    minibuffer_history_state(BufferId buffer, std::string_view history) const {
+        return guile_.minibuffer_history_state(buffer, history);
+    }
     CompletionPipeline& completion() { return *completion_; }
     const CompletionPipeline& completion() const { return *completion_; }
     std::vector<LspSessionSnapshot> lsp_sessions() const { return lsp_sessions_->snapshots(); }

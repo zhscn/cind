@@ -60,8 +60,12 @@ struct GuileInteractionStatus {
     std::optional<std::string> history;
     std::optional<std::size_t> selected;
     std::size_t candidate_count = 0;
-    std::optional<std::size_t> history_index;
-    std::string history_draft;
+};
+
+struct GuileMinibufferHistoryState {
+    std::size_t entries = 0;
+    std::optional<std::size_t> index;
+    std::string draft;
 };
 
 struct GuileInteractionSubmission {
@@ -221,11 +225,9 @@ struct GuileHostServices {
     std::function<std::optional<ProjectId>()> interaction_origin_project;
     std::function<void()> refresh_interaction;
     std::function<std::expected<GuileInteractionSubmission, std::string>()> submit_interaction;
-    std::function<std::vector<std::string>(std::string_view)> interaction_history;
-    std::function<void(std::string, std::vector<std::string>)> set_interaction_history;
     std::function<bool(std::size_t)> select_interaction_candidate;
-    std::function<bool(std::optional<std::size_t>, std::string, std::string)>
-        set_interaction_history_position;
+    std::function<std::expected<RevisionId, std::string>(std::string_view)>
+        replace_interaction_input;
     std::function<bool()> cancel_interaction;
     std::function<bool()> completion_active;
     std::function<std::expected<CompletionProvider, std::string>(CommandTarget, std::string_view)>
@@ -389,6 +391,9 @@ public:
         WindowId window, std::string_view path, std::optional<std::uint32_t> line = std::nullopt,
         std::optional<std::uint32_t> column = std::nullopt, std::string_view intent = "edit");
     std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
+    std::expected<void, std::string> minibuffer_input_changed(BufferId buffer, RevisionId revision);
+    std::expected<GuileMinibufferHistoryState, std::string>
+    minibuffer_history_state(BufferId buffer, std::string_view history) const;
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
     std::expected<GuileKeymapPolicy, std::string>

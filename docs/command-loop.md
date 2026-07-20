@@ -308,8 +308,10 @@ minibuffer)` applies the configured history policy to successful non-empty submi
 policy keeps 100 adjacent-deduplicated entries. `M-p` moves from the current minibuffer draft toward
 older entries, and `M-n` moves toward newer entries before restoring the saved draft. Editing a
 recalled value exits history traversal while leaving the edited text in the ordinary minibuffer
-Buffer. Native history storage and input replacement update the same View caret and candidate
-generation as direct editing.
+Buffer. Scheme retains named entries, traversal cursor, saved draft and the revision produced by a
+history replacement. Native input replacement updates the same View caret as direct editing;
+revision notifications let Scheme distinguish a recalled value from a subsequent user edit before
+refreshing the candidate provider.
 
 Candidate providers return semantic values, labels, details, and filter text immediately, through
 a cancellable native worker job, or through a scripted async request paired with an editor-thread

@@ -5318,7 +5318,7 @@ SCM interaction_status(SCM host_object) {
         const GuileInteractionStatus status = host.services.interaction_status
                                                   ? host.services.interaction_status()
                                                   : GuileInteractionStatus{};
-        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(6, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
         scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
         scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
@@ -5327,9 +5327,6 @@ SCM interaction_status(SCM host_object) {
         scm_c_vector_set_x(result, 4,
                            status.selected ? scm_from_size_t(*status.selected) : SCM_BOOL_F);
         scm_c_vector_set_x(result, 5, scm_from_size_t(status.candidate_count));
-        scm_c_vector_set_x(
-            result, 6, status.history_index ? scm_from_size_t(*status.history_index) : SCM_BOOL_F);
-        scm_c_vector_set_x(result, 7, scm_from_utf8_string(status.history_draft.c_str()));
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("interaction-status", exception.what());
@@ -5457,47 +5454,6 @@ SCM submit_interaction(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-SCM interaction_history(SCM host_object, SCM name_value) {
-    if (!scm_is_string(name_value)) {
-        scm_wrong_type_arg_msg("interaction-history", 2, name_value, "string");
-    }
-    HostLease& host = require_host(host_object, "interaction-history");
-    if (!host.services.interaction_history) {
-        scm_misc_error("interaction-history", "interaction history capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        return string_vector_value(host.services.interaction_history(scheme_string(name_value)));
-    } catch (const std::exception& exception) {
-        raise_host_error("interaction-history", exception.what());
-    } catch (...) {
-        scm_misc_error("interaction-history", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_interaction_history(SCM host_object, SCM name_value, SCM entries_value) {
-    if (!scm_is_string(name_value)) {
-        scm_wrong_type_arg_msg("set-interaction-history!", 2, name_value, "string");
-    }
-    HostLease& host = require_host(host_object, "set-interaction-history!");
-    if (!host.services.set_interaction_history) {
-        scm_misc_error("set-interaction-history!",
-                       "interaction history mutation capability is unavailable", SCM_EOL);
-    }
-    try {
-        host.services.set_interaction_history(
-            scheme_string(name_value),
-            string_sequence_from_scheme(entries_value, "set-interaction-history!", 3));
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-interaction-history!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-interaction-history!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 SCM select_interaction_candidate(SCM host_object, SCM index_value) {
     if (scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
         scm_wrong_type_arg_msg("select-interaction-candidate!", 2, index_value,
@@ -5519,35 +5475,28 @@ SCM select_interaction_candidate(SCM host_object, SCM index_value) {
     return SCM_BOOL_F;
 }
 
-SCM set_interaction_history_position(SCM host_object, SCM index_value, SCM draft_value,
-                                     SCM input_value) {
-    if (!scheme_false(index_value) &&
-        scm_is_unsigned_integer(index_value, 0, std::numeric_limits<std::size_t>::max()) == 0) {
-        scm_wrong_type_arg_msg("set-interaction-history-position!", 2, index_value,
-                               "#f or a non-negative integer");
-    }
-    if (!scm_is_string(draft_value)) {
-        scm_wrong_type_arg_msg("set-interaction-history-position!", 3, draft_value, "string");
-    }
+SCM replace_interaction_input(SCM host_object, SCM input_value) {
     if (!scm_is_string(input_value)) {
-        scm_wrong_type_arg_msg("set-interaction-history-position!", 4, input_value, "string");
+        scm_wrong_type_arg_msg("replace-interaction-input!", 2, input_value, "string");
     }
-    HostLease& host = require_host(host_object, "set-interaction-history-position!");
-    if (!host.services.set_interaction_history_position) {
-        scm_misc_error("set-interaction-history-position!",
-                       "interaction history navigation capability is unavailable", SCM_EOL);
+    HostLease& host = require_host(host_object, "replace-interaction-input!");
+    if (!host.services.replace_interaction_input) {
+        scm_misc_error("replace-interaction-input!",
+                       "interaction input replacement capability is unavailable", SCM_EOL);
     }
     try {
-        const std::optional<std::size_t> index =
-            scheme_false(index_value) ? std::nullopt : std::optional(scm_to_size_t(index_value));
-        return scm_from_bool(host.services.set_interaction_history_position(
-            index, scheme_string(draft_value), scheme_string(input_value)));
+        const std::expected<RevisionId, std::string> revision =
+            host.services.replace_interaction_input(scheme_string(input_value));
+        if (!revision) {
+            raise_host_error("replace-interaction-input!", revision.error());
+        }
+        return scm_from_uint64(*revision);
     } catch (const std::exception& exception) {
-        raise_host_error("set-interaction-history-position!", exception.what());
+        raise_host_error("replace-interaction-input!", exception.what());
     } catch (...) {
-        scm_misc_error("set-interaction-history-position!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("replace-interaction-input!", "unknown C++ host failure", SCM_EOL);
     }
-    return SCM_BOOL_F;
+    return scm_from_uint64(0);
 }
 
 SCM cancel_interaction(SCM host_object) {
@@ -6116,14 +6065,10 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(refresh_interaction));
     (void)scm_c_define_gsubr("submit-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(submit_interaction));
-    (void)scm_c_define_gsubr("interaction-history", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(interaction_history));
-    (void)scm_c_define_gsubr("set-interaction-history!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_interaction_history));
     (void)scm_c_define_gsubr("select-interaction-candidate!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(select_interaction_candidate));
-    (void)scm_c_define_gsubr("set-interaction-history-position!", 4, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_interaction_history_position));
+    (void)scm_c_define_gsubr("replace-interaction-input!", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(replace_interaction_input));
     (void)scm_c_define_gsubr("cancel-interaction!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
     (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
@@ -6253,17 +6198,17 @@ void initialize_host_module(void*) {
         "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!", "page-rows",
         "interaction-status", "interaction-provider", "set-interaction-provider!",
         "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
-        "interaction-history", "set-interaction-history!", "select-interaction-candidate!",
-        "set-interaction-history-position!", "cancel-interaction!", "cancel-pending-input!",
-        "completion-active?", "start-completion!", "move-completion!", "apply-completion!",
-        "cancel-completion!", "view-position", "location-navigation", "set-location-navigation!",
-        "location-list-target", "move-location-list!", "position-buffer-view!", "set-message!",
-        "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!",
-        "abort-buffer-save!", "open-buffer-ids", "create-buffer!", "buffer-saving?",
-        "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
+        "select-interaction-candidate!", "replace-interaction-input!", "cancel-interaction!",
+        "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
+        "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
+        "set-location-navigation!", "location-list-target", "move-location-list!",
+        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
+        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
+        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
         "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
@@ -7020,6 +6965,8 @@ struct GuileCall {
         HandleScroll,
         OpenResource,
         RestoreWorkbenchSession,
+        MinibufferInputChanged,
+        MinibufferHistoryState,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
         ChromeContent,
@@ -7064,6 +7011,7 @@ struct GuileCall {
     std::string path;
     std::string source;
     std::string source_name;
+    std::string history;
     std::string query;
     std::vector<InteractionCandidate> provider_candidates;
     CompletionProvider completion_provider;
@@ -7080,6 +7028,7 @@ struct GuileCall {
     CommandId command;
     WindowId window;
     BufferId buffer;
+    RevisionId revision = 0;
     ProjectId project;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
@@ -7087,6 +7036,7 @@ struct GuileCall {
     KeyStroke key;
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
+    GuileMinibufferHistoryState minibuffer_history;
     Operation operation = Operation::Load;
     bool pending_key_sequence = false;
     bool completion_needs_resolution = false;
@@ -7684,6 +7634,34 @@ SCM call_body(void* data) {
                 scm_call_2(scm_c_public_ref("cind core", "restore-workbench-session!"), call.host,
                            scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
+        case GuileCall::Operation::MinibufferInputChanged:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind minibuffer", "minibuffer-input-changed!"),
+                           call.host, entity_id(call.buffer.slot, call.buffer.generation),
+                           scm_from_uint64(call.revision));
+            break;
+        case GuileCall::Operation::MinibufferHistoryState: {
+            call.result =
+                scm_call_3(scm_c_public_ref("cind minibuffer", "minibuffer-history-state"),
+                           call.host, entity_id(call.buffer.slot, call.buffer.generation),
+                           scm_from_utf8_stringn(call.history.data(), call.history.size()));
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 3 ||
+                scm_is_unsigned_integer(scm_c_vector_ref(call.result, 0), 0,
+                                        std::numeric_limits<std::size_t>::max()) == 0 ||
+                (!scheme_false(scm_c_vector_ref(call.result, 1)) &&
+                 scm_is_unsigned_integer(scm_c_vector_ref(call.result, 1), 0,
+                                         std::numeric_limits<std::size_t>::max()) == 0) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 2))) {
+                scm_misc_error("minibuffer-history-state",
+                               "history state must be #(entry-count index-or-#f draft)", SCM_EOL);
+            }
+            call.minibuffer_history.entries = scm_to_size_t(scm_c_vector_ref(call.result, 0));
+            if (!scheme_false(scm_c_vector_ref(call.result, 1))) {
+                call.minibuffer_history.index = scm_to_size_t(scm_c_vector_ref(call.result, 1));
+            }
+            call.minibuffer_history.draft = scheme_string(scm_c_vector_ref(call.result, 2));
+            break;
+        }
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
                                      call.host, command_context_value(*call.context));
@@ -8517,6 +8495,40 @@ public:
         return {};
     }
 
+    std::expected<void, std::string> minibuffer_input_changed(BufferId buffer,
+                                                              RevisionId revision) {
+        require_owner_thread();
+        (void)lease_->runtime->buffers().get(buffer);
+        GuileCall call;
+        call.operation = GuileCall::Operation::MinibufferInputChanged;
+        call.host = host_;
+        call.buffer = buffer;
+        call.revision = revision;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return {};
+    }
+
+    std::expected<GuileMinibufferHistoryState, std::string>
+    minibuffer_history_state(BufferId buffer, std::string_view history) const {
+        require_owner_thread();
+        (void)lease_->runtime->buffers().get(buffer);
+        GuileCall call;
+        call.operation = GuileCall::Operation::MinibufferHistoryState;
+        call.host = host_;
+        call.buffer = buffer;
+        call.history = history;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error.reset();
+        return std::move(call.minibuffer_history);
+    }
+
     std::expected<std::size_t, std::string> install_input_states() {
         require_owner_thread();
         lease_->input_states_installed = 0;
@@ -9085,6 +9097,16 @@ std::expected<void, std::string> GuileRuntime::install_display_policy() {
 std::expected<void, std::string>
 GuileRuntime::restore_workbench_session(std::string_view serialized) {
     return impl_->restore_workbench_session(serialized);
+}
+
+std::expected<void, std::string> GuileRuntime::minibuffer_input_changed(BufferId buffer,
+                                                                        RevisionId revision) {
+    return impl_->minibuffer_input_changed(buffer, revision);
+}
+
+std::expected<GuileMinibufferHistoryState, std::string>
+GuileRuntime::minibuffer_history_state(BufferId buffer, std::string_view history) const {
+    return impl_->minibuffer_history_state(buffer, history);
 }
 
 std::expected<StartupPlan, std::string>

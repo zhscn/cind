@@ -1937,6 +1937,7 @@
   (reset-input-states! host (context-view context))
   (cancel-pending-input! host)
   (cancel-lsp-navigation! host)
+  (clear-minibuffer-navigation! host)
   (unless (or (cancel-completion! host)
               (cancel-interaction! host))
     (clear-selection! host (context-view context)))

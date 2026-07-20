@@ -9,11 +9,55 @@
             rank-provider-result
             make-bounded-history-policy
             configure-minibuffer-history-policy!
+            minibuffer-history
+            set-minibuffer-history!
+            minibuffer-history-state
+            minibuffer-input-changed!
+            clear-minibuffer-navigation!
             record-minibuffer-history!
             move-minibuffer-candidate!
             move-minibuffer-history!))
 
 (define history-policies (make-weak-key-hash-table))
+(define histories (make-weak-key-hash-table))
+(define minibuffer-navigations (make-weak-key-hash-table))
+
+(define (host-histories host)
+  (or (hashq-ref histories host)
+      (let ((table (make-hash-table)))
+        (hashq-set! histories host table)
+        table)))
+
+(define (minibuffer-history host name)
+  (unless (string? name)
+    (error "minibuffer history name must be a string" name))
+  (or (hash-ref (host-histories host) name) #()))
+
+(define (set-minibuffer-history! host name entries)
+  (unless (and (string? name) (> (string-length name) 0))
+    (error "minibuffer history name must be a non-empty string" name))
+  (unless (string-vector? entries)
+    (error "minibuffer history entries must be a string vector" entries))
+  (hash-set! (host-histories host) name entries))
+
+(define (clear-minibuffer-navigation! host)
+  (hashq-remove! minibuffer-navigations host))
+
+(define (minibuffer-navigation host buffer)
+  (let ((navigation (hashq-ref minibuffer-navigations host)))
+    (and navigation (equal? buffer (vector-ref navigation 0)) navigation)))
+
+(define (minibuffer-history-state host buffer name)
+  (let ((navigation (minibuffer-navigation host buffer)))
+    (vector (vector-length (minibuffer-history host name))
+            (and navigation (vector-ref navigation 1))
+            (if navigation (vector-ref navigation 2) ""))))
+
+(define (minibuffer-input-changed! host buffer revision)
+  (let ((navigation (minibuffer-navigation host buffer)))
+    (when (and navigation (not (= revision (vector-ref navigation 3))))
+      (clear-minibuffer-navigation! host))
+    (refresh-interaction! host)))
 
 (define (make-bounded-history-policy maximum)
   (unless (and (integer? maximum) (>= maximum 0))
@@ -50,16 +94,17 @@
     (error "minibuffer history name must be #f or a string" name))
   (unless (string? value)
     (error "minibuffer history value must be a string" value))
+  (clear-minibuffer-navigation! host)
   (when (and name
              (> (string-length name) 0)
              (> (string-length value) 0))
     (let ((policy (hashq-ref history-policies host)))
       (unless policy
         (error "minibuffer history policy is not configured"))
-      (let ((entries (policy (interaction-history host name) value)))
+      (let ((entries (policy (minibuffer-history host name) value)))
         (unless (string-vector? entries)
           (error "minibuffer history policy must return a string vector" entries))
-        (set-interaction-history! host name entries)))))
+        (set-minibuffer-history! host name entries)))))
 
 (define (move-minibuffer-candidate! host delta)
   (let* ((status (interaction-status host))
@@ -74,9 +119,10 @@
 (define (move-minibuffer-history! host context delta)
   (let* ((status (interaction-status host))
          (name (vector-ref status 3))
-         (index (vector-ref status 6))
-         (stored-draft (vector-ref status 7))
-         (entries (and name (interaction-history host name)))
+         (navigation (minibuffer-navigation host (context-buffer context)))
+         (index (and navigation (vector-ref navigation 1)))
+         (stored-draft (if navigation (vector-ref navigation 2) ""))
+         (entries (and name (minibuffer-history host name)))
          (count (if entries (vector-length entries) 0))
          (current (buffer-text host (context-buffer context))))
     (cond
@@ -87,15 +133,24 @@
                         (and (> count 0) (- count 1))))
             (draft (if index stored-draft current)))
         (and target
-             (set-interaction-history-position!
-              host target draft (vector-ref entries target)))))
+             (let ((revision
+                    (replace-interaction-input! host (vector-ref entries target))))
+               (hashq-set! minibuffer-navigations host
+                           (vector (context-buffer context) target draft revision))
+               #t))))
      ((not index) #f)
      ((< (+ index 1) count)
       (let ((target (+ index 1)))
-        (set-interaction-history-position!
-         host target stored-draft (vector-ref entries target))))
+        (let ((revision
+               (replace-interaction-input! host (vector-ref entries target))))
+          (hashq-set! minibuffer-navigations host
+                      (vector (context-buffer context) target stored-draft revision))
+          #t)))
      (else
-      (set-interaction-history-position! host #f stored-draft stored-draft)))))
+      (let ((revision (replace-interaction-input! host stored-draft)))
+        (hashq-set! minibuffer-navigations host
+                    (vector (context-buffer context) #f stored-draft revision))
+        #t)))))
 
 (define (candidate-filter-text candidate)
   (let ((filter-text (vector-ref candidate 3)))

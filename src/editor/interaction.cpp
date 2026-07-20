@@ -113,9 +113,6 @@ std::expected<void, std::string> InteractionController::start(InteractionRequest
                                     .candidates = {},
                                     .selected = 0,
                                     .generation = 0,
-                                    .history_index = std::nullopt,
-                                    .history_draft = {},
-                                    .history_navigation_revision = std::nullopt,
                                     .loading = false,
                                     .error = {}});
     refresh();
@@ -156,39 +153,23 @@ std::expected<void, std::string> InteractionController::set_provider(std::string
     return {};
 }
 
-bool InteractionController::set_history_navigation(std::optional<std::size_t> index,
-                                                   std::string draft, std::string_view input) {
-    InteractionState* active = state();
-    if (active == nullptr || active->request.history.empty()) {
-        return false;
-    }
-    if (index && *index >= history(active->request.history).size()) {
-        return false;
-    }
-    active->history_index = index;
-    active->history_draft = std::move(draft);
-    replace_input(input);
-    active->history_navigation_revision = input_revision();
-    return true;
-}
-
-void InteractionController::refresh_candidates() {
-    const bool history_navigation =
-        state_ && state_->history_navigation_revision == input_revision();
-    refresh(!history_navigation);
-}
-
-void InteractionController::replace_input(std::string_view input) {
+std::expected<RevisionId, std::string>
+InteractionController::replace_input(std::string_view input) {
     InteractionState* active = state();
     if (active == nullptr) {
-        return;
+        return std::unexpected("no interaction is active");
     }
     Buffer& buffer = runtime_->buffers().get(active->buffer);
     const TextOffset end{buffer.snapshot().content().size_bytes()};
     EditTransaction transaction = buffer.begin_transaction();
     transaction.replace({TextOffset{}, end}, input);
-    (void)transaction.commit();
+    const RevisionId revision = transaction.commit().snapshot.revision();
     runtime_->views().set_caret(active->view, buffer.snapshot().content().end_offset());
+    return revision;
+}
+
+void InteractionController::refresh_candidates() {
+    refresh();
 }
 
 std::expected<InteractionSubmission, std::string> InteractionController::submit() {
@@ -247,28 +228,10 @@ void InteractionController::destroy_surface(WindowId window, ViewId view,
     }
 }
 
-const std::vector<std::string>& InteractionController::history(std::string_view name) const {
-    static const std::vector<std::string> empty;
-    const auto found = histories_.find(std::string(name));
-    return found == histories_.end() ? empty : found->second;
-}
-
-void InteractionController::set_history(std::string name, std::vector<std::string> entries) {
-    if (name.empty()) {
-        throw std::invalid_argument("interaction history name must not be empty");
-    }
-    histories_.insert_or_assign(std::move(name), std::move(entries));
-}
-
-void InteractionController::refresh(bool input_edited) {
+void InteractionController::refresh() {
     InteractionState* active = state();
     if (active == nullptr) {
         return;
-    }
-    if (input_edited) {
-        active->history_index.reset();
-        active->history_draft.clear();
-        active->history_navigation_revision.reset();
     }
     cancel_pending();
     InteractionState& state = *active;

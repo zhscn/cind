@@ -68,9 +68,6 @@ struct InteractionState {
     std::vector<InteractionCandidate> candidates;
     std::size_t selected = 0;
     std::uint64_t generation = 0;
-    std::optional<std::size_t> history_index;
-    std::string history_draft;
-    std::optional<RevisionId> history_navigation_revision;
     bool loading = false;
     std::string error;
 };
@@ -106,18 +103,13 @@ public:
     RevisionId input_revision() const;
     bool select(std::size_t index);
     std::expected<void, std::string> set_provider(std::string provider);
-    bool set_history_navigation(std::optional<std::size_t> index, std::string draft,
-                                std::string_view input);
+    std::expected<RevisionId, std::string> replace_input(std::string_view input);
     void refresh_candidates();
     std::expected<InteractionSubmission, std::string> submit();
     bool cancel() noexcept;
 
-    const std::vector<std::string>& history(std::string_view name) const;
-    void set_history(std::string name, std::vector<std::string> entries);
-
 private:
-    void refresh(bool input_edited = false);
-    void replace_input(std::string_view input);
+    void refresh();
     void destroy_surface(WindowId window, ViewId view, BufferId buffer) noexcept;
     void cancel_pending() noexcept;
     void apply_candidates(std::uint64_t generation, std::vector<InteractionCandidate> candidates);
@@ -129,7 +121,6 @@ private:
     std::function<void()> cancel_pending_task_;
     std::uint64_t next_generation_ = 0;
     std::optional<InteractionState> state_;
-    std::unordered_map<std::string, std::vector<std::string>> histories_;
 };
 
 } // namespace cind

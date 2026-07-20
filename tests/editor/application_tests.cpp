@@ -1530,7 +1530,7 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     CHECK_FALSE(interaction.active());
 }
 
-TEST_CASE("interaction history exposes storage and navigation mechanisms") {
+TEST_CASE("interaction input replacement is a native minibuffer text mechanism") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "history-origin",
                                                       .initial_text = {},
@@ -1561,22 +1561,18 @@ TEST_CASE("interaction history exposes storage and navigation mechanisms") {
                                   .arguments = {}};
     };
 
-    interaction.set_history("commands", {"first", "second"});
     REQUIRE(interaction.start(request("draft"), context).has_value());
 
-    CHECK(interaction.set_history_navigation(1, "draft", "second"));
+    const std::expected<RevisionId, std::string> second = interaction.replace_input("second");
+    REQUIRE(second.has_value());
     CHECK(interaction.input_text() == "second");
     CHECK(interaction.input_caret() == TextOffset{6});
-    REQUIRE(interaction.state() != nullptr);
-    CHECK(interaction.state()->history_index == 1);
-    CHECK(interaction.state()->history_draft == "draft");
-    CHECK(interaction.set_history_navigation(0, "draft", "first"));
+    const std::expected<RevisionId, std::string> first = interaction.replace_input("first");
+    REQUIRE(first.has_value());
+    CHECK(*first > *second);
     CHECK(interaction.input_text() == "first");
-    CHECK_FALSE(interaction.set_history_navigation(2, "draft", "invalid"));
-    CHECK(interaction.set_history_navigation(std::nullopt, "draft", "draft"));
+    REQUIRE(interaction.replace_input("draft").has_value());
     CHECK(interaction.input_text() == "draft");
-    CHECK_FALSE(interaction.state()->history_index.has_value());
-    CHECK(interaction.history("commands") == std::vector<std::string>{"first", "second"});
 }
 
 TEST_CASE("async interaction providers discard cancelled generations") {

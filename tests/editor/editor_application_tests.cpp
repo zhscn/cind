@@ -2957,9 +2957,28 @@ TEST_CASE("minibuffer history keys navigate named Scheme interaction history") {
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(application.interaction().input_text() == "alpha");
     CHECK(application.last_command() == "interaction.previous-history");
+    const BufferId minibuffer = application.interaction().state()->buffer;
+    const std::expected<GuileMinibufferHistoryState, std::string> previous =
+        application.minibuffer_history_state(minibuffer, "search");
+    REQUIRE(previous.has_value());
+    CHECK(previous->entries == 1);
+    CHECK(previous->index == 0);
+    CHECK(previous->draft == "draft");
     send_keys(application, "M-n");
     CHECK(application.interaction().input_text() == "draft");
     CHECK(application.last_command() == "interaction.next-history");
+    const std::expected<GuileMinibufferHistoryState, std::string> next =
+        application.minibuffer_history_state(minibuffer, "search");
+    REQUIRE(next.has_value());
+    CHECK_FALSE(next->index.has_value());
+    CHECK(next->draft == "draft");
+    send_keys(application, "M-p");
+    application.insert_text("x");
+    const std::expected<GuileMinibufferHistoryState, std::string> edited =
+        application.minibuffer_history_state(minibuffer, "search");
+    REQUIRE(edited.has_value());
+    CHECK_FALSE(edited->index.has_value());
+    CHECK(edited->draft.empty());
 }
 
 TEST_CASE("scripted caret and message commands use application host capabilities") {

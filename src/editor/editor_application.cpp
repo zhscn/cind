@@ -322,9 +322,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                        ? std::optional(state->selected)
                                        : std::nullopt,
                        .candidate_count =
-                           state != nullptr ? state->candidates.size() : std::size_t{0},
-                       .history_index = state != nullptr ? state->history_index : std::nullopt,
-                       .history_draft = state != nullptr ? state->history_draft : std::string{}};
+                           state != nullptr ? state->candidates.size() : std::size_t{0}};
                },
            .interaction_provider = [this]() -> std::optional<std::string> {
                const InteractionState* state = interaction_.state();
@@ -356,19 +354,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                 .target = submission->target},
                    .history = std::move(submission->history)};
            },
-           .interaction_history =
-               [this](std::string_view name) { return interaction_.history(name); },
-           .set_interaction_history =
-               [this](std::string name, std::vector<std::string> entries) {
-                   interaction_.set_history(std::move(name), std::move(entries));
-               },
            .select_interaction_candidate =
                [this](std::size_t index) { return interaction_.select(index); },
-           .set_interaction_history_position =
-               [this](std::optional<std::size_t> index, std::string draft,
-                      const std::string& input) {
-                   return interaction_.set_history_navigation(index, std::move(draft), input);
-               },
+           .replace_interaction_input =
+               [this](std::string_view input) { return interaction_.replace_input(input); },
            .cancel_interaction =
                [this] {
                    interaction_session_.reset();
@@ -3323,7 +3312,12 @@ CommandContext EditorApplication::command_context() {
 
 void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
     if (interaction_.active() && interaction_.input_revision() != before) {
-        interaction_.refresh_candidates();
+        const InteractionState& interaction = *interaction_.state();
+        const std::expected<void, std::string> refreshed =
+            guile_.minibuffer_input_changed(interaction.buffer, interaction_.input_revision());
+        if (!refreshed) {
+            message_ = refreshed.error();
+        }
     }
 }
 

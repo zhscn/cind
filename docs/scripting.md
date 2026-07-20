@@ -191,10 +191,8 @@ The native module exports:
 (interaction-origin-project host)
 (refresh-interaction! host)
 (submit-interaction! host)
-(interaction-history host history-name)
-(set-interaction-history! host history-name entries)
 (select-interaction-candidate! host zero-based-index)
-(set-interaction-history-position! host index-or-#f draft input)
+(replace-interaction-input! host input)
 (completion-active? host)
 (start-completion! host context provider-names trigger)
 (move-completion! host delta)
@@ -948,12 +946,13 @@ scoped editor state. `interaction` remains the lower-level tag constructor used 
 `configure-minibuffer-history-policy!` installs a per-application procedure that receives the
 current string vector and a submitted value and returns the replacement string vector.
 `make-bounded-history-policy` constructs the default adjacent-deduplicating policy; the core policy
-uses a capacity of 100. `(cind minibuffer)` implements previous/next history traversal, draft
-restoration, and wrapping candidate movement from the `interaction-status` snapshot. Native code
-stores named string vectors, applies absolute candidate indices, replaces minibuffer input, and
-tracks the navigation position for inspection. The status vector is
-`#(active? picker? has-history? history-or-#f selected-or-#f candidate-count
-history-index-or-#f history-draft)`.
+uses a capacity of 100. `(cind minibuffer)` stores the per-application named history vectors and
+implements previous/next traversal, draft restoration, edit invalidation and wrapping candidate
+movement. `minibuffer-history-state` exposes the entry count, navigation index and draft for
+inspection. Native code applies absolute candidate indices and provides
+`replace-interaction-input!`, which updates the ordinary minibuffer Buffer/View and returns its new
+revision. The status vector contains only native interaction facts:
+`#(active? picker? has-history? history-or-#f selected-or-#f candidate-count)`.
 
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and
@@ -1041,7 +1040,7 @@ transform; native code performs only the cancellable enumeration. `(cind minibuf
 matching and stable score ordering, and `rank-provider-result`, which applies the same policy to
 immediate results or an asynchronous result transform. The bundled provider registrations compose
 that policy explicitly. `InteractionController` preserves provider order and owns only absolute
-selection state, generation-safe completion, cancellation, named history storage, and minibuffer
+candidate selection, generation-safe provider completion, cancellation and transient minibuffer
 object lifetimes.
 
 ## Editor self-description

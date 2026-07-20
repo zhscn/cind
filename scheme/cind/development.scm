@@ -264,7 +264,7 @@
          (state (repl-state host buffer)))
     (if (not state)
         (command-error "current buffer is not a Scheme REPL")
-        (let* ((entries (interaction-history host repl-history-name))
+        (let* ((entries (minibuffer-history host repl-history-name))
                (count (vector-length entries))
                (index (vector-ref state 1))
                (start (buffer-marker-offset host buffer (vector-ref state 0)))
