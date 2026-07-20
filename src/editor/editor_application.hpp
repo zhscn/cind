@@ -369,7 +369,6 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     bool execute_command(CommandId command, const CommandInvocation& invocation);
     void record_command_input(std::string_view key, bool clear_message);
-    void record_command_feedback(std::string_view command);
     void refresh_interaction_after_edit(RevisionId before);
     void refresh_completion_after_command();
     CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,

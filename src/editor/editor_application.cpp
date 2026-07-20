@@ -3218,17 +3218,12 @@ void EditorApplication::record_command_input(std::string_view key, bool clear_me
     }
 }
 
-void EditorApplication::record_command_feedback(std::string_view command) {
-    if (const std::expected<void, std::string> recorded = guile_.record_command(command);
-        !recorded) {
-        return;
-    }
-}
-
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {
+    std::optional<std::string_view> command;
     if (result.command) {
-        record_command_feedback(runtime_.commands().definition(*result.command).name);
+        command = runtime_.commands().definition(*result.command).name;
     }
+    bool interaction_started = false;
     if (result.interaction) {
         CommandContext context = command_context();
         std::expected<void, std::string> started =
@@ -3239,15 +3234,13 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
             const InteractionState& state = *interaction_.state();
             interaction_session_ =
                 std::make_unique<EditSession>(runtime_, state.buffer, state.view, CppIndentStyle{});
-            set_message({});
+            interaction_started = true;
         }
-    } else if (result.status == CommandLoopStatus::Error ||
-               result.status == CommandLoopStatus::Disabled ||
-               result.status == CommandLoopStatus::Cancelled ||
-               (result.status == CommandLoopStatus::NotHandled && result.consumed)) {
-        // A prefix does not echo as a message: the pending sequence has its
-        // own display channels (which-key title, echo right edge).
-        set_message(std::move(result.message));
+    }
+    if (const std::expected<void, std::string> recorded = guile_.command_result_feedback(
+            result.status, result.consumed, command, interaction_started, result.message);
+        !recorded) {
+        return result.consumed;
     }
     return result.consumed;
 }

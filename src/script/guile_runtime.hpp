@@ -26,6 +26,7 @@
 namespace cind {
 
 class EditorRuntime;
+enum class CommandLoopStatus : std::uint8_t;
 
 std::optional<std::string> discover_user_init_file();
 
@@ -414,6 +415,10 @@ public:
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
+    std::expected<void, std::string>
+    command_result_feedback(CommandLoopStatus status, bool consumed,
+                            std::optional<std::string_view> command, bool interaction_started,
+                            std::string_view message);
     std::expected<void, std::string> record_command(std::string_view command);
     std::expected<void, std::string> set_message(std::string_view message);
     bool project_search_running() const;

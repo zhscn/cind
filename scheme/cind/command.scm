@@ -9,6 +9,7 @@
             command-error
             command-feedback-state
             command-input!
+            command-result!
             record-command!
             set-message!
             command-dispatch
@@ -103,6 +104,28 @@
   (unless (string? command)
     (error "command name must be a string" command))
   (vector-set! (command-feedback-entry host) 2 command))
+
+(define command-result-statuses
+  '(not-handled prefix prefix-argument executed awaiting-input disabled cancelled error))
+
+(define (command-result! host status consumed? command interaction-started? message)
+  (unless (memq status command-result-statuses)
+    (error "unknown command result status" status))
+  (unless (boolean? consumed?)
+    (error "command result consumed flag must be a boolean" consumed?))
+  (unless (or (not command) (string? command))
+    (error "command result command must be a string or #f" command))
+  (unless (boolean? interaction-started?)
+    (error "command result interaction flag must be a boolean" interaction-started?))
+  (unless (string? message)
+    (error "command result message must be a string" message))
+  (when command
+    (record-command! host command))
+  (cond (interaction-started?
+         (set-message! host ""))
+        ((or (memq status '(disabled cancelled error))
+             (and (eq? status 'not-handled) consumed?))
+         (set-message! host message))))
 
 (define (set-message! host message)
   (unless (string? message)

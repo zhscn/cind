@@ -1,5 +1,6 @@
 #include "script/guile_runtime.hpp"
 
+#include "editor/command_loop.hpp"
 #include "editor/cpp_mode.hpp"
 #include "editor/resource_policy.hpp"
 #include "editor/runtime.hpp"
@@ -33,6 +34,28 @@ constexpr std::array<std::string_view, 19> bundled_guile_modules = {
     "emacs",      "toy-modal",   "meow", "vim",        "helix",     "structural", "paredit",
     "minibuffer", "development", "ares", "introspect", "core",
 };
+
+const char* command_loop_status_name(CommandLoopStatus status) {
+    switch (status) {
+    case CommandLoopStatus::NotHandled:
+        return "not-handled";
+    case CommandLoopStatus::Prefix:
+        return "prefix";
+    case CommandLoopStatus::PrefixArgument:
+        return "prefix-argument";
+    case CommandLoopStatus::Executed:
+        return "executed";
+    case CommandLoopStatus::AwaitingInput:
+        return "awaiting-input";
+    case CommandLoopStatus::Disabled:
+        return "disabled";
+    case CommandLoopStatus::Cancelled:
+        return "cancelled";
+    case CommandLoopStatus::Error:
+        return "error";
+    }
+    throw std::logic_error("unknown command loop status");
+}
 
 struct ScriptCommand {
     SCM execute = SCM_UNDEFINED;
@@ -6983,6 +7006,7 @@ struct GuileCall {
         CommandFeedbackState,
         BufferSavingState,
         CommandInput,
+        CommandResultFeedback,
         RecordCommand,
         SetMessage,
         ResolveKeymapPolicy,
@@ -7058,12 +7082,15 @@ struct GuileCall {
     GuileDisplayPlan display_plan;
     GuileMinibufferHistoryState minibuffer_history;
     GuileCommandFeedbackState command_feedback;
+    CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
+    std::optional<std::string> command_name;
     Operation operation = Operation::Load;
     bool pending_key_sequence = false;
     bool completion_needs_resolution = false;
     bool force = false;
     bool enabled = false;
     bool clear_message = false;
+    bool interaction_started = false;
 };
 
 void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
@@ -7709,6 +7736,17 @@ SCM call_body(void* data) {
             call.result = scm_call_3(scm_c_public_ref("cind command", "command-input!"), call.host,
                                      scm_from_utf8_stringn(call.source.data(), call.source.size()),
                                      scm_from_bool(call.clear_message));
+            break;
+        case GuileCall::Operation::CommandResultFeedback:
+            call.result =
+                scm_call_6(scm_c_public_ref("cind command", "command-result!"), call.host,
+                           scm_from_utf8_symbol(command_loop_status_name(call.command_status)),
+                           scm_from_bool(call.enabled),
+                           call.command_name ? scm_from_utf8_stringn(call.command_name->data(),
+                                                                     call.command_name->size())
+                                             : SCM_BOOL_F,
+                           scm_from_bool(call.interaction_started),
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
         case GuileCall::Operation::RecordCommand:
             call.result = scm_call_2(scm_c_public_ref("cind command", "record-command!"), call.host,
@@ -8795,6 +8833,30 @@ public:
         return {};
     }
 
+    std::expected<void, std::string>
+    command_result_feedback(CommandLoopStatus status, bool consumed,
+                            std::optional<std::string_view> command, bool interaction_started,
+                            std::string_view message) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::CommandResultFeedback;
+        call.host = host_;
+        call.command_status = status;
+        call.enabled = consumed;
+        if (command) {
+            call.command_name = *command;
+        }
+        call.interaction_started = interaction_started;
+        call.source = message;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<void, std::string> set_message(std::string_view message) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -9415,6 +9477,13 @@ std::expected<void, std::string> GuileRuntime::command_input(std::string_view ke
 
 std::expected<void, std::string> GuileRuntime::record_command(std::string_view command) {
     return impl_->record_command(command);
+}
+
+std::expected<void, std::string>
+GuileRuntime::command_result_feedback(CommandLoopStatus status, bool consumed,
+                                      std::optional<std::string_view> command,
+                                      bool interaction_started, std::string_view message) {
+    return impl_->command_result_feedback(status, consumed, command, interaction_started, message);
 }
 
 std::expected<void, std::string> GuileRuntime::set_message(std::string_view message) {

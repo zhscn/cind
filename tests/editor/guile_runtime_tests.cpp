@@ -299,7 +299,10 @@ TEST_CASE("Guile command feedback owns message and command input state") {
 
     REQUIRE(guile.command_input("C-x", true).has_value());
     REQUIRE(guile.set_message("pending").has_value());
-    REQUIRE(guile.record_command("file.save").has_value());
+    REQUIRE(guile
+                .command_result_feedback(CommandLoopStatus::Executed, true,
+                                         std::string_view("file.save"), false, "ignored")
+                .has_value());
     const std::expected<GuileCommandFeedbackState, std::string> pending =
         guile.command_feedback_state();
     REQUIRE(pending.has_value());
@@ -307,13 +310,34 @@ TEST_CASE("Guile command feedback owns message and command input state") {
     CHECK(pending->last_key == "C-x");
     CHECK(pending->last_command == "file.save");
 
-    REQUIRE(guile.command_input("C-f", true).has_value());
+    REQUIRE(
+        guile
+            .command_result_feedback(CommandLoopStatus::AwaitingInput, true, std::nullopt, true, {})
+            .has_value());
     const std::expected<GuileCommandFeedbackState, std::string> next =
         guile.command_feedback_state();
     REQUIRE(next.has_value());
     CHECK(next->message.empty());
-    CHECK(next->last_key == "C-f");
+    CHECK(next->last_key == "C-x");
     CHECK(next->last_command == "file.save");
+
+    REQUIRE(guile.set_message("prefix-safe").has_value());
+    REQUIRE(
+        guile
+            .command_result_feedback(CommandLoopStatus::Prefix, true, std::nullopt, false, "prefix")
+            .has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> prefix =
+        guile.command_feedback_state();
+    REQUIRE(prefix.has_value());
+    CHECK(prefix->message == "prefix-safe");
+    REQUIRE(guile
+                .command_result_feedback(CommandLoopStatus::Disabled, true, std::nullopt, false,
+                                         "disabled")
+                .has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> disabled =
+        guile.command_feedback_state();
+    REQUIRE(disabled.has_value());
+    CHECK(disabled->message == "disabled");
 }
 
 TEST_CASE("Guile language profile declarations replace configuration atomically") {
