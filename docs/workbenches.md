@@ -82,7 +82,9 @@ role and preserves the split.
 
 The display policy is a replaceable Guile procedure. Native code validates its complete plan,
 applies WindowLayout invariants, and provides a deterministic fallback when the procedure reports
-an error.
+an error. Guile jump policy decides whether the display intent contributes to the target Window's
+jump walk and assigns a semantic edge kind to each recorded transition; the native jump graph
+retains the resulting nodes and edge.
 
 The origin Window also identifies the target workbench. An asynchronous open or tool request may
 finish while another workbench is active; its result updates the originating layout and MRU without

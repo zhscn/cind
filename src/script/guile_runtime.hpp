@@ -475,7 +475,10 @@ public:
     std::expected<GuileJumpWalkState, std::string>
     workbench_jump_session_walk(WindowId window, const std::vector<std::uint64_t>& durable_nodes,
                                 std::size_t maximum_entries) const;
-    std::expected<std::string, std::string> workbench_jump_edge_kind(std::string_view intent) const;
+    std::expected<bool, std::string> workbench_jump_track_intent(std::string_view intent) const;
+    std::expected<std::optional<std::string>, std::string>
+    workbench_jump_transition(WindowId window, std::string_view intent, std::uint64_t from,
+                              std::uint64_t to);
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
     std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;

@@ -36,7 +36,8 @@
             workbench-jump-restore!
             workbench-jump-walk
             workbench-jump-session-walk
-            workbench-jump-edge-kind
+            workbench-jump-track-intent?
+            workbench-jump-transition!
             replace-workbench-mru!
             workbench-name
             workbench-find-by-name
@@ -579,15 +580,32 @@
     (vector (list->vector (vector-ref filtered 0))
             (vector-ref filtered 1))))
 
-(define (workbench-jump-edge-kind intent)
+(define (require-jump-intent intent)
   (unless (and (string? intent) (> (string-length intent) 0))
-    (error "jump display intent must be a non-empty string" intent))
+    (error "jump display intent must be a non-empty string" intent)))
+
+(define (jump-edge-kind intent)
   (cond ((string=? intent "list") "list")
         ((member intent '("definition" "declaration" "implementation")) "def")
         ((member intent '("reference" "references")) "ref")
         ((string=? intent "search") "search")
         ((string=? intent "manual") "manual")
         (else "open")))
+
+(define (workbench-jump-track-intent? intent)
+  (require-jump-intent intent)
+  (not (string=? intent "replay")))
+
+(define (workbench-jump-transition! host window intent from to)
+  (require-jump-intent intent)
+  (require-jump-node from)
+  (require-jump-node to)
+  (if (not (workbench-jump-track-intent? intent))
+      #f
+      (begin
+        (workbench-jump-record! host window from)
+        (workbench-jump-record! host window to)
+        (and (not (= from to)) (jump-edge-kind intent)))))
 
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)

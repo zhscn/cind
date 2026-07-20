@@ -6689,7 +6689,8 @@ struct GuileCall {
         WorkbenchJumpRestore,
         WorkbenchJumpWalk,
         WorkbenchJumpSessionWalk,
-        WorkbenchJumpEdgeKind,
+        WorkbenchJumpTrackIntent,
+        WorkbenchJumpTransition,
         ReplaceWorkbenchMru,
         WorkbenchName,
         WorkbenchFindByName,
@@ -6803,8 +6804,10 @@ struct GuileCall {
     std::uint64_t lsp_session = 0;
     std::uint64_t transaction_group = 0;
     std::uint64_t jump_node_id = 0;
+    std::uint64_t jump_node_to = 0;
     std::int64_t jump_delta = 0;
     std::optional<std::uint64_t> selected_jump;
+    std::optional<std::string> jump_edge_kind;
     std::optional<std::size_t> jump_cursor;
     std::size_t maximum_entries = 0;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
@@ -7835,13 +7838,29 @@ SCM call_body(void* data) {
                 jump_walk_state_from_scheme(call.result, "workbench-jump-session-walk");
             break;
         }
-        case GuileCall::Operation::WorkbenchJumpEdgeKind:
-            call.result = scm_call_1(scm_c_public_ref("cind workbench", "workbench-jump-edge-kind"),
-                                     scm_from_utf8_stringn(call.intent.data(), call.intent.size()));
-            if (!scm_is_string(call.result)) {
-                scm_wrong_type_arg_msg("workbench-jump-edge-kind", 0, call.result, "string");
+        case GuileCall::Operation::WorkbenchJumpTrackIntent:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind workbench", "workbench-jump-track-intent?"),
+                           scm_from_utf8_stringn(call.intent.data(), call.intent.size()));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-jump-track-intent?", 0, call.result, "boolean");
             }
-            call.source = scheme_string(call.result);
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchJumpTransition:
+            call.result =
+                scm_call_5(scm_c_public_ref("cind workbench", "workbench-jump-transition!"),
+                           call.host, entity_id(call.window.slot, call.window.generation),
+                           scm_from_utf8_stringn(call.intent.data(), call.intent.size()),
+                           scm_from_uint64(call.jump_node_id), scm_from_uint64(call.jump_node_to));
+            if (scheme_false(call.result)) {
+                call.jump_edge_kind.reset();
+            } else if (scm_is_string(call.result)) {
+                call.jump_edge_kind = scheme_string(call.result);
+            } else {
+                scm_wrong_type_arg_msg("workbench-jump-transition!", 0, call.result,
+                                       "edge kind string or #f");
+            }
             break;
         case GuileCall::Operation::ReplaceWorkbenchMru: {
             SCM buffers = scm_c_make_vector(call.buffers.size(), SCM_UNSPECIFIED);
@@ -9625,19 +9644,38 @@ public:
         return std::move(call.jump_walk);
     }
 
-    std::expected<std::string, std::string>
-    workbench_jump_edge_kind(std::string_view intent) const {
+    std::expected<bool, std::string> workbench_jump_track_intent(std::string_view intent) const {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
         GuileCall call;
-        call.operation = GuileCall::Operation::WorkbenchJumpEdgeKind;
+        call.operation = GuileCall::Operation::WorkbenchJumpTrackIntent;
         call.intent = intent;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
         state_->last_error = std::move(previous_error);
-        return std::move(call.source);
+        return call.enabled;
+    }
+
+    std::expected<std::optional<std::string>, std::string>
+    workbench_jump_transition(WindowId window, std::string_view intent, std::uint64_t from,
+                              std::uint64_t to) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpTransition;
+        call.host = host_;
+        call.window = window;
+        call.intent = intent;
+        call.jump_node_id = from;
+        call.jump_node_to = to;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.jump_edge_kind);
     }
 
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
@@ -10725,9 +10763,15 @@ GuileRuntime::workbench_jump_session_walk(WindowId window,
     return impl_->workbench_jump_session_walk(window, durable_nodes, maximum_entries);
 }
 
-std::expected<std::string, std::string>
-GuileRuntime::workbench_jump_edge_kind(std::string_view intent) const {
-    return impl_->workbench_jump_edge_kind(intent);
+std::expected<bool, std::string>
+GuileRuntime::workbench_jump_track_intent(std::string_view intent) const {
+    return impl_->workbench_jump_track_intent(intent);
+}
+
+std::expected<std::optional<std::string>, std::string>
+GuileRuntime::workbench_jump_transition(WindowId window, std::string_view intent,
+                                        std::uint64_t from, std::uint64_t to) {
+    return impl_->workbench_jump_transition(window, intent, from, to);
 }
 
 std::expected<void, std::string>

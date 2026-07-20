@@ -1228,8 +1228,12 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     if (!workbench.layout().contains(origin) || runtime_.windows().try_get(origin) == nullptr) {
         origin = selected_window;
     }
-    const bool replay = intent == "replay";
-    const std::optional<JumpNodeId> from = replay ? std::nullopt : capture_jump(workbench, origin);
+    const std::expected<bool, std::string> track_jump = guile_.workbench_jump_track_intent(intent);
+    if (!track_jump) {
+        return std::unexpected(track_jump.error());
+    }
+    const std::optional<JumpNodeId> from =
+        *track_jump ? capture_jump(workbench, origin) : std::nullopt;
     GuileDisplayFacts facts{.intent = std::string(intent),
                             .origin = origin,
                             .active = selected_window,
@@ -1341,20 +1345,13 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     }
     const std::optional<JumpNodeId> to = capture_jump(workbench, target);
     if (from && to) {
-        const std::expected<bool, std::string> recorded_from =
-            guile_.workbench_jump_record(target, *from);
-        const std::expected<bool, std::string> recorded_to =
-            guile_.workbench_jump_record(target, *to);
-        if (!recorded_from || !recorded_to) {
-            return std::unexpected(!recorded_from ? recorded_from.error() : recorded_to.error());
+        const std::expected<std::optional<std::string>, std::string> transition =
+            guile_.workbench_jump_transition(target, intent, *from, *to);
+        if (!transition) {
+            return std::unexpected(transition.error());
         }
-        if (*from != *to) {
-            const std::expected<std::string, std::string> kind =
-                guile_.workbench_jump_edge_kind(intent);
-            if (!kind) {
-                return std::unexpected(kind.error());
-            }
-            (void)workbench.jumps().link(*from, *to, *kind);
+        if (*transition) {
+            (void)workbench.jumps().link(*from, *to, **transition);
         }
     }
     (void)evict_jump_graph(workbench, default_jump_graph_limit);

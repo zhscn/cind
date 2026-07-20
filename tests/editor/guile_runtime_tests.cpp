@@ -1589,9 +1589,18 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         guile.workbench_jump_session_walk(window, {2, 3, 5, 6}, 4).value();
     CHECK(session_walk.entries == std::vector<std::uint64_t>{3, 5, 6});
     CHECK(session_walk.cursor == std::optional<std::size_t>{1});
-    CHECK(guile.workbench_jump_edge_kind("definition").value_or("") == "def");
-    CHECK(guile.workbench_jump_edge_kind("references").value_or("") == "ref");
-    CHECK(guile.workbench_jump_edge_kind("edit").value_or("") == "open");
+    CHECK(guile.workbench_jump_track_intent("edit").value_or(false));
+    CHECK_FALSE(guile.workbench_jump_track_intent("replay").value_or(true));
+    REQUIRE(guile.workbench_jump_restore(window, {}, std::nullopt).has_value());
+    CHECK(guile.workbench_jump_transition(window, "definition", 10, 11).value_or(std::nullopt) ==
+          std::optional<std::string>{"def"});
+    jump_walk = guile.workbench_jump_walk(window).value();
+    CHECK(jump_walk.entries == std::vector<std::uint64_t>{10, 11});
+    CHECK(jump_walk.cursor == std::optional<std::size_t>{1});
+    CHECK_FALSE(guile.workbench_jump_transition(window, "replay", 12, 13)
+                    .value_or(std::optional<std::string>{"unexpected"})
+                    .has_value());
+    CHECK(guile.workbench_jump_walk(window).value().entries == std::vector<std::uint64_t>{10, 11});
     {
         EditorRuntime parallel_runtime;
         GuileRuntime parallel(parallel_runtime);
