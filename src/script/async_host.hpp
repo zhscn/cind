@@ -70,10 +70,21 @@ struct ScriptProcessRequest {
     std::string working_directory;
 };
 
+struct ScriptLspProviderSpec {
+    std::string name;
+    std::string language_id;
+    std::string command;
+    std::vector<std::string> arguments;
+    std::string root;
+    std::vector<std::string> features;
+
+    friend bool operator==(const ScriptLspProviderSpec&, const ScriptLspProviderSpec&) = default;
+};
+
 struct ScriptLspNavigationRequest {
     CommandTarget target;
     std::string kind;
-    std::string provider;
+    ScriptLspProviderSpec provider;
 };
 
 using ScriptAsyncRequest =

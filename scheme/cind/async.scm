@@ -1,6 +1,7 @@
 (define-module (cind async)
   #:use-module (ice-9 optargs)
   #:use-module (cind host)
+  #:use-module (cind lsp)
   #:export (async-file-read
             async-file-write
             async-directory-list
@@ -85,8 +86,8 @@
 (define (async-lsp-navigation window buffer view kind provider)
   (unless (symbol? kind)
     (error "LSP navigation kind must be a symbol" kind))
-  (unless (string? provider)
-    (error "LSP navigation provider must be a string" provider))
+  (unless (lsp-provider? provider)
+    (error "LSP navigation provider must be a provider specification" provider))
   (vector 'lsp-navigation window buffer view kind provider))
 
 (define* (start-async-task! host request completed

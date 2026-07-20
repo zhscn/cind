@@ -28,10 +28,10 @@ namespace cind {
 
 namespace {
 
-constexpr std::array<std::string_view, 18> bundled_guile_modules = {
-    "command", "input",      "async",       "lifecycle", "pointer",    "extension",
-    "emacs",   "toy-modal",  "meow",        "vim",       "helix",      "structural",
-    "paredit", "minibuffer", "development", "ares",      "introspect", "core",
+constexpr std::array<std::string_view, 19> bundled_guile_modules = {
+    "command",    "input",       "lsp",  "async",      "lifecycle", "pointer",    "extension",
+    "emacs",      "toy-modal",   "meow", "vim",        "helix",     "structural", "paredit",
+    "minibuffer", "development", "ares", "introspect", "core",
 };
 
 struct ScriptCommand {
@@ -5484,32 +5484,46 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
         } else {
             scm_wrong_type_arg_msg("start-completion!", 5, trigger_value, "'manual or 'automatic");
         }
+        if (!scm_is_vector(providers_value)) {
+            scm_wrong_type_arg_msg("start-completion!", 4, providers_value,
+                                   "completion provider vector");
+        }
+        const CommandTarget target{.window = context.window_id(),
+                                   .buffer = context.buffer_id(),
+                                   .view = context.view_id()};
         std::vector<CompletionProvider> providers;
-        for (const std::string& name :
-             string_sequence_from_scheme(providers_value, "start-completion!", 4)) {
-            if (const auto provider = host.state->completion_providers_by_name.find(name);
-                provider != host.state->completion_providers_by_name.end()) {
-                providers.push_back(CompletionProvider::scripted(provider->second));
-            } else if (name == "snippet") {
-                providers.push_back(CompletionProvider::snippet());
-            } else if (host.services.resolve_completion_provider) {
-                const CommandTarget target{.window = context.window_id(),
-                                           .buffer = context.buffer_id(),
-                                           .view = context.view_id()};
+        const std::size_t provider_count = scm_c_vector_length(providers_value);
+        providers.reserve(provider_count);
+        for (std::size_t index = 0; index < provider_count; ++index) {
+            const SCM value = scm_c_vector_ref(providers_value, index);
+            if (scm_is_string(value)) {
+                const std::string name = scheme_string(value);
+                if (const auto provider = host.state->completion_providers_by_name.find(name);
+                    provider != host.state->completion_providers_by_name.end()) {
+                    providers.push_back(CompletionProvider::scripted(provider->second));
+                } else if (name == "snippet") {
+                    providers.push_back(CompletionProvider::snippet());
+                } else {
+                    raise_host_error("start-completion!",
+                                     std::format("unknown completion provider '{}'", name));
+                }
+            } else if (scm_is_vector(value)) {
+                if (!host.services.resolve_lsp_completion_provider) {
+                    raise_host_error("start-completion!",
+                                     "LSP completion capability is unavailable");
+                }
                 std::expected<CompletionProvider, std::string> resolved =
-                    host.services.resolve_completion_provider(target, name);
+                    host.services.resolve_lsp_completion_provider(
+                        target, script_lsp_provider_from_scheme(value, "start-completion!", 4));
                 if (!resolved) {
                     raise_host_error("start-completion!", resolved.error());
                 }
                 providers.push_back(*resolved);
             } else {
-                raise_host_error("start-completion!",
-                                 std::format("unknown completion provider '{}'", name));
+                scm_wrong_type_arg_msg("start-completion!", 4, value,
+                                       "completion provider name or LSP provider specification");
             }
         }
-        const CommandTarget target{.window = context.window_id(),
-                                   .buffer = context.buffer_id(),
-                                   .view = context.view_id()};
         std::expected<void, std::string> started = host.services.start_completion(
             target, anchor, std::move(providers), std::move(trigger));
         if (!started) {

@@ -248,8 +248,9 @@ struct GuileHostServices {
         replace_interaction_input;
     std::function<bool()> cancel_interaction;
     std::function<bool()> completion_active;
-    std::function<std::expected<CompletionProvider, std::string>(CommandTarget, std::string_view)>
-        resolve_completion_provider;
+    std::function<std::expected<CompletionProvider, std::string>(CommandTarget,
+                                                                 ScriptLspProviderSpec)>
+        resolve_lsp_completion_provider;
     std::function<std::expected<void, std::string>(
         CommandTarget, TextOffset, std::vector<CompletionProvider>, CompletionTrigger)>
         start_completion;

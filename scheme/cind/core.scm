@@ -13,6 +13,7 @@
   #:use-module (cind input)
   #:use-module (cind introspect)
   #:use-module (cind lifecycle)
+  #:use-module (cind lsp)
   #:use-module (cind meow)
   #:use-module (cind minibuffer)
   #:use-module (cind pointer)
@@ -1991,6 +1992,15 @@
           (loop (+ index 1)
                 (if (string=? provider "path") result (cons provider result)))))))
 
+(define (resolve-completion-providers host context providers)
+  (let loop ((index 0)
+             (result '()))
+    (if (= index (vector-length providers))
+        (list->vector (reverse result))
+        (let* ((name (vector-ref providers index))
+               (provider (or (resolve-lsp-provider host context name) name)))
+          (loop (+ index 1) (cons provider result))))))
+
 (define (completion-suppressed? host context caret)
   (and (> caret 0)
        (let ((token (view-syntax-token host (context-view context) (- caret 1))))
@@ -2039,7 +2049,10 @@
          (plan (completion-start-plan host context (vector-ref policy 3) trigger)))
     (if (vector? plan)
         (begin
-          (start-completion! host context (vector-ref plan 0) (vector-ref plan 1) trigger)
+          (start-completion! host context (vector-ref plan 0)
+                             (resolve-completion-providers host context
+                                                           (vector-ref plan 1))
+                             trigger)
           #t)
         plan)))
 
@@ -2485,9 +2498,14 @@
                             (symbol->string source) message)))))
 
 (define (lsp-navigation-provider host context)
-  (and (eq? (vector-ref (buffer-mode-summary host (context-buffer context)) 0)
-            'cind.cpp)
-       "lsp:cpp:clangd"))
+  (let ((providers (vector-ref (mode-completion-policy host context) 3)))
+    (let loop ((index 0))
+      (and (< index (vector-length providers))
+           (let ((provider
+                  (resolve-lsp-provider host context (vector-ref providers index))))
+             (if (and provider (lsp-provider-supports? provider "navigation"))
+                 provider
+                 (loop (+ index 1))))))))
 
 (define (lsp-navigation host context kind)
   (let ((provider (lsp-navigation-provider host context)))
@@ -3460,6 +3478,8 @@
     mode))
 
 (define (install-core-modes! host)
+  (define-lsp-provider! host "clangd" "cpp" "clangd" '()
+                        '("completion" "diagnostics" "navigation"))
   (define-thing! host 'cind.angle '(pair "<" ">"))
   (define-thing! host 'cind.word '(char-class word))
   (define-thing! host 'cind.symbol '(char-class symbol))
@@ -3522,7 +3542,7 @@
     #:parent 'prog-mode
     #:language 'cind.cpp
     #:interaction-class 'editing
-    #:completion-providers '("lsp:cpp:clangd" "word" "path")
+    #:completion-providers '("clangd" "word" "path")
     #:things '((angle . cind.angle)
                (defun . cind.defun)
                (string . cind.string)))

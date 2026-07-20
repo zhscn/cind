@@ -197,7 +197,7 @@ The native module exports:
 (select-interaction-candidate! host zero-based-index)
 (replace-interaction-input! host input)
 (completion-active? host)
-(start-completion! host context anchor-byte provider-names trigger)
+(start-completion! host context anchor-byte provider-values trigger)
 (move-completion! host delta)
 (apply-completion! host replace?)
 (cancel-completion! host)
@@ -251,6 +251,7 @@ The native module exports:
 (async-project-discovery path provider-definitions)
 (async-rg-result-parse project-root output)
 (async-process executable arguments [working-directory])
+(async-lsp-navigation window-id buffer-id view-id kind provider-specification)
 (start-async-task! host request completed
                    #:key (failed #f) (cancelled #f))
 (cancel-async-task! host task-id)
@@ -620,8 +621,10 @@ optional resolver. The
 procedure receives an immutable command context and a request value whose accessors are exported by
 `(cind command)`: query, generic anchor, caret, logical line, trigger kind, and trigger character.
 `start-completion!` creates that request from an explicit byte anchor, an ordered vector of provider
-names, and either the `manual` or `automatic` trigger symbol. Scheme mode policy derives the anchor,
-syntax gate, and effective providers before entering the native completion pipeline. The provider
+values, and either the `manual` or `automatic` trigger symbol. A provider value is a scripted
+provider name, `snippet`, or a structured LSP provider specification. Scheme mode policy derives
+the anchor, syntax gate, resolves registered provider names, and supplies the effective provider
+values before entering the native completion pipeline. The provider
 procedure returns `completion-result`
 containing `completion-item` values. Each item supplies display,
 filter, ordering, insertion, detail, kind, and documentation text, plus either two byte offsets for
@@ -660,6 +663,22 @@ find the query anchor without placing language-specific decisions in `EditorAppl
 The bundled `path` provider derives local or system include roots from these snapshots, submits a
 multi-directory enumeration task, and constructs, filters, deduplicates, and labels path candidates
 in Scheme.
+
+`(cind lsp)` owns language-server provider policy. `define-lsp-provider!` registers a per-host
+provider name, language ID, executable, argument sequence and feature sequence. Supported features
+are `completion`, `diagnostics`, and `navigation`. `resolve-lsp-provider` combines a registration
+with a command context and returns this immutable request value:
+
+```scheme
+#(lsp-provider name language-id executable arguments root features)
+```
+
+The resolver selects the context project root when a Buffer belongs to a project, the resource's
+parent directory for another file-backed Buffer, and the current directory for a resource-free
+Buffer. Completion and navigation discover LSP providers through the effective mode completion
+policy, so major and minor modes can compose or replace providers through the ordinary mode
+precedence rules. Native code validates the specification, creates or reuses a protocol session,
+maps requested features to client capabilities, synchronizes documents and publishes diagnostics.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`
@@ -1106,10 +1125,11 @@ Scheme callbacks and provider transforms while their tasks are outstanding, so s
 inspection, cancellation, and extension rollback observe one task namespace.
 
 The task namespace also carries editor-thread protocol operations. Semantic LSP navigation is a
-typed request/result pair: Scheme owns the pending request identity, replacement and quit policy,
-failure messages, and result presentation, while the host owns session resolution, protocol
-encoding and the opaque cancellation handle. This boundary keeps asynchronous feature state out of
-`EditorApplication` without exposing transport objects to Scheme.
+typed request/result pair: Scheme owns provider registration and resolution, pending request
+identity, replacement and quit policy, failure messages, and result presentation, while the host
+owns session lifetime, protocol encoding and the opaque cancellation handle. This boundary keeps
+asynchronous feature state out of `EditorApplication` without exposing transport objects to
+Scheme.
 
 Additional host APIs follow the same boundary:
 

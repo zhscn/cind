@@ -18,6 +18,7 @@ namespace cind {
 struct GuileAsyncBridgeState;
 
 ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* caller, int position);
+ScriptLspProviderSpec script_lsp_provider_from_scheme(SCM value, const char* caller, int position);
 SCM script_async_result_to_scheme(ScriptAsyncResult result);
 
 class GuileAsyncBridge {

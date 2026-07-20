@@ -176,6 +176,29 @@ SCM cpp_indent_style_value(const CppIndentStyle& style) {
 
 } // namespace
 
+ScriptLspProviderSpec script_lsp_provider_from_scheme(SCM value, const char* caller, int position) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 7 ||
+        !symbol_is(scm_c_vector_ref(value, 0), "lsp-provider") ||
+        !scm_is_string(scm_c_vector_ref(value, 1)) || !scm_is_string(scm_c_vector_ref(value, 2)) ||
+        !scm_is_string(scm_c_vector_ref(value, 3)) || !scm_is_string(scm_c_vector_ref(value, 5))) {
+        scm_wrong_type_arg_msg(caller, position, value,
+                               "#(lsp-provider name language-id command arguments root features)");
+    }
+    ScriptLspProviderSpec provider{
+        .name = scheme_string(scm_c_vector_ref(value, 1)),
+        .language_id = scheme_string(scm_c_vector_ref(value, 2)),
+        .command = scheme_string(scm_c_vector_ref(value, 3)),
+        .arguments = string_sequence(scm_c_vector_ref(value, 4), caller),
+        .root = scheme_string(scm_c_vector_ref(value, 5)),
+        .features = string_sequence(scm_c_vector_ref(value, 6), caller),
+    };
+    if (provider.name.empty() || provider.language_id.empty() || provider.command.empty() ||
+        provider.root.empty()) {
+        scm_misc_error(caller, "LSP provider fields must not be empty", SCM_EOL);
+    }
+    return provider;
+}
+
 ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* caller, int position) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) == 0) {
         scm_wrong_type_arg_msg(caller, position, value, "async request vector");
@@ -276,8 +299,7 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                                     .working_directory = scheme_string(scm_c_vector_ref(value, 3))};
     }
     if (symbol_is(tag, "lsp-navigation")) {
-        if (size != 6 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 4))) ||
-            !scm_is_string(scm_c_vector_ref(value, 5))) {
+        if (size != 6 || !scheme_true(scm_symbol_p(scm_c_vector_ref(value, 4)))) {
             scm_wrong_type_arg_msg(caller, position, value,
                                    "#(lsp-navigation window buffer view kind provider) request");
         }
@@ -286,7 +308,8 @@ ScriptAsyncRequest script_async_request_from_scheme(SCM value, const char* calle
                        .buffer = entity_id<BufferTag>(scm_c_vector_ref(value, 2), caller, position),
                        .view = entity_id<ViewTag>(scm_c_vector_ref(value, 3), caller, position)},
             .kind = scheme_name(scm_c_vector_ref(value, 4), caller, position),
-            .provider = scheme_string(scm_c_vector_ref(value, 5))};
+            .provider =
+                script_lsp_provider_from_scheme(scm_c_vector_ref(value, 5), caller, position)};
     }
     scm_misc_error(caller, "unknown async request kind", SCM_EOL);
     return ScriptFileReadRequest{};

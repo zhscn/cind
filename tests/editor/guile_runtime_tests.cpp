@@ -648,12 +648,12 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.engine == "guile");
     CHECK(snapshot.version == "3.0.11");
-    CHECK(snapshot.modules ==
-          std::vector<std::string>{"cind command", "cind input", "cind async", "cind lifecycle",
-                                   "cind pointer", "cind extension", "cind emacs", "cind toy-modal",
-                                   "cind meow", "cind vim", "cind helix", "cind structural",
-                                   "cind paredit", "cind minibuffer", "cind development",
-                                   "cind ares", "cind introspect", "cind core"});
+    CHECK(snapshot.modules == std::vector<std::string>{
+                                  "cind command", "cind input", "cind lsp", "cind async",
+                                  "cind lifecycle", "cind pointer", "cind extension", "cind emacs",
+                                  "cind toy-modal", "cind meow", "cind vim", "cind helix",
+                                  "cind structural", "cind paredit", "cind minibuffer",
+                                  "cind development", "cind ares", "cind introspect", "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }
@@ -925,7 +925,7 @@ TEST_CASE("bundled Guile policy declares the core mode hierarchy") {
                                         {.name = "defun", .definition = "cind.defun"},
                                         {.name = "string", .definition = "cind.string"}});
     CHECK(runtime.modes().definition(cpp).completion_providers ==
-          std::optional<std::vector<std::string>>{{"lsp:cpp:clangd", "word", "path"}});
+          std::optional<std::vector<std::string>>{{"clangd", "word", "path"}});
     const InputStrategyId emacs_strategy =
         runtime.input_strategies().find("emacs").value_or(InputStrategyId{});
     REQUIRE(emacs_strategy);
@@ -1050,6 +1050,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const ModeId fundamental_mode = runtime.modes().define("fundamental-mode", ModeKind::Major);
     const ModeId special_mode = runtime.modes().define("special-mode", ModeKind::Major);
     const ModeId cpp_mode = runtime.modes().define("cind.cpp", ModeKind::Major);
+    runtime.modes().set_completion_providers(cpp_mode, {{"clangd"}});
 
     const BufferId buffer = runtime.buffers().create({.name = "sample",
                                                       .initial_text = "abc\n",
@@ -1173,7 +1174,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .replace_interaction_input = {},
          .cancel_interaction = {},
          .completion_active = {},
-         .resolve_completion_provider = {},
+         .resolve_lsp_completion_provider = {},
          .start_completion = {},
          .move_completion = {},
          .apply_completion = {},
@@ -1417,6 +1418,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              },
          .async_tasks = [] { return std::vector<ScriptAsyncTaskSummary>{}; }});
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
+    const std::expected<GuileEvaluationResult, std::string> lsp_provider =
+        guile.evaluate({.source = R"((use-modules (cind lsp))
+(define-lsp-provider! host "clangd" "cpp" "clangd" '()
+                      '("completion" "diagnostics" "navigation")))",
+                        .source_name = "lsp-provider-test.scm"});
+    REQUIRE(lsp_provider.has_value());
+    REQUIRE_FALSE(lsp_provider->error.has_value());
     const std::expected<std::size_t, std::string> installed = guile.install_core_commands();
     REQUIRE(installed.has_value());
     CHECK(*installed == 233);
@@ -1445,7 +1453,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(navigation->target.buffer == buffer);
     CHECK(navigation->target.view == view);
     CHECK(navigation->kind == "definition");
-    CHECK(navigation->provider == "lsp:cpp:clangd");
+    CHECK(navigation->provider.name == "clangd");
+    CHECK(navigation->provider.language_id == "cpp");
+    CHECK(navigation->provider.command == "clangd");
+    CHECK(navigation->provider.arguments.empty());
+    CHECK(navigation->provider.root == "/tmp");
+    CHECK(navigation->provider.features ==
+          std::vector<std::string>{"completion", "diagnostics", "navigation"});
     const std::uint64_t definition_task = next_async_task - 1;
     const CommandResult references =
         runtime.commands().invoke(require_command(runtime, "lsp.references"), context);

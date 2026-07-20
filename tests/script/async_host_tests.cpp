@@ -321,10 +321,15 @@ TEST_CASE("script async host presents LSP navigation as a cancellable script tas
     ScriptLspNavigationResult completed_result;
     bool completed = false;
     bool cancelled = false;
+    const ScriptLspProviderSpec provider{.name = "clangd",
+                                         .language_id = "cpp",
+                                         .command = "clangd",
+                                         .arguments = {"--background-index"},
+                                         .root = "/tmp/project",
+                                         .features = {"completion", "navigation"}};
 
     const auto task = host.start(
-        ScriptLspNavigationRequest{
-            .target = target, .kind = "definition", .provider = "lsp:cpp:clangd"},
+        ScriptLspNavigationRequest{.target = target, .kind = "definition", .provider = provider},
         {.completed =
              [&](std::uint64_t, ScriptAsyncResult result) {
                  completed_result = std::get<ScriptLspNavigationResult>(std::move(result));
@@ -338,6 +343,7 @@ TEST_CASE("script async host presents LSP navigation as a cancellable script tas
         ScriptLspNavigationRequest{.target = {}, .kind = {}, .provider = {}});
     CHECK(captured.target == target);
     CHECK(captured.kind == "definition");
+    CHECK(captured.provider == provider);
     REQUIRE(host.tasks().size() == 1);
     CHECK(host.tasks().front().kind == ScriptAsyncTaskKind::LspNavigation);
 
@@ -353,8 +359,7 @@ TEST_CASE("script async host presents LSP navigation as a cancellable script tas
     CHECK(host.tasks().empty());
 
     const auto replacement = host.start(
-        ScriptLspNavigationRequest{
-            .target = target, .kind = "references", .provider = "lsp:cpp:clangd"},
+        ScriptLspNavigationRequest{.target = target, .kind = "references", .provider = provider},
         {.completed = [](std::uint64_t, const ScriptAsyncResult&) {},
          .cancelled = [&](std::uint64_t) { cancelled = true; },
          .failed = {}});

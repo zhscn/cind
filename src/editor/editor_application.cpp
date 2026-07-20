@@ -26,6 +26,10 @@ namespace {
 
 constexpr std::size_t default_jump_graph_limit = 4096;
 
+bool lsp_feature_enabled(const ScriptLspProviderSpec& provider, std::string_view feature) {
+    return std::ranges::find(provider.features, feature) != provider.features.end();
+}
+
 TextRange plain_kill_line_range(const Text& text, TextOffset caret) {
     const std::uint32_t line = text.position(caret).line;
     const TextOffset content_end = text.line_content_end(line);
@@ -292,9 +296,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return interaction_.cancel();
                },
            .completion_active = [this] { return completion_ && completion_->active(); },
-           .resolve_completion_provider =
-               [this](CommandTarget target, std::string_view name) {
-                   return resolve_completion_provider(target, name);
+           .resolve_lsp_completion_provider =
+               [this](CommandTarget target, ScriptLspProviderSpec provider) {
+                   return resolve_lsp_completion_provider(target, std::move(provider));
                },
            .start_completion =
                [this](CommandTarget target, TextOffset anchor,
@@ -3289,8 +3293,13 @@ void EditorApplication::refresh_completion_after_command() {
 }
 
 std::expected<CompletionProvider, std::string>
-EditorApplication::resolve_completion_provider(CommandTarget target, std::string_view name) {
-    std::expected<LspSessionId, std::string> session = resolve_lsp_session(target, name);
+EditorApplication::resolve_lsp_completion_provider(CommandTarget target,
+                                                   ScriptLspProviderSpec provider) {
+    if (!lsp_feature_enabled(provider, "completion")) {
+        return std::unexpected(
+            std::format("LSP provider '{}' does not support completion", provider.name));
+    }
+    std::expected<LspSessionId, std::string> session = resolve_lsp_session(target, provider);
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }
@@ -3298,43 +3307,39 @@ EditorApplication::resolve_completion_provider(CommandTarget target, std::string
 }
 
 std::expected<LspSessionId, std::string>
-EditorApplication::resolve_lsp_session(CommandTarget target, std::string_view name) {
-    constexpr std::string_view prefix = "lsp:";
-    if (!name.starts_with(prefix)) {
-        return std::unexpected(std::format("unknown LSP provider '{}'", name));
-    }
-    name.remove_prefix(prefix.size());
-    const std::size_t separator = name.find(':');
-    if (separator == std::string_view::npos || separator == 0 || separator + 1 == name.size()) {
-        return std::unexpected("LSP provider must be lsp:<language>:<command>");
-    }
-    const std::string language(name.substr(0, separator));
-    const std::string command(name.substr(separator + 1));
+EditorApplication::resolve_lsp_session(CommandTarget target,
+                                       const ScriptLspProviderSpec& provider) {
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
     if (buffer == nullptr || !buffer->resource_uri()) {
         return std::unexpected("LSP provider requires a file-backed buffer");
     }
-    std::string root = std::filesystem::path(*buffer->resource_uri()).parent_path().string();
-    if (buffer->project_id()) {
-        const Project* project = runtime_.projects().try_get(*buffer->project_id());
-        if (project != nullptr && !project->roots().empty()) {
-            root = project->roots().front();
+    std::vector<std::string> capabilities;
+    capabilities.reserve(provider.features.size());
+    for (const std::string& feature : provider.features) {
+        if (feature == "completion") {
+            capabilities.push_back(LspCompletionFeature::client_capabilities());
+        } else if (feature == "diagnostics") {
+            capabilities.push_back(LspDiagnosticsFeature::client_capabilities());
+        } else if (feature == "navigation") {
+            capabilities.push_back(LspNavigationFeature::client_capabilities());
+        } else {
+            return std::unexpected(
+                std::format("LSP provider '{}' has unknown feature '{}'", provider.name, feature));
         }
     }
     std::expected<LspSessionId, std::string> session = lsp_sessions_->ensure(
-        buffer->project_id(),
-        {.command = command,
-         .arguments = {},
-         .root = std::move(root),
-         .language_id = language,
-         .client_capabilities = {LspCompletionFeature::client_capabilities(),
-                                 LspDiagnosticsFeature::client_capabilities(),
-                                 LspNavigationFeature::client_capabilities()}});
+        buffer->project_id(), {.command = provider.command,
+                               .arguments = provider.arguments,
+                               .root = provider.root,
+                               .language_id = provider.language_id,
+                               .client_capabilities = std::move(capabilities)});
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }
     lsp_buffer_sessions_.insert_or_assign(target.buffer, *session);
-    attach_lsp_diagnostics(*session);
+    if (lsp_feature_enabled(provider, "diagnostics")) {
+        attach_lsp_diagnostics(*session);
+    }
     return *session;
 }
 
@@ -3435,6 +3440,10 @@ EditorApplication::start_lsp_navigation(const ScriptLspNavigationRequest& reques
         kind = LspNavigationKind::References;
     } else {
         return std::unexpected(std::format("unknown LSP navigation kind '{}'", request.kind));
+    }
+    if (!lsp_feature_enabled(request.provider, "navigation")) {
+        return std::unexpected(
+            std::format("LSP provider '{}' does not support navigation", request.provider.name));
     }
     const CommandTarget target = request.target;
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
