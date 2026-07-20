@@ -1815,8 +1815,12 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
     const bool was_active = workbench == workbench_id();
     std::optional<WorkbenchId> replacement;
     if (was_active) {
-        replacement = workbenches_.next(workbench);
-        if (!replacement || *replacement == workbench || !guile_.workbench_activate(*replacement)) {
+        const std::expected<WorkbenchId, std::string> next = guile_.workbench_next(workbench);
+        if (!next || *next == workbench) {
+            return false;
+        }
+        replacement = *next;
+        if (!guile_.workbench_activate(*replacement)) {
             return false;
         }
     }

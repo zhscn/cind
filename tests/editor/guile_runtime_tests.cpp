@@ -1564,6 +1564,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.workbench_created(other_workbench, "code", alternate_window, std::nullopt, {})
                 .has_value());
     CHECK(guile.active_workbench().value_or(WorkbenchId{}) == workbench);
+    CHECK(guile.workbench_next(workbench).value_or(WorkbenchId{}) == other_workbench);
+    CHECK(guile.workbench_next(other_workbench).value_or(WorkbenchId{}) == workbench);
+    CHECK(guile.workbench_next(workbench, -1).value_or(WorkbenchId{}) == other_workbench);
     REQUIRE(guile.workbench_activate(other_workbench).has_value());
     CHECK(guile.active_workbench().value_or(WorkbenchId{}) == other_workbench);
     REQUIRE(guile.workbench_focus_window(other_workbench, alternate_window).has_value());

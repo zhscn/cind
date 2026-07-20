@@ -6988,6 +6988,7 @@ struct GuileCall {
         WorkbenchCreated,
         ActiveWorkbench,
         WorkbenchActivate,
+        WorkbenchNext,
         WorkbenchActiveWindow,
         WorkbenchFocusWindow,
         WorkbenchVisitBuffer,
@@ -7099,6 +7100,7 @@ struct GuileCall {
     GuileCommandFeedbackState command_feedback;
     GuileApplicationState application_state;
     std::uint32_t page_rows = 1;
+    int delta = 1;
     std::uint64_t lsp_session = 0;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
@@ -7905,6 +7907,13 @@ SCM call_body(void* data) {
             call.result =
                 scm_call_2(scm_c_public_ref("cind workbench", "workbench-activate!"), call.host,
                            entity_id(call.workbench.slot, call.workbench.generation));
+            break;
+        case GuileCall::Operation::WorkbenchNext:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-next"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           scm_from_int(call.delta));
+            call.workbench = entity_id_from_scheme<WorkbenchTag>(call.result, "workbench-next", 0);
             break;
         case GuileCall::Operation::WorkbenchActiveWindow:
             call.result =
@@ -9399,6 +9408,22 @@ public:
         return {};
     }
 
+    std::expected<WorkbenchId, std::string> workbench_next(WorkbenchId workbench, int delta) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchNext;
+        call.host = host_;
+        call.workbench = workbench;
+        call.delta = delta;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.workbench;
+    }
+
     std::expected<WindowId, std::string> workbench_active_window(WorkbenchId workbench) const {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -10473,6 +10498,11 @@ std::expected<WorkbenchId, std::string> GuileRuntime::active_workbench() const {
 
 std::expected<void, std::string> GuileRuntime::workbench_activate(WorkbenchId workbench) {
     return impl_->workbench_activate(workbench);
+}
+
+std::expected<WorkbenchId, std::string> GuileRuntime::workbench_next(WorkbenchId workbench,
+                                                                     int delta) const {
+    return impl_->workbench_next(workbench, delta);
 }
 
 std::expected<WindowId, std::string>

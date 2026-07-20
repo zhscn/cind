@@ -3,6 +3,7 @@
             active-workbench
             workbench-summaries
             workbench-activate!
+            workbench-next
             workbench-active-window
             workbench-focus-window!
             workbench-visit-buffer!
@@ -136,6 +137,19 @@
   (require-workbench-entry host workbench)
   (hashq-set! active-workbenches host workbench)
   workbench)
+
+(define (workbench-next host workbench delta)
+  (unless (integer? delta)
+    (error "workbench selection delta must be an integer" delta))
+  (let* ((entries (reverse (host-workbench-states host)))
+         (count (length entries))
+         (current
+          (let loop ((remaining entries) (index 0))
+            (cond ((null? remaining)
+                   (error "unknown workbench policy state" workbench))
+                  ((equal? workbench (vector-ref (car remaining) 0)) index)
+                  (else (loop (cdr remaining) (+ index 1)))))))
+    (vector-ref (list-ref entries (modulo (+ current delta) count)) 0)))
 
 (define (workbench-active-window host workbench)
   (vector-ref (require-workbench-entry host workbench) 5))

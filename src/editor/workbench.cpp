@@ -1,6 +1,5 @@
 #include "editor/workbench.hpp"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -100,18 +99,6 @@ std::optional<WorkbenchId> WorkbenchRegistry::find_by_window(WindowId window) co
         }
     }
     return std::nullopt;
-}
-
-std::optional<WorkbenchId> WorkbenchRegistry::next(WorkbenchId id, int delta) const {
-    const std::vector<WorkbenchId> ids = all();
-    const auto found = std::ranges::find(ids, id);
-    if (found == ids.end() || ids.empty()) {
-        return std::nullopt;
-    }
-    const auto current = static_cast<std::ptrdiff_t>(std::distance(ids.begin(), found));
-    const auto count = static_cast<std::ptrdiff_t>(ids.size());
-    const auto wrapped = ((current + static_cast<std::ptrdiff_t>(delta)) % count + count) % count;
-    return ids[static_cast<std::size_t>(wrapped)];
 }
 
 } // namespace cind

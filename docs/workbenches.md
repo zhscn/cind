@@ -15,6 +15,9 @@ carets, selections, input states and viewports therefore remain available when t
 selected again. Buffers remain global and may be displayed by Views in several workbenches; edits
 to a shared Buffer are immediately visible through each View.
 
+The Guile registry preserves workbench creation order. Closing the active workbench selects the
+next entry in that order and wraps at the end before releasing the closing state.
+
 Guile selection state references native generational IDs. The application validates those IDs
 against the workbench registry and WindowLayout whenever it crosses the policy boundary. Window
 deletion transfers focus before removing a layout leaf, and workbench closure selects a replacement

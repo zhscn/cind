@@ -61,8 +61,6 @@ public:
     std::vector<WorkbenchId> all() const;
     std::optional<WorkbenchId> find_by_window(WindowId window) const;
 
-    std::optional<WorkbenchId> next(WorkbenchId id, int delta = 1) const;
-
     std::size_t size() const { return size_; }
 
 private:

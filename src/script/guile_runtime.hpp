@@ -431,6 +431,8 @@ public:
                                                        const std::vector<ProjectId>& scope);
     std::expected<WorkbenchId, std::string> active_workbench() const;
     std::expected<void, std::string> workbench_activate(WorkbenchId workbench);
+    std::expected<WorkbenchId, std::string> workbench_next(WorkbenchId workbench,
+                                                           int delta = 1) const;
     std::expected<WindowId, std::string> workbench_active_window(WorkbenchId workbench) const;
     std::expected<void, std::string> workbench_focus_window(WorkbenchId workbench, WindowId window);
     std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench, BufferId buffer);
