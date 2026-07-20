@@ -724,24 +724,27 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             after_edit(target.view);
             sync_keymaps();
         },
-        [this](const CompletionState* state) {
+        [this](const CompletionState* state, bool pending) {
             if (state == nullptr) {
                 if (std::expected<void, std::string> finished = guile_.completion_finished();
                     !finished) {
                     set_message(finished.error());
                 }
-                return;
+                return false;
             }
             std::vector<std::uint64_t> item_ids;
             item_ids.reserve(state->matches.size());
             for (const CompletionMatch& match : state->matches) {
                 item_ids.push_back(match.item.id);
             }
-            if (std::expected<std::optional<std::size_t>, std::string> reconciled =
-                    guile_.completion_reconcile(item_ids);
-                !reconciled) {
-                set_message(reconciled.error());
+            const bool automatic = state->request.trigger.kind == CompletionTriggerKind::Automatic;
+            std::expected<GuileCompletionDecision, std::string> decision =
+                guile_.completion_transition(item_ids, automatic, pending);
+            if (!decision) {
+                set_message(decision.error());
+                return false;
             }
+            return decision->cancel;
         });
     project_service_ =
         std::make_unique<ProjectService>(runtime_, async_runtime_, [this](ProjectId project) {

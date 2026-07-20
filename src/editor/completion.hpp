@@ -150,7 +150,7 @@ public:
         const CompletionRequest&, const CompletionItem&, ResolveCompleted,
         CompletionProviderAsync::Failed, CompletionProviderAsync::Cancelled)>;
     using Applied = std::function<void(CommandTarget)>;
-    using Changed = std::function<void(const CompletionState*)>;
+    using Changed = std::function<bool(const CompletionState*, bool pending)>;
 
     CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime, Dispatch dispatch,
                        Resolve resolve = {}, Applied applied = {}, Changed changed = {});
@@ -185,7 +185,6 @@ private:
     void cancelled(std::uint64_t generation, CompletionProvider provider);
     void rebuild_matches();
     void notify_changed() noexcept;
-    void settle_automatic();
     void resolve_item(std::uint64_t id);
     void publish_resolved(std::uint64_t generation, std::uint64_t id, CompletionItem item);
     void resolve_failed(std::uint64_t generation, std::uint64_t id, std::string error);

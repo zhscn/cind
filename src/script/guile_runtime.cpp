@@ -6662,7 +6662,7 @@ struct GuileCall {
         InteractionPolicyState,
         MinibufferHistoryState,
         InteractionSelection,
-        CompletionReconcile,
+        CompletionTransition,
         CompletionFinished,
         CompletionSelection,
         CommandFeedbackState,
@@ -6806,6 +6806,8 @@ struct GuileCall {
     std::optional<std::size_t> interaction_selection;
     std::vector<std::uint64_t> completion_item_ids;
     std::optional<std::size_t> completion_selection;
+    bool completion_automatic = false;
+    bool completion_pending = false;
     GuileCommandFeedbackState command_feedback;
     GuileApplicationState application_state;
     std::uint32_t page_rows = 1;
@@ -7533,22 +7535,28 @@ SCM call_body(void* data) {
                 call.interaction_selection = scm_to_size_t(call.result);
             }
             break;
-        case GuileCall::Operation::CompletionReconcile: {
+        case GuileCall::Operation::CompletionTransition: {
             SCM item_ids = scm_c_make_vector(call.completion_item_ids.size(), SCM_UNSPECIFIED);
             for (std::size_t index = 0; index < call.completion_item_ids.size(); ++index) {
                 scm_c_vector_set_x(item_ids, index,
                                    scm_from_uint64(call.completion_item_ids[index]));
             }
-            call.result = scm_call_2(scm_c_public_ref("cind application", "reconcile-completion!"),
-                                     call.host, item_ids);
-            if (!scheme_false(call.result)) {
-                if (scm_is_unsigned_integer(call.result, 0,
-                                            std::numeric_limits<std::size_t>::max()) == 0) {
-                    scm_misc_error("reconcile-completion!",
-                                   "selection must be a non-negative integer or #f", SCM_EOL);
-                }
-                call.completion_selection = scm_to_size_t(call.result);
+            call.result = scm_call_4(scm_c_public_ref("cind application", "completion-transition!"),
+                                     call.host, item_ids, scm_from_bool(call.completion_automatic),
+                                     scm_from_bool(call.completion_pending));
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 2 ||
+                (!scheme_false(scm_c_vector_ref(call.result, 0)) &&
+                 scm_is_unsigned_integer(scm_c_vector_ref(call.result, 0), 0,
+                                         std::numeric_limits<std::size_t>::max()) == 0) ||
+                !scheme_boolean(scm_c_vector_ref(call.result, 1))) {
+                scm_misc_error("completion-transition!",
+                               "decision must be #(selection-or-#f cancel?)", SCM_EOL);
             }
+            const SCM selection = scm_c_vector_ref(call.result, 0);
+            if (!scheme_false(selection)) {
+                call.completion_selection = scm_to_size_t(selection);
+            }
+            call.changed = scheme_true(scm_c_vector_ref(call.result, 1));
             break;
         }
         case GuileCall::Operation::CompletionFinished:
@@ -9172,19 +9180,23 @@ public:
         return call.interaction_selection;
     }
 
-    std::expected<std::optional<std::size_t>, std::string>
-    completion_reconcile(const std::vector<std::uint64_t>& item_ids) {
+    std::expected<GuileCompletionDecision, std::string>
+    completion_transition(const std::vector<std::uint64_t>& item_ids, bool automatic,
+                          bool pending) {
         require_owner_thread();
         GuileCall call;
-        call.operation = GuileCall::Operation::CompletionReconcile;
+        call.operation = GuileCall::Operation::CompletionTransition;
         call.host = host_;
         call.completion_item_ids = item_ids;
+        call.completion_automatic = automatic;
+        call.completion_pending = pending;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
         state_->last_error.reset();
-        return call.completion_selection;
+        return GuileCompletionDecision{.selection = call.completion_selection,
+                                       .cancel = call.changed};
     }
 
     std::expected<void, std::string> completion_finished() {
@@ -10694,9 +10706,10 @@ std::expected<std::optional<std::size_t>, std::string> GuileRuntime::interaction
     return impl_->interaction_selection();
 }
 
-std::expected<std::optional<std::size_t>, std::string>
-GuileRuntime::completion_reconcile(const std::vector<std::uint64_t>& item_ids) {
-    return impl_->completion_reconcile(item_ids);
+std::expected<GuileCompletionDecision, std::string>
+GuileRuntime::completion_transition(const std::vector<std::uint64_t>& item_ids, bool automatic,
+                                    bool pending) {
+    return impl_->completion_transition(item_ids, automatic, pending);
 }
 
 std::expected<void, std::string> GuileRuntime::completion_finished() {

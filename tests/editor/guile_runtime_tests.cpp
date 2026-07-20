@@ -305,11 +305,13 @@ TEST_CASE("Guile completion selection follows stable item ids") {
       (reconcile-completion! host #(44 22 33))
       (completion-selection host)
       (move-completion-selection! host -1)
-      (begin (finish-completion! host) (completion-selection host))))",
+      (completion-transition! host #() #t #t)
+      (completion-transition! host #() #t #f)
+      (completion-selection host)))",
                         .source_name = "completion-selection-test.scm"});
     REQUIRE(result.has_value());
     CHECK_FALSE(result->error.has_value());
-    CHECK(result->values == std::vector<std::string>{"(0 1 1 1 0 #f)"});
+    CHECK(result->values == std::vector<std::string>{"(0 1 1 1 0 #(#f #f) #(#f #t) #f)"});
 }
 
 TEST_CASE("Guile command feedback owns message and command input state") {

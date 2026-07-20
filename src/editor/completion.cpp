@@ -151,7 +151,6 @@ CompletionPipeline::start(CommandContext& context, TextOffset anchor,
         request_provider(provider, request);
     }
     dispatching_batch_ = false;
-    settle_automatic();
     notify_changed();
     return {};
 }
@@ -226,7 +225,6 @@ std::expected<void, std::string> CompletionPipeline::update(CommandContext& cont
     }
     dispatching_batch_ = false;
     rebuild_matches();
-    settle_automatic();
     notify_changed();
     return {};
 }
@@ -476,7 +474,6 @@ void CompletionPipeline::publish(std::uint64_t generation, CompletionProviderRes
     provider->is_incomplete = response.is_incomplete;
     provider->error.clear();
     rebuild_matches();
-    settle_automatic();
     notify_changed();
 }
 
@@ -489,7 +486,6 @@ void CompletionPipeline::fail(std::uint64_t generation, CompletionProvider provi
         found->pending = false;
         found->error = std::move(error);
     }
-    settle_automatic();
     notify_changed();
 }
 
@@ -500,7 +496,6 @@ void CompletionPipeline::cancelled(std::uint64_t generation, CompletionProvider 
     if (CompletionProviderState* found = source(provider)) {
         found->pending = false;
     }
-    settle_automatic();
     notify_changed();
 }
 
@@ -532,22 +527,20 @@ void CompletionPipeline::rebuild_matches() {
 
 void CompletionPipeline::notify_changed() noexcept {
     try {
-        if (changed_) {
-            changed_(state_ ? &*state_ : nullptr);
+        if (!changed_) {
+            return;
+        }
+        const bool pending =
+            state_ && (dispatching_batch_ ||
+                       std::ranges::any_of(state_->providers, &CompletionProviderState::pending));
+        if (changed_(state_ ? &*state_ : nullptr, pending) && state_) {
+            cancel_pending();
+            state_.reset();
+            (void)changed_(nullptr, false);
         }
     } catch (...) {
         return;
     }
-}
-
-void CompletionPipeline::settle_automatic() {
-    if (dispatching_batch_ || !state_ ||
-        state_->request.trigger.kind != CompletionTriggerKind::Automatic ||
-        std::ranges::any_of(state_->providers, &CompletionProviderState::pending) ||
-        !state_->matches.empty()) {
-        return;
-    }
-    (void)cancel();
 }
 
 void CompletionPipeline::resolve_item(std::uint64_t id) {

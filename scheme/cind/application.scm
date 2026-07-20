@@ -7,6 +7,7 @@
             page-rows
             set-page-rows!
             reconcile-completion!
+            completion-transition!
             finish-completion!
             completion-selection
             move-completion-selection!))
@@ -78,6 +79,17 @@
              (id (vector-ref item-ids index)))
         (hashq-set! completion-states host (vector item-ids id index))
         index)))
+
+(define (completion-transition! host item-ids automatic? pending?)
+  (unless (and (boolean? automatic?) (boolean? pending?))
+    (error "completion transition flags must be booleans" automatic? pending?))
+  (let* ((selection (reconcile-completion! host item-ids))
+         (cancel? (and automatic?
+                       (not pending?)
+                       (zero? (vector-length item-ids)))))
+    (when cancel?
+      (finish-completion! host))
+    (vector selection cancel?)))
 
 (define (finish-completion! host)
   (hashq-remove! completion-states host))

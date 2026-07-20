@@ -1793,6 +1793,48 @@ TEST_CASE("completion pipeline merges fixed providers and addresses duplicate la
     CHECK(pipeline.state()->providers.size() == 2);
 }
 
+TEST_CASE("completion pipeline delegates empty automatic session policy") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-policy",
+                                                      .initial_text = "f",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{1});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    std::vector<bool> pending_states;
+    int finishes = 0;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider, const CompletionRequest&) -> CompletionProviderResult {
+            return CompletionProviderResponse{
+                .provider = provider, .items = {}, .is_incomplete = false};
+        },
+        {}, {},
+        [&](const CompletionState* state, bool pending) {
+            if (state == nullptr) {
+                ++finishes;
+                return false;
+            }
+            pending_states.push_back(pending);
+            return state->request.trigger.kind == CompletionTriggerKind::Automatic && !pending &&
+                   state->matches.empty();
+        });
+
+    REQUIRE(pipeline
+                .start(context, TextOffset{}, {CompletionProvider::word()},
+                       {.kind = CompletionTriggerKind::Automatic, .character = {}})
+                .has_value());
+    CHECK_FALSE(pipeline.active());
+    CHECK(pending_states == std::vector<bool>{true, false});
+    CHECK(finishes == 1);
+
+    REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::word()}).has_value());
+    CHECK(pipeline.active());
+}
+
 TEST_CASE("completion pipeline resolves visible candidates in place by stable id") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "completion-resolve",

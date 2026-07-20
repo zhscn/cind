@@ -380,6 +380,11 @@ struct GuileApplicationState {
     std::uint32_t page_rows = 1;
 };
 
+struct GuileCompletionDecision {
+    std::optional<std::size_t> selection;
+    bool cancel = false;
+};
+
 // Owns the editor-thread Guile policy environment. C++ registries and
 // generational editor objects remain authoritative; Scheme receives only
 // explicit host capabilities and never a process-global current editor.
@@ -424,8 +429,8 @@ public:
     std::expected<std::optional<GuileInteractionPolicyState>, std::string>
     interaction_policy_state() const;
     std::expected<std::optional<std::size_t>, std::string> interaction_selection() const;
-    std::expected<std::optional<std::size_t>, std::string>
-    completion_reconcile(const std::vector<std::uint64_t>& item_ids);
+    std::expected<GuileCompletionDecision, std::string>
+    completion_transition(const std::vector<std::uint64_t>& item_ids, bool automatic, bool pending);
     std::expected<void, std::string> completion_finished();
     std::expected<std::optional<std::size_t>, std::string> completion_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
