@@ -130,9 +130,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                },
            .display_generated_buffer =
                [this](WindowId window, std::string name, std::string text, ModeId mode,
-                      std::string style_origin, std::string_view intent) {
+                      std::string_view style_origin, std::string_view intent) {
                    return display_generated_buffer(window, std::move(name), std::move(text), mode,
-                                                   std::move(style_origin), intent);
+                                                   style_origin, intent);
                },
            .navigate_jump = [this](WindowId window,
                                    std::int64_t delta) { return navigate_jump(window, delta); },
@@ -564,7 +564,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                                    .kind = spec.kind,
                                                    .resource_uri = std::move(spec.resource),
                                                    .read_only = spec.read_only},
-                                        spec.style, std::move(spec.style_origin), spec.major_mode);
+                                        spec.style, spec.style_origin, spec.major_mode);
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
                }
@@ -878,7 +878,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                  .kind = startup->buffer.kind,
                                  .resource_uri = std::move(startup->buffer.resource),
                                  .read_only = startup->buffer.read_only},
-                      startup->style, std::move(startup->style_origin), startup->buffer.major_mode);
+                      startup->style, startup->style_origin, startup->buffer.major_mode);
     const ViewId initial_view = create_view({}, initial);
     const WindowId initial_window = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = initial_window;
@@ -2303,9 +2303,9 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         throw std::logic_error("buffer lifecycle registry is inconsistent");
     }
     workbenches_.forget_buffer(buffer);
-    if (const std::expected<void, std::string> released = guile_.lsp_buffer_released(buffer);
+    if (const std::expected<void, std::string> released = guile_.buffer_released(buffer);
         !released) {
-        set_message(std::format("LSP binding release failed: {}", released.error()));
+        set_message(std::format("buffer lifecycle release failed: {}", released.error()));
     }
     show_caret();
     sync_keymaps();
@@ -2562,12 +2562,12 @@ const std::string& EditorApplication::path(WindowId window) const {
     return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();
 }
 
-const std::string& EditorApplication::style_origin() const {
-    return active_buffer().style_origin;
+std::string EditorApplication::style_origin() const {
+    return style_origin(window_id());
 }
 
-const std::string& EditorApplication::style_origin(WindowId window) const {
-    return state_for(buffer_id(window)).style_origin;
+std::string EditorApplication::style_origin(WindowId window) const {
+    return guile_.buffer_style_origin(buffer_id(window)).value_or("plain text");
 }
 
 std::uint32_t EditorApplication::save_generation() const {
@@ -2584,14 +2584,6 @@ bool EditorApplication::has_background_work() const {
 
 bool EditorApplication::poll_background_work() {
     return async_runtime_.drain() != 0;
-}
-
-EditorApplication::BufferState& EditorApplication::active_buffer() {
-    return state_for(buffer_id());
-}
-
-const EditorApplication::BufferState& EditorApplication::active_buffer() const {
-    return const_cast<EditorApplication*>(this)->active_buffer();
 }
 
 EditorApplication::BufferState& EditorApplication::state_for(BufferId buffer) {
@@ -2654,7 +2646,7 @@ const EditSession& EditorApplication::session_for(ViewId view) const {
 }
 
 BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
-                                          std::string style_origin,
+                                          std::string_view style_origin,
                                           std::optional<ModeId> major_mode, TextOffset caret) {
     (void)caret;
     const BufferId buffer = runtime_.buffers().create(std::move(spec));
@@ -2663,11 +2655,18 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
         auto state = std::make_unique<BufferState>();
         state->buffer = buffer;
         state->style = std::make_shared<CppIndentStyle>(style);
-        state->style_origin = std::move(style_origin);
         buffers_.push_back(std::move(state));
         resolve_location_lists(buffer);
         resolve_jump_nodes(buffer);
+        if (const std::expected<void, std::string> recorded =
+                guile_.buffer_created(buffer, style_origin);
+            !recorded) {
+            throw std::runtime_error(recorded.error());
+        }
     } catch (...) {
+        std::erase_if(buffers_, [buffer](const std::unique_ptr<BufferState>& state) {
+            return state->buffer == buffer;
+        });
         (void)runtime_.buffers().erase(buffer);
         throw;
     }
@@ -2749,7 +2748,7 @@ bool EditorApplication::show_buffer(WindowId window, BufferId buffer) {
 
 std::expected<WindowId, std::string>
 EditorApplication::display_generated_buffer(WindowId origin, std::string name, std::string text,
-                                            ModeId mode, std::string style_origin,
+                                            ModeId mode, std::string_view style_origin,
                                             std::string_view intent) {
     try {
         (void)runtime_.modes().definition(mode);
@@ -2773,14 +2772,18 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
                 throw;
             }
             target.modes().set_major(runtime_.modes(), mode);
-            state_for(buffer).style_origin = std::move(style_origin);
+            if (const std::expected<void, std::string> recorded =
+                    guile_.buffer_created(buffer, style_origin);
+                !recorded) {
+                return std::unexpected(recorded.error());
+            }
         } else {
             buffer = create_buffer(BufferSpec{.name = std::move(name),
                                               .initial_text = std::move(text),
                                               .kind = BufferKind::Generated,
                                               .resource_uri = std::nullopt,
                                               .read_only = true},
-                                   CppIndentStyle{}, std::move(style_origin), mode);
+                                   CppIndentStyle{}, style_origin, mode);
         }
         const std::expected<WindowId, std::string> displayed =
             display_buffer(buffer, intent, origin, LinePosition{});

@@ -6964,7 +6964,9 @@ struct GuileCall {
         SetCaretReveal,
         SetPageRows,
         LspSessionBound,
-        LspBufferReleased,
+        BufferCreated,
+        BufferStyleOrigin,
+        BufferReleased,
         LspDiagnosticsFailed,
         BufferSavingState,
         CommandInput,
@@ -7811,9 +7813,23 @@ SCM call_body(void* data) {
             }
             call.enabled = scheme_true(call.result);
             break;
-        case GuileCall::Operation::LspBufferReleased:
+        case GuileCall::Operation::BufferCreated:
+            call.result = scm_call_3(scm_c_public_ref("cind lifecycle", "buffer-created!"),
+                                     call.host, entity_id(call.buffer.slot, call.buffer.generation),
+                                     scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            break;
+        case GuileCall::Operation::BufferStyleOrigin:
             call.result =
-                scm_call_2(scm_c_public_ref("cind lsp", "lsp-buffer-released!"), call.host,
+                scm_call_2(scm_c_public_ref("cind lifecycle", "buffer-style-origin"), call.host,
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            if (!scm_is_string(call.result)) {
+                scm_wrong_type_arg_msg("buffer-style-origin", 0, call.result, "string");
+            }
+            call.source = scheme_string(call.result);
+            break;
+        case GuileCall::Operation::BufferReleased:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind lifecycle", "buffer-released!"), call.host,
                            entity_id(call.buffer.slot, call.buffer.generation));
             break;
         case GuileCall::Operation::LspDiagnosticsFailed:
@@ -9005,11 +9021,43 @@ public:
         return call.enabled;
     }
 
-    std::expected<void, std::string> lsp_buffer_released(BufferId buffer) {
+    std::expected<void, std::string> buffer_created(BufferId buffer,
+                                                    std::string_view style_origin) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
         GuileCall call;
-        call.operation = GuileCall::Operation::LspBufferReleased;
+        call.operation = GuileCall::Operation::BufferCreated;
+        call.host = host_;
+        call.buffer = buffer;
+        call.source = style_origin;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferStyleOrigin;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.source);
+    }
+
+    std::expected<void, std::string> buffer_released(BufferId buffer) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferReleased;
         call.host = host_;
         call.buffer = buffer;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
@@ -9741,8 +9789,17 @@ std::expected<bool, std::string> GuileRuntime::lsp_session_bound(BufferId buffer
     return impl_->lsp_session_bound(buffer, session);
 }
 
-std::expected<void, std::string> GuileRuntime::lsp_buffer_released(BufferId buffer) {
-    return impl_->lsp_buffer_released(buffer);
+std::expected<void, std::string> GuileRuntime::buffer_created(BufferId buffer,
+                                                              std::string_view style_origin) {
+    return impl_->buffer_created(buffer, style_origin);
+}
+
+std::expected<std::string, std::string> GuileRuntime::buffer_style_origin(BufferId buffer) const {
+    return impl_->buffer_style_origin(buffer);
+}
+
+std::expected<void, std::string> GuileRuntime::buffer_released(BufferId buffer) {
+    return impl_->buffer_released(buffer);
 }
 
 std::expected<void, std::string> GuileRuntime::lsp_diagnostics_failed(std::string_view message) {

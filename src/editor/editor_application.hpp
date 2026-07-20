@@ -260,8 +260,8 @@ public:
     bool dirty(WindowId window) const { return session(window).buffer().modified(); }
     const std::string& path() const;
     const std::string& path(WindowId window) const;
-    const std::string& style_origin() const;
-    const std::string& style_origin(WindowId window) const;
+    std::string style_origin() const;
+    std::string style_origin(WindowId window) const;
     std::uint32_t save_generation() const;
     std::uint32_t save_generation(WindowId window) const;
 
@@ -297,7 +297,6 @@ private:
     struct BufferState {
         BufferId buffer;
         std::shared_ptr<CppIndentStyle> style;
-        std::string style_origin;
     };
 
     struct ViewState {
@@ -316,8 +315,6 @@ private:
         std::optional<PositionHintCache> position_hints;
     };
 
-    BufferState& active_buffer();
-    const BufferState& active_buffer() const;
     BufferState& state_for(BufferId buffer);
     const BufferState& state_for(BufferId buffer) const;
     ViewState& active_view();
@@ -328,7 +325,7 @@ private:
     const ViewState* find_view(WindowId window, BufferId buffer) const;
     EditSession& session_for(ViewId view);
     const EditSession& session_for(ViewId view) const;
-    BufferId create_buffer(BufferSpec spec, CppIndentStyle style, std::string style_origin,
+    BufferId create_buffer(BufferSpec spec, CppIndentStyle style, std::string_view style_origin,
                            std::optional<ModeId> major_mode, TextOffset caret = {});
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     bool show_buffer(WindowId window, BufferId buffer);
@@ -337,7 +334,7 @@ private:
     const Workbench& active_workbench() const { return workbenches_.active(); }
     std::expected<WindowId, std::string> display_generated_buffer(WindowId origin, std::string name,
                                                                   std::string text, ModeId mode,
-                                                                  std::string style_origin,
+                                                                  std::string_view style_origin,
                                                                   std::string_view intent);
     std::expected<void, std::string> move_caret_to_line(ViewId view, std::uint32_t line,
                                                         std::uint32_t display_column);

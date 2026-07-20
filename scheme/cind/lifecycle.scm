@@ -1,5 +1,6 @@
 (define-module (cind lifecycle)
   #:use-module (cind host)
+  #:use-module (cind lsp)
   #:export (configure-startup-policy!
             resolve-startup-plan
             configure-session-policy!
@@ -14,6 +15,9 @@
             buffer-saving?
             observe-buffer-edits!
             buffer-edited!
+            buffer-created!
+            buffer-style-origin
+            buffer-released!
             startup-placeholder
             set-startup-placeholder!))
 
@@ -24,6 +28,47 @@
 (define close-policies (make-weak-key-hash-table))
 (define buffer-save-states (make-weak-key-hash-table))
 (define buffer-edit-observers (make-weak-key-hash-table))
+(define buffer-style-origins (make-weak-key-hash-table))
+
+(define (host-buffer-style-origins host)
+  (or (hashq-ref buffer-style-origins host) '()))
+
+(define (without-buffer-style-origin entries buffer)
+  (cond ((null? entries) '())
+        ((equal? buffer (vector-ref (car entries) 0))
+         (cdr entries))
+        (else
+         (cons (car entries)
+               (without-buffer-style-origin (cdr entries) buffer)))))
+
+(define (buffer-created! host buffer style-origin)
+  (unless (string? style-origin)
+    (error "buffer style origin must be a string" style-origin))
+  (hashq-set! buffer-style-origins host
+              (cons (vector buffer style-origin)
+                    (without-buffer-style-origin
+                     (host-buffer-style-origins host) buffer)))
+  buffer)
+
+(define (buffer-style-origin host buffer)
+  (let loop ((entries (host-buffer-style-origins host)))
+    (cond ((null? entries)
+           (error "buffer has no style origin" buffer))
+          ((equal? buffer (vector-ref (car entries) 0))
+           (vector-ref (car entries) 1))
+          (else (loop (cdr entries))))))
+
+(define (buffer-released! host buffer)
+  (set-buffer-saves! host
+                     (without-buffer-save (host-buffer-saves host) buffer))
+  (when (equal? buffer (startup-placeholder host))
+    (hashq-remove! startup-placeholders host))
+  (let ((remaining
+         (without-buffer-style-origin (host-buffer-style-origins host) buffer)))
+    (if (null? remaining)
+        (hashq-remove! buffer-style-origins host)
+        (hashq-set! buffer-style-origins host remaining)))
+  (lsp-buffer-released! host buffer))
 
 (define (observe-buffer-edits! host procedure)
   (unless (procedure? procedure)

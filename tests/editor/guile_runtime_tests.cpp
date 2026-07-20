@@ -1252,13 +1252,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return target_window;
          },
          .display_generated_buffer = [&](WindowId target_window, std::string name, std::string text,
-                                         ModeId mode, std::string style_origin,
+                                         ModeId mode, std::string_view style_origin,
                                          std::string_view) -> std::expected<WindowId, std::string> {
              displayed_help_window = target_window;
              help_name = std::move(name);
              help_text = std::move(text);
              help_mode = mode;
-             help_style_origin = std::move(style_origin);
+             help_style_origin = style_origin;
              return target_window;
          },
          .navigate_jump = {},
@@ -1554,6 +1554,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.set_page_rows(17).has_value());
     CHECK(guile.application_state()->page_rows == 17);
     REQUIRE(guile.install_buffer_lifecycle_policies().has_value());
+    REQUIRE(guile.buffer_created(buffer, "test style").has_value());
+    CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
     const std::expected<GuileEvaluationResult, std::string> lsp_provider =
         guile.evaluate({.source = R"((use-modules (cind lsp))
 (define-lsp-provider! host "clangd" "cpp" "clangd" '()
@@ -1625,8 +1627,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptLspNavigationResult{.locations = {}});
     CHECK(feedback_message() == "no LSP references found");
-    REQUIRE(guile.lsp_buffer_released(buffer).has_value());
+    REQUIRE(guile.buffer_released(buffer).has_value());
     CHECK_FALSE(guile.lsp_session_bound(buffer, 41).value_or(true));
+    CHECK_FALSE(guile.buffer_style_origin(buffer).has_value());
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const std::uint32_t save_generation = runtime.buffers().get(buffer).save_generation();

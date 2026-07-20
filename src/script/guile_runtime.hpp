@@ -220,7 +220,7 @@ struct GuileHostServices {
                                                        std::optional<GuileDisplayPosition>)>
         display_buffer;
     std::function<std::expected<WindowId, std::string>(WindowId, std::string, std::string, ModeId,
-                                                       std::string, std::string_view)>
+                                                       std::string_view, std::string_view)>
         display_generated_buffer;
     std::function<bool(WindowId, std::int64_t)> navigate_jump;
     std::function<std::optional<std::uint64_t>(WindowId)> mark_jump;
@@ -432,7 +432,9 @@ public:
     std::expected<void, std::string> set_page_rows(std::uint32_t rows);
     std::expected<bool, std::string> lsp_session_bound(BufferId buffer,
                                                        std::uint64_t session) const;
-    std::expected<void, std::string> lsp_buffer_released(BufferId buffer);
+    std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin);
+    std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
+    std::expected<void, std::string> buffer_released(BufferId buffer);
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
