@@ -119,13 +119,10 @@ The native module exports:
 (observe-mode-policy-changes! host procedure)
 (enabled-command-names host context)
 (command-properties host context command-name)
-(open-buffer-summaries host)
 (workbench-list host)
 (current-workbench host)
 (workbench-scope host workbench-id)
 (workbench-mru host workbench-id)
-(workbench-buffer-summaries host workbench-id widen?)
-(workbench-buffer-ids host workbench-id widen?)
 (new-workbench! host name project-id-or-#f)
 (switch-workbench! host workbench-id)
 (close-workbench! host workbench-id)
@@ -141,6 +138,7 @@ The native module exports:
 (active-key-bindings host)
 (buffer-id-by-name host name)
 (buffer-resource host buffer-id)
+(buffer-project-id host buffer-id)
 (path-parent host path)
 (path-relative host path base)
 (path-filename host path)
@@ -650,10 +648,11 @@ field accessors for copying unchanged item data into the resolved value. Provide
 metadata whose computation is unsuitable for the typing hot path, such as documentation and
 additional semantic detail.
 
-`enabled-command-names`, `open-buffer-summaries`, `project-root`, `project-files` and
-`active-key-bindings` expose immutable registry and application snapshots. Path operations provide
-platform-native relative, filename and parent calculations. These capabilities keep candidate
-selection and presentation in Scheme while C++ retains registry identity and filesystem syntax.
+`enabled-command-names`, `open-buffer-ids`, the Buffer property getters, `project-root`,
+`project-files` and `active-key-bindings` expose immutable registry and application data. Path
+operations provide platform-native relative, filename and parent calculations. These capabilities
+keep candidate selection and presentation in Scheme while C++ retains registry identity and
+filesystem syntax.
 
 `buffer-mode-summary` returns the current major mode, enabled minor modes, and effective policy;
 `mode-properties` describes each registered definition. `owned-user-modules` returns only the
@@ -830,8 +829,9 @@ the previous message and refreshes minibuffer candidates when the edited View ow
 interaction. Native post-edit work remains target-specific: the edited Buffer is the one synchronized
 with its LSP session, including when a command or completion edits a non-active View.
 
-`open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-modified?`
-exposes the Buffer save-point comparison without deciding how commands respond to it.
+`open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-project-id`
+returns the Buffer's attached Project or `#f`. `buffer-modified?` exposes the Buffer save-point
+comparison without deciding how commands respond to it.
 `create-buffer!` atomically creates an undisplayed scratch, file, generated, or process buffer from
 explicit resource, mode, style and presentation data. `release-buffer!` requires a distinct open
 replacement, redirects every Window displaying the
@@ -920,13 +920,15 @@ mechanism.
 
 Workbench capabilities expose durable editing surfaces without transferring Buffer or Project
 ownership. `workbench-list` returns `#(id name active?)` summaries; scope and MRU queries return
-generational Project and Buffer IDs. The scoped Buffer queries optionally widen to the global
-Buffer pool. `(cind workbench)` owns names, uniqueness, scope, recency, active workbench and
-per-workbench active Window selection, plus per-Window display metadata. Window roles are unique
-within a workbench and directly derive its named slots. Native lifecycle mechanisms validate entity
-identity and layout membership, while bundled commands own picker interaction and feedback. Native
-code validates and applies display plans. A failed or invalid extension policy is retried through
-the bundled default Scheme policy, so placement decisions have a single implementation.
+generational Project and Buffer IDs. `(cind workbench)` owns names, uniqueness, scope, recency,
+active workbench and per-workbench active Window selection, plus per-Window display metadata. Its
+`workbench-buffer-ids` and `workbench-buffer-summaries` procedures combine the native open-Buffer
+snapshot and Buffer-to-Project attachment with scope and recency policy; widening selects the
+global Buffer pool. Window roles are unique within a workbench and directly derive its named slots.
+Native lifecycle mechanisms validate entity identity and layout membership, while bundled commands
+own picker interaction and feedback. Native code validates and applies display plans. A failed or
+invalid extension policy is retried through the bundled default Scheme policy, so placement
+decisions have a single implementation.
 
 `workbench-session-state` returns the versioned serialization of every workbench.
 `prepare-workbench-session-restore!` validates and atomically installs the serialized topology,

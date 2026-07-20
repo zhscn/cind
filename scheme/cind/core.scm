@@ -22,6 +22,9 @@
   #:use-module (cind structural)
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
+  #:use-module ((cind workbench)
+                #:select (workbench-buffer-ids
+                          workbench-buffer-summaries))
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!

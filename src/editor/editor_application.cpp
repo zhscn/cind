@@ -462,8 +462,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
-           .workbench_buffers = [this](WorkbenchId workbench,
-                                       bool widen) { return workbench_buffers(workbench, widen); },
            .create_workbench = [this](std::string name, std::optional<ProjectId> project)
                -> std::expected<WorkbenchId, std::string> {
                try {
@@ -1862,40 +1860,12 @@ bool EditorApplication::expel_buffer(WorkbenchId workbench, BufferId buffer) {
 std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench,
                                                            bool widen) const {
     (void)workbenches_.get(workbench);
-    std::vector<BufferId> result;
-    result.reserve(buffers_.size());
-    const auto append = [&](BufferId buffer) {
-        if (runtime_.buffers().try_get(buffer) != nullptr &&
-            std::ranges::find(result, buffer) == result.end()) {
-            result.push_back(buffer);
-        }
-    };
-    if (widen) {
-        for (const std::unique_ptr<BufferState>& state : buffers_) {
-            append(state->buffer);
-        }
-        return result;
+    const std::expected<std::vector<BufferId>, std::string> buffers =
+        guile_.workbench_buffers(workbench, widen);
+    if (!buffers) {
+        throw std::runtime_error(buffers.error());
     }
-    const std::expected<std::vector<BufferId>, std::string> mru = guile_.workbench_mru(workbench);
-    if (!mru) {
-        throw std::runtime_error(mru.error());
-    }
-    for (const BufferId buffer : *mru) {
-        append(buffer);
-    }
-    const std::expected<std::vector<ProjectId>, std::string> scope =
-        guile_.workbench_scope(workbench);
-    if (!scope) {
-        throw std::runtime_error(scope.error());
-    }
-    for (const std::unique_ptr<BufferState>& state : buffers_) {
-        const Buffer& buffer = runtime_.buffers().get(state->buffer);
-        if (buffer.project_id() &&
-            std::ranges::find(*scope, *buffer.project_id()) != scope->end()) {
-            append(state->buffer);
-        }
-    }
-    return result;
+    return *buffers;
 }
 
 std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {

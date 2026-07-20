@@ -1334,12 +1334,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return only_buffer ? std::vector<BufferId>{buffer}
                                     : std::vector<BufferId>{buffer, other};
              },
-         .workbench_buffers =
-             [=](WorkbenchId target, bool) {
-                 CHECK(target == workbench);
-                 return only_buffer ? std::vector<BufferId>{buffer}
-                                    : std::vector<BufferId>{buffer, other};
-             },
          .create_workbench = [](std::string, std::optional<ProjectId>)
              -> std::expected<WorkbenchId, std::string> { return WorkbenchId{1, 1}; },
          .switch_workbench = [](WorkbenchId) -> std::expected<void, std::string> { return {}; },
@@ -1738,6 +1732,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
           cancelled_async_tasks.end());
     CHECK(restored_workbench_session == std::optional<std::string>{"replacement session"});
     CHECK(feedback_message() == "workbench session restored");
+
+    REQUIRE(guile.workbench_visit_buffer(workbench, buffer).has_value());
+    REQUIRE(guile.workbench_visit_buffer(workbench, other).has_value());
+    CHECK(guile.workbench_buffers(workbench).value_or(std::vector<BufferId>{}) ==
+          std::vector<BufferId>{other, buffer});
 
     const std::vector<InteractionCandidate> command_candidates =
         complete_provider(runtime, "commands", context);

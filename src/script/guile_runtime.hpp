@@ -279,7 +279,6 @@ struct GuileHostServices {
         position_buffer_view;
     std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
     std::function<std::vector<BufferId>()> open_buffers;
-    std::function<std::vector<BufferId>(WorkbenchId, bool)> workbench_buffers;
     std::function<std::expected<WorkbenchId, std::string>(std::string, std::optional<ProjectId>)>
         create_workbench;
     std::function<std::expected<void, std::string>(WorkbenchId)> switch_workbench;
@@ -439,6 +438,8 @@ public:
     std::expected<bool, std::string> workbench_expel_buffer(WorkbenchId workbench, BufferId buffer);
     std::expected<void, std::string> workbench_released(WorkbenchId workbench);
     std::expected<std::vector<BufferId>, std::string> workbench_mru(WorkbenchId workbench) const;
+    std::expected<std::vector<BufferId>, std::string> workbench_buffers(WorkbenchId workbench,
+                                                                        bool widen = false) const;
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
     std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;

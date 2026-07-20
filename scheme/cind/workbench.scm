@@ -1,4 +1,10 @@
 (define-module (cind workbench)
+  #:use-module ((cind host)
+                #:select (open-buffer-ids
+                          buffer-project-id
+                          buffer-name
+                          buffer-resource
+                          buffer-modified?))
   #:export (workbench-created!
             active-workbench
             workbench-summaries
@@ -11,6 +17,8 @@
             workbench-forget-buffer!
             workbench-released!
             workbench-mru
+            workbench-buffer-ids
+            workbench-buffer-summaries
             replace-workbench-mru!
             workbench-name
             workbench-find-by-name
@@ -196,6 +204,52 @@
 
 (define (workbench-mru host workbench)
   (list->vector (vector-ref (require-workbench-entry host workbench) 2)))
+
+(define (select-values predicate values)
+  (let loop ((remaining values)
+             (result '()))
+    (if (null? remaining)
+        (reverse result)
+        (loop (cdr remaining)
+              (if (predicate (car remaining))
+                  (cons (car remaining) result)
+                  result)))))
+
+(define (workbench-buffer-ids host workbench widen?)
+  (require-workbench-entry host workbench)
+  (unless (boolean? widen?)
+    (error "workbench widen flag must be a boolean" widen?))
+  (let* ((open (vector->list (open-buffer-ids host)))
+         (scope (vector->list (workbench-scope host workbench))))
+    (list->vector
+     (if widen?
+         open
+         (unique-values
+          (append
+           (select-values
+            (lambda (buffer) (member buffer open))
+            (vector->list (workbench-mru host workbench)))
+           (select-values
+            (lambda (buffer)
+              (let ((project (buffer-project-id host buffer)))
+                (and project (member project scope))))
+            open)))))))
+
+(define (workbench-buffer-summaries host workbench widen?)
+  (let* ((scope (vector->list (workbench-scope host workbench)))
+         (buffers (workbench-buffer-ids host workbench widen?)))
+    (let loop ((index 0)
+               (summaries '()))
+      (if (= index (vector-length buffers))
+          (list->vector (reverse summaries))
+          (let* ((buffer (vector-ref buffers index))
+                 (project (buffer-project-id host buffer)))
+            (loop (+ index 1)
+                  (cons (vector (buffer-name host buffer)
+                                (buffer-resource host buffer)
+                                (buffer-modified? host buffer)
+                                (not (and project (member project scope))))
+                        summaries)))))))
 
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)

@@ -2309,34 +2309,6 @@ SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
     return SCM_BOOL_F;
 }
 
-SCM buffer_summary_value(const Buffer& buffer, std::optional<bool> visitor = std::nullopt) {
-    SCM summary = scm_c_make_vector(visitor ? 4 : 3, SCM_UNSPECIFIED);
-    scm_c_vector_set_x(summary, 0, scm_from_utf8_string(buffer.name().c_str()));
-    scm_c_vector_set_x(summary, 1,
-                       buffer.resource_uri() ? scm_from_utf8_string(buffer.resource_uri()->c_str())
-                                             : SCM_BOOL_F);
-    scm_c_vector_set_x(summary, 2, scm_from_bool(buffer.modified()));
-    if (visitor) {
-        scm_c_vector_set_x(summary, 3, scm_from_bool(*visitor));
-    }
-    return summary;
-}
-
-SCM buffer_summaries_value(HostLease& host, const std::vector<BufferId>& buffers,
-                           const std::vector<ProjectId>* scope = nullptr) {
-    SCM result = scm_c_make_vector(buffers.size(), SCM_UNSPECIFIED);
-    for (std::size_t index = 0; index < buffers.size(); ++index) {
-        const Buffer& buffer = host.runtime->buffers().get(buffers[index]);
-        std::optional<bool> visitor;
-        if (scope != nullptr) {
-            visitor = !buffer.project_id() ||
-                      std::ranges::find(*scope, *buffer.project_id()) == scope->end();
-        }
-        scm_c_vector_set_x(result, index, buffer_summary_value(buffer, visitor));
-    }
-    return result;
-}
-
 std::vector<ProjectId> scheme_workbench_scope(HostLease& host, SCM host_object, SCM workbench_value,
                                               const char* caller) {
     const SCM value = scm_call_2(scm_c_public_ref("cind workbench", "workbench-scope"), host_object,
@@ -2353,22 +2325,6 @@ std::vector<ProjectId> scheme_workbench_scope(HostLease& host, SCM host_object, 
         result.push_back(project);
     }
     return result;
-}
-
-SCM open_buffer_summaries(SCM host_object) {
-    HostLease& host = require_host(host_object, "open-buffer-summaries");
-    if (!host.services.open_buffers) {
-        scm_misc_error("open-buffer-summaries", "open-buffer snapshot capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        return buffer_summaries_value(host, host.services.open_buffers());
-    } catch (const std::exception& exception) {
-        raise_host_error("open-buffer-summaries", exception.what());
-    } catch (...) {
-        scm_misc_error("open-buffer-summaries", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
 }
 
 SCM workbench_list(SCM host_object) {
@@ -2449,58 +2405,6 @@ SCM workbench_mru(SCM host_object, SCM workbench_value) {
         raise_host_error("workbench-mru", exception.what());
     } catch (...) {
         scm_misc_error("workbench-mru", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM workbench_buffer_summaries(SCM host_object, SCM workbench_value, SCM widen_value) {
-    if (!scheme_boolean(widen_value)) {
-        scm_wrong_type_arg_msg("workbench-buffer-summaries", 3, widen_value, "boolean");
-    }
-    try {
-        HostLease& host = require_host(host_object, "workbench-buffer-summaries");
-        if (!host.services.workbench_buffers) {
-            scm_misc_error("workbench-buffer-summaries",
-                           "workbench buffer capability is unavailable", SCM_EOL);
-        }
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-buffer-summaries", 2);
-        const std::vector<ProjectId> scope = scheme_workbench_scope(
-            host, host_object, workbench_value, "workbench-buffer-summaries");
-        return buffer_summaries_value(
-            host, host.services.workbench_buffers(workbench, scheme_true(widen_value)), &scope);
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-buffer-summaries", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-buffer-summaries", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM workbench_buffer_ids(SCM host_object, SCM workbench_value, SCM widen_value) {
-    if (!scheme_boolean(widen_value)) {
-        scm_wrong_type_arg_msg("workbench-buffer-ids", 3, widen_value, "boolean");
-    }
-    HostLease& host = require_host(host_object, "workbench-buffer-ids");
-    if (!host.services.workbench_buffers) {
-        scm_misc_error("workbench-buffer-ids", "workbench buffer capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-buffer-ids", 2);
-        const std::vector<BufferId> buffers =
-            host.services.workbench_buffers(workbench, scheme_true(widen_value));
-        SCM result = scm_c_make_vector(buffers.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < buffers.size(); ++index) {
-            scm_c_vector_set_x(result, index,
-                               entity_id(buffers[index].slot, buffers[index].generation));
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-buffer-ids", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-buffer-ids", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -3671,6 +3575,21 @@ SCM buffer_name(SCM host_object, SCM buffer_value) {
         raise_host_error("buffer-name", exception.what());
     } catch (...) {
         scm_misc_error("buffer-name", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM buffer_project_id(SCM host_object, SCM buffer_value) {
+    try {
+        HostLease& host = require_host(host_object, "buffer-project-id");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-project-id", 2);
+        const std::optional<ProjectId> project = host.runtime->buffers().get(buffer).project_id();
+        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
+    } catch (const std::exception& exception) {
+        raise_host_error("buffer-project-id", exception.what());
+    } catch (...) {
+        scm_misc_error("buffer-project-id", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -5910,8 +5829,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("command-properties", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(command_properties));
-    (void)scm_c_define_gsubr("open-buffer-summaries", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(open_buffer_summaries));
     (void)scm_c_define_gsubr("workbench-list", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(workbench_list));
     (void)scm_c_define_gsubr("current-workbench", 1, 0, 0,
@@ -5919,10 +5836,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("workbench-scope", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(workbench_scope));
     (void)scm_c_define_gsubr("workbench-mru", 2, 0, 0, reinterpret_cast<scm_t_subr>(workbench_mru));
-    (void)scm_c_define_gsubr("workbench-buffer-summaries", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(workbench_buffer_summaries));
-    (void)scm_c_define_gsubr("workbench-buffer-ids", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(workbench_buffer_ids));
     (void)scm_c_define_gsubr("new-workbench!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_workbench));
     (void)scm_c_define_gsubr("switch-workbench!", 2, 0, 0,
@@ -5997,6 +5910,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("buffer-name", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_name));
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_resource));
+    (void)scm_c_define_gsubr("buffer-project-id", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_project_id));
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
@@ -6181,19 +6096,18 @@ void initialize_host_module(void*) {
         "define-file-mode-rule!", "define-project-provider!", "mode-properties",
         "buffer-language-facet?", "set-buffer-major-mode!", "set-buffer-minor-mode!",
         "buffer-mode-policy", "buffer-mode-summary", "observe-mode-policy-changes!",
-        "enabled-command-names", "command-properties", "open-buffer-summaries", "workbench-list",
-        "current-workbench", "workbench-scope", "workbench-mru", "workbench-buffer-summaries",
-        "workbench-buffer-ids", "new-workbench!", "switch-workbench!", "close-workbench!",
-        "adopt-project!", "expel-buffer!", "workbench-session-state",
+        "enabled-command-names", "command-properties", "workbench-list", "current-workbench",
+        "workbench-scope", "workbench-mru", "new-workbench!", "switch-workbench!",
+        "close-workbench!", "adopt-project!", "expel-buffer!", "workbench-session-state",
         "prepare-workbench-session-restore!", "show-buffer-in-window!", "replace-workbench-mru!",
         "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
         "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-text", "buffer-byte-size", "buffer-editable-start",
-        "set-buffer-editable-start!", "create-buffer-marker!", "buffer-marker-offset",
-        "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics", "set-buffer-locations!",
-        "set-location-list!", "buffer-read-only?", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "buffer-resource", "buffer-project-id", "buffer-text", "buffer-byte-size",
+        "buffer-editable-start", "set-buffer-editable-start!", "create-buffer-marker!",
+        "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
+        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
         "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
@@ -6995,6 +6909,7 @@ struct GuileCall {
         WorkbenchExpelBuffer,
         WorkbenchReleased,
         WorkbenchMru,
+        WorkbenchBuffers,
         ReplaceWorkbenchMru,
         WorkbenchName,
         WorkbenchFindByName,
@@ -7108,6 +7023,7 @@ struct GuileCall {
     bool pending_key_sequence = false;
     bool completion_needs_resolution = false;
     bool force = false;
+    bool widen = false;
     bool enabled = false;
     bool clear_message = false;
     bool interaction_started = false;
@@ -7960,6 +7876,21 @@ SCM call_body(void* data) {
             for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
                 call.buffers.push_back(entity_id_from_scheme<BufferTag>(
                     scm_c_vector_ref(call.result, index), "workbench-mru", 0));
+            }
+            break;
+        case GuileCall::Operation::WorkbenchBuffers:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-buffer-ids"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           scm_from_bool(call.widen));
+            if (!scm_is_vector(call.result)) {
+                scm_wrong_type_arg_msg("workbench-buffer-ids", 0, call.result, "vector");
+            }
+            call.buffers.clear();
+            call.buffers.reserve(scm_c_vector_length(call.result));
+            for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
+                call.buffers.push_back(entity_id_from_scheme<BufferTag>(
+                    scm_c_vector_ref(call.result, index), "workbench-buffer-ids", 0));
             }
             break;
         case GuileCall::Operation::ReplaceWorkbenchMru: {
@@ -9520,6 +9451,23 @@ public:
         return std::move(call.buffers);
     }
 
+    std::expected<std::vector<BufferId>, std::string> workbench_buffers(WorkbenchId workbench,
+                                                                        bool widen) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchBuffers;
+        call.host = host_;
+        call.workbench = workbench;
+        call.widen = widen;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.buffers);
+    }
+
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers) {
         require_owner_thread();
@@ -10532,6 +10480,11 @@ std::expected<void, std::string> GuileRuntime::workbench_released(WorkbenchId wo
 std::expected<std::vector<BufferId>, std::string>
 GuileRuntime::workbench_mru(WorkbenchId workbench) const {
     return impl_->workbench_mru(workbench);
+}
+
+std::expected<std::vector<BufferId>, std::string>
+GuileRuntime::workbench_buffers(WorkbenchId workbench, bool widen) const {
+    return impl_->workbench_buffers(workbench, widen);
 }
 
 std::expected<void, std::string>
