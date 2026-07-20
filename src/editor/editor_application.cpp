@@ -881,9 +881,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     const WindowId initial_window = runtime_.windows().create(initial_view);
     view_state_for(initial_view).window = initial_window;
     const WorkbenchId initial_workbench =
-        workbenches_.create(WorkbenchSpec{.name = {}, .root_window = initial_window, .scope = {}});
+        workbenches_.create(WorkbenchSpec{.name = {}, .root_window = initial_window});
     if (const std::expected<void, std::string> created =
-            guile_.workbench_created(initial_workbench, initial);
+            guile_.workbench_created(initial_workbench, initial, {});
         !created) {
         throw std::runtime_error(std::format("Guile workbench state failed: {}", created.error()));
     }
@@ -1669,10 +1669,10 @@ WorkbenchId EditorApplication::create_workbench(std::string name,
         if (project) {
             scope.push_back(*project);
         }
-        workbench = workbenches_.create(WorkbenchSpec{
-            .name = std::move(name), .root_window = window, .scope = std::move(scope)});
+        workbench =
+            workbenches_.create(WorkbenchSpec{.name = std::move(name), .root_window = window});
         if (const std::expected<void, std::string> created =
-                guile_.workbench_created(workbench, buffer);
+                guile_.workbench_created(workbench, buffer, scope);
             !created) {
             throw std::runtime_error(created.error());
         }
@@ -1759,8 +1759,8 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
 
 bool EditorApplication::adopt_project(WorkbenchId workbench, ProjectId project) {
     (void)runtime_.projects().get(project);
-    Workbench* target = workbenches_.try_get(workbench);
-    return target != nullptr && target->adopt_project(project);
+    return workbenches_.try_get(workbench) != nullptr &&
+           guile_.workbench_adopt_project(workbench, project).value_or(false);
 }
 
 bool EditorApplication::expel_buffer(WorkbenchId workbench, BufferId buffer) {
@@ -1771,7 +1771,7 @@ bool EditorApplication::expel_buffer(WorkbenchId workbench, BufferId buffer) {
 
 std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench,
                                                            bool widen) const {
-    const Workbench& target = workbenches_.get(workbench);
+    (void)workbenches_.get(workbench);
     std::vector<BufferId> result;
     result.reserve(buffers_.size());
     const auto append = [&](BufferId buffer) {
@@ -1793,9 +1793,15 @@ std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench
     for (const BufferId buffer : *mru) {
         append(buffer);
     }
+    const std::expected<std::vector<ProjectId>, std::string> scope =
+        guile_.workbench_scope(workbench);
+    if (!scope) {
+        throw std::runtime_error(scope.error());
+    }
     for (const std::unique_ptr<BufferState>& state : buffers_) {
         const Buffer& buffer = runtime_.buffers().get(state->buffer);
-        if (buffer.project_id() && target.contains_project(*buffer.project_id())) {
+        if (buffer.project_id() &&
+            std::ranges::find(*scope, *buffer.project_id()) != scope->end()) {
             append(state->buffer);
         }
     }
@@ -1824,21 +1830,24 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
         if (!mru) {
             throw std::runtime_error(mru.error());
         }
+        const std::expected<std::vector<ProjectId>, std::string> scope = guile_.workbench_scope(id);
+        if (!scope) {
+            throw std::runtime_error(scope.error());
+        }
         std::vector<std::pair<std::string, WindowId>> slots(workbench.slots().begin(),
                                                             workbench.slots().end());
         std::ranges::sort(slots, {},
                           [](const auto& slot) -> const std::string& { return slot.first; });
-        result.push_back(
-            {.workbench = id,
-             .name = workbench.name(),
-             .scope = std::vector<ProjectId>(workbench.scope().begin(), workbench.scope().end()),
-             .mru = *mru,
-             .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
-                                              workbench.layout().leaves().end()),
-             .active_window = workbench.active_window(),
-             .slots = std::move(slots),
-             .layout = snapshot_layout(*workbench.layout().root()),
-             .active = id == workbenches_.active_id()});
+        result.push_back({.workbench = id,
+                          .name = workbench.name(),
+                          .scope = *scope,
+                          .mru = *mru,
+                          .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
+                                                           workbench.layout().leaves().end()),
+                          .active_window = workbench.active_window(),
+                          .slots = std::move(slots),
+                          .layout = snapshot_layout(*workbench.layout().root()),
+                          .active = id == workbenches_.active_id()});
     }
     return result;
 }
@@ -1924,7 +1933,12 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                                     .active_leaf = 0,
                                     .jump_nodes = {},
                                     .jump_edges = {}};
-        for (const ProjectId project : workbench.scope()) {
+        const std::expected<std::vector<ProjectId>, std::string> scope =
+            guile_.workbench_scope(ids[index]);
+        if (!scope) {
+            throw std::runtime_error(scope.error());
+        }
+        for (const ProjectId project : *scope) {
             const Project& definition = runtime_.projects().get(project);
             if (!definition.roots().empty()) {
                 entry.scope_roots.push_back(definition.roots().front());
@@ -2144,11 +2158,10 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                    std::ranges::find(names, temporary) != names.end()) {
                 temporary.push_back('*');
             }
-            const WorkbenchId id = workbenches_.create({.name = std::move(temporary),
-                                                        .root_window = root_window,
-                                                        .scope = std::move(scope)});
+            const WorkbenchId id =
+                workbenches_.create({.name = std::move(temporary), .root_window = root_window});
             if (const std::expected<void, std::string> registered =
-                    guile_.workbench_created(id, fallback);
+                    guile_.workbench_created(id, fallback, scope);
                 !registered) {
                 discard_workbench_state(id);
                 (void)workbenches_.erase(id);

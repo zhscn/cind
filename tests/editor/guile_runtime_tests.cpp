@@ -1240,6 +1240,8 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::int64_t requested_motion_count = 0;
     bool requested_motion_extend = false;
     const WorkbenchId workbench{0, 1};
+    const ProjectId initial_scope_project{4, 2};
+    const ProjectId adopted_scope_project{7, 3};
     std::vector<ProjectId> workbench_scope;
     const std::string workbench_session = "serialized workbench session";
     std::optional<std::string> restored_workbench_session;
@@ -1558,7 +1560,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.buffer_created(buffer, "test style").has_value());
     CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
     const BufferId visitor{buffer.slot + 1, buffer.generation};
-    REQUIRE(guile.workbench_created(workbench, buffer).has_value());
+    REQUIRE(
+        guile.workbench_created(workbench, buffer, {initial_scope_project, initial_scope_project})
+            .has_value());
+    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
+          std::vector<ProjectId>{initial_scope_project});
+    CHECK(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(false));
+    CHECK_FALSE(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(true));
+    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
+          std::vector<ProjectId>{initial_scope_project, adopted_scope_project});
     REQUIRE(guile.workbench_visit_buffer(workbench, visitor).has_value());
     REQUIRE(guile.workbench_visit_buffer(workbench, buffer).has_value());
     CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}) ==

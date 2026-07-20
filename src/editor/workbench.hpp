@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -21,12 +20,11 @@ namespace cind {
 struct WorkbenchSpec {
     std::string name;
     WindowId root_window;
-    std::vector<ProjectId> scope;
 };
 
-// Native workbench data binds a window layout and declared project scope over
-// the application's global Buffer and Project pools. Guile owns recency and
-// other feature policy; this object owns only layout, focus and slot mechanics.
+// Native workbench data binds a window layout over the application's global
+// entity pools. Guile owns recency and project-membership policy; this object
+// owns layout, focus, navigation data and slot mechanics.
 class Workbench {
 public:
     WorkbenchId id() const { return id_; }
@@ -37,11 +35,6 @@ public:
     WindowLayout& layout() { return layout_; }
     WindowId active_window() const { return active_window_; }
     void set_active_window(WindowId window);
-
-    std::span<const ProjectId> scope() const { return scope_; }
-    bool contains_project(ProjectId project) const;
-    bool adopt_project(ProjectId project);
-    bool expel_project(ProjectId project);
 
     const std::unordered_map<std::string, WindowId>& slots() const { return slots_; }
     std::optional<WindowId> slot(std::string_view role) const;
@@ -63,7 +56,6 @@ private:
 
     WorkbenchId id_;
     std::string name_;
-    std::vector<ProjectId> scope_;
     WindowLayout layout_;
     WindowId active_window_;
     std::unordered_map<std::string, WindowId> slots_;
@@ -96,7 +88,6 @@ public:
     bool activate(WorkbenchId id);
     std::optional<WorkbenchId> next(WorkbenchId id, int delta = 1) const;
 
-    void forget_project(ProjectId project);
     std::size_t size() const { return size_; }
 
 private:

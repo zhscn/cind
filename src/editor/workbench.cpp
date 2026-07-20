@@ -7,22 +7,11 @@
 namespace cind {
 
 Workbench::Workbench(WorkbenchId id, WorkbenchSpec spec)
-    : id_(id), name_(std::move(spec.name)), scope_(std::move(spec.scope)),
-      layout_(spec.root_window), active_window_(spec.root_window) {
+    : id_(id), name_(std::move(spec.name)), layout_(spec.root_window),
+      active_window_(spec.root_window) {
     if (!spec.root_window) {
         throw std::invalid_argument("workbench requires a root window");
     }
-    std::vector<ProjectId> unique_scope;
-    unique_scope.reserve(scope_.size());
-    for (const ProjectId project : scope_) {
-        if (!project) {
-            throw std::invalid_argument("workbench scope contains an invalid project");
-        }
-        if (std::ranges::find(unique_scope, project) == unique_scope.end()) {
-            unique_scope.push_back(project);
-        }
-    }
-    scope_ = std::move(unique_scope);
 }
 
 void Workbench::set_active_window(WindowId window) {
@@ -30,30 +19,6 @@ void Workbench::set_active_window(WindowId window) {
         throw std::invalid_argument("active window does not belong to the workbench");
     }
     active_window_ = window;
-}
-
-bool Workbench::contains_project(ProjectId project) const {
-    return std::ranges::find(scope_, project) != scope_.end();
-}
-
-bool Workbench::adopt_project(ProjectId project) {
-    if (!project) {
-        throw std::invalid_argument("cannot adopt an invalid project");
-    }
-    if (contains_project(project)) {
-        return false;
-    }
-    scope_.push_back(project);
-    return true;
-}
-
-bool Workbench::expel_project(ProjectId project) {
-    const auto found = std::ranges::find(scope_, project);
-    if (found == scope_.end()) {
-        return false;
-    }
-    scope_.erase(found);
-    return true;
 }
 
 std::optional<WindowId> Workbench::slot(std::string_view role) const {
@@ -227,12 +192,6 @@ std::optional<WorkbenchId> WorkbenchRegistry::next(WorkbenchId id, int delta) co
     const auto count = static_cast<std::ptrdiff_t>(ids.size());
     const auto wrapped = ((current + static_cast<std::ptrdiff_t>(delta)) % count + count) % count;
     return ids[static_cast<std::size_t>(wrapped)];
-}
-
-void WorkbenchRegistry::forget_project(ProjectId project) {
-    for (const WorkbenchId id : all()) {
-        (void)get(id).expel_project(project);
-    }
 }
 
 } // namespace cind

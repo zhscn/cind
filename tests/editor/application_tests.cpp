@@ -74,18 +74,14 @@ InputStateId define_test_input_state(EditorRuntime& runtime, std::string name) {
 
 } // namespace
 
-TEST_CASE("workbench registry preserves layouts and scopes independently") {
+TEST_CASE("workbench registry preserves independent layouts") {
     WorkbenchRegistry registry;
     const WindowId first_window{0, 1};
     const WindowId second_window{1, 1};
     const WindowId third_window{2, 1};
-    const ProjectId backend{0, 1};
-    const ProjectId frontend{1, 1};
 
-    const WorkbenchId first = registry.create(
-        {.name = "shop", .root_window = first_window, .scope = {backend, frontend, backend}});
+    const WorkbenchId first = registry.create({.name = "shop", .root_window = first_window});
     CHECK(registry.active_id() == first);
-    CHECK(registry.get(first).scope().size() == 2);
     REQUIRE(registry.get(first).layout().split(
         {.target = first_window, .new_window = third_window, .axis = WindowSplitAxis::Columns}));
     registry.get(first).set_slot("tools", third_window);
@@ -97,11 +93,10 @@ TEST_CASE("workbench registry preserves layouts and scopes independently") {
     CHECK(registry.get(first).slots().empty());
     CHECK_THROWS_AS(registry.get(first).set_slot("tools", WindowId{9, 1}), std::invalid_argument);
 
-    const WorkbenchId second =
-        registry.create({.name = "notes", .root_window = second_window, .scope = {}});
-    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = WindowId{3, 1}, .scope = {}}),
+    const WorkbenchId second = registry.create({.name = "notes", .root_window = second_window});
+    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = WindowId{3, 1}}),
                     std::invalid_argument);
-    CHECK_THROWS_AS(registry.create({.name = "other", .root_window = second_window, .scope = {}}),
+    CHECK_THROWS_AS(registry.create({.name = "other", .root_window = second_window}),
                     std::invalid_argument);
     CHECK(registry.active_id() == first);
     REQUIRE(registry.find_by_window(second_window).has_value());
@@ -111,8 +106,6 @@ TEST_CASE("workbench registry preserves layouts and scopes independently") {
     CHECK(registry.activate(second));
     CHECK(registry.active().layout().contains(second_window));
 
-    registry.forget_project(backend);
-    CHECK_FALSE(registry.get(first).contains_project(backend));
     CHECK(registry.erase(first));
     CHECK(registry.try_get(first) == nullptr);
     CHECK_THROWS_AS(registry.erase(second), std::logic_error);

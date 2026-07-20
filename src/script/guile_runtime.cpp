@@ -6973,6 +6973,8 @@ struct GuileCall {
         WorkbenchReleased,
         WorkbenchMru,
         ReplaceWorkbenchMru,
+        WorkbenchScope,
+        WorkbenchAdoptProject,
         LspDiagnosticsFailed,
         BufferSavingState,
         CommandInput,
@@ -7048,6 +7050,7 @@ struct GuileCall {
     ProjectId project;
     WorkbenchId workbench;
     std::vector<BufferId> buffers;
+    std::vector<ProjectId> projects;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
     std::string intent;
@@ -7840,12 +7843,20 @@ SCM call_body(void* data) {
                 scm_call_2(scm_c_public_ref("cind lifecycle", "buffer-released!"), call.host,
                            entity_id(call.buffer.slot, call.buffer.generation));
             break;
-        case GuileCall::Operation::WorkbenchCreated:
-            call.result = scm_call_3(
+        case GuileCall::Operation::WorkbenchCreated: {
+            SCM scope = scm_c_make_vector(call.projects.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.projects.size(); ++index) {
+                scm_c_vector_set_x(
+                    scope, index,
+                    entity_id(call.projects[index].slot, call.projects[index].generation));
+            }
+            call.result = scm_call_4(
                 scm_c_public_ref("cind workbench", "workbench-created!"), call.host,
                 entity_id(call.workbench.slot, call.workbench.generation),
-                call.buffer ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F);
+                call.buffer ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F,
+                scope);
             break;
+        }
         case GuileCall::Operation::WorkbenchVisitBuffer:
             call.result =
                 scm_call_3(scm_c_public_ref("cind workbench", "workbench-visit-buffer!"), call.host,
@@ -7892,6 +7903,30 @@ SCM call_body(void* data) {
                            entity_id(call.workbench.slot, call.workbench.generation), buffers);
             break;
         }
+        case GuileCall::Operation::WorkbenchScope:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-scope"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_vector(call.result)) {
+                scm_wrong_type_arg_msg("workbench-scope", 0, call.result, "vector");
+            }
+            call.projects.clear();
+            call.projects.reserve(scm_c_vector_length(call.result));
+            for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
+                call.projects.push_back(entity_id_from_scheme<ProjectTag>(
+                    scm_c_vector_ref(call.result, index), "workbench-scope", 0));
+            }
+            break;
+        case GuileCall::Operation::WorkbenchAdoptProject:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-adopt-project!"),
+                           call.host, entity_id(call.workbench.slot, call.workbench.generation),
+                           entity_id(call.project.slot, call.project.generation));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-adopt-project!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
         case GuileCall::Operation::LspDiagnosticsFailed:
             call.result =
                 scm_call_2(scm_c_public_ref("cind lsp", "lsp-diagnostics-failed!"), call.host,
@@ -9129,7 +9164,8 @@ public:
     }
 
     std::expected<void, std::string> workbench_created(WorkbenchId workbench,
-                                                       std::optional<BufferId> initial_buffer) {
+                                                       std::optional<BufferId> initial_buffer,
+                                                       const std::vector<ProjectId>& scope) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
         GuileCall call;
@@ -9137,6 +9173,7 @@ public:
         call.host = host_;
         call.workbench = workbench;
         call.buffer = initial_buffer.value_or(BufferId{});
+        call.projects = scope;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
@@ -9224,6 +9261,39 @@ public:
         }
         state_->last_error = std::move(previous_error);
         return {};
+    }
+
+    std::expected<std::vector<ProjectId>, std::string>
+    workbench_scope(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchScope;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.projects);
+    }
+
+    std::expected<bool, std::string> workbench_adopt_project(WorkbenchId workbench,
+                                                             ProjectId project) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchAdoptProject;
+        call.host = host_;
+        call.workbench = workbench;
+        call.project = project;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
     }
 
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message) {
@@ -9961,8 +10031,9 @@ std::expected<void, std::string> GuileRuntime::buffer_released(BufferId buffer) 
 }
 
 std::expected<void, std::string>
-GuileRuntime::workbench_created(WorkbenchId workbench, std::optional<BufferId> initial_buffer) {
-    return impl_->workbench_created(workbench, initial_buffer);
+GuileRuntime::workbench_created(WorkbenchId workbench, std::optional<BufferId> initial_buffer,
+                                const std::vector<ProjectId>& scope) {
+    return impl_->workbench_created(workbench, initial_buffer, scope);
 }
 
 std::expected<void, std::string> GuileRuntime::workbench_visit_buffer(WorkbenchId workbench,
@@ -9987,6 +10058,16 @@ GuileRuntime::workbench_mru(WorkbenchId workbench) const {
 std::expected<void, std::string>
 GuileRuntime::replace_workbench_mru(WorkbenchId workbench, const std::vector<BufferId>& buffers) {
     return impl_->replace_workbench_mru(workbench, buffers);
+}
+
+std::expected<std::vector<ProjectId>, std::string>
+GuileRuntime::workbench_scope(WorkbenchId workbench) const {
+    return impl_->workbench_scope(workbench);
+}
+
+std::expected<bool, std::string> GuileRuntime::workbench_adopt_project(WorkbenchId workbench,
+                                                                       ProjectId project) {
+    return impl_->workbench_adopt_project(workbench, project);
 }
 
 std::expected<void, std::string> GuileRuntime::lsp_diagnostics_failed(std::string_view message) {

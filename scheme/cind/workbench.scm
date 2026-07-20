@@ -5,10 +5,12 @@
             workbench-forget-buffer!
             workbench-released!
             workbench-mru
-            replace-workbench-mru!))
+            replace-workbench-mru!
+            workbench-scope
+            workbench-adopt-project!))
 
-;; Entries are #(workbench mru-list). Window layouts and entity lifetimes are
-;; native data-plane state; recency is application policy owned by Guile.
+;; Entries are #(workbench mru-list scope-list). Window layouts and entity
+;; lifetimes are native data-plane state; membership policy is owned by Guile.
 (define workbench-states (make-weak-key-hash-table))
 
 (define (host-workbench-states host)
@@ -37,7 +39,7 @@
         ((equal? buffer (car buffers)) (without-buffer (cdr buffers) buffer))
         (else (cons (car buffers) (without-buffer (cdr buffers) buffer)))))
 
-(define (unique-buffers buffers)
+(define (unique-values buffers)
   (let loop ((remaining buffers)
              (result '()))
     (if (null? remaining)
@@ -47,12 +49,15 @@
                   result
                   (cons (car remaining) result))))))
 
-(define (workbench-created! host workbench initial-buffer)
+(define (workbench-created! host workbench initial-buffer scope)
   (when (workbench-entry host workbench)
     (error "workbench policy state already exists" workbench))
+  (unless (vector? scope)
+    (error "workbench scope must be a vector" scope))
   (hashq-set! workbench-states host
               (cons (vector workbench
-                            (if initial-buffer (list initial-buffer) '()))
+                            (if initial-buffer (list initial-buffer) '())
+                            (unique-values (vector->list scope)))
                     (host-workbench-states host)))
   workbench)
 
@@ -88,5 +93,17 @@
   (unless (vector? buffers)
     (error "workbench MRU must be a vector" buffers))
   (vector-set! (require-workbench-entry host workbench) 1
-               (unique-buffers (vector->list buffers)))
+               (unique-values (vector->list buffers)))
   workbench)
+
+(define (workbench-scope host workbench)
+  (list->vector (vector-ref (require-workbench-entry host workbench) 2)))
+
+(define (workbench-adopt-project! host workbench project)
+  (let* ((entry (require-workbench-entry host workbench))
+         (scope (vector-ref entry 2)))
+    (if (member project scope)
+        #f
+        (begin
+          (vector-set! entry 2 (append scope (list project)))
+          #t))))
