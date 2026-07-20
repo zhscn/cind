@@ -5485,15 +5485,13 @@ SCM start_completion(SCM host_object, SCM context_value, SCM providers_value, SC
         std::vector<CompletionProvider> providers;
         for (const std::string& name :
              string_sequence_from_scheme(providers_value, "start-completion!", 3)) {
-            if (name == "word") {
-                providers.push_back(CompletionProvider::word());
+            if (const auto provider = host.state->completion_providers_by_name.find(name);
+                provider != host.state->completion_providers_by_name.end()) {
+                providers.push_back(CompletionProvider::scripted(provider->second));
             } else if (name == "path") {
                 providers.push_back(CompletionProvider::path());
             } else if (name == "snippet") {
                 providers.push_back(CompletionProvider::snippet());
-            } else if (const auto provider = host.state->completion_providers_by_name.find(name);
-                       provider != host.state->completion_providers_by_name.end()) {
-                providers.push_back(CompletionProvider::scripted(provider->second));
             } else if (host.services.resolve_completion_provider) {
                 const CommandTarget target{.window = context.window_id(),
                                            .buffer = context.buffer_id(),
@@ -5617,6 +5615,23 @@ SCM view_position(SCM host_object, SCM view_value) {
         raise_host_error("view-position", exception.what());
     } catch (...) {
         scm_misc_error("view-position", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
+SCM view_identifier_words(SCM host_object, SCM view_value) {
+    HostLease& host = require_host(host_object, "view-identifier-words");
+    const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-identifier-words", 2);
+    if (!host.services.view_identifier_words) {
+        scm_misc_error("view-identifier-words", "identifier query capability is unavailable",
+                       SCM_EOL);
+    }
+    try {
+        return string_vector_value(host.services.view_identifier_words(view));
+    } catch (const std::exception& exception) {
+        raise_host_error("view-identifier-words", exception.what());
+    } catch (...) {
+        scm_misc_error("view-identifier-words", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -6020,6 +6035,8 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("cancel-pending-input!", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(cancel_pending_input));
     (void)scm_c_define_gsubr("view-position", 2, 0, 0, reinterpret_cast<scm_t_subr>(view_position));
+    (void)scm_c_define_gsubr("view-identifier-words", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(view_identifier_words));
     (void)scm_c_define_gsubr("location-navigation", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(location_navigation));
     (void)scm_c_define_gsubr("set-location-navigation!", 3, 0, 0,
@@ -6131,11 +6148,11 @@ void initialize_host_module(void*) {
         "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
         "select-interaction-candidate!", "replace-interaction-input!", "cancel-interaction!",
         "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
-        "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
-        "set-location-navigation!", "location-list-target", "move-location-list!",
-        "position-buffer-view!", "project-index-state", "request-project-index!",
-        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
-        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "apply-completion!", "cancel-completion!", "view-position", "view-identifier-words",
+        "location-navigation", "set-location-navigation!", "location-list-target",
+        "move-location-list!", "position-buffer-view!", "project-index-state",
+        "request-project-index!", "normalize-resource-path", "set-buffer-resource!",
+        "rename-buffer!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
         "create-buffer!", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",

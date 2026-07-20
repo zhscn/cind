@@ -3550,6 +3550,18 @@ TEST_CASE("completion commands use the completion-active keymap and apply buffer
     REQUIRE(application.completion().active());
     REQUIRE(application.completion().state() != nullptr);
     REQUIRE(application.completion().state()->matches.size() == 2);
+    const auto word_provider = std::ranges::find_if(
+        application.completion().state()->providers, [](const CompletionProviderState& provider) {
+            return provider.provider.kind == CompletionProviderKind::Scripted &&
+                   std::ranges::any_of(provider.items, [](const CompletionItem& item) {
+                       return item.kind == "word" && item.detail == "buffer";
+                   });
+        });
+    REQUIRE(word_provider != application.completion().state()->providers.end());
+    REQUIRE(word_provider->items.size() == 2);
+    CHECK(std::ranges::all_of(word_provider->items, [](const CompletionItem& item) {
+        return item.kind == "word" && item.detail == "buffer";
+    }));
     CHECK(std::ranges::any_of(application.active_keymap_layers(), [](const KeymapLayer& layer) {
         return layer.scope == "completion-active";
     }));
@@ -3579,7 +3591,10 @@ TEST_CASE("Scheme buffer completion uses Ares bindings and Scheme symbol ranges"
     REQUIRE(state != nullptr);
     const auto provider =
         std::ranges::find_if(state->providers, [](const CompletionProviderState& candidate) {
-            return candidate.provider.kind == CompletionProviderKind::Scripted;
+            return candidate.provider.kind == CompletionProviderKind::Scripted &&
+                   std::ranges::any_of(candidate.items, [](const CompletionItem& item) {
+                       return item.label == "cind-live-binding";
+                   });
         });
     REQUIRE(provider != state->providers.end());
     CAPTURE(provider->error);
@@ -3619,7 +3634,10 @@ TEST_CASE("Scheme typing starts Ares completion and deletion refilters cached bi
     const std::uint64_t define_id = define_match->item.id;
     const auto scripted =
         std::ranges::find_if(state->providers, [](const CompletionProviderState& candidate) {
-            return candidate.provider.kind == CompletionProviderKind::Scripted;
+            return candidate.provider.kind == CompletionProviderKind::Scripted &&
+                   std::ranges::any_of(candidate.items, [](const CompletionItem& item) {
+                       return item.label == "define";
+                   });
         });
     REQUIRE(scripted != state->providers.end());
     CHECK_FALSE(scripted->is_incomplete);

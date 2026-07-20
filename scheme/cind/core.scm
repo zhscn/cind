@@ -1975,6 +1975,27 @@
                (automatic-completion-character? text))
       (start-completion! host context (vector-ref policy 3) 'automatic))))
 
+(define (word-completion-provider host context request)
+  (let ((words (view-identifier-words host (context-view context)))
+        (query (completion-request-query request))
+        (start (completion-request-anchor request))
+        (end (completion-request-caret request)))
+    (let loop ((index 0)
+               (items '()))
+      (if (= index (vector-length words))
+          (completion-result (reverse items))
+          (let ((word (vector-ref words index)))
+            (loop (+ index 1)
+                  (if (or (zero? (string-length word))
+                          (string=? word query))
+                      items
+                      (cons (completion-item word
+                                             #:kind "word"
+                                             #:detail "buffer"
+                                             #:start start
+                                             #:end end)
+                            items))))))))
+
 (define (completion-move host delta)
   (lambda (context invocation)
     (move-completion! host delta)
@@ -3206,7 +3227,11 @@
 
 (define (install-core-providers! host)
   (let ((providers (core-providers host))
-        (completion-providers (ares-completion-provider-definitions host)))
+        (completion-providers
+         (cons (list "word"
+                     (lambda (context request)
+                       (word-completion-provider host context request)))
+               (ares-completion-provider-definitions host))))
     (for-each (lambda (provider)
                 (define-interaction-provider!
                  host (car provider)

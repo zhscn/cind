@@ -146,6 +146,7 @@ The native module exports:
 (path-as-directory host path)
 (window-buffer-id host window-id)
 (view-caret host view-id)
+(view-identifier-words host view-id)
 (view-mark host view-id)
 (view-selection host view-id)
 (set-selection! host view-id selection)
@@ -637,6 +638,10 @@ selection and presentation in Scheme while C++ retains registry identity and fil
 `mode-properties` describes each registered definition. `owned-user-modules` returns only the
 fresh extension modules and persistent evaluation module retained by the owning `GuileRuntime`, so
 module inspection preserves application isolation.
+
+`view-identifier-words` returns the sorted unique identifier tokens from the View's current
+language analysis. The bundled `word` completion provider is Scheme code that turns this semantic
+snapshot into completion items; native code does not choose, label, or rank those candidates.
 
 `buffer-id-by-name` resolves a buffer name to its generational ID or `#f`. `display-buffer!` assigns
 that buffer to the target window through the application view lifecycle. `move-caret-to-line!`

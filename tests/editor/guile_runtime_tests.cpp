@@ -1180,6 +1180,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .cancel_completion = {},
          .cancel_pending_input = {},
          .view_position = {},
+         .view_identifier_words = {},
          .publish_location_list = {},
          .location_navigation = {},
          .set_location_navigation = {},
@@ -1419,7 +1420,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(*installed == 233);
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
-    CHECK(*providers == 14);
+    CHECK(*providers == 15);
     const auto feedback_message = [&] {
         const std::expected<GuileCommandFeedbackState, std::string> state =
             guile.command_feedback_state();
@@ -2181,6 +2182,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(snapshot.command_revision == 1);
     CHECK(snapshot.scripted_commands == 233);
     CHECK(snapshot.provider_revision == 1);
-    CHECK(snapshot.scripted_providers == 14);
+    CHECK(snapshot.scripted_providers == 15);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

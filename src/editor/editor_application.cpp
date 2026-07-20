@@ -392,6 +392,23 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .byte = caret.value,
                        .byte_count = text.size_bytes()};
                },
+           .view_identifier_words =
+               [this](ViewId view) {
+                   const EditSession& active = session_for(view);
+                   const Buffer& buffer = active.buffer();
+                   if (!runtime_.language_provider(buffer.id(), LanguageFacet::Highlighting)) {
+                       return std::vector<std::string>{};
+                   }
+                   const DocumentSnapshot snapshot = active.snapshot();
+                   std::set<std::string, std::less<>> words;
+                   for (const Token token :
+                        active.analysis(LanguageFacet::Highlighting).tree.tokens()) {
+                       if (token.kind == TokenKind::Identifier) {
+                           words.insert(snapshot.content().substring(token.range));
+                       }
+                   }
+                   return std::vector<std::string>(words.begin(), words.end());
+               },
            .publish_location_list =
                [this](WindowId window, BufferId buffer, std::string source,
                       std::vector<BufferLocation> locations) {
@@ -3632,41 +3649,6 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
                     return std::unexpected("unknown LSP completion startup failure");
                 }
             }};
-    }
-    if (provider.kind == CompletionProviderKind::Word) {
-        const TokenBuffer& tokens = syntax_tokens(request.target.window);
-        std::set<std::string, std::less<>> words;
-        for (const Token token : tokens) {
-            if (token.kind != TokenKind::Identifier) {
-                continue;
-            }
-            std::string word = snapshot.content().substring(token.range);
-            if (!word.empty() && word != request.query) {
-                words.insert(std::move(word));
-            }
-        }
-        std::vector<CompletionItem> items;
-        items.reserve(words.size());
-        for (const std::string& word : words) {
-            items.push_back(
-                {.provider = provider,
-                 .filter_text = word,
-                 .label = word,
-                 .kind = "word",
-                 .detail = "buffer",
-                 .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
-                                        .replace_range = {request.anchor, request.caret},
-                                        .new_text = word},
-                 .sort_text = word,
-                 .resolved = true,
-                 .resolving = false,
-                 .resolve_error = {},
-                 .documentation = {},
-                 .additional_edits = {},
-                 .raw = {}});
-        }
-        return CompletionProviderResponse{
-            .provider = provider, .items = std::move(items), .is_incomplete = false};
     }
     if (provider.kind == CompletionProviderKind::Path) {
         std::string query = request.query;

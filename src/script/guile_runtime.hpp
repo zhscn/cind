@@ -246,6 +246,7 @@ struct GuileHostServices {
     std::function<bool()> cancel_completion;
     std::function<void()> cancel_pending_input;
     std::function<GuileViewPosition(ViewId)> view_position;
+    std::function<std::vector<std::string>(ViewId)> view_identifier_words;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::string,
                                                    std::vector<BufferLocation>)>
         publish_location_list;
