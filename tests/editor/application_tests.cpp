@@ -80,7 +80,7 @@ TEST_CASE("workbench registry preserves independent layouts") {
     const WindowId second_window{1, 1};
     const WindowId third_window{2, 1};
 
-    const WorkbenchId first = registry.create({.name = "shop", .root_window = first_window});
+    const WorkbenchId first = registry.create({.root_window = first_window});
     CHECK(registry.active_id() == first);
     REQUIRE(registry.get(first).layout().split(
         {.target = first_window, .new_window = third_window, .axis = WindowSplitAxis::Columns}));
@@ -93,11 +93,8 @@ TEST_CASE("workbench registry preserves independent layouts") {
     CHECK(registry.get(first).slots().empty());
     CHECK_THROWS_AS(registry.get(first).set_slot("tools", WindowId{9, 1}), std::invalid_argument);
 
-    const WorkbenchId second = registry.create({.name = "notes", .root_window = second_window});
-    CHECK_THROWS_AS(registry.create({.name = "shop", .root_window = WindowId{3, 1}}),
-                    std::invalid_argument);
-    CHECK_THROWS_AS(registry.create({.name = "other", .root_window = second_window}),
-                    std::invalid_argument);
+    const WorkbenchId second = registry.create({.root_window = second_window});
+    CHECK_THROWS_AS(registry.create({.root_window = second_window}), std::invalid_argument);
     CHECK(registry.active_id() == first);
     REQUIRE(registry.find_by_window(second_window).has_value());
     CHECK(*registry.find_by_window(second_window) == second);

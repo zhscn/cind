@@ -6973,6 +6973,9 @@ struct GuileCall {
         WorkbenchReleased,
         WorkbenchMru,
         ReplaceWorkbenchMru,
+        WorkbenchName,
+        WorkbenchFindByName,
+        WorkbenchRename,
         WorkbenchScope,
         WorkbenchAdoptProject,
         LspDiagnosticsFailed,
@@ -7850,9 +7853,10 @@ SCM call_body(void* data) {
                     scope, index,
                     entity_id(call.projects[index].slot, call.projects[index].generation));
             }
-            call.result = scm_call_4(
+            call.result = scm_call_5(
                 scm_c_public_ref("cind workbench", "workbench-created!"), call.host,
                 entity_id(call.workbench.slot, call.workbench.generation),
+                scm_from_utf8_stringn(call.source.data(), call.source.size()),
                 call.buffer ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F,
                 scope);
             break;
@@ -7903,6 +7907,34 @@ SCM call_body(void* data) {
                            entity_id(call.workbench.slot, call.workbench.generation), buffers);
             break;
         }
+        case GuileCall::Operation::WorkbenchName:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-name"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_string(call.result)) {
+                scm_wrong_type_arg_msg("workbench-name", 0, call.result, "string");
+            }
+            call.source = scheme_string(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchFindByName:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-find-by-name"), call.host,
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            call.workbench =
+                scheme_false(call.result)
+                    ? WorkbenchId{}
+                    : entity_id_from_scheme<WorkbenchTag>(call.result, "workbench-find-by-name", 0);
+            break;
+        case GuileCall::Operation::WorkbenchRename:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-rename!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-rename!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
         case GuileCall::Operation::WorkbenchScope:
             call.result =
                 scm_call_2(scm_c_public_ref("cind workbench", "workbench-scope"), call.host,
@@ -9163,7 +9195,7 @@ public:
         return {};
     }
 
-    std::expected<void, std::string> workbench_created(WorkbenchId workbench,
+    std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,
                                                        std::optional<BufferId> initial_buffer,
                                                        const std::vector<ProjectId>& scope) {
         require_owner_thread();
@@ -9172,6 +9204,7 @@ public:
         call.operation = GuileCall::Operation::WorkbenchCreated;
         call.host = host_;
         call.workbench = workbench;
+        call.source = name;
         call.buffer = initial_buffer.value_or(BufferId{});
         call.projects = scope;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
@@ -9261,6 +9294,54 @@ public:
         }
         state_->last_error = std::move(previous_error);
         return {};
+    }
+
+    std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchName;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.source);
+    }
+
+    std::expected<std::optional<WorkbenchId>, std::string>
+    workbench_find_by_name(std::string_view name) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchFindByName;
+        call.host = host_;
+        call.source = name;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.workbench ? std::optional(call.workbench) : std::nullopt;
+    }
+
+    std::expected<bool, std::string> workbench_rename(WorkbenchId workbench,
+                                                      std::string_view name) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchRename;
+        call.host = host_;
+        call.workbench = workbench;
+        call.source = name;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
     }
 
     std::expected<std::vector<ProjectId>, std::string>
@@ -10031,9 +10112,10 @@ std::expected<void, std::string> GuileRuntime::buffer_released(BufferId buffer) 
 }
 
 std::expected<void, std::string>
-GuileRuntime::workbench_created(WorkbenchId workbench, std::optional<BufferId> initial_buffer,
+GuileRuntime::workbench_created(WorkbenchId workbench, std::string_view name,
+                                std::optional<BufferId> initial_buffer,
                                 const std::vector<ProjectId>& scope) {
-    return impl_->workbench_created(workbench, initial_buffer, scope);
+    return impl_->workbench_created(workbench, name, initial_buffer, scope);
 }
 
 std::expected<void, std::string> GuileRuntime::workbench_visit_buffer(WorkbenchId workbench,
@@ -10058,6 +10140,20 @@ GuileRuntime::workbench_mru(WorkbenchId workbench) const {
 std::expected<void, std::string>
 GuileRuntime::replace_workbench_mru(WorkbenchId workbench, const std::vector<BufferId>& buffers) {
     return impl_->replace_workbench_mru(workbench, buffers);
+}
+
+std::expected<std::string, std::string> GuileRuntime::workbench_name(WorkbenchId workbench) const {
+    return impl_->workbench_name(workbench);
+}
+
+std::expected<std::optional<WorkbenchId>, std::string>
+GuileRuntime::workbench_find_by_name(std::string_view name) const {
+    return impl_->workbench_find_by_name(name);
+}
+
+std::expected<bool, std::string> GuileRuntime::workbench_rename(WorkbenchId workbench,
+                                                                std::string_view name) {
+    return impl_->workbench_rename(workbench, name);
 }
 
 std::expected<std::vector<ProjectId>, std::string>

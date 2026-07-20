@@ -435,7 +435,7 @@ public:
     std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin);
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);
-    std::expected<void, std::string> workbench_created(WorkbenchId workbench,
+    std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,
                                                        std::optional<BufferId> initial_buffer,
                                                        const std::vector<ProjectId>& scope);
     std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench, BufferId buffer);
@@ -444,6 +444,10 @@ public:
     std::expected<std::vector<BufferId>, std::string> workbench_mru(WorkbenchId workbench) const;
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
+    std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;
+    std::expected<std::optional<WorkbenchId>, std::string>
+    workbench_find_by_name(std::string_view name) const;
+    std::expected<bool, std::string> workbench_rename(WorkbenchId workbench, std::string_view name);
     std::expected<std::vector<ProjectId>, std::string> workbench_scope(WorkbenchId workbench) const;
     std::expected<bool, std::string> workbench_adopt_project(WorkbenchId workbench,
                                                              ProjectId project);

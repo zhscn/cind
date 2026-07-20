@@ -7,8 +7,7 @@
 namespace cind {
 
 Workbench::Workbench(WorkbenchId id, WorkbenchSpec spec)
-    : id_(id), name_(std::move(spec.name)), layout_(spec.root_window),
-      active_window_(spec.root_window) {
+    : id_(id), layout_(spec.root_window), active_window_(spec.root_window) {
     if (!spec.root_window) {
         throw std::invalid_argument("workbench requires a root window");
     }
@@ -46,9 +45,6 @@ WorkbenchId WorkbenchRegistry::create(WorkbenchSpec spec) {
     if (find_by_window(spec.root_window)) {
         throw std::invalid_argument("workbench root window already belongs to a workbench");
     }
-    if (find_by_name(spec.name)) {
-        throw std::invalid_argument("workbench name is already in use");
-    }
     std::uint32_t slot_index;
     if (free_slots_.empty()) {
         if (slots_.size() >= WorkbenchId::invalid_slot) {
@@ -63,7 +59,7 @@ WorkbenchId WorkbenchRegistry::create(WorkbenchSpec spec) {
     Slot& slot = slots_[slot_index];
     const WorkbenchId id{slot_index, slot.generation};
     try {
-        slot.value = std::unique_ptr<Workbench>(new Workbench(id, std::move(spec)));
+        slot.value = std::unique_ptr<Workbench>(new Workbench(id, spec));
     } catch (...) {
         free_slots_.push_back(slot_index);
         throw;
@@ -132,15 +128,6 @@ std::vector<WorkbenchId> WorkbenchRegistry::all() const {
     return result;
 }
 
-std::optional<WorkbenchId> WorkbenchRegistry::find_by_name(std::string_view name) const {
-    for (const WorkbenchId id : all()) {
-        if (get(id).name() == name) {
-            return id;
-        }
-    }
-    return std::nullopt;
-}
-
 std::optional<WorkbenchId> WorkbenchRegistry::find_by_window(WindowId window) const {
     for (const WorkbenchId id : all()) {
         if (get(id).layout().contains(window)) {
@@ -148,19 +135,6 @@ std::optional<WorkbenchId> WorkbenchRegistry::find_by_window(WindowId window) co
         }
     }
     return std::nullopt;
-}
-
-bool WorkbenchRegistry::rename(WorkbenchId id, std::string name) {
-    Workbench* workbench = try_get(id);
-    if (workbench == nullptr) {
-        return false;
-    }
-    if (const std::optional<WorkbenchId> existing = find_by_name(name);
-        existing && *existing != id) {
-        return false;
-    }
-    workbench->set_name(std::move(name));
-    return true;
 }
 
 Workbench& WorkbenchRegistry::active() {

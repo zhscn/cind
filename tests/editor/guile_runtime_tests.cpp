@@ -1560,9 +1560,21 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.buffer_created(buffer, "test style").has_value());
     CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
     const BufferId visitor{buffer.slot + 1, buffer.generation};
-    REQUIRE(
-        guile.workbench_created(workbench, buffer, {initial_scope_project, initial_scope_project})
-            .has_value());
+    REQUIRE(guile
+                .workbench_created(workbench, "code", buffer,
+                                   {initial_scope_project, initial_scope_project})
+                .has_value());
+    CHECK(guile.workbench_name(workbench).value_or("") == "code");
+    CHECK(guile.workbench_find_by_name("code").value_or(std::optional<WorkbenchId>{}) ==
+          std::optional{workbench});
+    CHECK_FALSE(
+        guile.workbench_find_by_name("notes").value_or(std::optional<WorkbenchId>{}).has_value());
+    CHECK(guile.workbench_rename(workbench, "notes").value_or(false));
+    CHECK(guile.workbench_name(workbench).value_or("") == "notes");
+    const WorkbenchId other_workbench{1, 1};
+    REQUIRE(guile.workbench_created(other_workbench, "code", std::nullopt, {}).has_value());
+    CHECK_FALSE(guile.workbench_rename(other_workbench, "notes").value_or(true));
+    REQUIRE(guile.workbench_released(other_workbench).has_value());
     CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
           std::vector<ProjectId>{initial_scope_project});
     CHECK(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(false));

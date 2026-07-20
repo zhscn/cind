@@ -5,6 +5,9 @@ It combines an ordered project scope, one WindowLayout, per-workbench Buffer rec
 Window, and named Window slots. A Project remains a tooling and configuration boundary; it does
 not own the workbench or its layout.
 
+Guile owns workbench names, name uniqueness, project scope and Buffer recency. Native workbench
+objects own the WindowLayout, active Window, navigation data and named Window slots.
+
 The editor always owns at least one workbench and has exactly one active workbench. Switching
 workbenches changes the presented layout without destroying inactive Windows or Views. Their
 carets, selections, input states and viewports therefore remain available when the workbench is
