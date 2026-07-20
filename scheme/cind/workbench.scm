@@ -26,6 +26,9 @@
             workbench-location-list-key
             workbench-move-location-list!
             workbench-location-list-states
+            workbench-transaction-group-recorded!
+            workbench-transaction-group-movable?
+            workbench-transaction-group-moved!
             replace-workbench-mru!
             workbench-name
             workbench-find-by-name
@@ -44,12 +47,15 @@
 
 ;; Entries are
 ;; #(workbench name mru-list scope-list window-list active-window
-;;   location-list-records current-location-list-or-#f).
+;;   location-list-records current-location-list-or-#f
+;;   transaction-group-records).
 ;; Window records are #(window role-or-#f pinned? created-by-policy?). Window
-;; layouts, LocationList items, anchors and entity lifetimes are native
-;; data-plane state. Selection, descriptive, membership, navigation and
-;; display policy state is owned by Guile. Location records are
+;; layouts, LocationList items, transaction entries, anchors and entity
+;; lifetimes are native data-plane state. Selection, descriptive, membership,
+;; navigation, undo direction and display policy state is owned by Guile.
+;; Location records are
 ;; #(list-id materialized-buffer-or-#f item-count selected-index-or-#f).
+;; Transaction records are #(group-id undone?).
 (define workbench-states (make-weak-key-hash-table))
 (define active-workbenches (make-weak-key-hash-table))
 
@@ -135,7 +141,8 @@
                               (list (vector root-window #f #f #f))
                               root-window
                               '()
-                              #f)
+                              #f
+                              '())
                       entries))
     (when (null? entries)
       (hashq-set! active-workbenches host workbench)))
@@ -373,6 +380,53 @@
                     (vector-ref record 3)
                     (and current (= current (vector-ref record 0)))))
           (vector-ref entry 6)))))
+
+(define (transaction-group-record-by-id entry group-id)
+  (let loop ((records (vector-ref entry 8)))
+    (and (pair? records)
+         (if (= group-id (vector-ref (car records) 0))
+             (car records)
+             (loop (cdr records))))))
+
+(define (require-transaction-group-id group-id)
+  (unless (and (integer? group-id) (> group-id 0))
+    (error "transaction group ID must be a positive integer" group-id)))
+
+(define (require-transaction-group-record entry group-id)
+  (or (transaction-group-record-by-id entry group-id)
+      (error "unknown transaction group policy state" group-id)))
+
+(define (workbench-transaction-group-recorded! host workbench group-id)
+  (require-transaction-group-id group-id)
+  (let ((entry (require-workbench-entry host workbench)))
+    (when (transaction-group-record-by-id entry group-id)
+      (error "transaction group policy state already exists" group-id))
+    (vector-set! entry 8
+                 (append (vector-ref entry 8)
+                         (list (vector group-id #f)))))
+  group-id)
+
+(define (workbench-transaction-group-movable? host workbench group-id redo?)
+  (require-transaction-group-id group-id)
+  (unless (boolean? redo?)
+    (error "transaction group redo direction must be boolean" redo?))
+  (let* ((entry (require-workbench-entry host workbench))
+         (record (transaction-group-record-by-id entry group-id)))
+    (and record (eq? (vector-ref record 1) redo?))))
+
+(define (workbench-transaction-group-moved! host workbench group-id redo? changed?)
+  (require-transaction-group-id group-id)
+  (unless (boolean? redo?)
+    (error "transaction group redo direction must be boolean" redo?))
+  (unless (boolean? changed?)
+    (error "transaction group changed state must be boolean" changed?))
+  (let* ((entry (require-workbench-entry host workbench))
+         (record (require-transaction-group-record entry group-id)))
+    (unless (eq? (vector-ref record 1) redo?)
+      (error "transaction group direction is unavailable" group-id redo?))
+    (when changed?
+      (vector-set! record 1 (not redo?))))
+  changed?)
 
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)

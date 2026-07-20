@@ -2509,11 +2509,28 @@ std::vector<LocationListSnapshot> EditorApplication::location_lists(WorkbenchId 
 TransactionGroupId
 EditorApplication::record_transaction_group(std::string source,
                                             std::vector<TransactionGroupEntry> entries) {
-    return active_workbench().transaction_groups().record(std::move(source), std::move(entries));
+    const WorkbenchId workbench = workbench_id();
+    const TransactionGroupId group =
+        active_workbench().transaction_groups().record(std::move(source), std::move(entries));
+    if (const std::expected<void, std::string> recorded =
+            guile_.workbench_transaction_group_recorded(workbench, group);
+        !recorded) {
+        throw std::runtime_error(recorded.error());
+    }
+    return group;
 }
 
 std::optional<TransactionGroupResult>
 EditorApplication::move_transaction_group(TransactionGroupId group, bool redo) {
+    const WorkbenchId workbench = workbench_id();
+    const std::expected<bool, std::string> movable =
+        guile_.workbench_transaction_group_movable(workbench, group, redo);
+    if (!movable) {
+        throw std::runtime_error(movable.error());
+    }
+    if (!*movable) {
+        return std::nullopt;
+    }
     auto current = [&](BufferId buffer) -> std::optional<UndoNodeId> {
         const Buffer* target = runtime_.buffers().try_get(buffer);
         return target != nullptr ? std::optional(target->undo_position()) : std::nullopt;
@@ -2532,7 +2549,17 @@ EditorApplication::move_transaction_group(TransactionGroupId group, bool redo) {
         return found != views_.end() && (*found)->session->undo_to(position);
     };
     TransactionGroupRegistry& groups = active_workbench().transaction_groups();
-    return redo ? groups.redo(group, current, navigate) : groups.undo(group, current, navigate);
+    std::optional<TransactionGroupResult> result =
+        redo ? groups.redo(group, current, navigate) : groups.undo(group, current, navigate);
+    if (!result) {
+        return std::nullopt;
+    }
+    if (const std::expected<void, std::string> moved = guile_.workbench_transaction_group_moved(
+            workbench, group, redo, !result->changed.empty());
+        !moved) {
+        throw std::runtime_error(moved.error());
+    }
+    return result;
 }
 
 const InputFeedback* EditorApplication::active_input_feedback() const {

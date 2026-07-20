@@ -448,6 +448,14 @@ public:
     workbench_location_navigation(WorkbenchId workbench) const;
     std::expected<std::vector<GuileLocationListPolicyState>, std::string>
     workbench_location_list_states(WorkbenchId workbench) const;
+    std::expected<void, std::string> workbench_transaction_group_recorded(WorkbenchId workbench,
+                                                                          std::uint64_t group);
+    std::expected<bool, std::string> workbench_transaction_group_movable(WorkbenchId workbench,
+                                                                         std::uint64_t group,
+                                                                         bool redo) const;
+    std::expected<void, std::string> workbench_transaction_group_moved(WorkbenchId workbench,
+                                                                       std::uint64_t group,
+                                                                       bool redo, bool changed);
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
     std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;

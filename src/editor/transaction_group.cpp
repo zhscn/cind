@@ -27,8 +27,7 @@ TransactionGroupId TransactionGroupRegistry::record(std::string source,
     groups_.push_back({.id = id,
                        .source = std::move(source),
                        .entries = std::move(entries),
-                       .created_at = ++clock_,
-                       .undone = false});
+                       .created_at = ++clock_});
     return id;
 }
 
@@ -54,9 +53,9 @@ std::optional<TransactionGroupResult> TransactionGroupRegistry::move(Transaction
                                                                      bool redo,
                                                                      const CurrentPosition& current,
                                                                      const Navigate& navigate) {
-    auto found = std::ranges::find_if(
+    const auto found = std::ranges::find_if(
         groups_, [group](const TransactionGroup& candidate) { return candidate.id == group; });
-    if (found == groups_.end() || found->undone != redo) {
+    if (found == groups_.end()) {
         return std::nullopt;
     }
     TransactionGroupResult result{.group = group, .changed = {}, .skipped = {}};
@@ -69,9 +68,6 @@ std::optional<TransactionGroupResult> TransactionGroupRegistry::move(Transaction
             continue;
         }
         result.changed.push_back(entry.buffer);
-    }
-    if (!result.changed.empty()) {
-        found->undone = redo ? false : true;
     }
     return result;
 }

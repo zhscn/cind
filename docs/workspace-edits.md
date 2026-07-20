@@ -20,10 +20,11 @@ text. A publication failure restores Buffers already committed before returning 
 
 ## Undo grouping
 
-The result contains one `TransactionGroupEntry` for every changed Buffer. Feature policy records
-these entries in the active Workbench's `TransactionGroupRegistry`, giving rename, code actions,
-composed views, and future refactors one cross-Buffer undo unit while retaining each Buffer's native
-branching undo tree.
+The result contains one `TransactionGroupEntry` for every changed Buffer. The active Workbench's
+native `TransactionGroupRegistry` retains the immutable Buffer and UndoNode edges. Guile records the
+group's undo direction and decides whether undo or redo is available. This gives rename, code
+actions, composed views, and refactors one cross-Buffer undo unit while retaining each Buffer's
+native branching undo tree.
 
 Transaction-group undo is conflict-aware. A member is moved only when its current undo position
 still matches the recorded edge; Buffers edited independently after the workspace operation are

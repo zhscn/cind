@@ -1552,6 +1552,17 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK_FALSE(location_states[0].current);
     CHECK(location_states[1].list == 2);
     CHECK(location_states[1].current);
+    CHECK_FALSE(guile.workbench_transaction_group_movable(workbench, 99, false).value_or(true));
+    REQUIRE(guile.workbench_transaction_group_recorded(workbench, 1).has_value());
+    CHECK(guile.workbench_transaction_group_movable(workbench, 1, false).value_or(false));
+    CHECK_FALSE(guile.workbench_transaction_group_movable(workbench, 1, true).value_or(true));
+    REQUIRE(guile.workbench_transaction_group_moved(workbench, 1, false, false).has_value());
+    CHECK(guile.workbench_transaction_group_movable(workbench, 1, false).value_or(false));
+    REQUIRE(guile.workbench_transaction_group_moved(workbench, 1, false, true).has_value());
+    CHECK_FALSE(guile.workbench_transaction_group_movable(workbench, 1, false).value_or(true));
+    CHECK(guile.workbench_transaction_group_movable(workbench, 1, true).value_or(false));
+    REQUIRE(guile.workbench_transaction_group_moved(workbench, 1, true, true).has_value());
+    CHECK(guile.workbench_transaction_group_movable(workbench, 1, false).value_or(false));
     {
         EditorRuntime parallel_runtime;
         GuileRuntime parallel(parallel_runtime);

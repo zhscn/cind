@@ -6656,6 +6656,9 @@ struct GuileCall {
         WorkbenchBuffers,
         WorkbenchLocationNavigation,
         WorkbenchLocationListStates,
+        WorkbenchTransactionGroupRecorded,
+        WorkbenchTransactionGroupMovable,
+        WorkbenchTransactionGroupMoved,
         ReplaceWorkbenchMru,
         WorkbenchName,
         WorkbenchFindByName,
@@ -6765,6 +6768,7 @@ struct GuileCall {
     std::uint32_t page_rows = 1;
     int delta = 1;
     std::uint64_t lsp_session = 0;
+    std::uint64_t transaction_group = 0;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
     Operation operation = Operation::Load;
@@ -6772,6 +6776,8 @@ struct GuileCall {
     bool completion_needs_resolution = false;
     bool force = false;
     bool widen = false;
+    bool redo = false;
+    bool changed = false;
     bool enabled = false;
     bool clear_message = false;
     bool interaction_started = false;
@@ -7689,6 +7695,30 @@ SCM call_body(void* data) {
                                                                  "workbench-location-list-states"),
                      .current = scheme_true(scm_c_vector_ref(state, 2))});
             }
+            break;
+        case GuileCall::Operation::WorkbenchTransactionGroupRecorded:
+            call.result = scm_call_3(
+                scm_c_public_ref("cind workbench", "workbench-transaction-group-recorded!"),
+                call.host, entity_id(call.workbench.slot, call.workbench.generation),
+                scm_from_uint64(call.transaction_group));
+            break;
+        case GuileCall::Operation::WorkbenchTransactionGroupMovable:
+            call.result = scm_call_4(
+                scm_c_public_ref("cind workbench", "workbench-transaction-group-movable?"),
+                call.host, entity_id(call.workbench.slot, call.workbench.generation),
+                scm_from_uint64(call.transaction_group), scm_from_bool(call.redo));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-transaction-group-movable?", 0, call.result,
+                                       "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchTransactionGroupMoved:
+            call.result =
+                scm_call_5(scm_c_public_ref("cind workbench", "workbench-transaction-group-moved!"),
+                           call.host, entity_id(call.workbench.slot, call.workbench.generation),
+                           scm_from_uint64(call.transaction_group), scm_from_bool(call.redo),
+                           scm_from_bool(call.changed));
             break;
         case GuileCall::Operation::ReplaceWorkbenchMru: {
             SCM buffers = scm_c_make_vector(call.buffers.size(), SCM_UNSPECIFIED);
@@ -9297,6 +9327,62 @@ public:
         return std::move(call.location_list_states);
     }
 
+    std::expected<void, std::string> workbench_transaction_group_recorded(WorkbenchId workbench,
+                                                                          std::uint64_t group) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchTransactionGroupRecorded;
+        call.host = host_;
+        call.workbench = workbench;
+        call.transaction_group = group;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<bool, std::string> workbench_transaction_group_movable(WorkbenchId workbench,
+                                                                         std::uint64_t group,
+                                                                         bool redo) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchTransactionGroupMovable;
+        call.host = host_;
+        call.workbench = workbench;
+        call.transaction_group = group;
+        call.redo = redo;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
+    std::expected<void, std::string> workbench_transaction_group_moved(WorkbenchId workbench,
+                                                                       std::uint64_t group,
+                                                                       bool redo, bool changed) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchTransactionGroupMoved;
+        call.host = host_;
+        call.workbench = workbench;
+        call.transaction_group = group;
+        call.redo = redo;
+        call.changed = changed;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers) {
         require_owner_thread();
@@ -10324,6 +10410,23 @@ GuileRuntime::workbench_location_navigation(WorkbenchId workbench) const {
 std::expected<std::vector<GuileLocationListPolicyState>, std::string>
 GuileRuntime::workbench_location_list_states(WorkbenchId workbench) const {
     return impl_->workbench_location_list_states(workbench);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_transaction_group_recorded(WorkbenchId workbench, std::uint64_t group) {
+    return impl_->workbench_transaction_group_recorded(workbench, group);
+}
+
+std::expected<bool, std::string>
+GuileRuntime::workbench_transaction_group_movable(WorkbenchId workbench, std::uint64_t group,
+                                                  bool redo) const {
+    return impl_->workbench_transaction_group_movable(workbench, group, redo);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_transaction_group_moved(WorkbenchId workbench, std::uint64_t group,
+                                                bool redo, bool changed) {
+    return impl_->workbench_transaction_group_moved(workbench, group, redo, changed);
 }
 
 std::expected<void, std::string>

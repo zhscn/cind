@@ -19,7 +19,8 @@ struct WorkbenchSpec {
 
 // Native workbench data binds a window layout over the application's global
 // entity pools. Guile owns selection, descriptive, membership and display
-// metadata; this object owns layout plus durable navigation items and anchors.
+// metadata; this object owns layout plus durable navigation and transaction
+// data, including anchors into native Buffer state.
 class Workbench {
 public:
     WorkbenchId id() const { return id_; }

@@ -26,7 +26,6 @@ struct TransactionGroup {
     std::string source;
     std::vector<TransactionGroupEntry> entries;
     std::uint64_t created_at = 0;
-    bool undone = false;
 };
 
 struct TransactionGroupResult {
