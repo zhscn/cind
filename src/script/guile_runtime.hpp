@@ -283,15 +283,11 @@ struct GuileHostServices {
         create_workbench;
     std::function<std::expected<void, std::string>(WorkbenchId)> switch_workbench;
     std::function<std::expected<void, std::string>(WorkbenchId)> close_workbench;
-    std::function<std::expected<void, std::string>(WorkbenchId, ProjectId)> adopt_project;
-    std::function<std::expected<void, std::string>(WorkbenchId, BufferId)> expel_buffer;
     std::function<std::string()> workbench_session_state;
     std::function<std::expected<GuileWorkbenchRestorePlan, std::string>(std::string_view)>
         prepare_workbench_session_restore;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         show_buffer_in_window;
-    std::function<std::expected<void, std::string>(WorkbenchId, const std::vector<BufferId>&)>
-        replace_workbench_mru;
     std::function<BufferId(WindowId)> window_buffer;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;

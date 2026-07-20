@@ -119,19 +119,12 @@ The native module exports:
 (observe-mode-policy-changes! host procedure)
 (enabled-command-names host context)
 (command-properties host context command-name)
-(workbench-list host)
-(current-workbench host)
-(workbench-scope host workbench-id)
-(workbench-mru host workbench-id)
 (new-workbench! host name project-id-or-#f)
 (switch-workbench! host workbench-id)
 (close-workbench! host workbench-id)
-(adopt-project! host workbench-id project-id)
-(expel-buffer! host workbench-id buffer-id)
 (workbench-session-state host)
 (prepare-workbench-session-restore! host serialized-state)
 (show-buffer-in-window! host window-id buffer-id caret-byte)
-(replace-workbench-mru! host workbench-id buffer-ids)
 (owned-user-modules host)
 (project-root host project-id)
 (project-files host project-id)
@@ -919,24 +912,26 @@ commands inspect buffer state and own the quit confirmation interaction before i
 mechanism.
 
 Workbench capabilities expose durable editing surfaces without transferring Buffer or Project
-ownership. `workbench-list` returns `#(id name active?)` summaries; scope and MRU queries return
-generational Project and Buffer IDs. `(cind workbench)` owns names, uniqueness, scope, recency,
-active workbench and per-workbench active Window selection, plus per-Window display metadata. Its
-`workbench-buffer-ids` and `workbench-buffer-summaries` procedures combine the native open-Buffer
-snapshot and Buffer-to-Project attachment with scope and recency policy; widening selects the
-global Buffer pool. Window roles are unique within a workbench and directly derive its named slots.
-Native lifecycle mechanisms validate entity identity and layout membership, while bundled commands
-own picker interaction and feedback. Native code validates and applies display plans. A failed or
-invalid extension policy is retried through the bundled default Scheme policy, so placement
-decisions have a single implementation.
+ownership. `(cind workbench)` owns names, uniqueness, scope, recency, active workbench and
+per-workbench active Window selection, plus per-Window display metadata. `workbench-summaries`
+returns `#(id name active?)` values; `workbench-scope` and `workbench-mru` return generational
+Project and Buffer IDs. `workbench-adopt-project!`, `workbench-expel-buffer!` and
+`replace-workbench-mru!` mutate that policy state directly. `workbench-buffer-ids` and
+`workbench-buffer-summaries` combine the native open-Buffer snapshot and Buffer-to-Project
+attachment with scope and recency policy; widening selects the global Buffer pool. Window roles are
+unique within a workbench and directly derive its named slots. Native lifecycle mechanisms validate
+entity identity and layout membership, while bundled commands own picker interaction and feedback.
+Native code validates and applies display plans. A failed or invalid extension policy is retried
+through the bundled default Scheme policy, so placement decisions have a single implementation.
 
 `workbench-session-state` returns the versioned serialization of every workbench.
 `prepare-workbench-session-restore!` validates and atomically installs the serialized topology,
 then returns a plan of resource paths, Window/caret targets and workbench MRU inputs.
-`show-buffer-in-window!`, `window-buffer-id` and `replace-workbench-mru!` are exact data-plane
-mechanisms used to apply that plan. The `(cind core)` `restore-workbench-session!` policy retains
-the plan and task IDs, cancels superseded restores, loads resources through the asynchronous
-runtime, creates and attaches Buffers, finalizes MRU state and reports completion. The bundled
+`show-buffer-in-window!` and `window-buffer-id` are exact data-plane mechanisms used to apply that
+plan; `(cind workbench)` accepts the restored MRU. The `(cind core)`
+`restore-workbench-session!` policy retains the plan and task IDs, cancels superseded restores,
+loads resources through the asynchronous runtime, creates and attaches Buffers, finalizes MRU state
+and reports completion. The bundled
 `workbench.save-session` and `workbench.restore-session` commands select a path through the
 minibuffer and compose session-file I/O with this policy. Session state contains stable Project
 roots and Buffer resource paths rather than runtime IDs.

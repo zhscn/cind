@@ -4,7 +4,8 @@
                           buffer-project-id
                           buffer-name
                           buffer-resource
-                          buffer-modified?))
+                          buffer-modified?
+                          project-root))
   #:export (workbench-created!
             active-workbench
             workbench-summaries
@@ -176,6 +177,7 @@
   buffer)
 
 (define (workbench-expel-buffer! host workbench buffer)
+  (buffer-name host buffer)
   (let* ((entry (require-workbench-entry host workbench))
          (before (vector-ref entry 2))
          (after (without-buffer before buffer)))
@@ -254,6 +256,8 @@
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)
     (error "workbench MRU must be a vector" buffers))
+  (for-each (lambda (buffer) (buffer-name host buffer))
+            (vector->list buffers))
   (vector-set! (require-workbench-entry host workbench) 2
                (unique-values (vector->list buffers)))
   workbench)
@@ -282,6 +286,7 @@
   (list->vector (vector-ref (require-workbench-entry host workbench) 3)))
 
 (define (workbench-adopt-project! host workbench project)
+  (project-root host project)
   (let* ((entry (require-workbench-entry host workbench))
          (scope (vector-ref entry 3)))
     (if (member project scope)

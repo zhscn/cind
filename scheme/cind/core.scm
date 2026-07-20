@@ -23,7 +23,14 @@
   #:use-module (cind toy-modal)
   #:use-module (cind vim)
   #:use-module ((cind workbench)
-                #:select (workbench-buffer-ids
+                #:select (active-workbench
+                          workbench-summaries
+                          workbench-scope
+                          workbench-mru
+                          workbench-adopt-project!
+                          workbench-expel-buffer!
+                          replace-workbench-mru!
+                          workbench-buffer-ids
                           workbench-buffer-summaries))
   #:export (install-core-commands!
             install-core-providers!
@@ -281,9 +288,9 @@
   (vector 'modeline-segment group tone weight debug? text))
 
 (define (active-workbench-name host)
-  (let ((workbenches (workbench-list host)))
+  (let ((workbenches (workbench-summaries host)))
     (and (> (vector-length workbenches) 1)
-         (let ((active (current-workbench host)))
+         (let ((active (active-workbench host)))
            (let loop ((index 0))
              (and (< index (vector-length workbenches))
                   (let ((summary (vector-ref workbenches index)))
@@ -481,7 +488,7 @@
 
 (define (buffers-provider host context query widen?)
   (let ((summaries (workbench-buffer-summaries
-                    host (current-workbench host) widen?)))
+                    host (active-workbench host) widen?)))
     (let loop ((index 0)
                (candidates '()))
       (if (= index (vector-length summaries))
@@ -556,7 +563,7 @@
    (lambda (result) (directory-list-candidates host result))))
 
 (define (effective-projects host context)
-  (let ((scope (workbench-scope host (current-workbench host))))
+  (let ((scope (workbench-scope host (active-workbench host))))
     (if (> (vector-length scope) 0)
         scope
         (let ((project (context-project context)))
@@ -594,7 +601,7 @@
                                result)))))))))))
 
 (define (workbenches-provider host context query)
-  (let ((workbenches (workbench-list host)))
+  (let ((workbenches (workbench-summaries host)))
     (let loop ((index 0)
                (candidates '()))
       (if (= index (vector-length workbenches))
@@ -1008,7 +1015,7 @@
                   (loop (+ index 1)))))))
 
 (define (buffer-switch-relative host context delta)
-  (let* ((workbench (current-workbench host))
+  (let* ((workbench (active-workbench host))
          (buffers (workbench-buffer-ids host workbench #f))
          (count (vector-length buffers)))
     (if (< count 2)
@@ -1059,7 +1066,7 @@
         (equal? provider "buffers-global"))))
 
 (define (workbench-summary-by-name host name)
-  (let ((workbenches (workbench-list host)))
+  (let ((workbenches (workbench-summaries host)))
     (let loop ((index 0))
       (and (< index (vector-length workbenches))
            (let ((summary (vector-ref workbenches index)))
@@ -1110,7 +1117,7 @@
           (command-completed)))))
 
 (define (workbench-close host context invocation)
-  (close-workbench! host (current-workbench host))
+  (close-workbench! host (active-workbench host))
   (set-message! host "workbench closed")
   (command-completed))
 
@@ -1125,12 +1132,13 @@
     (if (not summary)
         (command-error "unknown project")
         (begin
-          (adopt-project! host (current-workbench host) (vector-ref summary 0))
+          (workbench-adopt-project! host (active-workbench host)
+                                    (vector-ref summary 0))
           (set-message! host (string-append "adopted " (vector-ref summary 1)))
           (command-completed)))))
 
 (define (workbench-expel-buffer host context invocation)
-  (expel-buffer! host (current-workbench host) (context-buffer context))
+  (workbench-expel-buffer! host (active-workbench host) (context-buffer context))
   (set-message! host "buffer expelled from workbench")
   (command-completed))
 

@@ -2309,106 +2309,6 @@ SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
     return SCM_BOOL_F;
 }
 
-std::vector<ProjectId> scheme_workbench_scope(HostLease& host, SCM host_object, SCM workbench_value,
-                                              const char* caller) {
-    const SCM value = scm_call_2(scm_c_public_ref("cind workbench", "workbench-scope"), host_object,
-                                 workbench_value);
-    if (!scm_is_vector(value)) {
-        scm_wrong_type_arg_msg(caller, 0, value, "workbench project vector");
-    }
-    std::vector<ProjectId> result;
-    result.reserve(scm_c_vector_length(value));
-    for (std::size_t index = 0; index < scm_c_vector_length(value); ++index) {
-        const ProjectId project =
-            entity_id_from_scheme<ProjectTag>(scm_c_vector_ref(value, index), caller, 0);
-        (void)host.runtime->projects().get(project);
-        result.push_back(project);
-    }
-    return result;
-}
-
-SCM workbench_list(SCM host_object) {
-    try {
-        (void)require_host(host_object, "workbench-list");
-        const SCM result =
-            scm_call_1(scm_c_public_ref("cind workbench", "workbench-summaries"), host_object);
-        if (!scm_is_vector(result)) {
-            scm_wrong_type_arg_msg("workbench-list", 0, result, "workbench summary vector");
-        }
-        for (std::size_t index = 0; index < scm_c_vector_length(result); ++index) {
-            const SCM summary = scm_c_vector_ref(result, index);
-            if (!scm_is_vector(summary) || scm_c_vector_length(summary) != 3 ||
-                !scm_is_string(scm_c_vector_ref(summary, 1)) ||
-                !scheme_boolean(scm_c_vector_ref(summary, 2))) {
-                scm_wrong_type_arg_msg("workbench-list", 0, summary, "#(workbench name active?)");
-            }
-            (void)entity_id_from_scheme<WorkbenchTag>(scm_c_vector_ref(summary, 0),
-                                                      "workbench-list", 0);
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-list", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-list", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM current_workbench(SCM host_object) {
-    try {
-        (void)require_host(host_object, "current-workbench");
-        return scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), host_object);
-    } catch (const std::exception& exception) {
-        raise_host_error("current-workbench", exception.what());
-    } catch (...) {
-        scm_misc_error("current-workbench", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM workbench_scope(SCM host_object, SCM workbench_value) {
-    try {
-        HostLease& host = require_host(host_object, "workbench-scope");
-        (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-scope", 2);
-        const std::vector<ProjectId> scope =
-            scheme_workbench_scope(host, host_object, workbench_value, "workbench-scope");
-        SCM result = scm_c_make_vector(scope.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < scope.size(); ++index) {
-            scm_c_vector_set_x(result, index,
-                               entity_id(scope[index].slot, scope[index].generation));
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-scope", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-scope", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM workbench_mru(SCM host_object, SCM workbench_value) {
-    try {
-        HostLease& host = require_host(host_object, "workbench-mru");
-        (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-mru", 2);
-        const SCM result = scm_call_2(scm_c_public_ref("cind workbench", "workbench-mru"),
-                                      host_object, workbench_value);
-        if (!scm_is_vector(result)) {
-            scm_wrong_type_arg_msg("workbench-mru", 0, result, "buffer vector");
-        }
-        for (std::size_t index = 0; index < scm_c_vector_length(result); ++index) {
-            const BufferId buffer = entity_id_from_scheme<BufferTag>(
-                scm_c_vector_ref(result, index), "workbench-mru", 0);
-            (void)host.runtime->buffers().get(buffer);
-        }
-        return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-mru", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-mru", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
 SCM project_list(SCM host_object) {
     try {
         HostLease& host = require_host(host_object, "project-list");
@@ -2500,53 +2400,6 @@ SCM close_workbench(SCM host_object, SCM workbench_value) {
         raise_host_error("close-workbench!", exception.what());
     } catch (...) {
         scm_misc_error("close-workbench!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM adopt_project(SCM host_object, SCM workbench_value, SCM project_value) {
-    HostLease& host = require_host(host_object, "adopt-project!");
-    if (!host.services.adopt_project) {
-        scm_misc_error("adopt-project!", "workbench adoption capability is unavailable", SCM_EOL);
-    }
-    try {
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "adopt-project!", 2);
-        const ProjectId project =
-            entity_id_from_scheme<ProjectTag>(project_value, "adopt-project!", 3);
-        const std::expected<void, std::string> adopted =
-            host.services.adopt_project(workbench, project);
-        if (!adopted) {
-            raise_host_error("adopt-project!", adopted.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("adopt-project!", exception.what());
-    } catch (...) {
-        scm_misc_error("adopt-project!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM expel_buffer(SCM host_object, SCM workbench_value, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "expel-buffer!");
-    if (!host.services.expel_buffer) {
-        scm_misc_error("expel-buffer!", "workbench expulsion capability is unavailable", SCM_EOL);
-    }
-    try {
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "expel-buffer!", 2);
-        const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "expel-buffer!", 3);
-        const std::expected<void, std::string> expelled =
-            host.services.expel_buffer(workbench, buffer);
-        if (!expelled) {
-            raise_host_error("expel-buffer!", expelled.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("expel-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("expel-buffer!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -2667,39 +2520,6 @@ SCM show_buffer_in_window(SCM host_object, SCM window_value, SCM buffer_value, S
         raise_host_error("show-buffer-in-window!", exception.what());
     } catch (...) {
         scm_misc_error("show-buffer-in-window!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM replace_workbench_mru(SCM host_object, SCM workbench_value, SCM buffers_value) {
-    HostLease& host = require_host(host_object, "replace-workbench-mru!");
-    if (!host.services.replace_workbench_mru) {
-        scm_misc_error("replace-workbench-mru!", "workbench MRU capability is unavailable",
-                       SCM_EOL);
-    }
-    const WorkbenchId workbench =
-        entity_id_from_scheme<WorkbenchTag>(workbench_value, "replace-workbench-mru!", 2);
-    if (!scm_is_vector(buffers_value)) {
-        scm_wrong_type_arg_msg("replace-workbench-mru!", 3, buffers_value, "vector");
-    }
-    try {
-        std::vector<BufferId> buffers;
-        const std::size_t count = scm_c_vector_length(buffers_value);
-        buffers.reserve(count);
-        for (std::size_t index = 0; index < count; ++index) {
-            buffers.push_back(entity_id_from_scheme<BufferTag>(
-                scm_c_vector_ref(buffers_value, index), "replace-workbench-mru!", 3));
-        }
-        const std::expected<void, std::string> replaced =
-            host.services.replace_workbench_mru(workbench, buffers);
-        if (!replaced) {
-            raise_host_error("replace-workbench-mru!", replaced.error());
-        }
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("replace-workbench-mru!", exception.what());
-    } catch (...) {
-        scm_misc_error("replace-workbench-mru!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_UNSPECIFIED;
 }
@@ -5829,30 +5649,18 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(enabled_command_names));
     (void)scm_c_define_gsubr("command-properties", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(command_properties));
-    (void)scm_c_define_gsubr("workbench-list", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(workbench_list));
-    (void)scm_c_define_gsubr("current-workbench", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(current_workbench));
-    (void)scm_c_define_gsubr("workbench-scope", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(workbench_scope));
-    (void)scm_c_define_gsubr("workbench-mru", 2, 0, 0, reinterpret_cast<scm_t_subr>(workbench_mru));
     (void)scm_c_define_gsubr("new-workbench!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_workbench));
     (void)scm_c_define_gsubr("switch-workbench!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(switch_workbench));
     (void)scm_c_define_gsubr("close-workbench!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(close_workbench));
-    (void)scm_c_define_gsubr("adopt-project!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(adopt_project));
-    (void)scm_c_define_gsubr("expel-buffer!", 3, 0, 0, reinterpret_cast<scm_t_subr>(expel_buffer));
     (void)scm_c_define_gsubr("workbench-session-state", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(workbench_session_state));
     (void)scm_c_define_gsubr("prepare-workbench-session-restore!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(prepare_workbench_session_restore));
     (void)scm_c_define_gsubr("show-buffer-in-window!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(show_buffer_in_window));
-    (void)scm_c_define_gsubr("replace-workbench-mru!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(replace_workbench_mru));
     (void)scm_c_define_gsubr("project-list", 1, 0, 0, reinterpret_cast<scm_t_subr>(project_list));
     (void)scm_c_define_gsubr("owned-user-modules", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(owned_user_modules));
@@ -6096,42 +5904,41 @@ void initialize_host_module(void*) {
         "define-file-mode-rule!", "define-project-provider!", "mode-properties",
         "buffer-language-facet?", "set-buffer-major-mode!", "set-buffer-minor-mode!",
         "buffer-mode-policy", "buffer-mode-summary", "observe-mode-policy-changes!",
-        "enabled-command-names", "command-properties", "workbench-list", "current-workbench",
-        "workbench-scope", "workbench-mru", "new-workbench!", "switch-workbench!",
-        "close-workbench!", "adopt-project!", "expel-buffer!", "workbench-session-state",
-        "prepare-workbench-session-restore!", "show-buffer-in-window!", "replace-workbench-mru!",
-        "project-list", "owned-user-modules", "project-root", "project-files", "path-relative",
-        "path-filename", "path-resolve", "active-key-bindings", "buffer-id-by-name", "buffer-name",
-        "buffer-resource", "buffer-project-id", "buffer-text", "buffer-byte-size",
-        "buffer-editable-start", "set-buffer-editable-start!", "create-buffer-marker!",
-        "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
-        "set-buffer-locations!", "set-location-list!", "buffer-read-only?", "path-parent",
-        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
-        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
-        "clear-selection-history!", "selection-history-depth", "replace-selection!",
-        "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
-        "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
-        "motion-selection", "expand-node-selection", "write-clipboard!", "read-clipboard",
-        "display-buffer!", "display-buffer-at!", "display-buffer-position-at!",
-        "display-generated-buffer!", "navigate-jump!", "mark-jump!", "visit-jump!", "link-jump!",
-        "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "undo!",
-        "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!",
-        "indent!", "type-text!", "structural-edit!", "interaction-mechanism-status",
-        "interaction-origin-project", "refresh-interaction-mechanism!",
-        "submit-interaction-mechanism!", "replace-interaction-input!",
-        "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
-        "refresh-completion!", "ensure-lsp-session!", "attach-lsp-diagnostics!",
-        "synchronize-lsp-session!", "start-completion!", "move-completion!", "apply-completion!",
-        "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
-        "view-identifier-words", "location-navigation", "set-location-navigation!",
-        "location-list-target", "move-location-list!", "position-buffer-view!",
-        "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!",
-        "open-buffer-ids", "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!",
-        "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
-        "window-view-id", "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
+        "enabled-command-names", "command-properties", "new-workbench!", "switch-workbench!",
+        "close-workbench!", "workbench-session-state", "prepare-workbench-session-restore!",
+        "show-buffer-in-window!", "project-list", "owned-user-modules", "project-root",
+        "project-files", "path-relative", "path-filename", "path-resolve", "active-key-bindings",
+        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-project-id", "buffer-text",
+        "buffer-byte-size", "buffer-editable-start", "set-buffer-editable-start!",
+        "create-buffer-marker!", "buffer-marker-offset", "remove-buffer-marker!",
+        "buffer-locations", "buffer-diagnostics", "set-buffer-locations!", "set-location-list!",
+        "buffer-read-only?", "path-parent", "directory-path?", "path-as-directory", "view-caret",
+        "view-mark", "view-selection", "set-selection!", "clear-selection!",
+        "push-selection-history!", "pop-selection-history!", "clear-selection-history!",
+        "selection-history-depth", "replace-selection!", "selection-texts", "buffer-substring",
+        "find-buffer-text", "erase-range!", "insert-text!", "soft-kill-range", "set-view-caret!",
+        "reset-preferred-column!", "thing-selection", "motion-selection", "expand-node-selection",
+        "write-clipboard!", "read-clipboard", "display-buffer!", "display-buffer-at!",
+        "display-buffer-position-at!", "display-generated-buffer!", "navigate-jump!", "mark-jump!",
+        "visit-jump!", "link-jump!", "jump-branches", "evaluate-scheme!", "move-caret-to-line!",
+        "scroll-view-lines!", "undo!", "redo!", "move-caret-lines!", "move-caret-line-boundary!",
+        "delete-grapheme!", "newline!", "indent!", "type-text!", "structural-edit!",
+        "interaction-mechanism-status", "interaction-origin-project",
+        "refresh-interaction-mechanism!", "submit-interaction-mechanism!",
+        "replace-interaction-input!", "cancel-interaction-mechanism!", "cancel-pending-input!",
+        "completion-active?", "refresh-completion!", "ensure-lsp-session!",
+        "attach-lsp-diagnostics!", "synchronize-lsp-session!", "start-completion!",
+        "move-completion!", "apply-completion!", "cancel-completion!", "view-position",
+        "view-line-prefix", "view-syntax-token", "view-identifier-words", "location-navigation",
+        "set-location-navigation!", "location-list-target", "move-location-list!",
+        "position-buffer-view!", "project-index-state", "request-project-index!",
+        "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
+        "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
+        "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
+        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
+        "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
         "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
         nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);

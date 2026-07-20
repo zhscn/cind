@@ -1338,12 +1338,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              -> std::expected<WorkbenchId, std::string> { return WorkbenchId{1, 1}; },
          .switch_workbench = [](WorkbenchId) -> std::expected<void, std::string> { return {}; },
          .close_workbench = [](WorkbenchId) -> std::expected<void, std::string> { return {}; },
-         .adopt_project = [](WorkbenchId, ProjectId) -> std::expected<void, std::string> {
-             return {};
-         },
-         .expel_buffer = [](WorkbenchId, BufferId) -> std::expected<void, std::string> {
-             return {};
-         },
          .workbench_session_state = [&] { return workbench_session; },
          .prepare_workbench_session_restore =
              [&](std::string_view state) -> std::expected<GuileWorkbenchRestorePlan, std::string> {
@@ -1355,8 +1349,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return GuileWorkbenchRestorePlan{};
          },
          .show_buffer_in_window = [](WindowId, BufferId, std::uint32_t)
-             -> std::expected<void, std::string> { return {}; },
-         .replace_workbench_mru = [](WorkbenchId, const std::vector<BufferId>&)
              -> std::expected<void, std::string> { return {}; },
          .window_buffer = [=](WindowId) { return buffer; },
          .create_buffer = [&](GuileBufferCreation spec) -> std::expected<BufferId, std::string> {

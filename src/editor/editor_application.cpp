@@ -479,36 +479,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                           ? std::expected<void, std::string>{}
                           : std::unexpected("cannot close the last workbench");
            },
-           .adopt_project = [this](WorkbenchId workbench,
-                                   ProjectId project) -> std::expected<void, std::string> {
-               const std::vector<WorkbenchSnapshot> snapshots = workbench_snapshots();
-               if (std::ranges::none_of(snapshots, [workbench](const WorkbenchSnapshot& snapshot) {
-                       return snapshot.workbench == workbench;
-                   })) {
-                   return std::unexpected("unknown workbench");
-               }
-               try {
-                   (void)adopt_project(workbench, project);
-                   return {};
-               } catch (const std::exception& exception) {
-                   return std::unexpected(exception.what());
-               }
-           },
-           .expel_buffer = [this](WorkbenchId workbench,
-                                  BufferId buffer) -> std::expected<void, std::string> {
-               const std::vector<WorkbenchSnapshot> snapshots = workbench_snapshots();
-               if (std::ranges::none_of(snapshots, [workbench](const WorkbenchSnapshot& snapshot) {
-                       return snapshot.workbench == workbench;
-                   })) {
-                   return std::unexpected("unknown workbench");
-               }
-               try {
-                   (void)expel_buffer(workbench, buffer);
-                   return {};
-               } catch (const std::exception& exception) {
-                   return std::unexpected(exception.what());
-               }
-           },
            .workbench_session_state = [this] { return serialize_workbench_session(); },
            .prepare_workbench_session_restore =
                [this](std::string_view serialized) {
@@ -524,19 +494,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                runtime_.views().set_caret(runtime_.windows().get(window).view_id(),
                                           TextOffset{std::min(caret, end.value)});
                return {};
-           },
-           .replace_workbench_mru =
-               [this](WorkbenchId workbench,
-                      const std::vector<BufferId>& buffers) -> std::expected<void, std::string> {
-               if (workbenches_.try_get(workbench) == nullptr) {
-                   return std::unexpected("unknown workbench");
-               }
-               for (const BufferId buffer : buffers) {
-                   if (runtime_.buffers().try_get(buffer) == nullptr) {
-                       return std::unexpected("workbench MRU contains an unknown buffer");
-                   }
-               }
-               return guile_.replace_workbench_mru(workbench, buffers);
            },
            .window_buffer = [this](WindowId window) { return buffer_id(window); },
            .create_buffer =
