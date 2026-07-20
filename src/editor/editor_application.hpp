@@ -260,8 +260,9 @@ public:
     std::uint32_t save_generation() const;
     std::uint32_t save_generation(WindowId window) const;
 
-    const std::string& message() const { return message_; }
-    void set_message(std::string message) { message_ = std::move(message); }
+    GuileCommandFeedbackState command_feedback() const;
+    std::string message() const { return command_feedback().message; }
+    void set_message(std::string_view message);
     ChromeContent chrome_content(std::string_view preedit = {});
     ModelineContent modeline(WindowId window);
     const PresentationTheme& presentation_theme() const { return presentation_profile_.theme; }
@@ -275,8 +276,8 @@ public:
     const PresentationTypography& presentation_typography() const {
         return presentation_profile_.typography;
     }
-    const std::string& last_key() const { return last_key_; }
-    const std::string& last_command() const { return last_command_; }
+    std::string last_key() const { return command_feedback().last_key; }
+    std::string last_command() const { return command_feedback().last_command; }
 
     bool reveal_caret() const { return reveal_caret_; }
     void show_caret() { reveal_caret_ = true; }
@@ -375,6 +376,8 @@ private:
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
     bool execute_command(CommandId command, const CommandInvocation& invocation);
+    void record_command_input(std::string_view key, bool clear_message);
+    void record_command_feedback(std::string_view command);
     void refresh_interaction_after_edit(RevisionId before);
     void refresh_completion_after_command();
     CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,
@@ -413,9 +416,6 @@ private:
     EditingMechanisms editing_mechanisms_;
     CommandLoop command_loop_;
     int command_page_rows_ = 1;
-    std::string message_;
-    std::string last_key_;
-    std::string last_command_;
     PresentationProfile presentation_profile_;
     EditorPlatformServices platform_services_;
     bool reveal_caret_ = true;

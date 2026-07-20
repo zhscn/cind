@@ -177,6 +177,8 @@ TEST_CASE("failed Guile extension loads roll back every registration") {
     CHECK_FALSE(runtime.languages().find_profile("user.partial-language").has_value());
     CHECK(runtime.resource_policies().file_mode_rules().empty());
     CHECK(runtime.resource_policies().project_providers().empty());
+    REQUIRE(guile.set_message("extension load failed").has_value());
+    REQUIRE(guile.command_feedback_state().has_value());
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.extensions.empty());
     REQUIRE(snapshot.last_error.has_value());
@@ -289,6 +291,29 @@ TEST_CASE("Guile minibuffer history storage is scoped to the editor host") {
     REQUIRE(result.has_value());
     CHECK_FALSE(result->error.has_value());
     CHECK(result->values == std::vector<std::string>{"#(\"first\" \"second\")"});
+}
+
+TEST_CASE("Guile command feedback owns message and command input state") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    REQUIRE(guile.command_input("C-x", true).has_value());
+    REQUIRE(guile.set_message("pending").has_value());
+    REQUIRE(guile.record_command("file.save").has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> pending =
+        guile.command_feedback_state();
+    REQUIRE(pending.has_value());
+    CHECK(pending->message == "pending");
+    CHECK(pending->last_key == "C-x");
+    CHECK(pending->last_command == "file.save");
+
+    REQUIRE(guile.command_input("C-f", true).has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> next =
+        guile.command_feedback_state();
+    REQUIRE(next.has_value());
+    CHECK(next->message.empty());
+    CHECK(next->last_key == "C-f");
+    CHECK(next->last_command == "file.save");
 }
 
 TEST_CASE("Guile language profile declarations replace configuration atomically") {
@@ -1051,7 +1076,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::string help_style_origin;
     std::tuple<ViewId, std::uint32_t, std::uint32_t> moved;
     bool caret_moved = false;
-    std::string message;
     ProjectId indexed_project;
     bool project_index_requested = false;
     BufferId saved_buffer;
@@ -1167,7 +1191,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .location_target = {},
          .move_location_list = {},
          .position_buffer_view = {},
-         .set_message = [&](std::string value) { message = std::move(value); },
          .request_project_index = [&](ProjectId target) -> std::expected<void, std::string> {
              indexed_project = target;
              project_index_requested = true;
@@ -1419,6 +1442,12 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const std::expected<std::size_t, std::string> providers = guile.install_core_providers();
     REQUIRE(providers.has_value());
     CHECK(*providers == 14);
+    const auto feedback_message = [&] {
+        const std::expected<GuileCommandFeedbackState, std::string> state =
+            guile.command_feedback_state();
+        REQUIRE(state.has_value());
+        return state->message;
+    };
     const CommandId save = require_command(runtime, "file.save");
     runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
 
@@ -1450,7 +1479,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(references_navigation->kind == "references");
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptLspNavigationResult{.locations = {}});
-    CHECK(message == "no LSP references found");
+    CHECK(feedback_message() == "no LSP references found");
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -1462,12 +1491,12 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(write != nullptr);
     CHECK(write->path == "/tmp/sample");
     CHECK(write->contents == "abc\n");
-    CHECK(message == "saving /tmp/sample…");
+    CHECK(feedback_message() == "saving /tmp/sample…");
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptFileWriteResult{.path = "/tmp/sample"});
     CHECK(buffer_save_completed);
     CHECK_FALSE(buffer_save_aborted);
-    CHECK(message == "saved /tmp/sample");
+    CHECK(feedback_message() == "saved /tmp/sample");
 
     const CommandResult session_saved = runtime.commands().invoke(
         require_command(runtime, "workbench.save-session.accept"), context,
@@ -1477,10 +1506,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(session_write != nullptr);
     CHECK(session_write->path == "/tmp/cind-session");
     CHECK(session_write->contents == workbench_session);
-    CHECK(message == "saving workbench session…");
+    CHECK(feedback_message() == "saving workbench session…");
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptFileWriteResult{.path = "/tmp/cind-session"});
-    CHECK(message == "saved workbench session /tmp/cind-session");
+    CHECK(feedback_message() == "saved workbench session /tmp/cind-session");
 
     const CommandResult session_restoring = runtime.commands().invoke(
         require_command(runtime, "workbench.restore-session.accept"), context,
@@ -1489,13 +1518,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const auto* session_read = std::get_if<ScriptFileReadRequest>(&*pending_async_request);
     REQUIRE(session_read != nullptr);
     CHECK(session_read->path == "/tmp/cind-session");
-    CHECK(message == "reading workbench session…");
+    CHECK(feedback_message() == "reading workbench session…");
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptFileReadResult{.path = "/tmp/cind-session",
                                                            .exists = true,
                                                            .contents = workbench_session});
     CHECK(restored_workbench_session == std::optional{workbench_session});
-    CHECK(message == "workbench session restored");
+    CHECK(feedback_message() == "workbench session restored");
 
     REQUIRE(guile.restore_workbench_session("resource session").has_value());
     const std::uint64_t superseded_resource_task = next_async_task - 1;
@@ -1506,7 +1535,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(std::ranges::find(cancelled_async_tasks, superseded_resource_task) !=
           cancelled_async_tasks.end());
     CHECK(restored_workbench_session == std::optional<std::string>{"replacement session"});
-    CHECK(message == "workbench session restored");
+    CHECK(feedback_message() == "workbench session restored");
 
     const std::vector<InteractionCandidate> command_candidates =
         complete_provider(runtime, "commands", context);
@@ -1651,22 +1680,22 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         CommandInvocation{.arguments = {true, std::string("bc")}, .prefix = {}});
     REQUIRE(buffer_search_result.has_value());
     CHECK(runtime.views().caret(view) == TextOffset{1});
-    CHECK(message.empty());
+    CHECK(feedback_message().empty());
     CHECK(redraw_requested);
     CHECK(runtime.commands().definition(search_accept).source == "scheme:(cind core)");
 
-    message.clear();
+    REQUIRE(guile.set_message("").has_value());
     const CommandId search_next = require_command(runtime, "search.next");
     REQUIRE(runtime.commands().invoke(search_next, context).has_value());
     CHECK(runtime.views().caret(view) == TextOffset{1});
-    CHECK(message == "search wrapped");
+    CHECK(feedback_message() == "search wrapped");
     CHECK(runtime.commands().definition(search_next).source == "scheme:(cind core)");
 
-    message.clear();
+    REQUIRE(guile.set_message("").has_value());
     const CommandId search_previous = require_command(runtime, "search.previous");
     REQUIRE(runtime.commands().invoke(search_previous, context).has_value());
     CHECK(runtime.views().caret(view) == TextOffset{1});
-    CHECK(message == "search wrapped");
+    CHECK(feedback_message() == "search wrapped");
     CHECK(runtime.commands().definition(search_previous).source == "scheme:(cind core)");
 
     const CommandResult missing = runtime.commands().invoke(request->accept_command, context);
@@ -1851,7 +1880,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         CommandInvocation{.arguments = {std::string("no")}, .prefix = {}});
     REQUIRE(declined.has_value());
     CHECK_FALSE(quit_requested);
-    CHECK(message == "quit cancelled");
+    CHECK(feedback_message() == "quit cancelled");
 
     const CommandResult confirmed = runtime.commands().invoke(
         require_command(runtime, "application.quit.accept"), context,
@@ -1889,7 +1918,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(delete_others.has_value());
     REQUIRE(other_windows_deleted);
     CHECK(retained_window == window);
-    CHECK(message == "other windows deleted");
+    CHECK(feedback_message() == "other windows deleted");
 
     const CommandResult other_window =
         runtime.commands().invoke(require_command(runtime, "window.other"), context);
@@ -1968,7 +1997,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         require_command(runtime, "help.keys.accept"), context,
         CommandInvocation{.arguments = {std::string("C-x C-s  file.save")}, .prefix = {}});
     REQUIRE(help.has_value());
-    CHECK(message == "C-x C-s  file.save");
+    CHECK(feedback_message() == "C-x C-s  file.save");
 
     const CommandId project_search = require_command(runtime, "project.search");
     CHECK_FALSE(runtime.commands().enabled(project_search, context));
@@ -2083,7 +2112,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                           .standard_output = {},
                                                           .standard_error = "rg failed\n"});
     CHECK_FALSE(guile.project_search_running());
-    CHECK(message == "project search failed: rg failed");
+    CHECK(feedback_message() == "project search failed: rg failed");
 
     const ProjectId tools_project = runtime.projects().create({.name = "tools",
                                                                .roots = {"/tmp/tools"},
@@ -2128,17 +2157,17 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");
     CHECK(command_loop.execute(toggle_mark, context).status == CommandLoopStatus::Executed);
     CHECK(runtime.views().mark(view) == std::optional<TextOffset>{TextOffset{0}});
-    CHECK(message == "mark set");
+    CHECK(feedback_message() == "mark set");
     CHECK(command_loop.execute(toggle_mark, context).status == CommandLoopStatus::Executed);
     CHECK_FALSE(runtime.views().mark(view).has_value());
-    CHECK(message == "mark cleared");
+    CHECK(feedback_message() == "mark cleared");
 
     runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
     command_loop.set_pending_prefix({.count = std::nullopt, .register_name = "a", .extra = {}});
     CHECK(command_loop.execute(require_command(runtime, "edit.copy-region"), context).status ==
           CommandLoopStatus::Executed);
     CHECK(clipboard == "a");
-    CHECK(message == "copied");
+    CHECK(feedback_message() == "copied");
     CHECK_FALSE(runtime.views().mark(view).has_value());
 
     CHECK(command_loop.execute(require_command(runtime, "edit.yank"), context).status ==

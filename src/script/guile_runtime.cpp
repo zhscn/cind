@@ -4581,27 +4581,6 @@ SCM page_rows(SCM host_object) {
     return SCM_BOOL_F;
 }
 
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
-SCM set_message(SCM host_object, SCM message_value) {
-    if (!scm_is_string(message_value)) {
-        scm_wrong_type_arg_msg("set-message!", 2, message_value, "string");
-    }
-    try {
-        HostLease& host = require_host(host_object, "set-message!");
-        if (!host.services.set_message) {
-            scm_misc_error("set-message!", "message capability is unavailable", SCM_EOL);
-        }
-        host.services.set_message(scheme_string(message_value));
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-message!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-message!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
 SCM project_index_state(SCM host_object, SCM project_value) {
     HostLease& host = require_host(host_object, "project-index-state");
     const ProjectId project =
@@ -6094,7 +6073,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(move_location_list));
     (void)scm_c_define_gsubr("position-buffer-view!", 4, 0, 0,
                              reinterpret_cast<scm_t_subr>(position_buffer_view));
-    (void)scm_c_define_gsubr("set-message!", 2, 0, 0, reinterpret_cast<scm_t_subr>(set_message));
     (void)scm_c_define_gsubr("project-index-state", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(project_index_state));
     (void)scm_c_define_gsubr("request-project-index!", 2, 0, 0,
@@ -6202,7 +6180,7 @@ void initialize_host_module(void*) {
         "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
         "apply-completion!", "cancel-completion!", "view-position", "location-navigation",
         "set-location-navigation!", "location-list-target", "move-location-list!",
-        "position-buffer-view!", "set-message!", "project-index-state", "request-project-index!",
+        "position-buffer-view!", "project-index-state", "request-project-index!",
         "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
         "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
@@ -6282,7 +6260,7 @@ SCM modeline_facts_value(const ModelineFacts& facts) {
     scm_c_vector_set_x(value, 6, scm_from_uint32(facts.line_count));
     scm_c_vector_set_x(value, 7, scm_from_uint64(facts.revision));
     scm_c_vector_set_x(value, 8, scm_from_utf8_string(facts.style_origin.c_str()));
-    scm_c_vector_set_x(value, 9, scm_from_utf8_string(facts.last_key.c_str()));
+    scm_c_vector_set_x(value, 9, scm_from_utf8_string(""));
     scm_c_vector_set_x(value, 10, scm_from_utf8_string(facts.input_state.c_str()));
     return value;
 }
@@ -6401,7 +6379,7 @@ SCM chrome_facts_value(const ChromeFacts& facts) {
     scm_c_vector_set_x(value, 4, scm_from_size_t(facts.input_caret));
     scm_c_vector_set_x(value, 5, candidates);
     scm_c_vector_set_x(value, 6, facts.selection ? scm_from_size_t(*facts.selection) : SCM_BOOL_F);
-    scm_c_vector_set_x(value, 7, scm_from_utf8_string(facts.message.c_str()));
+    scm_c_vector_set_x(value, 7, scm_from_utf8_string(""));
     scm_c_vector_set_x(value, 8, scm_from_utf8_string(facts.preedit.c_str()));
     scm_c_vector_set_x(value, 9, scm_from_utf8_string(facts.pending_sequence.c_str()));
     scm_c_vector_set_x(value, 10, scm_from_utf8_string(facts.pending_prefix.c_str()));
@@ -6967,6 +6945,10 @@ struct GuileCall {
         RestoreWorkbenchSession,
         MinibufferInputChanged,
         MinibufferHistoryState,
+        CommandFeedbackState,
+        CommandInput,
+        RecordCommand,
+        SetMessage,
         ResolveKeymapPolicy,
         ResolveBaseKeymapPolicy,
         ChromeContent,
@@ -7037,11 +7019,13 @@ struct GuileCall {
     PresentationProfile presentation_profile;
     GuileDisplayPlan display_plan;
     GuileMinibufferHistoryState minibuffer_history;
+    GuileCommandFeedbackState command_feedback;
     Operation operation = Operation::Load;
     bool pending_key_sequence = false;
     bool completion_needs_resolution = false;
     bool force = false;
     bool enabled = false;
+    bool clear_message = false;
 };
 
 void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
@@ -7662,6 +7646,34 @@ SCM call_body(void* data) {
             call.minibuffer_history.draft = scheme_string(scm_c_vector_ref(call.result, 2));
             break;
         }
+        case GuileCall::Operation::CommandFeedbackState:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind command", "command-feedback-state"), call.host);
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 3 ||
+                !scm_is_string(scm_c_vector_ref(call.result, 0)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 1)) ||
+                !scm_is_string(scm_c_vector_ref(call.result, 2))) {
+                scm_misc_error("command-feedback-state",
+                               "command feedback state must be #(message last-key last-command)",
+                               SCM_EOL);
+            }
+            call.command_feedback.message = scheme_string(scm_c_vector_ref(call.result, 0));
+            call.command_feedback.last_key = scheme_string(scm_c_vector_ref(call.result, 1));
+            call.command_feedback.last_command = scheme_string(scm_c_vector_ref(call.result, 2));
+            break;
+        case GuileCall::Operation::CommandInput:
+            call.result = scm_call_3(scm_c_public_ref("cind command", "command-input!"), call.host,
+                                     scm_from_utf8_stringn(call.source.data(), call.source.size()),
+                                     scm_from_bool(call.clear_message));
+            break;
+        case GuileCall::Operation::RecordCommand:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "record-command!"), call.host,
+                                     scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            break;
+        case GuileCall::Operation::SetMessage:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "set-message!"), call.host,
+                                     scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            break;
         case GuileCall::Operation::ResolveKeymapPolicy:
             call.result = scm_call_2(scm_c_public_ref("cind command", "resolve-keymap-policy"),
                                      call.host, command_context_value(*call.context));
@@ -8516,6 +8528,7 @@ public:
     minibuffer_history_state(BufferId buffer, std::string_view history) const {
         require_owner_thread();
         (void)lease_->runtime->buffers().get(buffer);
+        std::optional<std::string> previous_error = state_->last_error;
         GuileCall call;
         call.operation = GuileCall::Operation::MinibufferHistoryState;
         call.host = host_;
@@ -8525,8 +8538,68 @@ public:
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
         }
-        state_->last_error.reset();
+        state_->last_error = std::move(previous_error);
         return std::move(call.minibuffer_history);
+    }
+
+    std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::CommandFeedbackState;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.command_feedback);
+    }
+
+    std::expected<void, std::string> command_input(std::string_view key, bool clear_message) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::CommandInput;
+        call.host = host_;
+        call.source = key;
+        call.clear_message = clear_message;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string> record_command(std::string_view command) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::RecordCommand;
+        call.host = host_;
+        call.source = command;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string> set_message(std::string_view message) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetMessage;
+        call.host = host_;
+        call.source = message;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
     }
 
     std::expected<std::size_t, std::string> install_input_states() {
@@ -9107,6 +9180,23 @@ std::expected<void, std::string> GuileRuntime::minibuffer_input_changed(BufferId
 std::expected<GuileMinibufferHistoryState, std::string>
 GuileRuntime::minibuffer_history_state(BufferId buffer, std::string_view history) const {
     return impl_->minibuffer_history_state(buffer, history);
+}
+
+std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {
+    return impl_->command_feedback_state();
+}
+
+std::expected<void, std::string> GuileRuntime::command_input(std::string_view key,
+                                                             bool clear_message) {
+    return impl_->command_input(key, clear_message);
+}
+
+std::expected<void, std::string> GuileRuntime::record_command(std::string_view command) {
+    return impl_->record_command(command);
+}
+
+std::expected<void, std::string> GuileRuntime::set_message(std::string_view message) {
+    return impl_->set_message(message);
 }
 
 std::expected<StartupPlan, std::string>

@@ -35,7 +35,6 @@ struct ModelineFacts {
     std::uint32_t line_count = 0;
     std::uint64_t revision = 0;
     std::string style_origin;
-    std::string last_key;
     std::string input_state;
 };
 

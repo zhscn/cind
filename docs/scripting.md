@@ -2,8 +2,8 @@
 
 cind uses Guile as its policy and extension language. C++ owns editor mechanisms: generational
 Buffer, View, Window, Project and Mode objects; registries; text mutation; asynchronous I/O; command
-dispatch; and frontend-independent UI state. Scheme modules compose those mechanisms into editor
-behavior.
+dispatch; and validated presentation snapshots. Scheme modules own application policy state and
+compose the native mechanisms into editor behavior.
 
 ```text
 bundled Scheme modules
@@ -198,7 +198,6 @@ The native module exports:
 (move-completion! host delta)
 (apply-completion! host replace?)
 (cancel-completion! host)
-(set-message! host message)
 (project-index-state host project-id)
 (request-project-index! host project-id)
 (normalize-resource-path host path)
@@ -322,6 +321,10 @@ or selecting global roots.
 (resolve-keymap-policy host context)
 (base-keymap-layers host context)
 (active-keymap-layers host context)
+(command-feedback-state host)
+(command-input! host key clear-message?)
+(record-command! host command-name)
+(set-message! host message)
 (configure-modeline-policy! host procedure)
 (resolve-modeline-content host context facts)
 (configure-chrome-policy! host procedure)
@@ -345,6 +348,13 @@ always-active override maps. Minibuffer contexts omit editor roots. Policy resul
 names and diagnostic scopes; the native boundary validates every name and converts it to a
 `KeymapId` before updating the command loop. `base-keymap-layers` and `active-keymap-layers` expose
 name-only projections for scripted translators and self-description.
+
+`(cind command)` retains `#(message last-key last-command)` feedback state per host.
+`command-input!` records normalized input and optionally begins a new message lifetime,
+`record-command!` records the command selected by native dispatch, and `set-message!` replaces the
+echo message. `command-feedback-state` returns a copy for inspection. Modeline and chrome policy
+resolution inject the current last key and message into their fact vectors, so presentation policy
+and inspector snapshots observe the same Guile-owned state.
 
 A modeline policy receives the explicit host, command context, and
 `#(modeline-facts buffer-name resource-or-#f dirty? line column line-count revision style-origin

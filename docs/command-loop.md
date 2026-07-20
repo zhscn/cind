@@ -329,8 +329,10 @@ Document completion is a distinct cursor-anchored overlay: the document owns the
 and the popup contains only candidate rows. Presentation semantics therefore do not require a
 frontend to infer whether a popup is a minibuffer or a completion list from its geometry.
 
-The application owns one transient message independently of either frontend. A normalized key
-starts a new message lifetime; command errors and `set-message!` may replace the cleared value.
+`(cind command)` owns one transient message per application independently of either frontend. A
+normalized key starts a new message lifetime; command errors and `set-message!` may replace the
+cleared value. The same Guile-owned feedback record retains the most recent normalized key and
+dispatched command for modeline policy and inspection.
 When no message or non-picker minibuffer input owns the echo area, `(cind core)` derives an idle hint
 from commands that are enabled and bound in the active keymap policy. GUI and TUI therefore present
 the same binding-aware echo content without frontend-specific shortcut tables or retention state.

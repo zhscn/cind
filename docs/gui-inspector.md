@@ -211,7 +211,8 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset，
   `history_entries`、`history_index` 和 `history_draft` 来自 Guile minibuffer policy，描述命名
-  history 的遍历状态。
+  history 的遍历状态。消息、最近按键和 command loop 的 `last_command` 来自 Guile command
+  feedback state。
   Selection 记录 active mark、primary range 索引、anchored history depth、Scheme metadata，
   以及每个 range 的 anchor、head 和 `char`/`line`/`block`/`node` granularity。
   Input state 同时记录所属 strategy 在文档编辑后使用的 `collapse` 或 `preserve`

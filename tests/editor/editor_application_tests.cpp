@@ -596,6 +596,21 @@ TEST_CASE("user initialization owns modeline content policy") {
     CHECK(content.segments.front().weight == ModelineWeight::Strong);
 }
 
+TEST_CASE("command feedback exposes the last key only in the active modeline") {
+    EditorApplication application = make_application("sample.cc", "text");
+    REQUIRE(application.split_window(WindowSplitAxis::Columns));
+    send_keys(application, "C-f");
+
+    const std::vector<OpenWindowSnapshot> windows = application.open_windows();
+    REQUIRE(windows.size() == 2);
+    for (const OpenWindowSnapshot& window : windows) {
+        const ModelineContent content = application.modeline(window.window);
+        const bool contains_last_key = std::ranges::any_of(
+            content.segments, [](const ModelineSegment& segment) { return segment.text == "C-f"; });
+        CHECK(contains_last_key == window.active);
+    }
+}
+
 TEST_CASE("user initialization owns editor chrome policy") {
     TemporaryFile init(std::format("cind-chrome-policy-{}.scm", static_cast<long>(::getpid())),
                        R"((configure-chrome-policy!

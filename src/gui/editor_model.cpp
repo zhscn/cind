@@ -385,6 +385,7 @@ EditorStateSnapshot EditorModel::inspect() {
     const ViewportState& view = session.view().viewport();
     const CommandLoop& command_loop = application_.command_loop();
     const EditorRuntime& runtime = application_.runtime();
+    const GuileCommandFeedbackState feedback = application_.command_feedback();
     CommandLoopStateSnapshot command_state{
         .keymaps = {},
         .layers = {},
@@ -396,7 +397,7 @@ EditorStateSnapshot EditorModel::inspect() {
         .register_name = command_loop.pending_prefix().register_name,
         .prefix_extra = command_loop.pending_prefix().extra,
         .prefix_text = application_.pending_prefix_text(),
-        .last_command = application_.last_command()};
+        .last_command = feedback.last_command};
     for (const KeymapLayer& layer : command_loop.keymap_layers()) {
         command_state.keymaps.push_back(runtime.keymaps().definition(layer.keymap).name);
         KeymapLayerStateSnapshot layer_state{.name =
@@ -767,9 +768,9 @@ EditorStateSnapshot EditorModel::inspect() {
             .line_signs = signs(application_.window_id()),
             .tab_width = session.style().tab_width,
             .style_origin = application_.style_origin(),
-            .message = application_.message(),
+            .message = feedback.message,
             .preedit = preedit_,
-            .last_key = application_.last_key(),
+            .last_key = feedback.last_key,
             .active_window_slot = active_window.slot,
             .active_window_generation = active_window.generation,
             .input_focus = std::string(application_.input_focus()),

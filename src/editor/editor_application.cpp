@@ -474,7 +474,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .set_message = [this](std::string message) { message_ = std::move(message); },
            .request_project_index = [this](ProjectId project) -> std::expected<void, std::string> {
                try {
                    (void)runtime_.projects().get(project);
@@ -888,7 +887,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     if (spec.init_file) {
         if (std::expected<void, std::string> loaded = guile_.load_extension(*spec.init_file);
             !loaded) {
-            message_ = std::format("init failed: {}", loaded.error());
+            set_message(std::format("init failed: {}", loaded.error()));
         }
     }
     const std::expected<PresentationProfile, std::string> presentation_profile =
@@ -941,7 +940,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                 spec.initial_line > 0 ? std::optional(spec.initial_line - 1) : std::nullopt,
                 spec.initial_line > 0 ? std::optional<std::uint32_t>(0) : std::nullopt);
             !opened) {
-            message_ = std::format("open failed: {}", opened.error());
+            set_message(std::format("open failed: {}", opened.error()));
         }
     }
 }
@@ -1006,9 +1005,8 @@ void EditorApplication::refresh_default_keymap() {
 }
 
 bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
-    message_.clear();
     command_page_rows_ = std::max(1, page_rows);
-    last_key_ = format_key_stroke(key);
+    record_command_input(format_key_stroke(key), true);
     const ViewId focused_view = interaction_.active() ? interaction_.state()->view : view_id();
     runtime_.views().clear_input_feedback(focused_view);
     sync_keymaps();
@@ -1029,7 +1027,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 InputStateHandlerResult handled = definition.handler(context, key);
                 if (!handled) {
                     command_loop_.cancel_pending();
-                    message_ = handled.error();
+                    set_message(handled.error());
                     sync_keymaps();
                     return true;
                 }
@@ -1041,7 +1039,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 if (handled->kind == InputStateHandlerActionKind::Dispatch) {
                     if (!handled->command) {
                         command_loop_.cancel_pending();
-                        message_ = "input state handler returned an invalid command";
+                        set_message("input state handler returned an invalid command");
                         sync_keymaps();
                         return true;
                     }
@@ -1059,7 +1057,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 if (handled->kind == InputStateHandlerActionKind::Pending) {
                     if (!handled->feedback) {
                         command_loop_.cancel_pending();
-                        message_ = "input state handler returned pending without feedback";
+                        set_message("input state handler returned pending without feedback");
                         sync_keymaps();
                         return true;
                     }
@@ -1093,9 +1091,20 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
     return consumed;
 }
 
+GuileCommandFeedbackState EditorApplication::command_feedback() const {
+    const std::expected<GuileCommandFeedbackState, std::string> state =
+        guile_.command_feedback_state();
+    return state.value_or(GuileCommandFeedbackState{});
+}
+
+void EditorApplication::set_message(std::string_view message) {
+    if (const std::expected<void, std::string> updated = guile_.set_message(message); !updated) {
+        return;
+    }
+}
+
 ChromeContent EditorApplication::chrome_content(std::string_view preedit) {
     ChromeFacts facts;
-    facts.message = message_;
     facts.preedit = preedit;
     facts.pending_sequence = pending_key_sequence_text();
     facts.pending_prefix = pending_prefix_text();
@@ -1153,7 +1162,6 @@ ModelineContent EditorApplication::modeline(WindowId window_id) {
         .line_count = text.line_count(),
         .revision = snapshot.revision(),
         .style_origin = style_origin(window_id),
-        .last_key = window_id == this->window_id() ? last_key_ : std::string(),
         .input_state = state.indicator,
     };
     std::expected<ModelineContent, std::string> content = guile_.modeline_content(context, facts);
@@ -1165,7 +1173,7 @@ bool EditorApplication::execute_command(std::string_view name,
     const std::optional<CommandId> command = runtime_.commands().find(name);
     if (!command) {
         command_loop_.cancel_pending();
-        message_ = std::format("unknown command '{}'", name);
+        set_message(std::format("unknown command '{}'", name));
         sync_keymaps();
         return false;
     }
@@ -1301,7 +1309,7 @@ bool EditorApplication::request_close(bool force) {
     const std::expected<CommandId, std::string> command =
         guile_.close_command(command_context(), force);
     if (!command) {
-        message_ = std::format("close policy failed: {}", command.error());
+        set_message(std::format("close policy failed: {}", command.error()));
         return false;
     }
     return execute_command(*command, {});
@@ -1317,15 +1325,15 @@ void EditorApplication::insert_text(std::string_view text) {
     }
     if (!state.text_command) {
         command_loop_.cancel_pending();
-        message_ = std::format("input state '{}' has no text command", state.name);
-        last_key_ = "text";
+        set_message(std::format("input state '{}' has no text command", state.name));
+        record_command_input("text", false);
         return;
     }
     const std::optional<CommandId> command = runtime_.commands().find(*state.text_command);
     if (!command) {
         command_loop_.cancel_pending();
-        message_ = std::format("unknown input text command '{}'", *state.text_command);
-        last_key_ = "text";
+        set_message(std::format("unknown input text command '{}'", *state.text_command));
+        record_command_input("text", false);
         return;
     }
     const RevisionId interaction_revision = interaction_.input_revision();
@@ -1333,7 +1341,7 @@ void EditorApplication::insert_text(std::string_view text) {
     CommandInvocation invocation{.arguments = {std::string(text)},
                                  .prefix = command_loop_.pending_prefix()};
     (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
-    last_key_ = "text";
+    record_command_input("text", false);
     refresh_interaction_after_edit(interaction_revision);
     refresh_completion_after_command();
     sync_keymaps();
@@ -1400,7 +1408,7 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
         policy_error = validate_plan(*resolved);
     }
     if (policy_error) {
-        message_ = std::format("display policy failed: {}; using built-in policy", *policy_error);
+        set_message(std::format("display policy failed: {}; using built-in policy", *policy_error));
         resolved = built_in_display_plan(facts);
         if (const std::optional<std::string> fallback_error = validate_plan(*resolved)) {
             return std::unexpected(
@@ -3117,7 +3125,7 @@ bool EditorApplication::restore_jump(Workbench& workbench, WindowId window, Jump
             guile_.open_resource(window, target->position.resource, target->position.fallback.line,
                                  target->position.fallback.byte_column, "replay");
         if (!opened) {
-            message_ = std::format("jump reopen failed: {}", opened.error());
+            set_message(std::format("jump reopen failed: {}", opened.error()));
             return false;
         }
         return true;
@@ -3250,7 +3258,7 @@ void EditorApplication::sync_keymaps() {
     CommandContext context = command_context();
     const std::expected<GuileKeymapPolicy, std::string> policy = guile_.keymap_policy(context);
     if (!policy) {
-        message_ = std::format("keymap policy failed: {}", policy.error());
+        set_message(std::format("keymap policy failed: {}", policy.error()));
         return;
     }
     std::vector<KeymapLayer> layers;
@@ -3275,21 +3283,35 @@ void EditorApplication::sync_keymaps() {
     }
 }
 
+void EditorApplication::record_command_input(std::string_view key, bool clear_message) {
+    if (const std::expected<void, std::string> recorded = guile_.command_input(key, clear_message);
+        !recorded) {
+        return;
+    }
+}
+
+void EditorApplication::record_command_feedback(std::string_view command) {
+    if (const std::expected<void, std::string> recorded = guile_.record_command(command);
+        !recorded) {
+        return;
+    }
+}
+
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {
     if (result.command) {
-        last_command_ = runtime_.commands().definition(*result.command).name;
+        record_command_feedback(runtime_.commands().definition(*result.command).name);
     }
     if (result.interaction) {
         CommandContext context = command_context();
         std::expected<void, std::string> started =
             interaction_.start(std::move(*result.interaction), context);
         if (!started) {
-            message_ = started.error();
+            set_message(started.error());
         } else {
             const InteractionState& state = *interaction_.state();
             interaction_session_ =
                 std::make_unique<EditSession>(runtime_, state.buffer, state.view, CppIndentStyle{});
-            message_.clear();
+            set_message({});
         }
     } else if (result.status == CommandLoopStatus::Error ||
                result.status == CommandLoopStatus::Disabled ||
@@ -3297,7 +3319,7 @@ bool EditorApplication::handle_loop_result(CommandLoopResult result) {
                (result.status == CommandLoopStatus::NotHandled && result.consumed)) {
         // A prefix does not echo as a message: the pending sequence has its
         // own display channels (which-key title, echo right edge).
-        message_ = result.message;
+        set_message(std::move(result.message));
     }
     return result.consumed;
 }
@@ -3316,7 +3338,7 @@ void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
         const std::expected<void, std::string> refreshed =
             guile_.minibuffer_input_changed(interaction.buffer, interaction_.input_revision());
         if (!refreshed) {
-            message_ = refreshed.error();
+            set_message(refreshed.error());
         }
     }
 }
@@ -3335,7 +3357,7 @@ void EditorApplication::refresh_completion_after_command() {
                            request.target.view);
     if (runtime_.buffers().get(request.target.buffer).snapshot().revision() != request.revision) {
         if (std::expected<void, std::string> updated = completion_->update(context); !updated) {
-            message_ = updated.error();
+            set_message(updated.error());
         }
     } else {
         (void)completion_->invalidate_if_stale();
@@ -3407,7 +3429,7 @@ void EditorApplication::attach_lsp_diagnostics(LspSessionId session_id) {
             publish_lsp_diagnostics(session_id, std::move(published));
         },
         [this](std::string error) {
-            message_ = std::format("LSP diagnostics failed: {}", std::move(error));
+            set_message(std::format("LSP diagnostics failed: {}", std::move(error)));
         });
 }
 
@@ -3415,7 +3437,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
                                                 LspPublishedDiagnostics published) {
     const std::expected<std::string, std::string> resource = file_uri_to_path(published.uri);
     if (!resource) {
-        message_ = std::format("LSP diagnostics failed: {}", resource.error());
+        set_message(std::format("LSP diagnostics failed: {}", resource.error()));
         return;
     }
     const std::optional<BufferId> buffer_id = runtime_.buffers().find_by_resource(*resource);
@@ -3436,7 +3458,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
         const std::optional<TextRange> range =
             text_range_from_lsp(snapshot.content(), source.range);
         if (!range) {
-            message_ = "LSP diagnostics failed: server returned an invalid range";
+            set_message("LSP diagnostics failed: server returned an invalid range");
             return;
         }
         diagnostics.push_back({.range = *range,
@@ -3449,7 +3471,7 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
         runtime_.buffers().set_diagnostics(*buffer_id, std::format("lsp:{}", session_id.value),
                                            snapshot.revision(), std::move(diagnostics));
     } catch (const std::exception& exception) {
-        message_ = std::format("LSP diagnostics failed: {}", exception.what());
+        set_message(std::format("LSP diagnostics failed: {}", exception.what()));
     }
 }
 
@@ -3471,7 +3493,7 @@ void EditorApplication::synchronize_lsp_buffer(BufferId buffer_id) {
                                            .revision = snapshot.revision(),
                                            .text = snapshot.content()});
         !synchronized) {
-        message_ = std::format("LSP synchronization failed: {}", synchronized.error());
+        set_message(std::format("LSP synchronization failed: {}", synchronized.error()));
     }
 }
 
@@ -3786,7 +3808,7 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
 }
 
 void EditorApplication::after_edit() {
-    message_.clear();
+    set_message({});
     reveal_caret_ = true;
     synchronize_lsp_buffer(buffer_id());
 }

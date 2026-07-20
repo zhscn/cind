@@ -31,7 +31,6 @@ struct ChromeFacts {
     std::size_t input_caret = 0;
     std::vector<ChromeItem> candidates;
     std::optional<std::size_t> selection;
-    std::string message;
     std::string preedit;
     std::string pending_sequence;
     std::string pending_prefix;

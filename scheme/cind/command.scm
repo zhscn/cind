@@ -7,6 +7,10 @@
             command-completed/selection
             command-prefix
             command-error
+            command-feedback-state
+            command-input!
+            record-command!
+            set-message!
             command-dispatch
             command-dispatch-to
             interaction
@@ -69,6 +73,40 @@
             selection-range-granularity
             selection-with-metadata
             selection-with-ranges))
+
+(define command-feedback-states (make-weak-key-hash-table))
+
+(define (command-feedback-entry host)
+  (or (hashq-ref command-feedback-states host)
+      (let ((state (vector "" "" "")))
+        (hashq-set! command-feedback-states host state)
+        state)))
+
+(define (command-feedback-state host)
+  (let ((state (command-feedback-entry host)))
+    (vector (vector-ref state 0)
+            (vector-ref state 1)
+            (vector-ref state 2))))
+
+(define (command-input! host key clear-message?)
+  (unless (string? key)
+    (error "command input key must be a string" key))
+  (unless (boolean? clear-message?)
+    (error "command input clear-message flag must be a boolean" clear-message?))
+  (let ((state (command-feedback-entry host)))
+    (when clear-message?
+      (vector-set! state 0 ""))
+    (vector-set! state 1 key)))
+
+(define (record-command! host command)
+  (unless (string? command)
+    (error "command name must be a string" command))
+  (vector-set! (command-feedback-entry host) 2 command))
+
+(define (set-message! host message)
+  (unless (string? message)
+    (error "command message must be a string" message))
+  (vector-set! (command-feedback-entry host) 0 message))
 
 (define (completed-result tag values)
   (cond ((null? values) (vector tag))
@@ -370,7 +408,12 @@
   (let ((procedure (hashq-ref modeline-policies host)))
     (unless procedure
       (error "modeline policy is not configured"))
-    (procedure host context facts)))
+    (let ((effective-facts (list->vector (vector->list facts))))
+      (vector-set! effective-facts 9
+                   (if (equal? (context-window context) (active-window-id host))
+                       (vector-ref (command-feedback-entry host) 1)
+                       ""))
+      (procedure host context effective-facts))))
 
 (define chrome-policies (make-weak-key-hash-table))
 
@@ -384,7 +427,10 @@
   (let ((procedure (hashq-ref chrome-policies host)))
     (unless procedure
       (error "chrome policy is not configured"))
-    (procedure host context facts)))
+    (let ((effective-facts (list->vector (vector->list facts))))
+      (vector-set! effective-facts 7
+                   (vector-ref (command-feedback-entry host) 0))
+      (procedure host context effective-facts))))
 
 (define theme-policies (make-weak-key-hash-table))
 

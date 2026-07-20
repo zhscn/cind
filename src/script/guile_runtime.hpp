@@ -68,6 +68,12 @@ struct GuileMinibufferHistoryState {
     std::string draft;
 };
 
+struct GuileCommandFeedbackState {
+    std::string message;
+    std::string last_key;
+    std::string last_command;
+};
+
 struct GuileInteractionSubmission {
     CommandDispatch dispatch;
     std::string history;
@@ -252,7 +258,6 @@ struct GuileHostServices {
     std::function<bool(int)> move_location_list;
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
-    std::function<void(std::string)> set_message;
     std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
     std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
     std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
@@ -394,6 +399,10 @@ public:
     std::expected<void, std::string> minibuffer_input_changed(BufferId buffer, RevisionId revision);
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const;
+    std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
+    std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
+    std::expected<void, std::string> record_command(std::string_view command);
+    std::expected<void, std::string> set_message(std::string_view message);
     bool project_search_running() const;
     void project_index_updated(ProjectId project);
     std::expected<GuileKeymapPolicy, std::string>
