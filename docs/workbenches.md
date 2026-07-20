@@ -6,14 +6,19 @@ Window, and named Window slots. A Project remains a tooling and configuration bo
 not own the workbench or its layout.
 
 Guile owns workbench names, name uniqueness, project scope, Buffer recency, Window roles, pinning,
-display-policy provenance and role-derived Window slots. Native workbench objects own the
-WindowLayout, active Window and navigation data.
+display-policy provenance, role-derived Window slots, the active workbench and each workbench's
+active Window. Native workbench objects own the WindowLayout and navigation data.
 
 The editor always owns at least one workbench and has exactly one active workbench. Switching
 workbenches changes the presented layout without destroying inactive Windows or Views. Their
 carets, selections, input states and viewports therefore remain available when the workbench is
 selected again. Buffers remain global and may be displayed by Views in several workbenches; edits
 to a shared Buffer are immediately visible through each View.
+
+Guile selection state references native generational IDs. The application validates those IDs
+against the workbench registry and WindowLayout whenever it crosses the policy boundary. Window
+deletion transfers focus before removing a layout leaf, and workbench closure selects a replacement
+before releasing the active workbench state.
 
 ## Membership and project scope
 

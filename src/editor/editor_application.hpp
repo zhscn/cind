@@ -147,15 +147,15 @@ public:
     BufferId buffer_id(WindowId window) const;
     ViewId view_id() const;
     ViewId view_id(WindowId window) const;
-    WindowId window_id() const { return workbenches_.active().active_window(); }
-    WorkbenchId workbench_id() const { return workbenches_.active_id(); }
+    WindowId window_id() const;
+    WorkbenchId workbench_id() const;
     EditSession& session();
     const EditSession& session() const;
     EditSession& session(WindowId window);
     const EditSession& session(WindowId window) const;
     const TokenBuffer& syntax_tokens() const;
     const TokenBuffer& syntax_tokens(WindowId window) const;
-    const WindowLayout& window_layout() const { return workbenches_.active().layout(); }
+    const WindowLayout& window_layout() const;
     CommandLoop& command_loop() { return command_loop_; }
     const CommandLoop& command_loop() const { return command_loop_; }
     InteractionMechanisms& interaction() { return interaction_; }
@@ -331,11 +331,12 @@ private:
     ViewId create_view(WindowId window, BufferId buffer, TextOffset caret = {});
     bool show_buffer(WindowId window, BufferId buffer);
     bool focus_window(WorkbenchId workbench, WindowId window);
+    WindowId active_window(WorkbenchId workbench) const;
     void discard_workbench_state(WorkbenchId workbench);
     GuileWorkbenchWindowState window_policy(WindowId window) const;
     void register_workbench_window(WorkbenchId workbench, WindowId window);
-    Workbench& active_workbench() { return workbenches_.active(); }
-    const Workbench& active_workbench() const { return workbenches_.active(); }
+    Workbench& active_workbench() { return workbenches_.get(workbench_id()); }
+    const Workbench& active_workbench() const { return workbenches_.get(workbench_id()); }
     std::expected<WindowId, std::string> display_generated_buffer(WindowId origin, std::string name,
                                                                   std::string text, ModeId mode,
                                                                   std::string_view style_origin,

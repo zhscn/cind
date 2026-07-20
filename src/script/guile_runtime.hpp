@@ -128,14 +128,6 @@ struct GuileBufferCreation {
     std::string style_origin;
 };
 
-struct GuileWorkbenchSummary {
-    WorkbenchId workbench;
-    std::string name;
-    std::vector<ProjectId> scope;
-    std::vector<BufferId> mru;
-    bool active = false;
-};
-
 struct GuileWorkbenchRestoreTarget {
     WindowId window;
     std::uint32_t caret = 0;
@@ -287,8 +279,6 @@ struct GuileHostServices {
         position_buffer_view;
     std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
     std::function<std::vector<BufferId>()> open_buffers;
-    std::function<std::vector<GuileWorkbenchSummary>()> workbenches;
-    std::function<WorkbenchId()> active_workbench;
     std::function<std::vector<BufferId>(WorkbenchId, bool)> workbench_buffers;
     std::function<std::expected<WorkbenchId, std::string>(std::string, std::optional<ProjectId>)>
         create_workbench;
@@ -310,7 +300,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> delete_window;
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
     std::function<std::vector<WindowId>()> open_windows;
-    std::function<WindowId()> active_window;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<void(ViewId, ViewSelection)> set_selection;
@@ -440,6 +429,10 @@ public:
                                                        WindowId root_window,
                                                        std::optional<BufferId> initial_buffer,
                                                        const std::vector<ProjectId>& scope);
+    std::expected<WorkbenchId, std::string> active_workbench() const;
+    std::expected<void, std::string> workbench_activate(WorkbenchId workbench);
+    std::expected<WindowId, std::string> workbench_active_window(WorkbenchId workbench) const;
+    std::expected<void, std::string> workbench_focus_window(WorkbenchId workbench, WindowId window);
     std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench, BufferId buffer);
     std::expected<bool, std::string> workbench_expel_buffer(WorkbenchId workbench, BufferId buffer);
     std::expected<void, std::string> workbench_released(WorkbenchId workbench);

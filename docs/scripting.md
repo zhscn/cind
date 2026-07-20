@@ -37,10 +37,12 @@ placeholder state, active Buffer save transactions, and post-edit observers;
 strategies; `(cind structural)` defines structural selection policy; `(cind introspect)` derives
 editor self-description from registry and module state; and `(cind core)` composes the built-in
 editor policy.
-These modules are loaded before application keymaps are configured. Calls from C++ enter Guile
-through a condition boundary; a Scheme condition becomes a C++ error value and is retained in the
-scripting inspection snapshot. C++ exceptions raised by a host primitive are translated into
-Scheme conditions.
+Bundled module definitions are loaded once into the Guile VM. Per-application mutable state is
+keyed by the protected host capability, so several live editor applications share definitions
+without sharing policy state. The modules are available before application keymaps are configured.
+Calls from C++ enter Guile through a condition boundary; a Scheme condition becomes a C++ error
+value and is retained in the scripting inspection snapshot. C++ exceptions raised by a host
+primitive are translated into Scheme conditions.
 
 `editor.scripting` exposes the engine and Guile version, loaded policy modules, scripted command,
 interaction-provider, input-state, input-strategy, mode, file-mode-rule and project-provider counts,
@@ -919,12 +921,12 @@ mechanism.
 Workbench capabilities expose durable editing surfaces without transferring Buffer or Project
 ownership. `workbench-list` returns `#(id name active?)` summaries; scope and MRU queries return
 generational Project and Buffer IDs. The scoped Buffer queries optionally widen to the global
-Buffer pool. `(cind workbench)` owns names, uniqueness, scope, recency and per-Window display
-metadata. Window roles are unique within a workbench and directly derive its named slots. Native
-lifecycle mechanisms validate entity identity and layout membership, while bundled commands own
-picker interaction and feedback. Native code validates and applies display plans. A failed or
-invalid extension policy is retried through the bundled default Scheme policy, so placement
-decisions have a single implementation.
+Buffer pool. `(cind workbench)` owns names, uniqueness, scope, recency, active workbench and
+per-workbench active Window selection, plus per-Window display metadata. Window roles are unique
+within a workbench and directly derive its named slots. Native lifecycle mechanisms validate entity
+identity and layout membership, while bundled commands own picker interaction and feedback. Native
+code validates and applies display plans. A failed or invalid extension policy is retried through
+the bundled default Scheme policy, so placement decisions have a single implementation.
 
 `workbench-session-state` returns the versioned serialization of every workbench.
 `prepare-workbench-session-restore!` validates and atomically installs the serialized topology,

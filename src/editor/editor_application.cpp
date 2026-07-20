@@ -462,19 +462,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    }
                    return result;
                },
-           .workbenches =
-               [this] {
-                   std::vector<GuileWorkbenchSummary> result;
-                   for (WorkbenchSnapshot snapshot : workbench_snapshots()) {
-                       result.push_back({.workbench = snapshot.workbench,
-                                         .name = std::move(snapshot.name),
-                                         .scope = std::move(snapshot.scope),
-                                         .mru = std::move(snapshot.mru),
-                                         .active = snapshot.active});
-                   }
-                   return result;
-               },
-           .active_workbench = [this] { return workbench_id(); },
            .workbench_buffers = [this](WorkbenchId workbench,
                                        bool widen) { return workbench_buffers(workbench, widen); },
            .create_workbench = [this](std::string name, std::optional<ProjectId> project)
@@ -589,7 +576,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::vector<WindowId>(window_layout().leaves().begin(),
                                                 window_layout().leaves().end());
                },
-           .active_window = [this] { return window_id(); },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -908,6 +894,37 @@ EditorApplication::~EditorApplication() {
 
 BufferId EditorApplication::buffer_id() const {
     return runtime_.views().get(view_id()).buffer_id();
+}
+
+WorkbenchId EditorApplication::workbench_id() const {
+    const std::expected<WorkbenchId, std::string> selected = guile_.active_workbench();
+    if (!selected) {
+        throw std::runtime_error(selected.error());
+    }
+    if (workbenches_.try_get(*selected) == nullptr) {
+        throw std::runtime_error("active Guile workbench is not a native workbench");
+    }
+    return *selected;
+}
+
+WindowId EditorApplication::window_id() const {
+    return active_window(workbench_id());
+}
+
+WindowId EditorApplication::active_window(WorkbenchId workbench) const {
+    const std::expected<WindowId, std::string> selected = guile_.workbench_active_window(workbench);
+    if (!selected) {
+        throw std::runtime_error(selected.error());
+    }
+    const Workbench& native = workbenches_.get(workbench);
+    if (!native.layout().contains(*selected) || runtime_.windows().try_get(*selected) == nullptr) {
+        throw std::runtime_error("active Guile window is not a native workbench window");
+    }
+    return *selected;
+}
+
+const WindowLayout& EditorApplication::window_layout() const {
+    return workbenches_.get(workbench_id()).layout();
 }
 
 BufferId EditorApplication::buffer_id(WindowId window) const {
@@ -1286,16 +1303,17 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
         return std::unexpected("unknown display buffer");
     }
     const WorkbenchId workbench_id =
-        workbenches_.find_by_window(origin).value_or(workbenches_.active_id());
+        workbenches_.find_by_window(origin).value_or(this->workbench_id());
     Workbench& workbench = workbenches_.get(workbench_id);
+    const WindowId selected_window = active_window(workbench_id);
     if (!workbench.layout().contains(origin) || runtime_.windows().try_get(origin) == nullptr) {
-        origin = workbench.active_window();
+        origin = selected_window;
     }
     const bool replay = intent == "replay";
     const std::optional<JumpNodeId> from = replay ? std::nullopt : capture_jump(workbench, origin);
     GuileDisplayFacts facts{.intent = std::string(intent),
                             .origin = origin,
-                            .active = workbench.active_window(),
+                            .active = selected_window,
                             .windows = {},
                             .slots = {}};
     for (const WindowId window : workbench.layout().leaves()) {
@@ -1500,7 +1518,7 @@ bool EditorApplication::switch_buffer(BufferId buffer) {
 }
 
 bool EditorApplication::focus_window(WindowId window) {
-    return focus_window(workbenches_.active_id(), window);
+    return focus_window(workbench_id(), window);
 }
 
 bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) {
@@ -1509,13 +1527,14 @@ bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) 
         runtime_.windows().try_get(window) == nullptr) {
         return false;
     }
-    const bool active = workbench_id == workbenches_.active_id();
-    Workbench& workbench = *target;
-    if (active && window != workbench.active_window()) {
+    const bool active = workbench_id == this->workbench_id();
+    if (active && window != active_window(workbench_id)) {
         command_loop_.cancel_pending();
     }
-    workbench.set_active_window(window);
     if (!guile_.workbench_visit_buffer(workbench_id, buffer_id(window))) {
+        return false;
+    }
+    if (!guile_.workbench_focus_window(workbench_id, window)) {
         return false;
     }
     if (active) {
@@ -1569,11 +1588,14 @@ bool EditorApplication::delete_window() {
 bool EditorApplication::delete_window(WindowId target) {
     Workbench& workbench = active_workbench();
     const std::optional<WindowId> replacement = workbench.layout().next(target);
-    if (!replacement || *replacement == target || !workbench.layout().erase(target)) {
+    if (!replacement || *replacement == target) {
         return false;
     }
-    if (workbench.active_window() == target) {
-        workbench.set_active_window(*replacement);
+    if (active_window(workbench.id()) == target && !focus_window(workbench.id(), *replacement)) {
+        return false;
+    }
+    if (!workbench.layout().erase(target)) {
+        return false;
     }
     destroy_window(target);
     show_caret();
@@ -1657,13 +1679,15 @@ bool EditorApplication::delete_other_windows(WindowId retained) {
     }
     const std::vector<WindowId> windows(workbench.layout().leaves().begin(),
                                         workbench.layout().leaves().end());
+    if (!focus_window(workbench.id(), retained)) {
+        return false;
+    }
     (void)workbench.layout().retain(retained);
     for (const WindowId window : windows) {
         if (window != retained) {
             destroy_window(window);
         }
     }
-    workbench.set_active_window(retained);
     show_caret();
     sync_keymaps();
     return true;
@@ -1728,17 +1752,19 @@ WorkbenchId EditorApplication::create_workbench(std::string name,
 }
 
 bool EditorApplication::switch_workbench(WorkbenchId workbench) {
-    if (workbenches_.try_get(workbench) == nullptr) {
+    const Workbench* selected = workbenches_.try_get(workbench);
+    if (selected == nullptr) {
         return false;
     }
-    if (workbench != workbenches_.active_id()) {
+    const WorkbenchId previous = workbench_id();
+    if (workbench != previous) {
         command_loop_.cancel_pending();
     }
-    if (!workbenches_.activate(workbench)) {
+    const WindowId selected_window = active_window(workbench);
+    if (!guile_.workbench_visit_buffer(workbench, buffer_id(selected_window))) {
         return false;
     }
-    Workbench& selected = workbenches_.active();
-    if (!guile_.workbench_visit_buffer(workbench, buffer_id(selected.active_window()))) {
+    if (!guile_.workbench_activate(workbench)) {
         return false;
     }
     show_caret();
@@ -1786,10 +1812,11 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
     }
     const std::vector<WindowId> windows(closing->layout().leaves().begin(),
                                         closing->layout().leaves().end());
-    const bool was_active = workbench == workbenches_.active_id();
+    const bool was_active = workbench == workbench_id();
+    std::optional<WorkbenchId> replacement;
     if (was_active) {
-        const std::optional<WorkbenchId> replacement = workbenches_.next(workbench);
-        if (!replacement || *replacement == workbench || !workbenches_.activate(*replacement)) {
+        replacement = workbenches_.next(workbench);
+        if (!replacement || *replacement == workbench || !guile_.workbench_activate(*replacement)) {
             return false;
         }
     }
@@ -1805,9 +1832,8 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
         destroy_window(window);
     }
     if (was_active) {
-        Workbench& selected = workbenches_.active();
-        if (!guile_.workbench_visit_buffer(workbenches_.active_id(),
-                                           buffer_id(selected.active_window()))) {
+        const WindowId selected_window = active_window(*replacement);
+        if (!guile_.workbench_visit_buffer(*replacement, buffer_id(selected_window))) {
             return false;
         }
         command_loop_.cancel_pending();
@@ -1871,6 +1897,7 @@ std::vector<BufferId> EditorApplication::workbench_buffers(WorkbenchId workbench
 std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
     std::vector<WorkbenchSnapshot> result;
     result.reserve(workbenches_.size());
+    const WorkbenchId selected_workbench = workbench_id();
     const auto snapshot_layout = [](this const auto& self,
                                     const WindowLayoutNode& node) -> WorkbenchLayoutSnapshot {
         if (node.leaf()) {
@@ -1916,10 +1943,10 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
                           .mru = *mru,
                           .windows = std::vector<WindowId>(workbench.layout().leaves().begin(),
                                                            workbench.layout().leaves().end()),
-                          .active_window = workbench.active_window(),
+                          .active_window = active_window(id),
                           .slots = std::move(slots),
                           .layout = snapshot_layout(*workbench.layout().root()),
-                          .active = id == workbenches_.active_id()});
+                          .active = id == selected_workbench});
     }
     return result;
 }
@@ -1953,6 +1980,7 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                                 .active_workbench = 0,
                                 .workbenches = {}};
     const std::vector<WorkbenchId> ids = workbenches_.all();
+    const WorkbenchId selected_workbench = workbench_id();
     state.workbenches.reserve(ids.size());
     const auto capture_walk = [](const JumpWalk& walk) {
         constexpr std::size_t maximum_entries = 128;
@@ -2033,7 +2061,7 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
             }
         }
         const auto active =
-            std::ranges::find(workbench.layout().leaves(), workbench.active_window());
+            std::ranges::find(workbench.layout().leaves(), active_window(ids[index]));
         entry.active_leaf =
             static_cast<std::size_t>(std::distance(workbench.layout().leaves().begin(), active));
         std::set<JumpNodeId> durable_nodes;
@@ -2082,7 +2110,7 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
             window.jump_cursor = filtered.cursor();
         };
         filter_walk(entry.layout);
-        if (ids[index] == workbenches_.active_id()) {
+        if (ids[index] == selected_workbench) {
             state.active_workbench = index;
         }
         state.workbenches.push_back(std::move(entry));
@@ -2199,9 +2227,9 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
     std::vector<GuileWorkbenchRestoreMru> mru;
     const BufferId fallback = buffer_id();
     const std::vector<WorkbenchId> previous = workbenches_.all();
-    const WorkbenchId previous_active = workbenches_.active_id();
     std::vector<WorkbenchId> created;
     created.reserve(parsed->workbenches.size());
+    WorkbenchId selected;
     std::vector<ProjectId> created_projects;
 
     const auto project_for_root = [&](const std::string& root) -> ProjectId {
@@ -2336,7 +2364,11 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
             apply_node(source.layout, root_window);
             const std::vector<WindowId> leaves(workbench.layout().leaves().begin(),
                                                workbench.layout().leaves().end());
-            workbench.set_active_window(leaves[source.active_leaf]);
+            if (const std::expected<void, std::string> focused =
+                    guile_.workbench_focus_window(id, leaves[source.active_leaf]);
+                !focused) {
+                throw std::runtime_error(focused.error());
+            }
             for (const std::string& resource : source.mru_resources) {
                 if (!runtime_.buffers().find_by_resource(resource)) {
                     (void)resources[resource];
@@ -2344,8 +2376,12 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
             }
             mru.push_back({.workbench = id, .resources = source.mru_resources, .windows = leaves});
         }
+        selected = created[parsed->active_workbench];
+        if (const std::expected<void, std::string> activated = guile_.workbench_activate(selected);
+            !activated) {
+            throw std::runtime_error(activated.error());
+        }
     } catch (const std::exception& exception) {
-        (void)workbenches_.activate(previous_active);
         for (const WorkbenchId id : created) {
             if (Workbench* workbench = workbenches_.try_get(id)) {
                 const std::vector<WindowId> windows(workbench->layout().leaves().begin(),
@@ -2364,8 +2400,6 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
         return std::unexpected(exception.what());
     }
 
-    const WorkbenchId selected = created[parsed->active_workbench];
-    (void)workbenches_.activate(selected);
     for (const WorkbenchId id : previous) {
         Workbench& old = workbenches_.get(id);
         const std::vector<WindowId> windows(old.layout().leaves().begin(),
@@ -2536,7 +2570,7 @@ OpenWindowSnapshot EditorApplication::window_snapshot(WindowId window) const {
             .role = policy.window.role,
             .pinned = policy.window.pinned,
             .created_by_policy = policy.window.created_by_policy,
-            .active = window == owner.active_window()};
+            .active = window == active_window(owner.id())};
 }
 
 LocationNavigationSnapshot EditorApplication::location_navigation() const {

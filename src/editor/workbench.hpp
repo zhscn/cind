@@ -18,16 +18,14 @@ struct WorkbenchSpec {
 };
 
 // Native workbench data binds a window layout over the application's global
-// entity pools. Guile owns descriptive, membership and display metadata; this
-// object owns layout, focus and navigation data.
+// entity pools. Guile owns selection, descriptive, membership and display
+// metadata; this object owns layout and navigation data.
 class Workbench {
 public:
     WorkbenchId id() const { return id_; }
 
     const WindowLayout& layout() const { return layout_; }
     WindowLayout& layout() { return layout_; }
-    WindowId active_window() const { return active_window_; }
-    void set_active_window(WindowId window);
 
     JumpGraph& jumps() { return jumps_; }
     const JumpGraph& jumps() const { return jumps_; }
@@ -43,16 +41,14 @@ private:
 
     WorkbenchId id_;
     WindowLayout layout_;
-    WindowId active_window_;
     JumpGraph jumps_;
     LocationListStack location_lists_;
     TransactionGroupRegistry transaction_groups_;
 };
 
-// Generational application-local ownership for workbenches. Exactly one
-// workbench is active whenever the registry is non-empty. Windows belong to
-// at most one workbench layout; non-active layouts and their Window/View
-// objects stay live.
+// Generational application-local ownership for workbenches. Windows belong to
+// at most one workbench layout; all layouts and their Window/View objects stay
+// live independently of Guile's active selection.
 class WorkbenchRegistry {
 public:
     WorkbenchId create(WorkbenchSpec spec);
@@ -65,10 +61,6 @@ public:
     std::vector<WorkbenchId> all() const;
     std::optional<WorkbenchId> find_by_window(WindowId window) const;
 
-    WorkbenchId active_id() const { return active_; }
-    Workbench& active();
-    const Workbench& active() const;
-    bool activate(WorkbenchId id);
     std::optional<WorkbenchId> next(WorkbenchId id, int delta = 1) const;
 
     std::size_t size() const { return size_; }
@@ -81,7 +73,6 @@ private:
 
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_slots_;
-    WorkbenchId active_;
     std::size_t size_ = 0;
 };
 

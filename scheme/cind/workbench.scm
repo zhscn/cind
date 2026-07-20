@@ -1,5 +1,10 @@
 (define-module (cind workbench)
   #:export (workbench-created!
+            active-workbench
+            workbench-summaries
+            workbench-activate!
+            workbench-active-window
+            workbench-focus-window!
             workbench-visit-buffer!
             workbench-expel-buffer!
             workbench-forget-buffer!
@@ -21,11 +26,12 @@
             workbench-slot
             workbench-slots))
 
-;; Entries are #(workbench name mru-list scope-list window-list). Window records
-;; are #(window role-or-#f pinned? created-by-policy?). Window layouts and entity
-;; lifetimes are native data-plane state; descriptive, membership and display
-;; policy metadata is owned by Guile.
+;; Entries are #(workbench name mru-list scope-list window-list active-window).
+;; Window records are #(window role-or-#f pinned? created-by-policy?). Window
+;; layouts and entity lifetimes are native data-plane state; selection,
+;; descriptive, membership and display policy state is owned by Guile.
 (define workbench-states (make-weak-key-hash-table))
+(define active-workbenches (make-weak-key-hash-table))
 
 (define (host-workbench-states host)
   (or (hashq-ref workbench-states host) '()))
@@ -100,14 +106,46 @@
     (error "window policy state already exists" root-window))
   (unless (vector? scope)
     (error "workbench scope must be a vector" scope))
-  (hashq-set! workbench-states host
-              (cons (vector workbench
-                            name
-                            (if initial-buffer (list initial-buffer) '())
-                            (unique-values (vector->list scope))
-                            (list (vector root-window #f #f #f)))
-                    (host-workbench-states host)))
+  (let ((entries (host-workbench-states host)))
+    (hashq-set! workbench-states host
+                (cons (vector workbench
+                              name
+                              (if initial-buffer (list initial-buffer) '())
+                              (unique-values (vector->list scope))
+                              (list (vector root-window #f #f #f))
+                              root-window)
+                      entries))
+    (when (null? entries)
+      (hashq-set! active-workbenches host workbench)))
   workbench)
+
+(define (active-workbench host)
+  (or (hashq-ref active-workbenches host)
+      (error "workbench selection state is unavailable")))
+
+(define (workbench-summaries host)
+  (let ((selected (active-workbench host)))
+    (list->vector
+     (map (lambda (entry)
+            (vector (vector-ref entry 0)
+                    (vector-ref entry 1)
+                    (equal? selected (vector-ref entry 0))))
+          (reverse (host-workbench-states host))))))
+
+(define (workbench-activate! host workbench)
+  (require-workbench-entry host workbench)
+  (hashq-set! active-workbenches host workbench)
+  workbench)
+
+(define (workbench-active-window host workbench)
+  (vector-ref (require-workbench-entry host workbench) 5))
+
+(define (workbench-focus-window! host workbench window)
+  (let ((entry (require-workbench-entry host workbench)))
+    (unless (window-entry-in-workbench entry window)
+      (error "focused window does not belong to the workbench" window))
+    (vector-set! entry 5 window))
+  window)
 
 (define (workbench-visit-buffer! host workbench buffer)
   (let ((entry (require-workbench-entry host workbench)))
@@ -129,10 +167,18 @@
    (host-workbench-states host)))
 
 (define (workbench-released! host workbench)
-  (let ((remaining (without-workbench (host-workbench-states host) workbench)))
+  (let* ((entries (host-workbench-states host))
+         (entry (require-workbench-entry host workbench))
+         (remaining (without-workbench entries workbench)))
+    (when (and (pair? remaining)
+               (equal? workbench (active-workbench host)))
+      (error "cannot release the active workbench" workbench))
     (if (null? remaining)
-        (hashq-remove! workbench-states host)
-        (hashq-set! workbench-states host remaining))))
+        (begin
+          (hashq-remove! workbench-states host)
+          (hashq-remove! active-workbenches host))
+        (hashq-set! workbench-states host remaining))
+    entry))
 
 (define (workbench-mru host workbench)
   (list->vector (vector-ref (require-workbench-entry host workbench) 2)))
@@ -197,6 +243,8 @@
        (let* ((before (vector-ref entry 4))
               (after (without-window before window)))
          (unless (= (length before) (length after))
+           (when (equal? window (vector-ref entry 5))
+             (error "cannot forget the active workbench window" window))
            (set! removed? #t)
            (vector-set! entry 4 after))))
      (host-workbench-states host))

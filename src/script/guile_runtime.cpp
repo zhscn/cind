@@ -152,6 +152,7 @@ SCM string_vector_value(const std::vector<std::string>& values);
 
 SCM host_type = SCM_UNDEFINED;
 std::once_flag guile_once;
+std::once_flag bundled_modules_once;
 
 std::string scheme_string(SCM value) {
     char* converted = scm_to_utf8_string(value);
@@ -2336,20 +2337,22 @@ SCM buffer_summaries_value(HostLease& host, const std::vector<BufferId>& buffers
     return result;
 }
 
-std::vector<GuileWorkbenchSummary> workbench_snapshot(HostLease& host, const char* caller) {
-    if (!host.services.workbenches) {
-        scm_misc_error(caller, "workbench snapshot capability is unavailable", SCM_EOL);
+std::vector<ProjectId> scheme_workbench_scope(HostLease& host, SCM host_object, SCM workbench_value,
+                                              const char* caller) {
+    const SCM value = scm_call_2(scm_c_public_ref("cind workbench", "workbench-scope"), host_object,
+                                 workbench_value);
+    if (!scm_is_vector(value)) {
+        scm_wrong_type_arg_msg(caller, 0, value, "workbench project vector");
     }
-    return host.services.workbenches();
-}
-
-const GuileWorkbenchSummary& require_workbench(const std::vector<GuileWorkbenchSummary>& values,
-                                               WorkbenchId workbench, const char* caller) {
-    const auto found = std::ranges::find(values, workbench, &GuileWorkbenchSummary::workbench);
-    if (found == values.end()) {
-        scm_misc_error(caller, "unknown workbench", SCM_EOL);
+    std::vector<ProjectId> result;
+    result.reserve(scm_c_vector_length(value));
+    for (std::size_t index = 0; index < scm_c_vector_length(value); ++index) {
+        const ProjectId project =
+            entity_id_from_scheme<ProjectTag>(scm_c_vector_ref(value, index), caller, 0);
+        (void)host.runtime->projects().get(project);
+        result.push_back(project);
     }
-    return *found;
+    return result;
 }
 
 SCM open_buffer_summaries(SCM host_object) {
@@ -2370,18 +2373,21 @@ SCM open_buffer_summaries(SCM host_object) {
 
 SCM workbench_list(SCM host_object) {
     try {
-        HostLease& host = require_host(host_object, "workbench-list");
-        const std::vector<GuileWorkbenchSummary> values =
-            workbench_snapshot(host, "workbench-list");
-        SCM result = scm_c_make_vector(values.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < values.size(); ++index) {
-            SCM summary = scm_c_make_vector(3, SCM_UNSPECIFIED);
-            scm_c_vector_set_x(
-                summary, 0,
-                entity_id(values[index].workbench.slot, values[index].workbench.generation));
-            scm_c_vector_set_x(summary, 1, scm_from_utf8_string(values[index].name.c_str()));
-            scm_c_vector_set_x(summary, 2, scm_from_bool(values[index].active));
-            scm_c_vector_set_x(result, index, summary);
+        (void)require_host(host_object, "workbench-list");
+        const SCM result =
+            scm_call_1(scm_c_public_ref("cind workbench", "workbench-summaries"), host_object);
+        if (!scm_is_vector(result)) {
+            scm_wrong_type_arg_msg("workbench-list", 0, result, "workbench summary vector");
+        }
+        for (std::size_t index = 0; index < scm_c_vector_length(result); ++index) {
+            const SCM summary = scm_c_vector_ref(result, index);
+            if (!scm_is_vector(summary) || scm_c_vector_length(summary) != 3 ||
+                !scm_is_string(scm_c_vector_ref(summary, 1)) ||
+                !scheme_boolean(scm_c_vector_ref(summary, 2))) {
+                scm_wrong_type_arg_msg("workbench-list", 0, summary, "#(workbench name active?)");
+            }
+            (void)entity_id_from_scheme<WorkbenchTag>(scm_c_vector_ref(summary, 0),
+                                                      "workbench-list", 0);
         }
         return result;
     } catch (const std::exception& exception) {
@@ -2393,13 +2399,9 @@ SCM workbench_list(SCM host_object) {
 }
 
 SCM current_workbench(SCM host_object) {
-    HostLease& host = require_host(host_object, "current-workbench");
-    if (!host.services.active_workbench) {
-        scm_misc_error("current-workbench", "active workbench capability is unavailable", SCM_EOL);
-    }
     try {
-        const WorkbenchId workbench = host.services.active_workbench();
-        return entity_id(workbench.slot, workbench.generation);
+        (void)require_host(host_object, "current-workbench");
+        return scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), host_object);
     } catch (const std::exception& exception) {
         raise_host_error("current-workbench", exception.what());
     } catch (...) {
@@ -2411,12 +2413,9 @@ SCM current_workbench(SCM host_object) {
 SCM workbench_scope(SCM host_object, SCM workbench_value) {
     try {
         HostLease& host = require_host(host_object, "workbench-scope");
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-scope", 2);
-        const std::vector<GuileWorkbenchSummary> values =
-            workbench_snapshot(host, "workbench-scope");
-        const std::vector<ProjectId>& scope =
-            require_workbench(values, workbench, "workbench-scope").scope;
+        (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-scope", 2);
+        const std::vector<ProjectId> scope =
+            scheme_workbench_scope(host, host_object, workbench_value, "workbench-scope");
         SCM result = scm_c_make_vector(scope.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < scope.size(); ++index) {
             scm_c_vector_set_x(result, index,
@@ -2434,14 +2433,16 @@ SCM workbench_scope(SCM host_object, SCM workbench_value) {
 SCM workbench_mru(SCM host_object, SCM workbench_value) {
     try {
         HostLease& host = require_host(host_object, "workbench-mru");
-        const WorkbenchId workbench =
-            entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-mru", 2);
-        const std::vector<GuileWorkbenchSummary> values = workbench_snapshot(host, "workbench-mru");
-        const std::vector<BufferId>& mru =
-            require_workbench(values, workbench, "workbench-mru").mru;
-        SCM result = scm_c_make_vector(mru.size(), SCM_UNSPECIFIED);
-        for (std::size_t index = 0; index < mru.size(); ++index) {
-            scm_c_vector_set_x(result, index, entity_id(mru[index].slot, mru[index].generation));
+        (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-mru", 2);
+        const SCM result = scm_call_2(scm_c_public_ref("cind workbench", "workbench-mru"),
+                                      host_object, workbench_value);
+        if (!scm_is_vector(result)) {
+            scm_wrong_type_arg_msg("workbench-mru", 0, result, "buffer vector");
+        }
+        for (std::size_t index = 0; index < scm_c_vector_length(result); ++index) {
+            const BufferId buffer = entity_id_from_scheme<BufferTag>(
+                scm_c_vector_ref(result, index), "workbench-mru", 0);
+            (void)host.runtime->buffers().get(buffer);
         }
         return result;
     } catch (const std::exception& exception) {
@@ -2464,10 +2465,8 @@ SCM workbench_buffer_summaries(SCM host_object, SCM workbench_value, SCM widen_v
         }
         const WorkbenchId workbench =
             entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-buffer-summaries", 2);
-        const std::vector<GuileWorkbenchSummary> values =
-            workbench_snapshot(host, "workbench-buffer-summaries");
-        const std::vector<ProjectId>& scope =
-            require_workbench(values, workbench, "workbench-buffer-summaries").scope;
+        const std::vector<ProjectId> scope = scheme_workbench_scope(
+            host, host_object, workbench_value, "workbench-buffer-summaries");
         return buffer_summaries_value(
             host, host.services.workbench_buffers(workbench, scheme_true(widen_value)), &scope);
     } catch (const std::exception& exception) {
@@ -5061,14 +5060,15 @@ SCM open_windows(SCM host_object) {
 }
 
 SCM active_window(SCM host_object) {
-    HostLease& host = require_host(host_object, "active-window-id");
-    if (!host.services.active_window) {
-        scm_misc_error("active-window-id", "active-window capability is unavailable", SCM_EOL);
-    }
     try {
-        const WindowId window = host.services.active_window();
+        HostLease& host = require_host(host_object, "active-window-id");
+        const SCM workbench =
+            scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), host_object);
+        const SCM selected = scm_call_2(
+            scm_c_public_ref("cind workbench", "workbench-active-window"), host_object, workbench);
+        const WindowId window = entity_id_from_scheme<WindowTag>(selected, "active-window-id", 0);
         (void)host.runtime->windows().get(window);
-        return entity_id(window.slot, window.generation);
+        return selected;
     } catch (const std::exception& exception) {
         raise_host_error("active-window-id", exception.what());
     } catch (...) {
@@ -6986,6 +6986,10 @@ struct GuileCall {
         BufferStyleOrigin,
         BufferReleased,
         WorkbenchCreated,
+        ActiveWorkbench,
+        WorkbenchActivate,
+        WorkbenchActiveWindow,
+        WorkbenchFocusWindow,
         WorkbenchVisitBuffer,
         WorkbenchExpelBuffer,
         WorkbenchReleased,
@@ -7891,6 +7895,30 @@ SCM call_body(void* data) {
                 scope);
             break;
         }
+        case GuileCall::Operation::ActiveWorkbench:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), call.host);
+            call.workbench =
+                entity_id_from_scheme<WorkbenchTag>(call.result, "active-workbench", 0);
+            break;
+        case GuileCall::Operation::WorkbenchActivate:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-activate!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            break;
+        case GuileCall::Operation::WorkbenchActiveWindow:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-active-window"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            call.window =
+                entity_id_from_scheme<WindowTag>(call.result, "workbench-active-window", 0);
+            break;
+        case GuileCall::Operation::WorkbenchFocusWindow:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-focus-window!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           entity_id(call.window.slot, call.window.generation));
+            break;
         case GuileCall::Operation::WorkbenchVisitBuffer:
             call.result =
                 scm_call_3(scm_c_public_ref("cind workbench", "workbench-visit-buffer!"), call.host,
@@ -8899,16 +8927,19 @@ public:
         (void)ensure_scheme_mechanisms(runtime);
         state_->owner = std::this_thread::get_id();
         std::call_once(guile_once, initialize_guile);
-        for (const std::string_view module : bundled_guile_modules) {
-            GuileCall load;
-            load.operation = GuileCall::Operation::Load;
-            load.path = bundled_module_path(module).string();
-            if (std::expected<SCM, std::string> loaded = run_guile_call(load); !loaded) {
-                state_->last_error = loaded.error();
-                throw std::runtime_error(std::format("failed to load bundled Guile module '{}': {}",
-                                                     module, *state_->last_error));
+        std::call_once(bundled_modules_once, [this] {
+            for (const std::string_view module : bundled_guile_modules) {
+                GuileCall load;
+                load.operation = GuileCall::Operation::Load;
+                load.path = bundled_module_path(module).string();
+                if (std::expected<SCM, std::string> loaded = run_guile_call(load); !loaded) {
+                    state_->last_error = loaded.error();
+                    throw std::runtime_error(
+                        std::format("failed to load bundled Guile module '{}': {}", module,
+                                    *state_->last_error));
+                }
             }
-        }
+        });
         version_ = scheme_string(scm_version());
         lease_ = new HostLease{.runtime = &runtime,
                                .state = state_,
@@ -9331,6 +9362,67 @@ public:
         call.window = root_window;
         call.buffer = initial_buffer.value_or(BufferId{});
         call.projects = scope;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<WorkbenchId, std::string> active_workbench() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::ActiveWorkbench;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.workbench;
+    }
+
+    std::expected<void, std::string> workbench_activate(WorkbenchId workbench) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchActivate;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<WindowId, std::string> workbench_active_window(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchActiveWindow;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.window;
+    }
+
+    std::expected<void, std::string> workbench_focus_window(WorkbenchId workbench,
+                                                            WindowId window) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchFocusWindow;
+        call.host = host_;
+        call.workbench = workbench;
+        call.window = window;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
@@ -10373,6 +10465,24 @@ GuileRuntime::workbench_created(WorkbenchId workbench, std::string_view name, Wi
                                 std::optional<BufferId> initial_buffer,
                                 const std::vector<ProjectId>& scope) {
     return impl_->workbench_created(workbench, name, root_window, initial_buffer, scope);
+}
+
+std::expected<WorkbenchId, std::string> GuileRuntime::active_workbench() const {
+    return impl_->active_workbench();
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_activate(WorkbenchId workbench) {
+    return impl_->workbench_activate(workbench);
+}
+
+std::expected<WindowId, std::string>
+GuileRuntime::workbench_active_window(WorkbenchId workbench) const {
+    return impl_->workbench_active_window(workbench);
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_focus_window(WorkbenchId workbench,
+                                                                      WindowId window) {
+    return impl_->workbench_focus_window(workbench, window);
 }
 
 std::expected<void, std::string> GuileRuntime::workbench_visit_buffer(WorkbenchId workbench,

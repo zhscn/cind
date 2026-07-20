@@ -1240,9 +1240,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     std::int64_t requested_motion_count = 0;
     bool requested_motion_extend = false;
     const WorkbenchId workbench{0, 1};
-    const ProjectId initial_scope_project{4, 2};
-    const ProjectId adopted_scope_project{7, 3};
-    std::vector<ProjectId> workbench_scope;
     const std::string workbench_session = "serialized workbench session";
     std::optional<std::string> restored_workbench_session;
     GuileRuntime guile(
@@ -1337,15 +1334,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                  return only_buffer ? std::vector<BufferId>{buffer}
                                     : std::vector<BufferId>{buffer, other};
              },
-         .workbenches =
-             [&] {
-                 return std::vector<GuileWorkbenchSummary>{{.workbench = workbench,
-                                                            .name = {},
-                                                            .scope = workbench_scope,
-                                                            .mru = {buffer, other},
-                                                            .active = true}};
-             },
-         .active_workbench = [=] { return workbench; },
          .workbench_buffers =
              [=](WorkbenchId target, bool) {
                  CHECK(target == workbench);
@@ -1418,7 +1406,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              return {};
          },
          .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
-         .active_window = [&] { return window; },
          .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
@@ -1557,10 +1544,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.buffer_created(buffer, "test style").has_value());
     CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
     const BufferId visitor{buffer.slot + 1, buffer.generation};
-    REQUIRE(guile
-                .workbench_created(workbench, "code", window, buffer,
-                                   {initial_scope_project, initial_scope_project})
-                .has_value());
+    REQUIRE(guile.workbench_created(workbench, "code", window, buffer, {}).has_value());
+    CHECK(guile.active_workbench().value_or(WorkbenchId{}) == workbench);
+    CHECK(guile.workbench_active_window(workbench).value_or(WindowId{}) == window);
+    {
+        EditorRuntime parallel_runtime;
+        GuileRuntime parallel(parallel_runtime);
+        CHECK(guile.active_workbench().value_or(WorkbenchId{}) == workbench);
+        CHECK(guile.workbench_active_window(workbench).value_or(WindowId{}) == window);
+    }
     CHECK(guile.workbench_name(workbench).value_or("") == "code");
     CHECK(guile.workbench_find_by_name("code").value_or(std::optional<WorkbenchId>{}) ==
           std::optional{workbench});
@@ -1571,7 +1563,13 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     const WorkbenchId other_workbench{1, 1};
     REQUIRE(guile.workbench_created(other_workbench, "code", alternate_window, std::nullopt, {})
                 .has_value());
+    CHECK(guile.active_workbench().value_or(WorkbenchId{}) == workbench);
+    REQUIRE(guile.workbench_activate(other_workbench).has_value());
+    CHECK(guile.active_workbench().value_or(WorkbenchId{}) == other_workbench);
+    REQUIRE(guile.workbench_focus_window(other_workbench, alternate_window).has_value());
+    CHECK(guile.workbench_active_window(other_workbench).value_or(WindowId{}) == alternate_window);
     CHECK_FALSE(guile.workbench_rename(other_workbench, "notes").value_or(true));
+    REQUIRE(guile.workbench_activate(workbench).has_value());
     REQUIRE(guile.workbench_released(other_workbench).has_value());
     REQUIRE(guile.workbench_window_added(workbench, alternate_window).has_value());
     REQUIRE(guile.workbench_set_window_role(alternate_window, "tools").has_value());
@@ -1593,14 +1591,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(window_policy.window.created_by_policy);
     REQUIRE(guile.workbench_set_window_role(window, std::nullopt).has_value());
     CHECK(guile.workbench_slots(workbench).value_or(std::vector<GuileDisplaySlot>{}).empty());
+    REQUIRE(guile.workbench_focus_window(workbench, window).has_value());
     CHECK(guile.workbench_forget_window(alternate_window).value_or(false));
     CHECK_FALSE(guile.workbench_forget_window(alternate_window).value_or(true));
-    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
-          std::vector<ProjectId>{initial_scope_project});
-    CHECK(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(false));
-    CHECK_FALSE(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(true));
-    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
-          std::vector<ProjectId>{initial_scope_project, adopted_scope_project});
+    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}).empty());
     REQUIRE(guile.workbench_visit_buffer(workbench, visitor).has_value());
     REQUIRE(guile.workbench_visit_buffer(workbench, buffer).has_value());
     CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}) ==
@@ -2246,6 +2240,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(indexed_project == unindexed_project);
     runtime.projects().assign(buffer, project);
     project_index_requested = false;
+    CHECK(guile.workbench_adopt_project(workbench, project).value_or(false));
+    CHECK_FALSE(guile.workbench_adopt_project(workbench, project).value_or(true));
+    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
+          std::vector<ProjectId>{project});
 
     const std::size_t async_before_project_file = async_requests.size();
     const CommandResult file_accepted = runtime.commands().invoke(
@@ -2324,7 +2322,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                                .discovery_provider = {},
                                                                .discovery_marker = {}});
     runtime.projects().replace_index(tools_project, {"/tmp/tools/src/tool.cpp"});
-    workbench_scope = {project, tools_project};
+    CHECK(guile.workbench_adopt_project(workbench, tools_project).value_or(false));
+    CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
+          std::vector<ProjectId>{project, tools_project});
     const std::vector<InteractionCandidate> scoped_candidates =
         complete_provider(runtime, "project-files", context);
     REQUIRE(scoped_candidates.size() == 3);
@@ -2355,8 +2355,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                    "/tmp/tools"});
     pending_async_callbacks.failed(next_async_task - 1, "stopped");
     CHECK_FALSE(guile.project_search_running());
-    workbench_scope.clear();
-
     runtime.views().set_caret(view, TextOffset{0});
     CommandLoop command_loop(runtime);
     const CommandId toggle_mark = require_command(runtime, "selection.toggle-mark");

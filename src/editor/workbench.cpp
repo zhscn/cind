@@ -6,18 +6,10 @@
 
 namespace cind {
 
-Workbench::Workbench(WorkbenchId id, WorkbenchSpec spec)
-    : id_(id), layout_(spec.root_window), active_window_(spec.root_window) {
+Workbench::Workbench(WorkbenchId id, WorkbenchSpec spec) : id_(id), layout_(spec.root_window) {
     if (!spec.root_window) {
         throw std::invalid_argument("workbench requires a root window");
     }
-}
-
-void Workbench::set_active_window(WindowId window) {
-    if (!layout_.contains(window)) {
-        throw std::invalid_argument("active window does not belong to the workbench");
-    }
-    active_window_ = window;
 }
 
 WorkbenchId WorkbenchRegistry::create(WorkbenchSpec spec) {
@@ -44,9 +36,6 @@ WorkbenchId WorkbenchRegistry::create(WorkbenchSpec spec) {
         throw;
     }
     ++size_;
-    if (!active_) {
-        active_ = id;
-    }
     return id;
 }
 
@@ -57,9 +46,6 @@ bool WorkbenchRegistry::erase(WorkbenchId id) {
     }
     if (size_ == 1) {
         throw std::logic_error("cannot erase the last workbench");
-    }
-    if (active_ == id) {
-        throw std::logic_error("cannot erase the active workbench");
     }
     Slot& slot = slots_[id.slot];
     slot.value.reset();
@@ -114,25 +100,6 @@ std::optional<WorkbenchId> WorkbenchRegistry::find_by_window(WindowId window) co
         }
     }
     return std::nullopt;
-}
-
-Workbench& WorkbenchRegistry::active() {
-    if (!active_) {
-        throw std::logic_error("workbench registry has no active workbench");
-    }
-    return get(active_);
-}
-
-const Workbench& WorkbenchRegistry::active() const {
-    return const_cast<WorkbenchRegistry*>(this)->active();
-}
-
-bool WorkbenchRegistry::activate(WorkbenchId id) {
-    if (try_get(id) == nullptr) {
-        return false;
-    }
-    active_ = id;
-    return true;
 }
 
 std::optional<WorkbenchId> WorkbenchRegistry::next(WorkbenchId id, int delta) const {
