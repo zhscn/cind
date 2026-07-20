@@ -9,10 +9,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace cind {
@@ -22,8 +18,8 @@ struct WorkbenchSpec {
 };
 
 // Native workbench data binds a window layout over the application's global
-// entity pools. Guile owns recency and project-membership policy; this object
-// owns layout, focus, navigation data and slot mechanics.
+// entity pools. Guile owns descriptive, membership and display metadata; this
+// object owns layout, focus and navigation data.
 class Workbench {
 public:
     WorkbenchId id() const { return id_; }
@@ -32,12 +28,6 @@ public:
     WindowLayout& layout() { return layout_; }
     WindowId active_window() const { return active_window_; }
     void set_active_window(WindowId window);
-
-    const std::unordered_map<std::string, WindowId>& slots() const { return slots_; }
-    std::optional<WindowId> slot(std::string_view role) const;
-    void set_slot(std::string role, WindowId window);
-    void clear_slot(std::string_view role);
-    void clear_window_slots(WindowId window);
 
     JumpGraph& jumps() { return jumps_; }
     const JumpGraph& jumps() const { return jumps_; }
@@ -54,7 +44,6 @@ private:
     WorkbenchId id_;
     WindowLayout layout_;
     WindowId active_window_;
-    std::unordered_map<std::string, WindowId> slots_;
     JumpGraph jumps_;
     LocationListStack location_lists_;
     TransactionGroupRegistry transaction_groups_;

@@ -169,6 +169,11 @@ struct GuileDisplaySlot {
     WindowId window;
 };
 
+struct GuileWorkbenchWindowState {
+    WorkbenchId workbench;
+    GuileDisplayWindow window;
+};
+
 struct GuileDisplayFacts {
     std::string intent;
     WindowId origin;
@@ -306,10 +311,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId)> delete_other_windows;
     std::function<std::vector<WindowId>()> open_windows;
     std::function<WindowId()> active_window;
-    std::function<std::expected<void, std::string>(WindowId, std::optional<std::string>)>
-        set_window_role;
-    std::function<std::expected<void, std::string>(WindowId, bool)> set_window_pinned;
-    std::function<std::optional<WindowId>(WorkbenchId, std::string_view)> workbench_slot;
     std::function<std::expected<void, std::string>(WindowId)> focus_window;
     std::function<std::vector<GuileKeyBindingSummary>()> active_key_bindings;
     std::function<void(ViewId, ViewSelection)> set_selection;
@@ -436,6 +437,7 @@ public:
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);
     std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,
+                                                       WindowId root_window,
                                                        std::optional<BufferId> initial_buffer,
                                                        const std::vector<ProjectId>& scope);
     std::expected<void, std::string> workbench_visit_buffer(WorkbenchId workbench, BufferId buffer);
@@ -451,6 +453,19 @@ public:
     std::expected<std::vector<ProjectId>, std::string> workbench_scope(WorkbenchId workbench) const;
     std::expected<bool, std::string> workbench_adopt_project(WorkbenchId workbench,
                                                              ProjectId project);
+    std::expected<void, std::string> workbench_window_added(WorkbenchId workbench, WindowId window);
+    std::expected<bool, std::string> workbench_forget_window(WindowId window);
+    std::expected<GuileWorkbenchWindowState, std::string>
+    workbench_window_state(WindowId window) const;
+    std::expected<void, std::string>
+    workbench_set_window_role(WindowId window, std::optional<std::string_view> role);
+    std::expected<void, std::string> workbench_set_window_pinned(WindowId window, bool pinned);
+    std::expected<void, std::string> workbench_set_window_created_by_policy(WindowId window,
+                                                                            bool created);
+    std::expected<std::optional<WindowId>, std::string> workbench_slot(WorkbenchId workbench,
+                                                                       std::string_view role) const;
+    std::expected<std::vector<GuileDisplaySlot>, std::string>
+    workbench_slots(WorkbenchId workbench) const;
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message);
     std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);

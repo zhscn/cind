@@ -1419,9 +1419,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          },
          .open_windows = [&] { return std::vector<WindowId>{window, alternate_window}; },
          .active_window = [&] { return window; },
-         .set_window_role = {},
-         .set_window_pinned = {},
-         .workbench_slot = {},
          .focus_window = [&](WindowId target) -> std::expected<void, std::string> {
              if (!window_error.empty()) {
                  return std::unexpected(window_error);
@@ -1561,7 +1558,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(guile.buffer_style_origin(buffer).value_or("") == "test style");
     const BufferId visitor{buffer.slot + 1, buffer.generation};
     REQUIRE(guile
-                .workbench_created(workbench, "code", buffer,
+                .workbench_created(workbench, "code", window, buffer,
                                    {initial_scope_project, initial_scope_project})
                 .has_value());
     CHECK(guile.workbench_name(workbench).value_or("") == "code");
@@ -1572,9 +1569,32 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(guile.workbench_rename(workbench, "notes").value_or(false));
     CHECK(guile.workbench_name(workbench).value_or("") == "notes");
     const WorkbenchId other_workbench{1, 1};
-    REQUIRE(guile.workbench_created(other_workbench, "code", std::nullopt, {}).has_value());
+    REQUIRE(guile.workbench_created(other_workbench, "code", alternate_window, std::nullopt, {})
+                .has_value());
     CHECK_FALSE(guile.workbench_rename(other_workbench, "notes").value_or(true));
     REQUIRE(guile.workbench_released(other_workbench).has_value());
+    REQUIRE(guile.workbench_window_added(workbench, alternate_window).has_value());
+    REQUIRE(guile.workbench_set_window_role(alternate_window, "tools").has_value());
+    CHECK(guile.workbench_slot(workbench, "tools").value_or(std::optional<WindowId>{}) ==
+          std::optional{alternate_window});
+    REQUIRE(guile.workbench_set_window_role(window, "tools").has_value());
+    CHECK(guile.workbench_slot(workbench, "tools").value_or(std::optional<WindowId>{}) ==
+          std::optional{window});
+    const std::expected<GuileWorkbenchWindowState, std::string> alternate_policy =
+        guile.workbench_window_state(alternate_window);
+    REQUIRE(alternate_policy.has_value());
+    CHECK_FALSE(alternate_policy->window.role.has_value());
+    REQUIRE(guile.workbench_set_window_pinned(window, true).has_value());
+    REQUIRE(guile.workbench_set_window_created_by_policy(window, true).has_value());
+    const GuileWorkbenchWindowState window_policy = guile.workbench_window_state(window).value();
+    CHECK(window_policy.workbench == workbench);
+    CHECK(window_policy.window.role == std::optional<std::string>{"tools"});
+    CHECK(window_policy.window.pinned);
+    CHECK(window_policy.window.created_by_policy);
+    REQUIRE(guile.workbench_set_window_role(window, std::nullopt).has_value());
+    CHECK(guile.workbench_slots(workbench).value_or(std::vector<GuileDisplaySlot>{}).empty());
+    CHECK(guile.workbench_forget_window(alternate_window).value_or(false));
+    CHECK_FALSE(guile.workbench_forget_window(alternate_window).value_or(true));
     CHECK(guile.workbench_scope(workbench).value_or(std::vector<ProjectId>{}) ==
           std::vector<ProjectId>{initial_scope_project});
     CHECK(guile.workbench_adopt_project(workbench, adopted_scope_project).value_or(false));

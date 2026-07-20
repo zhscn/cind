@@ -20,27 +20,6 @@ void Workbench::set_active_window(WindowId window) {
     active_window_ = window;
 }
 
-std::optional<WindowId> Workbench::slot(std::string_view role) const {
-    const auto found = slots_.find(std::string(role));
-    return found == slots_.end() ? std::nullopt : std::optional(found->second);
-}
-
-void Workbench::set_slot(std::string role, WindowId window) {
-    if (role.empty() || !layout_.contains(window)) {
-        throw std::invalid_argument("workbench slot requires a role and member window");
-    }
-    clear_window_slots(window);
-    slots_.insert_or_assign(std::move(role), window);
-}
-
-void Workbench::clear_slot(std::string_view role) {
-    slots_.erase(std::string(role));
-}
-
-void Workbench::clear_window_slots(WindowId window) {
-    std::erase_if(slots_, [window](const auto& entry) { return entry.second == window; });
-}
-
 WorkbenchId WorkbenchRegistry::create(WorkbenchSpec spec) {
     if (find_by_window(spec.root_window)) {
         throw std::invalid_argument("workbench root window already belongs to a workbench");

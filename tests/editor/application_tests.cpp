@@ -84,14 +84,6 @@ TEST_CASE("workbench registry preserves independent layouts") {
     CHECK(registry.active_id() == first);
     REQUIRE(registry.get(first).layout().split(
         {.target = first_window, .new_window = third_window, .axis = WindowSplitAxis::Columns}));
-    registry.get(first).set_slot("tools", third_window);
-    CHECK(registry.get(first).slot("tools") == std::optional{third_window});
-    registry.get(first).set_slot("jump", third_window);
-    CHECK_FALSE(registry.get(first).slot("tools").has_value());
-    CHECK(registry.get(first).slot("jump") == std::optional{third_window});
-    registry.get(first).clear_window_slots(third_window);
-    CHECK(registry.get(first).slots().empty());
-    CHECK_THROWS_AS(registry.get(first).set_slot("tools", WindowId{9, 1}), std::invalid_argument);
 
     const WorkbenchId second = registry.create({.root_window = second_window});
     CHECK_THROWS_AS(registry.create({.root_window = second_window}), std::invalid_argument);

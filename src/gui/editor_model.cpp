@@ -573,7 +573,8 @@ EditorStateSnapshot EditorModel::inspect() {
                            .diagnostic_errors = buffer.diagnostic_errors,
                            .diagnostic_warnings = buffer.diagnostic_warnings});
     }
-    const auto inspect_window = [&](WindowId window, bool active) {
+    const auto inspect_window = [&](const OpenWindowSnapshot& snapshot) {
+        const WindowId window = snapshot.window;
         const Window& definition = runtime.windows().get(window);
         const ViewId view = definition.view_id();
         const BufferId buffer = runtime.views().get(view).buffer_id();
@@ -587,15 +588,15 @@ EditorStateSnapshot EditorModel::inspect() {
                                        .view_generation = view.generation,
                                        .buffer_slot = buffer.slot,
                                        .buffer_generation = buffer.generation,
-                                       .role = definition.role().value_or(std::string{}),
-                                       .pinned = definition.pinned(),
-                                       .created_by_policy = definition.created_by_policy(),
-                                       .active = active,
+                                       .role = snapshot.role.value_or(std::string{}),
+                                       .pinned = snapshot.pinned,
+                                       .created_by_policy = snapshot.created_by_policy,
+                                       .active = snapshot.active,
                                        .input_states = std::move(input_states)};
     };
     std::vector<OpenWindowStateSnapshot> windows;
     for (const OpenWindowSnapshot& window : application_.open_windows()) {
-        windows.push_back(inspect_window(window.window, window.active));
+        windows.push_back(inspect_window(window));
     }
     const auto inspect_layout =
         [](this const auto& self,
@@ -647,7 +648,7 @@ EditorStateSnapshot EditorModel::inspect() {
         }
         inspected.windows.reserve(workbench.windows.size());
         for (const WindowId window : workbench.windows) {
-            inspected.windows.push_back(inspect_window(window, window == workbench.active_window));
+            inspected.windows.push_back(inspect_window(application_.window_snapshot(window)));
         }
         workbenches.push_back(std::move(inspected));
     }

@@ -2397,7 +2397,7 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
         application.runtime().buffers().get(application.buffer_id(source_window)).resource_uri() ==
         std::optional{main.string()});
     CHECK(application.session(source_window).caret() == TextOffset{5});
-    CHECK(application.runtime().windows().get(source_window).pinned());
+    CHECK(application.window_snapshot(source_window).pinned);
     const std::optional<JumpNode> restored_jump = application.jump_node(source_window, 10);
     REQUIRE(restored_jump.has_value());
     CHECK(restored_jump->position.buffer == application.buffer_id(source_window));
@@ -2405,9 +2405,8 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     REQUIRE(application.jump_branches(source_window).size() == 1);
     CHECK(application.jump_branches(source_window)[0].to == 11);
     CHECK(application.window_id() == tool_window);
-    CHECK(application.runtime().windows().get(tool_window).role() ==
-          std::optional<std::string>{"tools"});
-    CHECK(application.runtime().windows().get(tool_window).created_by_policy());
+    CHECK(application.window_snapshot(tool_window).role == std::optional<std::string>{"tools"});
+    CHECK(application.window_snapshot(tool_window).created_by_policy);
     CHECK_FALSE(application.runtime().buffers().find_by_resource(missing.string()));
     CHECK(application.message() == "workbench session restored · 1 resources unavailable");
 }
@@ -2565,7 +2564,7 @@ TEST_CASE("window roles pinning and policy provenance stay frontend independent"
 
     REQUIRE(application.set_window_role(first, "tools").has_value());
     CHECK(application.workbench_slot(application.workbench_id(), "tools") == std::optional{first});
-    CHECK_FALSE(application.runtime().windows().get(second).role().has_value());
+    CHECK_FALSE(application.window_snapshot(second).role.has_value());
     REQUIRE(application.set_window_role(first, std::nullopt).has_value());
     CHECK_FALSE(application.workbench_slot(application.workbench_id(), "tools").has_value());
 
@@ -2577,7 +2576,7 @@ TEST_CASE("window roles pinning and policy provenance stay frontend independent"
     send_keys(application, "RET");
     CHECK(application.workbench_slot(application.workbench_id(), "doc") == std::optional{second});
     send_keys(application, "C-x w p");
-    CHECK_FALSE(application.runtime().windows().get(second).pinned());
+    CHECK_FALSE(application.window_snapshot(second).pinned);
     send_keys(application, "C-x w d");
     CHECK(application.runtime().windows().try_get(second) == nullptr);
     CHECK_FALSE(application.workbench_slot(application.workbench_id(), "doc").has_value());
@@ -2593,9 +2592,8 @@ TEST_CASE("display intents reuse named slots and route jumps around pinned windo
     const WindowId doc_window = application.window_id();
     const BufferId help_buffer = application.buffer_id();
     CHECK(doc_window != edit_window);
-    CHECK(application.runtime().windows().get(doc_window).role() ==
-          std::optional<std::string>{"doc"});
-    CHECK(application.runtime().windows().get(doc_window).created_by_policy());
+    CHECK(application.window_snapshot(doc_window).role == std::optional<std::string>{"doc"});
+    CHECK(application.window_snapshot(doc_window).created_by_policy);
     CHECK(application.buffer_id(edit_window) == edit_buffer);
 
     REQUIRE(application.set_window_role(doc_window, "explicit").has_value());
@@ -2738,7 +2736,7 @@ TEST_CASE("invalid display plans fall back to the default Scheme policy") {
     REQUIRE(application.open_windows().size() == 2);
     CHECK(application.window_id() != edit_window);
     CHECK(application.session().buffer().name() == "*Help*");
-    CHECK(application.runtime().windows().get(application.window_id()).role() ==
+    CHECK(application.window_snapshot(application.window_id()).role ==
           std::optional<std::string>{"doc"});
 }
 

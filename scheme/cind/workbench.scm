@@ -10,11 +10,21 @@
             workbench-find-by-name
             workbench-rename!
             workbench-scope
-            workbench-adopt-project!))
+            workbench-adopt-project!
+            workbench-window-added!
+            workbench-forget-window!
+            workbench-window-state
+            workbench-window-state-or-default
+            workbench-set-window-role!
+            workbench-set-window-pinned!
+            workbench-set-window-created-by-policy!
+            workbench-slot
+            workbench-slots))
 
-;; Entries are #(workbench name mru-list scope-list). Window layouts and entity
-;; lifetimes are native data-plane state; descriptive and membership policy is
-;; owned by Guile.
+;; Entries are #(workbench name mru-list scope-list window-list). Window records
+;; are #(window role-or-#f pinned? created-by-policy?). Window layouts and entity
+;; lifetimes are native data-plane state; descriptive, membership and display
+;; policy metadata is owned by Guile.
 (define workbench-states (make-weak-key-hash-table))
 
 (define (host-workbench-states host)
@@ -38,6 +48,25 @@
              (car entries)
              (loop (cdr entries))))))
 
+(define (window-entry-in-workbench entry window)
+  (let loop ((windows (vector-ref entry 4)))
+    (and (pair? windows)
+         (if (equal? window (vector-ref (car windows) 0))
+             (car windows)
+             (loop (cdr windows))))))
+
+(define (window-entry-with-workbench host window)
+  (let loop ((entries (host-workbench-states host)))
+    (and (pair? entries)
+         (let ((window-entry (window-entry-in-workbench (car entries) window)))
+           (if window-entry
+               (cons (car entries) window-entry)
+               (loop (cdr entries)))))))
+
+(define (require-window-entry-with-workbench host window)
+  (or (window-entry-with-workbench host window)
+      (error "unknown workbench window policy state" window)))
+
 (define (without-workbench entries workbench)
   (cond ((null? entries) '())
         ((equal? workbench (vector-ref (car entries) 0))
@@ -60,20 +89,23 @@
                   result
                   (cons (car remaining) result))))))
 
-(define (workbench-created! host workbench name initial-buffer scope)
+(define (workbench-created! host workbench name root-window initial-buffer scope)
   (when (workbench-entry host workbench)
     (error "workbench policy state already exists" workbench))
   (unless (string? name)
     (error "workbench name must be a string" name))
   (when (workbench-entry-by-name host name)
     (error "workbench name is already in use" name))
+  (when (window-entry-with-workbench host root-window)
+    (error "window policy state already exists" root-window))
   (unless (vector? scope)
     (error "workbench scope must be a vector" scope))
   (hashq-set! workbench-states host
               (cons (vector workbench
                             name
                             (if initial-buffer (list initial-buffer) '())
-                            (unique-values (vector->list scope)))
+                            (unique-values (vector->list scope))
+                            (list (vector root-window #f #f #f)))
                     (host-workbench-states host)))
   workbench)
 
@@ -143,3 +175,97 @@
         (begin
           (vector-set! entry 3 (append scope (list project)))
           #t))))
+
+(define (workbench-window-added! host workbench window)
+  (let ((entry (require-workbench-entry host workbench)))
+    (when (window-entry-with-workbench host window)
+      (error "window policy state already exists" window))
+    (vector-set! entry 4
+                 (append (vector-ref entry 4)
+                         (list (vector window #f #f #f)))))
+  window)
+
+(define (without-window windows window)
+  (cond ((null? windows) '())
+        ((equal? window (vector-ref (car windows) 0)) (cdr windows))
+        (else (cons (car windows) (without-window (cdr windows) window)))))
+
+(define (workbench-forget-window! host window)
+  (let ((removed? #f))
+    (for-each
+     (lambda (entry)
+       (let* ((before (vector-ref entry 4))
+              (after (without-window before window)))
+         (unless (= (length before) (length after))
+           (set! removed? #t)
+           (vector-set! entry 4 after))))
+     (host-workbench-states host))
+    removed?))
+
+(define (workbench-window-state host window)
+  (let* ((pair (require-window-entry-with-workbench host window))
+         (entry (car pair))
+         (state (cdr pair)))
+    (vector (vector-ref entry 0)
+            (vector-ref state 1)
+            (vector-ref state 2)
+            (vector-ref state 3))))
+
+(define (workbench-window-state-or-default host window)
+  (let ((pair (window-entry-with-workbench host window)))
+    (if pair
+        (let ((entry (car pair))
+              (state (cdr pair)))
+          (vector (vector-ref entry 0)
+                  (vector-ref state 1)
+                  (vector-ref state 2)
+                  (vector-ref state 3)))
+        (vector #f #f #f #f))))
+
+(define (workbench-set-window-role! host window role)
+  (unless (or (not role) (and (string? role) (> (string-length role) 0)))
+    (error "window role must be a non-empty string or #f" role))
+  (let* ((pair (require-window-entry-with-workbench host window))
+         (entry (car pair))
+         (state (cdr pair)))
+    (when role
+      (for-each
+       (lambda (candidate)
+         (when (and (not (eq? candidate state))
+                    (equal? role (vector-ref candidate 1)))
+           (vector-set! candidate 1 #f)))
+       (vector-ref entry 4)))
+    (vector-set! state 1 role))
+  window)
+
+(define (workbench-set-window-pinned! host window pinned?)
+  (unless (boolean? pinned?)
+    (error "window pinned state must be boolean" pinned?))
+  (vector-set! (cdr (require-window-entry-with-workbench host window)) 2 pinned?)
+  window)
+
+(define (workbench-set-window-created-by-policy! host window created?)
+  (unless (boolean? created?)
+    (error "window policy provenance must be boolean" created?))
+  (vector-set! (cdr (require-window-entry-with-workbench host window)) 3 created?)
+  window)
+
+(define (workbench-slot host workbench role)
+  (unless (and (string? role) (> (string-length role) 0))
+    (error "workbench slot role must be a non-empty string" role))
+  (let loop ((windows (vector-ref (require-workbench-entry host workbench) 4)))
+    (and (pair? windows)
+         (if (equal? role (vector-ref (car windows) 1))
+             (vector-ref (car windows) 0)
+             (loop (cdr windows))))))
+
+(define (workbench-slots host workbench)
+  (let loop ((windows (vector-ref (require-workbench-entry host workbench) 4))
+             (slots '()))
+    (if (null? windows)
+        (list->vector (reverse slots))
+        (let ((state (car windows)))
+          (loop (cdr windows)
+                (if (vector-ref state 1)
+                    (cons (vector (vector-ref state 1) (vector-ref state 0)) slots)
+                    slots))))))

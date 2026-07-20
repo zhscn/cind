@@ -973,6 +973,23 @@ BufferKind buffer_kind_from_scheme(SCM value, const char* caller, int position) 
     scm_wrong_type_arg_msg(caller, position, value, "'scratch, 'file, 'generated, or 'process");
 }
 
+SCM scheme_workbench_window_state(SCM host_object, WindowId window, const char* caller) {
+    const SCM state =
+        scm_call_2(scm_c_public_ref("cind workbench", "workbench-window-state-or-default"),
+                   host_object, entity_id(window.slot, window.generation));
+    if (!scm_is_vector(state) || scm_c_vector_length(state) != 4 ||
+        !scheme_boolean(scm_c_vector_ref(state, 2)) ||
+        !scheme_boolean(scm_c_vector_ref(state, 3))) {
+        scm_wrong_type_arg_msg(caller, 0, state,
+                               "#(workbench role-or-#f pinned? created-by-policy?)");
+    }
+    const SCM role = scm_c_vector_ref(state, 1);
+    if (!scheme_false(role) && !scm_is_string(role)) {
+        scm_wrong_type_arg_msg(caller, 0, role, "string or #f");
+    }
+    return state;
+}
+
 SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
     try {
         HostLease& host = require_host(host_object, "keymap-context-snapshot");
@@ -1020,7 +1037,9 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
         scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
         scm_c_vector_set_x(result, 6, minors);
         scm_c_vector_set_x(result, 7, major);
-        scm_c_vector_set_x(result, 8, scm_from_bool(window.created_by_policy()));
+        const SCM window_state =
+            scheme_workbench_window_state(host_object, window.id(), "keymap-context-snapshot");
+        scm_c_vector_set_x(result, 8, scm_c_vector_ref(window_state, 3));
         scm_c_vector_set_x(
             result, 9,
             scm_from_bool(host.services.completion_active && host.services.completion_active()));
@@ -5076,8 +5095,10 @@ SCM window_role(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "window-role");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-role", 2);
     try {
-        const std::optional<std::string>& role = host.runtime->windows().get(window).role();
-        return role ? name_symbol(*role) : SCM_BOOL_F;
+        (void)host.runtime->windows().get(window);
+        const SCM state = scheme_workbench_window_state(host_object, window, "window-role");
+        const SCM role = scm_c_vector_ref(state, 1);
+        return scheme_false(role) ? SCM_BOOL_F : name_symbol(scheme_string(role));
     } catch (const std::exception& exception) {
         raise_host_error("window-role", exception.what());
     } catch (...) {
@@ -5092,19 +5113,15 @@ SCM set_window_role(SCM host_object, SCM window_value, SCM role_value) {
     if (!scheme_false(role_value) && !scheme_true(scm_symbol_p(role_value))) {
         scm_wrong_type_arg_msg("set-window-role!", 3, role_value, "symbol or #f");
     }
-    if (!host.services.set_window_role) {
-        scm_misc_error("set-window-role!", "window role capability is unavailable", SCM_EOL);
-    }
     try {
+        (void)host.runtime->windows().get(window);
         const std::optional<std::string> role =
             scheme_false(role_value)
                 ? std::nullopt
                 : std::optional(scheme_name(role_value, "set-window-role!", 3));
-        const std::expected<void, std::string> changed =
-            host.services.set_window_role(window, role);
-        if (!changed) {
-            raise_host_error("set-window-role!", changed.error());
-        }
+        (void)scm_call_3(scm_c_public_ref("cind workbench", "workbench-set-window-role!"),
+                         host_object, window_value,
+                         role ? scm_from_utf8_stringn(role->data(), role->size()) : SCM_BOOL_F);
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("set-window-role!", exception.what());
@@ -5118,7 +5135,9 @@ SCM window_pinned(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "window-pinned?");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-pinned?", 2);
     try {
-        return scm_from_bool(host.runtime->windows().get(window).pinned());
+        (void)host.runtime->windows().get(window);
+        const SCM state = scheme_workbench_window_state(host_object, window, "window-pinned?");
+        return scm_c_vector_ref(state, 2);
     } catch (const std::exception& exception) {
         raise_host_error("window-pinned?", exception.what());
     } catch (...) {
@@ -5133,15 +5152,10 @@ SCM set_window_pinned(SCM host_object, SCM window_value, SCM pinned_value) {
     }
     HostLease& host = require_host(host_object, "set-window-pinned!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "set-window-pinned!", 2);
-    if (!host.services.set_window_pinned) {
-        scm_misc_error("set-window-pinned!", "window pin capability is unavailable", SCM_EOL);
-    }
     try {
-        const std::expected<void, std::string> changed =
-            host.services.set_window_pinned(window, scheme_true(pinned_value));
-        if (!changed) {
-            raise_host_error("set-window-pinned!", changed.error());
-        }
+        (void)host.runtime->windows().get(window);
+        (void)scm_call_3(scm_c_public_ref("cind workbench", "workbench-set-window-pinned!"),
+                         host_object, window_value, pinned_value);
         return SCM_UNSPECIFIED;
     } catch (const std::exception& exception) {
         raise_host_error("set-window-pinned!", exception.what());
@@ -5156,7 +5170,10 @@ SCM window_created_by_policy(SCM host_object, SCM window_value) {
     const WindowId window =
         entity_id_from_scheme<WindowTag>(window_value, "window-created-by-policy?", 2);
     try {
-        return scm_from_bool(host.runtime->windows().get(window).created_by_policy());
+        (void)host.runtime->windows().get(window);
+        const SCM state =
+            scheme_workbench_window_state(host_object, window, "window-created-by-policy?");
+        return scm_c_vector_ref(state, 3);
     } catch (const std::exception& exception) {
         raise_host_error("window-created-by-policy?", exception.what());
     } catch (...) {
@@ -5170,15 +5187,16 @@ SCM workbench_slot(SCM host_object, SCM workbench_value, SCM role_value) {
         scm_wrong_type_arg_msg("workbench-slot", 3, role_value, "symbol");
     }
     HostLease& host = require_host(host_object, "workbench-slot");
-    const WorkbenchId workbench =
-        entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-slot", 2);
-    if (!host.services.workbench_slot) {
-        scm_misc_error("workbench-slot", "workbench slot capability is unavailable", SCM_EOL);
-    }
+    (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-slot", 2);
     try {
-        const std::optional<WindowId> window =
-            host.services.workbench_slot(workbench, scheme_name(role_value, "workbench-slot", 3));
-        return window ? entity_id(window->slot, window->generation) : SCM_BOOL_F;
+        const SCM window = scm_call_3(
+            scm_c_public_ref("cind workbench", "workbench-slot"), host_object, workbench_value,
+            scm_from_utf8_string(scheme_name(role_value, "workbench-slot", 3).c_str()));
+        if (!scheme_false(window)) {
+            const WindowId id = entity_id_from_scheme<WindowTag>(window, "workbench-slot", 0);
+            (void)host.runtime->windows().get(id);
+        }
+        return window;
     } catch (const std::exception& exception) {
         raise_host_error("workbench-slot", exception.what());
     } catch (...) {
@@ -6978,6 +6996,14 @@ struct GuileCall {
         WorkbenchRename,
         WorkbenchScope,
         WorkbenchAdoptProject,
+        WorkbenchWindowAdded,
+        WorkbenchForgetWindow,
+        WorkbenchWindowState,
+        WorkbenchSetWindowRole,
+        WorkbenchSetWindowPinned,
+        WorkbenchSetWindowCreatedByPolicy,
+        WorkbenchSlot,
+        WorkbenchSlots,
         LspDiagnosticsFailed,
         BufferSavingState,
         CommandInput,
@@ -7054,6 +7080,9 @@ struct GuileCall {
     WorkbenchId workbench;
     std::vector<BufferId> buffers;
     std::vector<ProjectId> projects;
+    GuileWorkbenchWindowState workbench_window_state;
+    std::vector<GuileDisplaySlot> display_slots;
+    std::optional<std::string> role;
     std::optional<std::uint32_t> line;
     std::optional<std::uint32_t> column;
     std::string intent;
@@ -7853,10 +7882,11 @@ SCM call_body(void* data) {
                     scope, index,
                     entity_id(call.projects[index].slot, call.projects[index].generation));
             }
-            call.result = scm_call_5(
+            call.result = scm_call_6(
                 scm_c_public_ref("cind workbench", "workbench-created!"), call.host,
                 entity_id(call.workbench.slot, call.workbench.generation),
                 scm_from_utf8_stringn(call.source.data(), call.source.size()),
+                entity_id(call.window.slot, call.window.generation),
                 call.buffer ? entity_id(call.buffer.slot, call.buffer.generation) : SCM_BOOL_F,
                 scope);
             break;
@@ -7958,6 +7988,98 @@ SCM call_body(void* data) {
                 scm_wrong_type_arg_msg("workbench-adopt-project!", 0, call.result, "boolean");
             }
             call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchWindowAdded:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-window-added!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           entity_id(call.window.slot, call.window.generation));
+            break;
+        case GuileCall::Operation::WorkbenchForgetWindow:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-forget-window!"),
+                           call.host, entity_id(call.window.slot, call.window.generation));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-forget-window!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchWindowState: {
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-window-state"), call.host,
+                           entity_id(call.window.slot, call.window.generation));
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 4) {
+                scm_wrong_type_arg_msg("workbench-window-state", 0, call.result,
+                                       "#(workbench role-or-#f pinned? created-by-policy?)");
+            }
+            const SCM role = scm_c_vector_ref(call.result, 1);
+            if (!scheme_false(role) && !scm_is_string(role)) {
+                scm_wrong_type_arg_msg("workbench-window-state", 0, role, "string or #f");
+            }
+            const SCM pinned = scm_c_vector_ref(call.result, 2);
+            const SCM created = scm_c_vector_ref(call.result, 3);
+            if (!scheme_boolean(pinned) || !scheme_boolean(created)) {
+                scm_wrong_type_arg_msg("workbench-window-state", 0, call.result,
+                                       "window policy state with boolean flags");
+            }
+            call.workbench_window_state = {
+                .workbench = entity_id_from_scheme<WorkbenchTag>(scm_c_vector_ref(call.result, 0),
+                                                                 "workbench-window-state", 0),
+                .window = {.window = call.window,
+                           .role = scheme_false(role)
+                                       ? std::nullopt
+                                       : std::optional<std::string>(scheme_string(role)),
+                           .pinned = scheme_true(pinned),
+                           .created_by_policy = scheme_true(created)}};
+            break;
+        }
+        case GuileCall::Operation::WorkbenchSetWindowRole:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-set-window-role!"),
+                           call.host, entity_id(call.window.slot, call.window.generation),
+                           call.role ? scm_from_utf8_stringn(call.role->data(), call.role->size())
+                                     : SCM_BOOL_F);
+            break;
+        case GuileCall::Operation::WorkbenchSetWindowPinned:
+            call.result = scm_call_3(
+                scm_c_public_ref("cind workbench", "workbench-set-window-pinned!"), call.host,
+                entity_id(call.window.slot, call.window.generation), scm_from_bool(call.enabled));
+            break;
+        case GuileCall::Operation::WorkbenchSetWindowCreatedByPolicy:
+            call.result = scm_call_3(
+                scm_c_public_ref("cind workbench", "workbench-set-window-created-by-policy!"),
+                call.host, entity_id(call.window.slot, call.window.generation),
+                scm_from_bool(call.enabled));
+            break;
+        case GuileCall::Operation::WorkbenchSlot:
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-slot"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation),
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            call.window = scheme_false(call.result)
+                              ? WindowId{}
+                              : entity_id_from_scheme<WindowTag>(call.result, "workbench-slot", 0);
+            break;
+        case GuileCall::Operation::WorkbenchSlots:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-slots"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation));
+            if (!scm_is_vector(call.result)) {
+                scm_wrong_type_arg_msg("workbench-slots", 0, call.result, "vector");
+            }
+            call.display_slots.clear();
+            call.display_slots.reserve(scm_c_vector_length(call.result));
+            for (std::size_t index = 0; index < scm_c_vector_length(call.result); ++index) {
+                const SCM slot = scm_c_vector_ref(call.result, index);
+                if (!scm_is_vector(slot) || scm_c_vector_length(slot) != 2 ||
+                    !scm_is_string(scm_c_vector_ref(slot, 0))) {
+                    scm_wrong_type_arg_msg("workbench-slots", 0, slot, "#(role window)");
+                }
+                call.display_slots.push_back(
+                    {.role = scheme_string(scm_c_vector_ref(slot, 0)),
+                     .window = entity_id_from_scheme<WindowTag>(scm_c_vector_ref(slot, 1),
+                                                                "workbench-slots", 0)});
+            }
             break;
         case GuileCall::Operation::LspDiagnosticsFailed:
             call.result =
@@ -9196,6 +9318,7 @@ public:
     }
 
     std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,
+                                                       WindowId root_window,
                                                        std::optional<BufferId> initial_buffer,
                                                        const std::vector<ProjectId>& scope) {
         require_owner_thread();
@@ -9205,6 +9328,7 @@ public:
         call.host = host_;
         call.workbench = workbench;
         call.source = name;
+        call.window = root_window;
         call.buffer = initial_buffer.value_or(BufferId{});
         call.projects = scope;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
@@ -9375,6 +9499,139 @@ public:
         }
         state_->last_error = std::move(previous_error);
         return call.enabled;
+    }
+
+    std::expected<void, std::string> workbench_window_added(WorkbenchId workbench,
+                                                            WindowId window) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchWindowAdded;
+        call.host = host_;
+        call.workbench = workbench;
+        call.window = window;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<bool, std::string> workbench_forget_window(WindowId window) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchForgetWindow;
+        call.host = host_;
+        call.window = window;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
+    std::expected<GuileWorkbenchWindowState, std::string>
+    workbench_window_state(WindowId window) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchWindowState;
+        call.host = host_;
+        call.window = window;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.workbench_window_state);
+    }
+
+    std::expected<void, std::string>
+    workbench_set_window_role(WindowId window, std::optional<std::string_view> role) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchSetWindowRole;
+        call.host = host_;
+        call.window = window;
+        if (role) {
+            call.role = *role;
+        }
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string> workbench_set_window_pinned(WindowId window, bool pinned) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchSetWindowPinned;
+        call.host = host_;
+        call.window = window;
+        call.enabled = pinned;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string> workbench_set_window_created_by_policy(WindowId window,
+                                                                            bool created) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchSetWindowCreatedByPolicy;
+        call.host = host_;
+        call.window = window;
+        call.enabled = created;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<std::optional<WindowId>, std::string>
+    workbench_slot(WorkbenchId workbench, std::string_view role) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchSlot;
+        call.host = host_;
+        call.workbench = workbench;
+        call.source = role;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.window ? std::optional(call.window) : std::nullopt;
+    }
+
+    std::expected<std::vector<GuileDisplaySlot>, std::string>
+    workbench_slots(WorkbenchId workbench) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchSlots;
+        call.host = host_;
+        call.workbench = workbench;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.display_slots);
     }
 
     std::expected<void, std::string> lsp_diagnostics_failed(std::string_view message) {
@@ -10112,10 +10369,10 @@ std::expected<void, std::string> GuileRuntime::buffer_released(BufferId buffer) 
 }
 
 std::expected<void, std::string>
-GuileRuntime::workbench_created(WorkbenchId workbench, std::string_view name,
+GuileRuntime::workbench_created(WorkbenchId workbench, std::string_view name, WindowId root_window,
                                 std::optional<BufferId> initial_buffer,
                                 const std::vector<ProjectId>& scope) {
-    return impl_->workbench_created(workbench, name, initial_buffer, scope);
+    return impl_->workbench_created(workbench, name, root_window, initial_buffer, scope);
 }
 
 std::expected<void, std::string> GuileRuntime::workbench_visit_buffer(WorkbenchId workbench,
@@ -10164,6 +10421,45 @@ GuileRuntime::workbench_scope(WorkbenchId workbench) const {
 std::expected<bool, std::string> GuileRuntime::workbench_adopt_project(WorkbenchId workbench,
                                                                        ProjectId project) {
     return impl_->workbench_adopt_project(workbench, project);
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_window_added(WorkbenchId workbench,
+                                                                      WindowId window) {
+    return impl_->workbench_window_added(workbench, window);
+}
+
+std::expected<bool, std::string> GuileRuntime::workbench_forget_window(WindowId window) {
+    return impl_->workbench_forget_window(window);
+}
+
+std::expected<GuileWorkbenchWindowState, std::string>
+GuileRuntime::workbench_window_state(WindowId window) const {
+    return impl_->workbench_window_state(window);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_set_window_role(WindowId window, std::optional<std::string_view> role) {
+    return impl_->workbench_set_window_role(window, role);
+}
+
+std::expected<void, std::string> GuileRuntime::workbench_set_window_pinned(WindowId window,
+                                                                           bool pinned) {
+    return impl_->workbench_set_window_pinned(window, pinned);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_set_window_created_by_policy(WindowId window, bool created) {
+    return impl_->workbench_set_window_created_by_policy(window, created);
+}
+
+std::expected<std::optional<WindowId>, std::string>
+GuileRuntime::workbench_slot(WorkbenchId workbench, std::string_view role) const {
+    return impl_->workbench_slot(workbench, role);
+}
+
+std::expected<std::vector<GuileDisplaySlot>, std::string>
+GuileRuntime::workbench_slots(WorkbenchId workbench) const {
+    return impl_->workbench_slots(workbench);
 }
 
 std::expected<void, std::string> GuileRuntime::lsp_diagnostics_failed(std::string_view message) {

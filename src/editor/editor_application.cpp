@@ -590,16 +590,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                                 window_layout().leaves().end());
                },
            .active_window = [this] { return window_id(); },
-           .set_window_role =
-               [this](WindowId window, std::optional<std::string> role) {
-                   return set_window_role(window, std::move(role));
-               },
-           .set_window_pinned = [this](WindowId window,
-                                       bool pinned) { return set_window_pinned(window, pinned); },
-           .workbench_slot =
-               [this](WorkbenchId workbench, std::string_view role) {
-                   return workbench_slot(workbench, role);
-               },
            .focus_window = [this](WindowId window) -> std::expected<void, std::string> {
                return focus_window(window) ? std::expected<void, std::string>{}
                                            : std::unexpected("unknown window");
@@ -883,7 +873,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
     const WorkbenchId initial_workbench =
         workbenches_.create(WorkbenchSpec{.root_window = initial_window});
     if (const std::expected<void, std::string> created =
-            guile_.workbench_created(initial_workbench, {}, initial, {});
+            guile_.workbench_created(initial_workbench, {}, initial_window, initial, {});
         !created) {
         throw std::runtime_error(std::format("Guile workbench state failed: {}", created.error()));
     }
@@ -1309,23 +1299,32 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
                             .windows = {},
                             .slots = {}};
     for (const WindowId window : workbench.layout().leaves()) {
-        const Window& candidate = runtime_.windows().get(window);
-        facts.windows.push_back({.window = window,
-                                 .role = candidate.role(),
-                                 .pinned = candidate.pinned(),
-                                 .created_by_policy = candidate.created_by_policy()});
+        (void)runtime_.windows().get(window);
+        const GuileWorkbenchWindowState state = window_policy(window);
+        if (state.workbench != workbench_id) {
+            return std::unexpected("window policy owner does not match its native layout");
+        }
+        facts.windows.push_back(state.window);
     }
-    for (const auto& [role, window] : workbench.slots()) {
-        facts.slots.push_back({.role = role, .window = window});
+    const std::expected<std::vector<GuileDisplaySlot>, std::string> slots =
+        guile_.workbench_slots(workbench_id);
+    if (!slots) {
+        return std::unexpected(slots.error());
     }
+    facts.slots = *slots;
     std::ranges::sort(facts.slots, {}, &GuileDisplaySlot::role);
 
     const auto validate_plan = [&](const GuileDisplayPlan& plan) -> std::optional<std::string> {
         if (!workbench.layout().contains(plan.target)) {
             return "selected a window outside the active workbench";
         }
-        if (plan.action == GuileDisplayPlan::Action::Reuse &&
-            runtime_.windows().get(plan.target).pinned() && intent != "explicit") {
+        const auto metadata =
+            std::ranges::find(facts.windows, plan.target, &GuileDisplayWindow::window);
+        if (metadata == facts.windows.end()) {
+            return "selected a window without display policy state";
+        }
+        if (plan.action == GuileDisplayPlan::Action::Reuse && metadata->pinned &&
+            intent != "explicit") {
             return "selected a pinned window";
         }
         return std::nullopt;
@@ -1368,7 +1367,20 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
             destroy_window(window);
             return std::unexpected("display policy split cannot be applied");
         }
-        runtime_.windows().get(window).set_created_by_policy(true);
+        try {
+            register_workbench_window(workbench_id, window);
+        } catch (const std::exception& exception) {
+            (void)workbench.layout().erase(window);
+            destroy_window(window);
+            return std::unexpected(exception.what());
+        }
+        if (const std::expected<void, std::string> created =
+                set_window_created_by_policy(window, true);
+            !created) {
+            (void)workbench.layout().erase(window);
+            destroy_window(window);
+            return std::unexpected(created.error());
+        }
         if (plan.role) {
             if (std::expected<void, std::string> assigned = set_window_role(window, plan.role);
                 !assigned) {
@@ -1536,6 +1548,13 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
         destroy_window(window);
         return false;
     }
+    try {
+        register_workbench_window(workbench.id(), window);
+    } catch (...) {
+        (void)workbench.layout().erase(window);
+        destroy_window(window);
+        return false;
+    }
     if (const std::optional<JumpNodeId> start = capture_jump(workbench, window)) {
         (void)runtime_.windows().get(window).jump_walk().record(*start);
     }
@@ -1568,7 +1587,7 @@ bool EditorApplication::delete_other_windows() {
 
 std::expected<void, std::string>
 EditorApplication::set_window_role(WindowId window, std::optional<std::string> role) {
-    Window* target = runtime_.windows().try_get(window);
+    const Window* target = runtime_.windows().try_get(window);
     const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
     if (target == nullptr || !owner) {
         return std::unexpected("unknown workbench window");
@@ -1576,45 +1595,56 @@ EditorApplication::set_window_role(WindowId window, std::optional<std::string> r
     if (role && role->empty()) {
         return std::unexpected("window role must not be empty");
     }
-    Workbench& workbench = workbenches_.get(*owner);
-    if (target->role()) {
-        workbench.clear_slot(*target->role());
+    (void)workbenches_.get(*owner);
+    try {
+        (void)window_policy(window);
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
     }
-    if (role) {
-        if (const std::optional<WindowId> previous = workbench.slot(*role);
-            previous && *previous != window) {
-            runtime_.windows().get(*previous).set_role(std::nullopt);
-        }
-        workbench.set_slot(*role, window);
-    }
-    target->set_role(std::move(role));
-    return {};
+    return guile_.workbench_set_window_role(window, role ? std::optional<std::string_view>(*role)
+                                                         : std::nullopt);
 }
 
 std::expected<void, std::string> EditorApplication::set_window_pinned(WindowId window,
                                                                       bool pinned) {
-    Window* target = runtime_.windows().try_get(window);
+    const Window* target = runtime_.windows().try_get(window);
     if (target == nullptr || !workbenches_.find_by_window(window)) {
         return std::unexpected("unknown workbench window");
     }
-    target->set_pinned(pinned);
-    return {};
+    try {
+        (void)window_policy(window);
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
+    }
+    return guile_.workbench_set_window_pinned(window, pinned);
 }
 
 std::expected<void, std::string> EditorApplication::set_window_created_by_policy(WindowId window,
                                                                                  bool created) {
-    Window* target = runtime_.windows().try_get(window);
+    const Window* target = runtime_.windows().try_get(window);
     if (target == nullptr || !workbenches_.find_by_window(window)) {
         return std::unexpected("unknown workbench window");
     }
-    target->set_created_by_policy(created);
-    return {};
+    try {
+        (void)window_policy(window);
+    } catch (const std::exception& exception) {
+        return std::unexpected(exception.what());
+    }
+    return guile_.workbench_set_window_created_by_policy(window, created);
 }
 
 std::optional<WindowId> EditorApplication::workbench_slot(WorkbenchId workbench,
                                                           std::string_view role) const {
     const Workbench* target = workbenches_.try_get(workbench);
-    return target == nullptr ? std::nullopt : target->slot(role);
+    if (target == nullptr) {
+        return std::nullopt;
+    }
+    const std::expected<std::optional<WindowId>, std::string> slot =
+        guile_.workbench_slot(workbench, role);
+    if (!slot) {
+        throw std::runtime_error(slot.error());
+    }
+    return *slot;
 }
 
 bool EditorApplication::delete_other_windows(WindowId retained) {
@@ -1676,7 +1706,7 @@ WorkbenchId EditorApplication::create_workbench(std::string name,
         }
         workbench = workbenches_.create(WorkbenchSpec{.root_window = window});
         if (const std::expected<void, std::string> created =
-                guile_.workbench_created(workbench, name, buffer, scope);
+                guile_.workbench_created(workbench, name, window, buffer, scope);
             !created) {
             throw std::runtime_error(created.error());
         }
@@ -1720,6 +1750,32 @@ void EditorApplication::discard_workbench_state(WorkbenchId workbench) {
     const std::expected<void, std::string> released = guile_.workbench_released(workbench);
     if (!released) {
         return;
+    }
+}
+
+GuileWorkbenchWindowState EditorApplication::window_policy(WindowId window) const {
+    const std::expected<GuileWorkbenchWindowState, std::string> state =
+        guile_.workbench_window_state(window);
+    if (!state) {
+        throw std::runtime_error(state.error());
+    }
+    const std::optional<WorkbenchId> native_owner = workbenches_.find_by_window(window);
+    if (!native_owner || *native_owner != state->workbench) {
+        throw std::runtime_error("window policy owner does not match its native layout");
+    }
+    return *state;
+}
+
+void EditorApplication::register_workbench_window(WorkbenchId workbench, WindowId window) {
+    const Workbench* native = workbenches_.try_get(workbench);
+    if (native == nullptr || !native->layout().contains(window) ||
+        runtime_.windows().try_get(window) == nullptr) {
+        throw std::logic_error("window policy registration requires a native layout member");
+    }
+    if (const std::expected<void, std::string> added =
+            guile_.workbench_window_added(workbench, window);
+        !added) {
+        throw std::runtime_error(added.error());
     }
 }
 
@@ -1842,8 +1898,16 @@ std::vector<WorkbenchSnapshot> EditorApplication::workbench_snapshots() const {
         if (!name) {
             throw std::runtime_error(name.error());
         }
-        std::vector<std::pair<std::string, WindowId>> slots(workbench.slots().begin(),
-                                                            workbench.slots().end());
+        const std::expected<std::vector<GuileDisplaySlot>, std::string> policy_slots =
+            guile_.workbench_slots(id);
+        if (!policy_slots) {
+            throw std::runtime_error(policy_slots.error());
+        }
+        std::vector<std::pair<std::string, WindowId>> slots;
+        slots.reserve(policy_slots->size());
+        for (const GuileDisplaySlot& slot : *policy_slots) {
+            slots.emplace_back(slot.role, slot.window);
+        }
         std::ranges::sort(slots, {},
                           [](const auto& slot) -> const std::string& { return slot.first; });
         result.push_back({.workbench = id,
@@ -1917,14 +1981,15 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
         const Window& window = runtime_.windows().get(node.window);
         const Buffer& buffer =
             runtime_.buffers().get(runtime_.views().get(window.view_id()).buffer_id());
+        const GuileWorkbenchWindowState policy = window_policy(node.window);
         auto [jump_walk, jump_cursor] = capture_walk(window.jump_walk());
         return {
             .window =
                 WorkbenchWindowSessionState{.resource = buffer.resource_uri(),
                                             .caret = runtime_.views().caret(window.view_id()).value,
-                                            .role = window.role(),
-                                            .pinned = window.pinned(),
-                                            .created_by_policy = window.created_by_policy(),
+                                            .role = policy.window.role,
+                                            .pinned = policy.window.pinned,
+                                            .created_by_policy = policy.window.created_by_policy,
                                             .jump_walk = std::move(jump_walk),
                                             .jump_cursor = jump_cursor},
             .axis = WindowSplitAxis::Rows,
@@ -2180,7 +2245,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
             }
             const WorkbenchId id = workbenches_.create({.root_window = root_window});
             if (const std::expected<void, std::string> registered =
-                    guile_.workbench_created(id, temporary, fallback, scope);
+                    guile_.workbench_created(id, temporary, root_window, fallback, scope);
                 !registered) {
                 discard_workbench_state(id);
                 (void)workbenches_.erase(id);
@@ -2228,6 +2293,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                         destroy_window(second_window);
                         throw std::runtime_error("cannot restore workbench layout split");
                     }
+                    register_workbench_window(id, second_window);
                     self(*node.first, target);
                     self(*node.second, second_window);
                     return;
@@ -2254,8 +2320,16 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                     !role) {
                     throw std::runtime_error(role.error());
                 }
-                runtime_.windows().get(target).set_pinned(leaf.pinned);
-                runtime_.windows().get(target).set_created_by_policy(leaf.created_by_policy);
+                if (std::expected<void, std::string> pinned =
+                        set_window_pinned(target, leaf.pinned);
+                    !pinned) {
+                    throw std::runtime_error(pinned.error());
+                }
+                if (std::expected<void, std::string> created =
+                        set_window_created_by_policy(target, leaf.created_by_policy);
+                    !created) {
+                    throw std::runtime_error(created.error());
+                }
                 runtime_.windows().get(target).jump_walk().restore(leaf.jump_walk,
                                                                    leaf.jump_cursor);
             };
@@ -2446,17 +2520,23 @@ std::vector<OpenWindowSnapshot> EditorApplication::open_windows() const {
     std::vector<OpenWindowSnapshot> result;
     result.reserve(window_layout().leaves().size());
     for (const WindowId window : window_layout().leaves()) {
-        const Window& editor_window = runtime_.windows().get(window);
-        const ViewId view = editor_window.view_id();
-        result.push_back({.window = window,
-                          .view = view,
-                          .buffer = runtime_.views().get(view).buffer_id(),
-                          .role = editor_window.role(),
-                          .pinned = editor_window.pinned(),
-                          .created_by_policy = editor_window.created_by_policy(),
-                          .active = window == window_id()});
+        result.push_back(window_snapshot(window));
     }
     return result;
+}
+
+OpenWindowSnapshot EditorApplication::window_snapshot(WindowId window) const {
+    const Window& editor_window = runtime_.windows().get(window);
+    const ViewId view = editor_window.view_id();
+    const GuileWorkbenchWindowState policy = window_policy(window);
+    const Workbench& owner = workbenches_.get(policy.workbench);
+    return {.window = window,
+            .view = view,
+            .buffer = runtime_.views().get(view).buffer_id(),
+            .role = policy.window.role,
+            .pinned = policy.window.pinned,
+            .created_by_policy = policy.window.created_by_policy,
+            .active = window == owner.active_window()};
 }
 
 LocationNavigationSnapshot EditorApplication::location_navigation() const {
@@ -3197,8 +3277,9 @@ void EditorApplication::release_jump_anchors(Workbench& workbench) {
 }
 
 void EditorApplication::destroy_window(WindowId window) {
-    for (const WorkbenchId workbench : workbenches_.all()) {
-        workbenches_.get(workbench).clear_window_slots(window);
+    const std::expected<bool, std::string> forgotten = guile_.workbench_forget_window(window);
+    if (!forgotten) {
+        throw std::runtime_error(forgotten.error());
     }
     if (!runtime_.windows().erase(window)) {
         throw std::logic_error("window lifecycle registry is inconsistent");

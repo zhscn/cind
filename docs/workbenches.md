@@ -5,8 +5,9 @@ It combines an ordered project scope, one WindowLayout, per-workbench Buffer rec
 Window, and named Window slots. A Project remains a tooling and configuration boundary; it does
 not own the workbench or its layout.
 
-Guile owns workbench names, name uniqueness, project scope and Buffer recency. Native workbench
-objects own the WindowLayout, active Window, navigation data and named Window slots.
+Guile owns workbench names, name uniqueness, project scope, Buffer recency, Window roles, pinning,
+display-policy provenance and role-derived Window slots. Native workbench objects own the
+WindowLayout, active Window and navigation data.
 
 The editor always owns at least one workbench and has exactly one active workbench. Switching
 workbenches changes the presented layout without destroying inactive Windows or Views. Their
@@ -64,10 +65,11 @@ to a deterministic reuse or split plan:
 | `pop` | Split beside the active Window |
 | `explicit` | Use the Window named by the caller |
 
-A role is the Window-side representation of a workbench slot. Assigning a role moves that slot
-from its previous Window. A pinned Window is not selected by policy for replacement. Windows
-created by placement policy retain provenance so dismissing them removes their layout leaf;
-dismissing an ordinary role-bearing Window clears the role and preserves the split.
+A role is the Window-side representation of a workbench slot. Each role is unique within its
+workbench, so assigning it to another Window moves the derived slot. A pinned Window is not
+selected by policy for replacement. Windows created by placement policy retain provenance so
+dismissing them removes their layout leaf; dismissing an ordinary role-bearing Window clears the
+role and preserves the split.
 
 The display policy is a replaceable Guile procedure. Native code validates its complete plan,
 applies WindowLayout invariants, and provides a deterministic fallback when the procedure reports

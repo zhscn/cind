@@ -232,6 +232,7 @@ public:
     std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
     std::expected<void, std::string> release_buffer(BufferId buffer, BufferId replacement);
     std::vector<OpenBufferSnapshot> open_buffers() const;
+    OpenWindowSnapshot window_snapshot(WindowId window) const;
     std::vector<OpenWindowSnapshot> open_windows() const;
     LocationNavigationSnapshot location_navigation() const;
     std::vector<LocationListSnapshot> location_lists(WorkbenchId workbench) const;
@@ -331,6 +332,8 @@ private:
     bool show_buffer(WindowId window, BufferId buffer);
     bool focus_window(WorkbenchId workbench, WindowId window);
     void discard_workbench_state(WorkbenchId workbench);
+    GuileWorkbenchWindowState window_policy(WindowId window) const;
+    void register_workbench_window(WorkbenchId workbench, WindowId window);
     Workbench& active_workbench() { return workbenches_.active(); }
     const Workbench& active_workbench() const { return workbenches_.active(); }
     std::expected<WindowId, std::string> display_generated_buffer(WindowId origin, std::string name,
