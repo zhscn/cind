@@ -259,9 +259,6 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(WindowId, BufferId, std::uint32_t)>
         position_buffer_view;
     std::function<std::expected<void, std::string>(ProjectId)> request_project_index;
-    std::function<std::expected<std::string, std::string>(BufferId)> begin_buffer_save;
-    std::function<std::expected<bool, std::string>(BufferId)> complete_buffer_save;
-    std::function<void(BufferId)> abort_buffer_save;
     std::function<std::vector<BufferId>()> open_buffers;
     std::function<std::vector<GuileWorkbenchSummary>()> workbenches;
     std::function<WorkbenchId()> active_workbench;
@@ -281,7 +278,6 @@ struct GuileHostServices {
         replace_workbench_mru;
     std::function<BufferId(WindowId)> window_buffer;
     std::function<std::expected<BufferId, std::string>(GuileBufferCreation)> create_buffer;
-    std::function<bool(BufferId)> buffer_saving;
     std::function<std::expected<void, std::string>(BufferId, BufferId)> release_buffer;
     std::function<void()> request_exit;
     std::function<std::expected<void, std::string>(WindowId, WindowSplitAxis)> split_window;
@@ -400,6 +396,7 @@ public:
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
+    std::expected<bool, std::string> buffer_saving(BufferId buffer) const;
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message);
     std::expected<void, std::string> record_command(std::string_view command);
     std::expected<void, std::string> set_message(std::string_view message);

@@ -61,7 +61,8 @@ public:
     void set_read_only(bool read_only) { read_only_ = read_only; }
     bool modified() const;
     const Text& save_point() const { return save_point_; }
-    void mark_saved(Text content) { save_point_ = std::move(content); }
+    void mark_saved(Text content);
+    std::uint32_t save_generation() const { return save_generation_; }
 
     DocumentSnapshot snapshot() const { return document_.snapshot(); }
     EditTransaction begin_transaction();
@@ -108,6 +109,7 @@ private:
     bool read_only_ = false;
     Document document_;
     Text save_point_;
+    std::uint32_t save_generation_ = 0;
     SettingsLayer settings_;
     BufferModes modes_;
     std::vector<KeymapId> keymaps_;

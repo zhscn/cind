@@ -483,9 +483,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .begin_buffer_save = [this](BufferId buffer) { return begin_buffer_save(buffer); },
-           .complete_buffer_save = [this](BufferId buffer) { return complete_buffer_save(buffer); },
-           .abort_buffer_save = [this](BufferId buffer) { abort_buffer_save(buffer); },
            .open_buffers =
                [this] {
                    std::vector<BufferId> result;
@@ -602,8 +599,6 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return std::unexpected(exception.what());
                }
            },
-           .buffer_saving =
-               [this](BufferId buffer) { return state_for(buffer).pending_save.has_value(); },
            .release_buffer =
                [this](BufferId buffer, BufferId replacement) {
                    return release_buffer(buffer, replacement);
@@ -2307,10 +2302,6 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
     if (found == buffers_.end()) {
         return std::unexpected("unknown buffer");
     }
-    BufferState& target = **found;
-    if (target.pending_save) {
-        return std::unexpected("buffer has a save in progress");
-    }
     if (buffer == replacement || runtime_.buffers().try_get(replacement) == nullptr ||
         std::ranges::none_of(buffers_, [replacement](const std::unique_ptr<BufferState>& state) {
             return state->buffer == replacement;
@@ -2397,7 +2388,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
              .resource = buffer.resource_uri(),
              .modified = buffer.modified(),
              .active = state.buffer == buffer_id(),
-             .saving = state.pending_save.has_value(),
+             .saving = guile_.buffer_saving(state.buffer).value_or(false),
              .major_mode = major ? runtime_.modes().definition(*major).name : std::string(),
              .interaction_class = mode_policy.interaction_class == InteractionClass::Editing
                                       ? "editing"
@@ -2639,11 +2630,11 @@ const std::string& EditorApplication::style_origin(WindowId window) const {
 }
 
 std::uint32_t EditorApplication::save_generation() const {
-    return active_buffer().save_generation;
+    return runtime_.buffers().get(buffer_id()).save_generation();
 }
 
 std::uint32_t EditorApplication::save_generation(WindowId window) const {
-    return state_for(buffer_id(window)).save_generation;
+    return runtime_.buffers().get(buffer_id(window)).save_generation();
 }
 
 bool EditorApplication::has_background_work() const {
@@ -2652,10 +2643,6 @@ bool EditorApplication::has_background_work() const {
 
 bool EditorApplication::poll_background_work() {
     return async_runtime_.drain() != 0;
-}
-
-void EditorApplication::mark_saved(Text content) {
-    mark_saved(buffer_id(), std::move(content));
 }
 
 EditorApplication::BufferState& EditorApplication::active_buffer() {
@@ -3811,42 +3798,6 @@ void EditorApplication::after_edit() {
     set_message({});
     reveal_caret_ = true;
     synchronize_lsp_buffer(buffer_id());
-}
-
-std::expected<std::string, std::string> EditorApplication::begin_buffer_save(BufferId buffer) {
-    BufferState& state = state_for(buffer);
-    if (state.pending_save) {
-        return std::unexpected("save already in progress");
-    }
-    try {
-        Text content = runtime_.buffers().get(state.buffer).snapshot().content();
-        std::string serialized = content.to_string();
-        state.pending_save.emplace(PendingSave{.content = std::move(content)});
-        return serialized;
-    } catch (const std::exception& exception) {
-        state.pending_save.reset();
-        return std::unexpected(exception.what());
-    }
-}
-
-std::expected<bool, std::string> EditorApplication::complete_buffer_save(BufferId buffer) {
-    BufferState& state = state_for(buffer);
-    if (!state.pending_save) {
-        return std::unexpected("buffer has no save in progress");
-    }
-    mark_saved(buffer, std::move(state.pending_save->content));
-    state.pending_save.reset();
-    return runtime_.buffers().get(buffer).modified();
-}
-
-void EditorApplication::abort_buffer_save(BufferId buffer) {
-    state_for(buffer).pending_save.reset();
-}
-
-void EditorApplication::mark_saved(BufferId buffer, Text content) {
-    BufferState& state = state_for(buffer);
-    runtime_.buffers().get(buffer).mark_saved(std::move(content));
-    ++state.save_generation;
 }
 
 } // namespace cind

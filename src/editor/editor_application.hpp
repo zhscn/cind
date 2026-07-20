@@ -288,19 +288,11 @@ public:
     bool poll_background_work();
     bool should_quit() const { return quit_; }
 
-    void mark_saved(Text content);
-
 private:
-    struct PendingSave {
-        Text content;
-    };
-
     struct BufferState {
         BufferId buffer;
         std::shared_ptr<CppIndentStyle> style;
         std::string style_origin;
-        std::uint32_t save_generation = 0;
-        std::optional<PendingSave> pending_save;
     };
 
     struct ViewState {
@@ -399,10 +391,6 @@ private:
                          ScriptExternalAsyncCallbacks callbacks);
     CommandContext command_context();
     void after_edit();
-    std::expected<std::string, std::string> begin_buffer_save(BufferId buffer);
-    std::expected<bool, std::string> complete_buffer_save(BufferId buffer);
-    void abort_buffer_save(BufferId buffer);
-    void mark_saved(BufferId buffer, Text content);
     std::expected<GuileWorkbenchRestorePlan, std::string>
     prepare_workbench_session_restore(std::string_view serialized);
     EditorRuntime runtime_;

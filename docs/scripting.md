@@ -28,8 +28,8 @@ The bundled Scheme tree is copied into the build directory as a runtime resource
 defines the public command value API; `(cind async)` defines cancellable native task composition;
 `(cind minibuffer)` defines high-level text and completion interaction constructors, completion
 ranking, candidate navigation, and named history policy;
-`(cind lifecycle)` owns configurable startup and fallback-buffer policy and per-application startup
-placeholder state;
+`(cind lifecycle)` owns configurable startup and fallback-buffer policy, per-application startup
+placeholder state, and active Buffer save transactions;
 `(cind pointer)` owns semantic pointer-target behavior;
 `(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
@@ -210,13 +210,11 @@ The native module exports:
 (project-id-by-root host root)
 (create-project! host name roots provider marker)
 (set-buffer-project! host buffer-id project-id-or-#f)
-(begin-buffer-save! host buffer-id)
-(complete-buffer-save! host buffer-id)
-(abort-buffer-save! host buffer-id)
+(buffer-save-snapshot host buffer-id)
+(mark-buffer-saved! host buffer-id snapshot-contents)
 (open-buffer-ids host)
 (create-buffer! host name initial-text kind resource-or-#f read-only? mode-or-#f
                 cpp-indent-style-or-#f style-origin)
-(buffer-saving? host buffer-id)
 (buffer-modified? host buffer-id)
 (release-buffer! host buffer-id replacement-buffer-id)
 (exit-editor! host)
@@ -762,14 +760,15 @@ clipboard success. This result domain lets Scheme own kill-ring policy without m
 `rename-buffer!`, `set-buffer-major-mode!` and `set-buffer-project!` mutate one explicit Buffer
 property. `buffer-id-by-resource`, `resource-mode` and `project-for-resource` query the registries
 without changing editor state. The bundled save-as policy composes these mechanisms in Scheme.
-`begin-buffer-save!` acquires a Buffer save lease and returns the immutable snapshot contents.
-`complete-buffer-save!` publishes that snapshot as the saved baseline, releases the lease and
-reports whether newer edits remain. `abort-buffer-save!` releases a failed or cancelled lease.
+`buffer-save-snapshot` returns the Buffer's current immutable contents. `mark-buffer-saved!`
+publishes explicit snapshot contents as the Buffer's saved baseline and reports whether newer edits
+remain. `(cind lifecycle)` uses these two data-plane operations to own active save transactions and
+exports `begin-buffer-save!`, `complete-buffer-save!`, `abort-buffer-save!`, and `buffer-saving?`.
 The bundled Scheme command chooses the destination, schedules `async-file-write`, owns completion
-and failure feedback and closes the lease from the corresponding callback.
+and failure feedback, and closes the transaction from the corresponding callback.
 
-`open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-saving?` and
-`buffer-modified?` expose lifecycle state without deciding how commands respond to it.
+`open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-modified?`
+exposes the Buffer save-point comparison without deciding how commands respond to it.
 `create-buffer!` atomically creates an undisplayed scratch, file, generated, or process buffer from
 explicit resource, mode, style and presentation data. `release-buffer!` requires a distinct open
 replacement, redirects every Window displaying the

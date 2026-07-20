@@ -21,6 +21,11 @@ bool Buffer::modified() const {
     return diff_edit(save_point_, document_.snapshot().content()).has_value();
 }
 
+void Buffer::mark_saved(Text content) {
+    save_point_ = std::move(content);
+    ++save_generation_;
+}
+
 const BufferLocation* Buffer::location_at(TextOffset offset) const {
     const std::vector<BufferLocation>& current = locations();
     const auto after =

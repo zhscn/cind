@@ -4815,66 +4815,39 @@ SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
     return SCM_UNSPECIFIED;
 }
 
-SCM begin_buffer_save(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "begin-buffer-save!");
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "begin-buffer-save!", 2);
-    if (!host.services.begin_buffer_save) {
-        scm_misc_error("begin-buffer-save!", "buffer-save lease capability is unavailable",
-                       SCM_EOL);
-    }
+SCM buffer_save_snapshot(SCM host_object, SCM buffer_value) {
     try {
-        const std::expected<std::string, std::string> content =
-            host.services.begin_buffer_save(buffer);
-        if (!content) {
-            raise_host_error("begin-buffer-save!", content.error());
-        }
-        return scm_from_utf8_stringn(content->data(), content->size());
+        HostLease& host = require_host(host_object, "buffer-save-snapshot");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-save-snapshot", 2);
+        const std::string content =
+            host.runtime->buffers().get(buffer).snapshot().content().to_string();
+        return scm_from_utf8_stringn(content.data(), content.size());
     } catch (const std::exception& exception) {
-        raise_host_error("begin-buffer-save!", exception.what());
+        raise_host_error("buffer-save-snapshot", exception.what());
     } catch (...) {
-        scm_misc_error("begin-buffer-save!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("buffer-save-snapshot", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
 
-SCM complete_buffer_save(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "complete-buffer-save!");
-    const BufferId buffer =
-        entity_id_from_scheme<BufferTag>(buffer_value, "complete-buffer-save!", 2);
-    if (!host.services.complete_buffer_save) {
-        scm_misc_error("complete-buffer-save!", "buffer-save completion capability is unavailable",
-                       SCM_EOL);
+SCM mark_buffer_saved(SCM host_object, SCM buffer_value, SCM content_value) {
+    if (!scm_is_string(content_value)) {
+        scm_wrong_type_arg_msg("mark-buffer-saved!", 3, content_value, "string");
     }
     try {
-        const std::expected<bool, std::string> newer = host.services.complete_buffer_save(buffer);
-        if (!newer) {
-            raise_host_error("complete-buffer-save!", newer.error());
-        }
-        return scm_from_bool(*newer);
+        HostLease& host = require_host(host_object, "mark-buffer-saved!");
+        const BufferId buffer =
+            entity_id_from_scheme<BufferTag>(buffer_value, "mark-buffer-saved!", 2);
+        Buffer& target = host.runtime->buffers().get(buffer);
+        target.mark_saved(Text(scheme_string_with_nuls(content_value)));
+        return scm_from_bool(target.modified());
     } catch (const std::exception& exception) {
-        raise_host_error("complete-buffer-save!", exception.what());
+        raise_host_error("mark-buffer-saved!", exception.what());
     } catch (...) {
-        scm_misc_error("complete-buffer-save!", "unknown C++ host failure", SCM_EOL);
+        scm_misc_error("mark-buffer-saved!", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
-}
-
-SCM abort_buffer_save(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "abort-buffer-save!");
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "abort-buffer-save!", 2);
-    if (!host.services.abort_buffer_save) {
-        scm_misc_error("abort-buffer-save!", "buffer-save abort capability is unavailable",
-                       SCM_EOL);
-    }
-    try {
-        host.services.abort_buffer_save(buffer);
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("abort-buffer-save!", exception.what());
-    } catch (...) {
-        scm_misc_error("abort-buffer-save!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
 }
 
 SCM open_buffers(SCM host_object) {
@@ -4954,22 +4927,6 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
         raise_host_error("create-buffer!", exception.what());
     } catch (...) {
         scm_misc_error("create-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM buffer_saving_p(SCM host_object, SCM buffer_value) {
-    HostLease& host = require_host(host_object, "buffer-saving?");
-    const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-saving?", 2);
-    if (!host.services.buffer_saving) {
-        scm_misc_error("buffer-saving?", "buffer-save snapshot capability is unavailable", SCM_EOL);
-    }
-    try {
-        return scm_from_bool(host.services.buffer_saving(buffer));
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-saving?", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-saving?", "unknown C++ host failure", SCM_EOL);
     }
     return SCM_BOOL_F;
 }
@@ -6096,18 +6053,14 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(create_project));
     (void)scm_c_define_gsubr("set-buffer-project!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_project));
-    (void)scm_c_define_gsubr("begin-buffer-save!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(begin_buffer_save));
-    (void)scm_c_define_gsubr("complete-buffer-save!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(complete_buffer_save));
-    (void)scm_c_define_gsubr("abort-buffer-save!", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(abort_buffer_save));
+    (void)scm_c_define_gsubr("buffer-save-snapshot", 2, 0, 0,
+                             reinterpret_cast<scm_t_subr>(buffer_save_snapshot));
+    (void)scm_c_define_gsubr("mark-buffer-saved!", 3, 0, 0,
+                             reinterpret_cast<scm_t_subr>(mark_buffer_saved));
     (void)scm_c_define_gsubr("open-buffer-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_buffers));
     (void)scm_c_define_gsubr("create-buffer!", 9, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_buffer));
-    (void)scm_c_define_gsubr("buffer-saving?", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(buffer_saving_p));
     (void)scm_c_define_gsubr("buffer-modified?", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_modified_p));
     (void)scm_c_define_gsubr("release-buffer!", 3, 0, 0,
@@ -6184,11 +6137,10 @@ void initialize_host_module(void*) {
         "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",
         "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
-        "set-buffer-project!", "begin-buffer-save!", "complete-buffer-save!", "abort-buffer-save!",
-        "open-buffer-ids", "create-buffer!", "buffer-saving?", "buffer-modified?",
-        "release-buffer!", "exit-editor!", "split-window!", "delete-window!",
-        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
-        "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
+        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
+        "create-buffer!", "buffer-modified?", "release-buffer!", "exit-editor!", "split-window!",
+        "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
+        "window-view-id", "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
         "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
         "request-redraw!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
@@ -6946,6 +6898,7 @@ struct GuileCall {
         MinibufferInputChanged,
         MinibufferHistoryState,
         CommandFeedbackState,
+        BufferSavingState,
         CommandInput,
         RecordCommand,
         SetMessage,
@@ -7660,6 +7613,12 @@ SCM call_body(void* data) {
             call.command_feedback.message = scheme_string(scm_c_vector_ref(call.result, 0));
             call.command_feedback.last_key = scheme_string(scm_c_vector_ref(call.result, 1));
             call.command_feedback.last_command = scheme_string(scm_c_vector_ref(call.result, 2));
+            break;
+        case GuileCall::Operation::BufferSavingState:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind lifecycle", "buffer-saving?"), call.host,
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            call.enabled = scheme_true(call.result);
             break;
         case GuileCall::Operation::CommandInput:
             call.result = scm_call_3(scm_c_public_ref("cind command", "command-input!"), call.host,
@@ -8556,6 +8515,22 @@ public:
         return std::move(call.command_feedback);
     }
 
+    std::expected<bool, std::string> buffer_saving(BufferId buffer) const {
+        require_owner_thread();
+        (void)lease_->runtime->buffers().get(buffer);
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferSavingState;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
     std::expected<void, std::string> command_input(std::string_view key, bool clear_message) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -9184,6 +9159,10 @@ GuileRuntime::minibuffer_history_state(BufferId buffer, std::string_view history
 
 std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {
     return impl_->command_feedback_state();
+}
+
+std::expected<bool, std::string> GuileRuntime::buffer_saving(BufferId buffer) const {
+    return impl_->buffer_saving(buffer);
 }
 
 std::expected<void, std::string> GuileRuntime::command_input(std::string_view key,

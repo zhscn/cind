@@ -1,4 +1,5 @@
 (define-module (cind lifecycle)
+  #:use-module (cind host)
   #:export (configure-startup-policy!
             resolve-startup-plan
             configure-session-policy!
@@ -7,6 +8,10 @@
             create-fallback-buffer!
             configure-close-policy!
             resolve-close-command
+            begin-buffer-save!
+            complete-buffer-save!
+            abort-buffer-save!
+            buffer-saving?
             startup-placeholder
             set-startup-placeholder!))
 
@@ -15,6 +20,56 @@
 (define fallback-buffer-policies (make-weak-key-hash-table))
 (define startup-placeholders (make-weak-key-hash-table))
 (define close-policies (make-weak-key-hash-table))
+(define buffer-save-states (make-weak-key-hash-table))
+
+(define (host-buffer-saves host)
+  (or (hashq-ref buffer-save-states host) '()))
+
+(define (buffer-save-entry host buffer)
+  (let loop ((entries (host-buffer-saves host)))
+    (and (pair? entries)
+         (if (equal? buffer (vector-ref (car entries) 0))
+             (car entries)
+             (loop (cdr entries))))))
+
+(define (without-buffer-save entries buffer)
+  (cond ((null? entries) '())
+        ((equal? buffer (vector-ref (car entries) 0))
+         (cdr entries))
+        (else
+         (cons (car entries)
+               (without-buffer-save (cdr entries) buffer)))))
+
+(define (set-buffer-saves! host entries)
+  (if (null? entries)
+      (hashq-remove! buffer-save-states host)
+      (hashq-set! buffer-save-states host entries)))
+
+(define (buffer-saving? host buffer)
+  (and (buffer-save-entry host buffer) #t))
+
+(define (begin-buffer-save! host buffer)
+  (when (buffer-saving? host buffer)
+    (error "save already in progress"))
+  (let ((contents (buffer-save-snapshot host buffer)))
+    (set-buffer-saves! host
+                       (cons (vector buffer contents)
+                             (host-buffer-saves host)))
+    contents))
+
+(define (complete-buffer-save! host buffer)
+  (let ((entry (buffer-save-entry host buffer)))
+    (unless entry
+      (error "buffer has no save in progress"))
+    (let ((newer-edits?
+           (mark-buffer-saved! host buffer (vector-ref entry 1))))
+      (set-buffer-saves! host
+                         (without-buffer-save (host-buffer-saves host) buffer))
+      newer-edits?)))
+
+(define (abort-buffer-save! host buffer)
+  (set-buffer-saves! host
+                     (without-buffer-save (host-buffer-saves host) buffer)))
 
 (define (configure-startup-policy! host procedure)
   (unless (procedure? procedure)

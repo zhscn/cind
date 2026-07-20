@@ -1078,17 +1078,12 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     bool caret_moved = false;
     ProjectId indexed_project;
     bool project_index_requested = false;
-    BufferId saved_buffer;
-    bool buffer_saved = false;
-    bool buffer_save_completed = false;
-    bool buffer_save_aborted = false;
     std::optional<ScriptAsyncRequest> pending_async_request;
     ScriptAsyncCallbacks pending_async_callbacks;
     std::vector<ScriptAsyncRequest> async_requests;
     std::vector<std::uint64_t> cancelled_async_tasks;
     std::uint64_t next_async_task = 1;
     std::optional<GuileBufferCreation> created_buffer;
-    bool buffer_saving = false;
     bool only_buffer = false;
     BufferId released_buffer;
     BufferId replacement_buffer;
@@ -1196,22 +1191,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              project_index_requested = true;
              return {};
          },
-         .begin_buffer_save =
-             [&](BufferId target_buffer) -> std::expected<std::string, std::string> {
-             saved_buffer = target_buffer;
-             buffer_saved = true;
-             return "abc\n";
-         },
-         .complete_buffer_save = [&](BufferId target_buffer) -> std::expected<bool, std::string> {
-             saved_buffer = target_buffer;
-             buffer_save_completed = true;
-             return false;
-         },
-         .abort_buffer_save =
-             [&](BufferId target_buffer) {
-                 saved_buffer = target_buffer;
-                 buffer_save_aborted = true;
-             },
          .open_buffers =
              [&] {
                  return only_buffer ? std::vector<BufferId>{buffer}
@@ -1261,7 +1240,6 @@ TEST_CASE("bundled Guile commands return editor command actions") {
              created_buffer = std::move(spec);
              return other;
          },
-         .buffer_saving = [&](BufferId) { return buffer_saving; },
          .release_buffer = [&](BufferId target_buffer,
                                BufferId replacement) -> std::expected<void, std::string> {
              if (!release_error.empty()) {
@@ -1482,10 +1460,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(feedback_message() == "no LSP references found");
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
 
+    const std::uint32_t save_generation = runtime.buffers().get(buffer).save_generation();
     const CommandResult saved = runtime.commands().invoke(save, context);
     REQUIRE(saved.has_value());
-    REQUIRE(buffer_saved);
-    CHECK(saved_buffer == buffer);
+    CHECK(guile.buffer_saving(buffer) == true);
     REQUIRE(pending_async_request.has_value());
     const auto* write = std::get_if<ScriptFileWriteRequest>(&*pending_async_request);
     REQUIRE(write != nullptr);
@@ -1494,8 +1472,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(feedback_message() == "saving /tmp/sample…");
     pending_async_callbacks.completed(next_async_task - 1,
                                       ScriptFileWriteResult{.path = "/tmp/sample"});
-    CHECK(buffer_save_completed);
-    CHECK_FALSE(buffer_save_aborted);
+    CHECK(runtime.buffers().get(buffer).save_generation() == save_generation + 1);
+    CHECK_FALSE(runtime.buffers().get(buffer).modified());
+    CHECK(guile.buffer_saving(buffer) == false);
     CHECK(feedback_message() == "saved /tmp/sample");
 
     const CommandResult session_saved = runtime.commands().invoke(
@@ -1817,12 +1796,15 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(refused_kill.error().message == "buffer has unsaved changes");
     CHECK_FALSE(buffer_released);
 
-    buffer_saving = true;
+    const CommandResult saving = runtime.commands().invoke(save, context);
+    REQUIRE(saving.has_value());
+    const std::uint64_t saving_task = next_async_task - 1;
     const CommandResult saving_kill =
         runtime.commands().invoke(require_command(runtime, "buffer.force-kill"), context);
     REQUIRE_FALSE(saving_kill.has_value());
     CHECK(saving_kill.error().message == "buffer has a save in progress");
-    buffer_saving = false;
+    pending_async_callbacks.cancelled(saving_task);
+    CHECK(guile.buffer_saving(buffer) == false);
 
     release_error = "buffer release failed";
     const CommandResult failed_release =
