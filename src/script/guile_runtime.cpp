@@ -5495,6 +5495,22 @@ SCM completion_active(SCM host_object) {
     return SCM_BOOL_F;
 }
 
+SCM refresh_completion(SCM host_object) {
+    HostLease& host = require_host(host_object, "refresh-completion!");
+    if (!host.services.refresh_completion) {
+        return SCM_BOOL_F;
+    }
+    try {
+        const std::expected<void, std::string> refreshed = host.services.refresh_completion();
+        return refreshed ? SCM_BOOL_F : scm_from_utf8_string(refreshed.error().c_str());
+    } catch (const std::exception& exception) {
+        raise_host_error("refresh-completion!", exception.what());
+    } catch (...) {
+        scm_misc_error("refresh-completion!", "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
+
 SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM providers_value,
                      SCM trigger_value) {
     HostLease& host = require_host(host_object, "start-completion!");
@@ -6114,6 +6130,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(cancel_interaction));
     (void)scm_c_define_gsubr("completion-active?", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(completion_active));
+    (void)scm_c_define_gsubr("refresh-completion!", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(refresh_completion));
     (void)scm_c_define_gsubr("start-completion!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
     (void)scm_c_define_gsubr("move-completion!", 2, 0, 0,
@@ -6241,9 +6259,9 @@ void initialize_host_module(void*) {
         "interaction-status", "interaction-provider", "set-interaction-provider!",
         "interaction-origin-project", "refresh-interaction!", "submit-interaction!",
         "select-interaction-candidate!", "replace-interaction-input!", "cancel-interaction!",
-        "cancel-pending-input!", "completion-active?", "start-completion!", "move-completion!",
-        "apply-completion!", "cancel-completion!", "view-position", "view-line-prefix",
-        "view-syntax-token", "view-identifier-words", "location-navigation",
+        "cancel-pending-input!", "completion-active?", "refresh-completion!", "start-completion!",
+        "move-completion!", "apply-completion!", "cancel-completion!", "view-position",
+        "view-line-prefix", "view-syntax-token", "view-identifier-words", "location-navigation",
         "set-location-navigation!", "location-list-target", "move-location-list!",
         "position-buffer-view!", "project-index-state", "request-project-index!",
         "normalize-resource-path", "set-buffer-resource!", "rename-buffer!",

@@ -298,6 +298,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    return interaction_.cancel();
                },
            .completion_active = [this] { return completion_ && completion_->active(); },
+           .refresh_completion = [this] { return refresh_completion(); },
            .resolve_lsp_completion_provider =
                [this](CommandTarget target, ScriptLspProviderSpec provider) {
                    return resolve_lsp_completion_provider(target, std::move(provider));
@@ -998,7 +999,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 if (std::optional<CommandLoopResult> override =
                         command_loop_.dispatch_override(key, context)) {
                     const bool consumed = handle_loop_result(std::move(*override));
-                    refresh_completion_after_command();
                     sync_keymaps();
                     return consumed;
                 }
@@ -1026,7 +1026,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                     }
                     const bool consumed = handle_loop_result(
                         command_loop_.execute(handled->command, context, handled->invocation));
-                    refresh_completion_after_command();
                     sync_keymaps();
                     return consumed;
                 }
@@ -1057,7 +1056,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                                           !has_modifier(key.modifiers, KeyModifier::Super) &&
                                           text_input_policy() == TextInputPolicy::Accept;
     const bool consumed = handle_loop_result(std::move(result));
-    refresh_completion_after_command();
     if (preserve_prefix_for_text) {
         command_loop_.set_pending_prefix(text_prefix);
     }
@@ -1157,7 +1155,6 @@ bool EditorApplication::execute_command(std::string_view name,
 bool EditorApplication::execute_command(CommandId command, const CommandInvocation& invocation) {
     CommandContext context = command_context();
     const bool consumed = handle_loop_result(command_loop_.execute(command, context, invocation));
-    refresh_completion_after_command();
     sync_keymaps();
     return consumed;
 }
@@ -1268,7 +1265,6 @@ void EditorApplication::insert_text(std::string_view text) {
                                  .prefix = command_loop_.pending_prefix()};
     (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
     record_command_input("text", false);
-    refresh_completion_after_command();
     sync_keymaps();
 }
 
@@ -3247,25 +3243,24 @@ CommandContext EditorApplication::command_context() {
     return CommandContext(runtime_, window_id(), buffer_id(), view_id());
 }
 
-void EditorApplication::refresh_completion_after_command() {
+std::expected<void, std::string> EditorApplication::refresh_completion() {
     if (!completion_->active()) {
-        return;
+        return {};
     }
     const CompletionRequest request = completion_->state()->request;
     if (request.target.window != window_id() || request.target.buffer != buffer_id() ||
         request.target.view != view_id()) {
         (void)completion_->cancel();
-        return;
+        return {};
     }
     CommandContext context(runtime_, request.target.window, request.target.buffer,
                            request.target.view);
     if (runtime_.buffers().get(request.target.buffer).snapshot().revision() != request.revision) {
-        if (std::expected<void, std::string> updated = completion_->update(context); !updated) {
-            set_message(updated.error());
-        }
+        return completion_->update(context);
     } else {
         (void)completion_->invalidate_if_stale();
     }
+    return {};
 }
 
 std::expected<CompletionProvider, std::string>

@@ -197,6 +197,7 @@ The native module exports:
 (select-interaction-candidate! host zero-based-index)
 (replace-interaction-input! host input)
 (completion-active? host)
+(refresh-completion! host)
 (start-completion! host context anchor-byte provider-values trigger)
 (move-completion! host delta)
 (apply-completion! host replace?)
@@ -362,8 +363,10 @@ name-only projections for scripted translators and self-description.
 `command-result!` consumes normalized command-loop outcomes, records the selected command, clears
 the message when an interaction takes focus, and publishes errors, disabled commands,
 cancellations, and consumed unbound input. Prefix and successful command results preserve messages
-set by command policy. `record-command!` and `set-message!` expose the individual transitions to
-extensions. `command-feedback-state` returns a copy for inspection. Modeline and chrome policy
+set by command policy. It also invokes the native completion-refresh mechanism; stale sessions are
+cancelled or updated, and refresh errors become command feedback. `record-command!` and
+`set-message!` expose the individual transitions to extensions. `command-feedback-state` returns a
+copy for inspection. Modeline and chrome policy
 resolution inject the current last key and message into their fact vectors, so presentation policy
 and inspector snapshots observe the same Guile-owned state.
 

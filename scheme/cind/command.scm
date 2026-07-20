@@ -125,7 +125,10 @@
          (set-message! host ""))
         ((or (memq status '(disabled cancelled error))
              (and (eq? status 'not-handled) consumed?))
-         (set-message! host message))))
+         (set-message! host message)))
+  (let ((completion-error (refresh-completion! host)))
+    (when completion-error
+      (set-message! host completion-error))))
 
 (define (set-message! host message)
   (unless (string? message)

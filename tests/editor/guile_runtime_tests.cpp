@@ -295,7 +295,17 @@ TEST_CASE("Guile minibuffer history storage is scoped to the editor host") {
 
 TEST_CASE("Guile command feedback owns message and command input state") {
     EditorRuntime runtime;
-    GuileRuntime guile(runtime);
+    std::size_t completion_refreshes = 0;
+    bool fail_completion_refresh = false;
+    GuileHostServices services;
+    services.refresh_completion = [&]() -> std::expected<void, std::string> {
+        ++completion_refreshes;
+        if (fail_completion_refresh) {
+            return std::unexpected("completion refresh failed");
+        }
+        return {};
+    };
+    GuileRuntime guile(runtime, std::move(services));
 
     REQUIRE(guile.command_input("C-x", true).has_value());
     REQUIRE(guile.set_message("pending").has_value());
@@ -338,6 +348,17 @@ TEST_CASE("Guile command feedback owns message and command input state") {
         guile.command_feedback_state();
     REQUIRE(disabled.has_value());
     CHECK(disabled->message == "disabled");
+    CHECK(completion_refreshes == 4);
+
+    fail_completion_refresh = true;
+    REQUIRE(
+        guile.command_result_feedback(CommandLoopStatus::Executed, true, std::nullopt, false, {})
+            .has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> refresh_failed =
+        guile.command_feedback_state();
+    REQUIRE(refresh_failed.has_value());
+    CHECK(refresh_failed->message == "completion refresh failed");
+    CHECK(completion_refreshes == 5);
 }
 
 TEST_CASE("Guile buffer edit observers own post-edit policy") {
@@ -1251,6 +1272,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .replace_interaction_input = {},
          .cancel_interaction = {},
          .completion_active = {},
+         .refresh_completion = {},
          .resolve_lsp_completion_provider = {},
          .start_completion = {},
          .move_completion = {},
