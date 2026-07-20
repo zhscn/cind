@@ -16,7 +16,7 @@ EditingMechanisms::EditingMechanisms(EditSessionResolver session, EditingMechani
 bool EditingMechanisms::undo(ViewId view) {
     const bool changed = session_(view).undo();
     if (changed) {
-        notify_edited();
+        notify_edited(view);
     }
     return changed;
 }
@@ -24,7 +24,7 @@ bool EditingMechanisms::undo(ViewId view) {
 bool EditingMechanisms::redo(ViewId view) {
     const bool changed = session_(view).redo();
     if (changed) {
-        notify_edited();
+        notify_edited(view);
     }
     return changed;
 }
@@ -51,7 +51,7 @@ void EditingMechanisms::move_lines(ViewId view, std::int64_t delta) {
     active.set_caret(ui::offset_at_display_column(
         text, {.line = static_cast<std::uint32_t>(target), .column = *viewport.preferred_column},
         active.style().tab_width));
-    notify_caret_moved();
+    notify_caret_moved(view);
 }
 
 void EditingMechanisms::move_line_boundary(ViewId view, bool end) {
@@ -60,7 +60,7 @@ void EditingMechanisms::move_line_boundary(ViewId view, bool end) {
     const Text& text = snapshot.content();
     const std::uint32_t line = text.position(active.caret()).line;
     active.set_caret(end ? text.line_content_end(line) : text.line_start(line));
-    notify_caret_moved();
+    notify_caret_moved(view);
 }
 
 DeleteGraphemeOutcome EditingMechanisms::delete_grapheme(ViewId view, bool forward,
@@ -70,14 +70,14 @@ DeleteGraphemeOutcome EditingMechanisms::delete_grapheme(ViewId view, bool forwa
                                               ? structural_delete(view, forward)
                                               : raw_delete(view, forward);
     if (session_(view).snapshot().revision() != revision) {
-        notify_edited();
+        notify_edited(view);
     }
     return outcome;
 }
 
 void EditingMechanisms::newline(ViewId view) {
     session_(view).enter();
-    notify_edited();
+    notify_edited(view);
 }
 
 std::optional<FormatRole> EditingMechanisms::indent(ViewId view) {
@@ -89,9 +89,9 @@ std::optional<FormatRole> EditingMechanisms::indent(ViewId view) {
     const TextOffset caret = active.caret();
     const IndentDecision decision = active.indent();
     if (active.snapshot().revision() != revision) {
-        notify_edited();
+        notify_edited(view);
     } else if (active.caret() != caret) {
-        notify_caret_moved();
+        notify_caret_moved(view);
     }
     return decision.role;
 }
@@ -104,7 +104,7 @@ void EditingMechanisms::type_text(ViewId view, std::string_view text) {
     const RevisionId revision = active.snapshot().revision();
     active.type_text(text);
     if (active.snapshot().revision() != revision) {
-        notify_edited();
+        notify_edited(view);
     }
 }
 
@@ -117,7 +117,7 @@ std::expected<void, std::string> EditingMechanisms::edit_structure(ViewId view,
     const RevisionId revision = active.snapshot().revision();
     std::expected<void, std::string> result = active.edit_structure(edit);
     if (result && active.snapshot().revision() != revision) {
-        notify_edited();
+        notify_edited(view);
     }
     return result;
 }
@@ -152,7 +152,7 @@ DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool for
             return DeleteGraphemeOutcome::Deleted;
         }
         active.set_caret(forward ? TextOffset{target.value + 1} : target);
-        notify_caret_moved();
+        notify_caret_moved(view);
         return DeleteGraphemeOutcome::MovedOverPair;
     }
     if (character == '"' || character == '\'') {
@@ -195,7 +195,7 @@ DeleteGraphemeOutcome EditingMechanisms::structural_delete(ViewId view, bool for
             return DeleteGraphemeOutcome::Deleted;
         }
         active.set_caret(forward ? TextOffset{target.value + 1} : target);
-        notify_caret_moved();
+        notify_caret_moved(view);
         return DeleteGraphemeOutcome::MovedOverLiteral;
     }
     return raw_delete(view, forward);
@@ -219,15 +219,15 @@ DeleteGraphemeOutcome EditingMechanisms::raw_delete(ViewId view, bool forward) {
     return DeleteGraphemeOutcome::Deleted;
 }
 
-void EditingMechanisms::notify_edited() {
+void EditingMechanisms::notify_edited(ViewId view) {
     if (hooks_.edited) {
-        hooks_.edited();
+        hooks_.edited(view);
     }
 }
 
-void EditingMechanisms::notify_caret_moved() {
+void EditingMechanisms::notify_caret_moved(ViewId view) {
     if (hooks_.caret_moved) {
-        hooks_.caret_moved();
+        hooks_.caret_moved(view);
     }
 }
 

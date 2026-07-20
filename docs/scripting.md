@@ -29,7 +29,7 @@ defines the public command value API; `(cind async)` defines cancellable native 
 `(cind minibuffer)` defines high-level text and completion interaction constructors, completion
 ranking, candidate navigation, and named history policy;
 `(cind lifecycle)` owns configurable startup and fallback-buffer policy, per-application startup
-placeholder state, and active Buffer save transactions;
+placeholder state, active Buffer save transactions, and post-edit observers;
 `(cind pointer)` owns semantic pointer-target behavior;
 `(cind extension)` owns isolated source-file loading;
 `(cind development)` owns interactive source evaluation and result presentation;
@@ -813,6 +813,18 @@ exports `begin-buffer-save!`, `complete-buffer-save!`, `abort-buffer-save!`, and
 The bundled Scheme command chooses the destination, schedules `async-file-write`, owns completion
 and failure feedback, and closes the transaction from the corresponding callback.
 
+```scheme
+(observe-buffer-edits! host procedure)
+(buffer-edited! host buffer-id view-id revision)
+```
+
+Every committed editor mutation reports its explicit Buffer, originating View and resulting
+revision to `buffer-edited!`. Procedures registered with `observe-buffer-edits!` run in registration
+order on the editor thread. The built-in observer starts a new echo-message lifetime by clearing
+the previous message and refreshes minibuffer candidates when the edited View owns the active
+interaction. Native post-edit work remains target-specific: the edited Buffer is the one synchronized
+with its LSP session, including when a command or completion edits a non-active View.
+
 `open-buffer-ids` returns the application-owned buffers in lifecycle order. `buffer-modified?`
 exposes the Buffer save-point comparison without deciding how commands respond to it.
 `create-buffer!` atomically creates an undisplayed scratch, file, generated, or process buffer from
@@ -1009,7 +1021,8 @@ movement. `minibuffer-history-state` exposes the entry count, navigation index a
 inspection. Native code applies absolute candidate indices and provides
 `replace-interaction-input!`, which updates the ordinary minibuffer Buffer/View and returns its new
 revision. The status vector contains only native interaction facts:
-`#(active? picker? has-history? history-or-#f selected-or-#f candidate-count)`.
+`#(active? picker? has-history? history-or-#f selected-or-#f candidate-count
+buffer-id-or-#f view-id-or-#f)`.
 
 `(cind core)` defines the command palette and its dispatching accept command, file-open and save-as
 interactions, named and relative buffer switching, buffer kill policy, goto-line parsing and

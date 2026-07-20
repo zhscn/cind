@@ -150,7 +150,7 @@ public:
     using Resolve = std::function<std::expected<CompletionProviderAsync::Cancel, std::string>(
         const CompletionRequest&, const CompletionItem&, ResolveCompleted,
         CompletionProviderAsync::Failed, CompletionProviderAsync::Cancelled)>;
-    using Applied = std::function<void()>;
+    using Applied = std::function<void(CommandTarget)>;
 
     CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& async_runtime, Dispatch dispatch,
                        Resolve resolve = {}, Applied applied = {});

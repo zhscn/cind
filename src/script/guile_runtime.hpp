@@ -61,6 +61,8 @@ struct GuileInteractionStatus {
     std::optional<std::string> history;
     std::optional<std::size_t> selected;
     std::size_t candidate_count = 0;
+    std::optional<BufferId> buffer;
+    std::optional<ViewId> view;
 };
 
 struct GuileMinibufferHistoryState {
@@ -409,7 +411,8 @@ public:
         WindowId window, std::string_view path, std::optional<std::uint32_t> line = std::nullopt,
         std::optional<std::uint32_t> column = std::nullopt, std::string_view intent = "edit");
     std::expected<void, std::string> restore_workbench_session(std::string_view serialized);
-    std::expected<void, std::string> minibuffer_input_changed(BufferId buffer, RevisionId revision);
+    std::expected<void, std::string> buffer_edited(BufferId buffer, ViewId view,
+                                                   RevisionId revision);
     std::expected<GuileMinibufferHistoryState, std::string>
     minibuffer_history_state(BufferId buffer, std::string_view history) const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;

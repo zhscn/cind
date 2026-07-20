@@ -25,8 +25,8 @@ enum class DeleteGraphemeOutcome : std::uint8_t {
 };
 
 struct EditingMechanismHooks {
-    std::function<void()> edited;
-    std::function<void()> caret_moved;
+    std::function<void(ViewId)> edited;
+    std::function<void(ViewId)> caret_moved;
 };
 
 // Atomic editor capabilities used by policy runtimes. This type owns no
@@ -50,8 +50,8 @@ public:
 private:
     DeleteGraphemeOutcome structural_delete(ViewId view, bool forward);
     DeleteGraphemeOutcome raw_delete(ViewId view, bool forward);
-    void notify_edited();
-    void notify_caret_moved();
+    void notify_edited(ViewId view);
+    void notify_caret_moved(ViewId view);
 
     EditSessionResolver session_;
     EditingMechanismHooks hooks_;

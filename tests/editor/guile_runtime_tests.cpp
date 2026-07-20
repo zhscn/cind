@@ -340,6 +340,59 @@ TEST_CASE("Guile command feedback owns message and command input state") {
     CHECK(disabled->message == "disabled");
 }
 
+TEST_CASE("Guile buffer edit observers own post-edit policy") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "edit-observer",
+                                                      .initial_text = "hello",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{5});
+    const RevisionId revision = runtime.buffers().get(buffer).snapshot().revision();
+    std::size_t refreshes = 0;
+    GuileHostServices services;
+    services.interaction_status = [=] {
+        return GuileInteractionStatus{.active = true,
+                                      .picker = true,
+                                      .has_history = false,
+                                      .history = std::nullopt,
+                                      .selected = std::nullopt,
+                                      .candidate_count = 0,
+                                      .buffer = buffer,
+                                      .view = view};
+    };
+    services.refresh_interaction = [&] { ++refreshes; };
+    GuileRuntime guile(runtime, std::move(services));
+    const std::expected<void, std::string> installed = guile.install_buffer_lifecycle_policies();
+    INFO(installed.error_or(""));
+    REQUIRE(installed.has_value());
+
+    REQUIRE(guile.set_message("pending").has_value());
+    REQUIRE(guile.buffer_edited(buffer, view, revision).has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> cleared =
+        guile.command_feedback_state();
+    REQUIRE(cleared.has_value());
+    CHECK(cleared->message.empty());
+    CHECK(refreshes == 1);
+
+    const std::expected<GuileEvaluationResult, std::string> observed =
+        guile.evaluate({.source = R"((use-modules (cind command) (cind lifecycle))
+(observe-buffer-edits!
+ host
+ (lambda (host buffer view revision)
+   (set-message! host (number->string revision))))
+#t)",
+                        .source_name = "buffer-edit-observer-test.scm"});
+    REQUIRE(observed.has_value());
+    CHECK_FALSE(observed->error.has_value());
+    REQUIRE(guile.buffer_edited(buffer, view, revision).has_value());
+    const std::expected<GuileCommandFeedbackState, std::string> feedback =
+        guile.command_feedback_state();
+    REQUIRE(feedback.has_value());
+    CHECK(feedback->message == std::to_string(revision));
+    CHECK(refreshes == 2);
+}
+
 TEST_CASE("Guile language profile declarations replace configuration atomically") {
     EditorRuntime runtime;
     GuileRuntime guile(runtime);

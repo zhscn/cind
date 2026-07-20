@@ -369,7 +369,6 @@ private:
     bool handle_loop_result(CommandLoopResult result);
     bool execute_command(CommandId command, const CommandInvocation& invocation);
     void record_command_input(std::string_view key, bool clear_message);
-    void refresh_interaction_after_edit(RevisionId before);
     void refresh_completion_after_command();
     CompletionProviderResult dispatch_completion_provider(CompletionProvider provider,
                                                           const CompletionRequest& request);
@@ -389,7 +388,7 @@ private:
     start_lsp_navigation(const ScriptLspNavigationRequest& request,
                          ScriptExternalAsyncCallbacks callbacks);
     CommandContext command_context();
-    void after_edit();
+    void after_edit(ViewId view);
     std::expected<GuileWorkbenchRestorePlan, std::string>
     prepare_workbench_session_restore(std::string_view serialized);
     EditorRuntime runtime_;

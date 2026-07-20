@@ -5277,7 +5277,7 @@ SCM interaction_status(SCM host_object) {
         const GuileInteractionStatus status = host.services.interaction_status
                                                   ? host.services.interaction_status()
                                                   : GuileInteractionStatus{};
-        SCM result = scm_c_make_vector(6, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(8, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_bool(status.active));
         scm_c_vector_set_x(result, 1, scm_from_bool(status.picker));
         scm_c_vector_set_x(result, 2, scm_from_bool(status.has_history));
@@ -5286,6 +5286,12 @@ SCM interaction_status(SCM host_object) {
         scm_c_vector_set_x(result, 4,
                            status.selected ? scm_from_size_t(*status.selected) : SCM_BOOL_F);
         scm_c_vector_set_x(result, 5, scm_from_size_t(status.candidate_count));
+        scm_c_vector_set_x(result, 6,
+                           status.buffer ? entity_id(status.buffer->slot, status.buffer->generation)
+                                         : SCM_BOOL_F);
+        scm_c_vector_set_x(result, 7,
+                           status.view ? entity_id(status.view->slot, status.view->generation)
+                                       : SCM_BOOL_F);
         return result;
     } catch (const std::exception& exception) {
         raise_host_error("interaction-status", exception.what());
@@ -7001,7 +7007,7 @@ struct GuileCall {
         HandleScroll,
         OpenResource,
         RestoreWorkbenchSession,
-        MinibufferInputChanged,
+        BufferEdited,
         MinibufferHistoryState,
         CommandFeedbackState,
         BufferSavingState,
@@ -7072,6 +7078,7 @@ struct GuileCall {
     CommandId command;
     WindowId window;
     BufferId buffer;
+    ViewId view;
     RevisionId revision = 0;
     ProjectId project;
     std::optional<std::uint32_t> line;
@@ -7608,7 +7615,6 @@ SCM call_body(void* data) {
         case GuileCall::Operation::InstallBufferLifecyclePolicies:
             call.result = scm_call_1(
                 scm_c_public_ref("cind core", "install-buffer-lifecycle-policies!"), call.host);
-            call.count = scm_to_size_t(call.result);
             break;
         case GuileCall::Operation::InstallPointerPolicies:
             call.result =
@@ -7683,11 +7689,11 @@ SCM call_body(void* data) {
                 scm_call_2(scm_c_public_ref("cind core", "restore-workbench-session!"), call.host,
                            scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
-        case GuileCall::Operation::MinibufferInputChanged:
-            call.result =
-                scm_call_3(scm_c_public_ref("cind minibuffer", "minibuffer-input-changed!"),
-                           call.host, entity_id(call.buffer.slot, call.buffer.generation),
-                           scm_from_uint64(call.revision));
+        case GuileCall::Operation::BufferEdited:
+            call.result = scm_call_4(scm_c_public_ref("cind lifecycle", "buffer-edited!"),
+                                     call.host, entity_id(call.buffer.slot, call.buffer.generation),
+                                     entity_id(call.view.slot, call.view.generation),
+                                     scm_from_uint64(call.revision));
             break;
         case GuileCall::Operation::MinibufferHistoryState: {
             call.result =
@@ -8737,14 +8743,22 @@ public:
         return {};
     }
 
-    std::expected<void, std::string> minibuffer_input_changed(BufferId buffer,
-                                                              RevisionId revision) {
+    std::expected<void, std::string> buffer_edited(BufferId buffer, ViewId view,
+                                                   RevisionId revision) {
         require_owner_thread();
-        (void)lease_->runtime->buffers().get(buffer);
+        const Buffer& target_buffer = lease_->runtime->buffers().get(buffer);
+        const View& target_view = lease_->runtime->views().get(view);
+        if (target_view.buffer_id() != buffer) {
+            return std::unexpected("edited view does not display the edited buffer");
+        }
+        if (target_buffer.snapshot().revision() != revision) {
+            return std::unexpected("edited buffer revision is stale");
+        }
         GuileCall call;
-        call.operation = GuileCall::Operation::MinibufferInputChanged;
+        call.operation = GuileCall::Operation::BufferEdited;
         call.host = host_;
         call.buffer = buffer;
+        call.view = view;
         call.revision = revision;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
@@ -8947,11 +8961,6 @@ public:
         call.host = host_;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
-            return std::unexpected(*state_->last_error);
-        }
-        if (call.count != 4) {
-            state_->last_error =
-                "Guile buffer lifecycle policy returned an inconsistent policy count";
             return std::unexpected(*state_->last_error);
         }
         state_->last_error.reset();
@@ -9452,9 +9461,9 @@ GuileRuntime::restore_workbench_session(std::string_view serialized) {
     return impl_->restore_workbench_session(serialized);
 }
 
-std::expected<void, std::string> GuileRuntime::minibuffer_input_changed(BufferId buffer,
-                                                                        RevisionId revision) {
-    return impl_->minibuffer_input_changed(buffer, revision);
+std::expected<void, std::string> GuileRuntime::buffer_edited(BufferId buffer, ViewId view,
+                                                             RevisionId revision) {
+    return impl_->buffer_edited(buffer, view, revision);
 }
 
 std::expected<GuileMinibufferHistoryState, std::string>

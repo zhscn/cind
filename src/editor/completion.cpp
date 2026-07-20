@@ -342,7 +342,7 @@ std::expected<void, std::string> CompletionPipeline::apply(CompletionApplyOption
     runtime_->views().clear_selection(state.request.target.view);
     (void)cancel();
     if (applied_) {
-        applied_();
+        applied_(state.request.target);
     }
     return {};
 }

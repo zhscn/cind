@@ -1998,7 +1998,12 @@ TEST_CASE("completion application waits for resolve and commits the resolved edi
             resolve_completed = std::move(completed);
             return CompletionProviderAsync::Cancel{[] {}};
         },
-        [&] { ++applied; });
+        [&](CommandTarget target) {
+            CHECK(target.window == window);
+            CHECK(target.buffer == buffer);
+            CHECK(target.view == view);
+            ++applied;
+        });
 
     REQUIRE(pipeline.start(context, TextOffset{}, {CompletionProvider::lsp(1)}).has_value());
     REQUIRE(resolve_completed);

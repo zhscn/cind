@@ -88,7 +88,16 @@
    host
    (lambda (host context force?)
      (if force? 'application.force-quit 'application.quit)))
-  4)
+  (observe-buffer-edits!
+   host
+   (lambda (host buffer view revision)
+     (set-message! host "")
+     (let ((status (interaction-status host)))
+       (when (and (vector-ref status 0)
+                  (equal? buffer (vector-ref status 6))
+                  (equal? view (vector-ref status 7)))
+         (minibuffer-input-changed! host buffer revision)))))
+  #t)
 
 (define (default-pointer-policy host context event)
   (let ((kind (vector-ref event 1))

@@ -254,7 +254,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                                        ? std::optional(state->selected)
                                        : std::nullopt,
                        .candidate_count =
-                           state != nullptr ? state->candidates.size() : std::size_t{0}};
+                           state != nullptr ? state->candidates.size() : std::size_t{0},
+                       .buffer = state != nullptr ? std::optional(state->buffer) : std::nullopt,
+                       .view = state != nullptr ? std::optional(state->view) : std::nullopt};
                },
            .interaction_provider = [this]() -> std::optional<std::string> {
                const InteractionState* state = interaction_.state();
@@ -659,7 +661,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    ViewSelection result =
                        active.replace_selection(std::move(selection), replacements);
                    if (active.snapshot().revision() != before) {
-                       after_edit();
+                       after_edit(view);
                    }
                    return result;
                } catch (const std::exception& exception) {
@@ -679,7 +681,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                try {
                    session_for(view).erase(
                        TextRange{TextOffset{range.start}, TextOffset{range.end}});
-                   after_edit();
+                   after_edit(view);
                    return {};
                } catch (const std::exception& exception) {
                    return std::unexpected(exception.what());
@@ -692,7 +694,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                    const RevisionId before = active.snapshot().revision();
                    active.insert_text(replacements);
                    if (active.snapshot().revision() != before) {
-                       after_edit();
+                       after_edit(view);
                    }
                    return {};
                } catch (const std::exception& exception) {
@@ -812,9 +814,9 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .cancel_async_task = [this](std::uint64_t task) { return script_async_.cancel(task); },
            .async_tasks = [this] { return script_async_.tasks(); }}),
       interaction_(runtime_, runtime_.interaction_providers()),
-      editing_mechanisms_(
-          [this](ViewId view) -> EditSession& { return session_for(view); },
-          {.edited = [this] { after_edit(); }, .caret_moved = [this] { reveal_caret_ = true; }}),
+      editing_mechanisms_([this](ViewId view) -> EditSession& { return session_for(view); },
+                          {.edited = [this](ViewId view) { after_edit(view); },
+                           .caret_moved = [this](ViewId) { reveal_caret_ = true; }}),
       command_loop_(runtime_), platform_services_(std::move(spec.platform_services)),
       async_runtime_(std::move(platform_services_.wake_event_loop)),
       script_async_(async_runtime_, {.start = [this](ScriptAsyncRequest request,
@@ -840,8 +842,8 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
             return dispatch_completion_resolve(request, item, std::move(completed),
                                                std::move(failed), std::move(cancelled));
         },
-        [this] {
-            after_edit();
+        [this](CommandTarget target) {
+            after_edit(target.view);
             sync_keymaps();
         });
     project_service_ =
@@ -1022,10 +1024,8 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                     if (handled->invocation.prefix.empty()) {
                         handled->invocation.prefix = command_loop_.pending_prefix();
                     }
-                    const RevisionId interaction_revision = interaction_.input_revision();
                     const bool consumed = handle_loop_result(
                         command_loop_.execute(handled->command, context, handled->invocation));
-                    refresh_interaction_after_edit(interaction_revision);
                     refresh_completion_after_command();
                     sync_keymaps();
                     return consumed;
@@ -1046,7 +1046,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
             }
         }
     }
-    const RevisionId interaction_revision = interaction_.input_revision();
     CommandContext context = command_context();
     const CommandPrefix text_prefix = command_loop_.pending_prefix();
     CommandLoopResult result = command_loop_.dispatch(key, context);
@@ -1058,7 +1057,6 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                                           !has_modifier(key.modifiers, KeyModifier::Super) &&
                                           text_input_policy() == TextInputPolicy::Accept;
     const bool consumed = handle_loop_result(std::move(result));
-    refresh_interaction_after_edit(interaction_revision);
     refresh_completion_after_command();
     if (preserve_prefix_for_text) {
         command_loop_.set_pending_prefix(text_prefix);
@@ -1157,10 +1155,8 @@ bool EditorApplication::execute_command(std::string_view name,
 }
 
 bool EditorApplication::execute_command(CommandId command, const CommandInvocation& invocation) {
-    const RevisionId interaction_revision = interaction_.input_revision();
     CommandContext context = command_context();
     const bool consumed = handle_loop_result(command_loop_.execute(command, context, invocation));
-    refresh_interaction_after_edit(interaction_revision);
     refresh_completion_after_command();
     sync_keymaps();
     return consumed;
@@ -1267,13 +1263,11 @@ void EditorApplication::insert_text(std::string_view text) {
         record_command_input("text", false);
         return;
     }
-    const RevisionId interaction_revision = interaction_.input_revision();
     CommandContext context = command_context();
     CommandInvocation invocation{.arguments = {std::string(text)},
                                  .prefix = command_loop_.pending_prefix()};
     (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
     record_command_input("text", false);
-    refresh_interaction_after_edit(interaction_revision);
     refresh_completion_after_command();
     sync_keymaps();
 }
@@ -3253,17 +3247,6 @@ CommandContext EditorApplication::command_context() {
     return CommandContext(runtime_, window_id(), buffer_id(), view_id());
 }
 
-void EditorApplication::refresh_interaction_after_edit(RevisionId before) {
-    if (interaction_.active() && interaction_.input_revision() != before) {
-        const InteractionState& interaction = *interaction_.state();
-        const std::expected<void, std::string> refreshed =
-            guile_.minibuffer_input_changed(interaction.buffer, interaction_.input_revision());
-        if (!refreshed) {
-            set_message(refreshed.error());
-        }
-    }
-}
-
 void EditorApplication::refresh_completion_after_command() {
     if (!completion_->active()) {
         return;
@@ -3633,10 +3616,16 @@ EditorApplication::dispatch_completion_resolve(const CompletionRequest& request,
         std::move(failed), std::move(cancelled));
 }
 
-void EditorApplication::after_edit() {
-    set_message({});
+void EditorApplication::after_edit(ViewId view) {
+    const BufferId buffer = runtime_.views().get(view).buffer_id();
     reveal_caret_ = true;
-    synchronize_lsp_buffer(buffer_id());
+    const RevisionId revision = runtime_.buffers().get(buffer).snapshot().revision();
+    if (const std::expected<void, std::string> notified =
+            guile_.buffer_edited(buffer, view, revision);
+        !notified) {
+        set_message(notified.error());
+    }
+    synchronize_lsp_buffer(buffer);
 }
 
 } // namespace cind

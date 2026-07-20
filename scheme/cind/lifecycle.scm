@@ -12,6 +12,8 @@
             complete-buffer-save!
             abort-buffer-save!
             buffer-saving?
+            observe-buffer-edits!
+            buffer-edited!
             startup-placeholder
             set-startup-placeholder!))
 
@@ -21,6 +23,20 @@
 (define startup-placeholders (make-weak-key-hash-table))
 (define close-policies (make-weak-key-hash-table))
 (define buffer-save-states (make-weak-key-hash-table))
+(define buffer-edit-observers (make-weak-key-hash-table))
+
+(define (observe-buffer-edits! host procedure)
+  (unless (procedure? procedure)
+    (error "buffer edit observer must be a procedure" procedure))
+  (let ((observers (or (hashq-ref buffer-edit-observers host) '())))
+    (hashq-set! buffer-edit-observers host
+                (append observers (list procedure)))
+    (length observers)))
+
+(define (buffer-edited! host buffer view revision)
+  (for-each (lambda (procedure)
+              (procedure host buffer view revision))
+            (or (hashq-ref buffer-edit-observers host) '())))
 
 (define (host-buffer-saves host)
   (or (hashq-ref buffer-save-states host) '()))
