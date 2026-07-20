@@ -1,14 +1,82 @@
 (define-module (cind completion)
-  #:export (reconcile-completion!
+  #:export (configure-completion-policy!
+            resolve-completion-policy
+            completion-policy-replace?
+            begin-completion!
+            completion-session-replace?
+            reconcile-completion!
             completion-transition!
             finish-completion!
             completion-selection
             move-completion-selection!))
 
-;; Each value is #(item-ids selected-item-id selected-index). The stable item
-;; id preserves selection while asynchronous providers replace and reorder
-;; native candidates.
+;; A completion policy is
+;; #(completion-policy rank-keys replace-on-accept? visible-resolve-count).
+;; The procedure is resolved when a session starts, so modes and extensions
+;; can vary behavior using the command context without changing the native
+;; completion mechanism.
+(define completion-policies (make-weak-key-hash-table))
+
+(define (default-completion-policy host context trigger)
+  (vector 'completion-policy
+          #(match-tier fuzzy-score sort-text kind label)
+          #f
+          8))
+
+(define (valid-rank-keys? keys)
+  (and (vector? keys)
+       (> (vector-length keys) 0)
+       (let loop ((index 0)
+                  (seen '()))
+         (if (= index (vector-length keys))
+             #t
+             (let ((key (vector-ref keys index)))
+               (and (memq key '(match-tier fuzzy-score sort-text kind label))
+                    (not (memq key seen))
+                    (loop (+ index 1) (cons key seen))))))))
+
+(define (validate-completion-policy policy)
+  (unless (and (vector? policy)
+               (= (vector-length policy) 4)
+               (eq? (vector-ref policy 0) 'completion-policy)
+               (valid-rank-keys? (vector-ref policy 1))
+               (boolean? (vector-ref policy 2))
+               (integer? (vector-ref policy 3))
+               (>= (vector-ref policy 3) 0))
+    (error "invalid completion policy" policy))
+  policy)
+
+(define (configure-completion-policy! host procedure)
+  (unless (procedure? procedure)
+    (error "completion policy must be a procedure" procedure))
+  (hashq-set! completion-policies host procedure)
+  procedure)
+
+(define (resolve-completion-policy host context trigger)
+  (validate-completion-policy
+   ((or (hashq-ref completion-policies host) default-completion-policy)
+    host context trigger)))
+
+(define (completion-policy-replace? policy)
+  (validate-completion-policy policy)
+  (vector-ref policy 2))
+
+;; Each value is #(item-ids selected-item-id selected-index policy). The stable
+;; item id preserves selection while asynchronous providers replace and
+;; reorder native candidates. The resolved policy remains fixed for the
+;; lifetime of a session.
 (define completion-states (make-weak-key-hash-table))
+
+(define (begin-completion! host policy)
+  (validate-completion-policy policy)
+  (hashq-set! completion-states host (vector #() #f #f policy))
+  policy)
+
+(define (completion-session-replace? host)
+  (let ((state (hashq-ref completion-states host)))
+    (and state
+         (let ((policy (vector-ref state 3)))
+           (and policy (completion-policy-replace? policy))))))
 
 (define (completion-index item-ids item-id)
   (let loop ((index 0))
@@ -25,18 +93,22 @@
                           (positive? (vector-ref item-ids index))
                           (loop (+ index 1))))))
     (error "completion item ids must be a vector of positive integers" item-ids))
-  (if (zero? (vector-length item-ids))
-      (begin
-        (hashq-set! completion-states host (vector item-ids #f #f))
-        #f)
-      (let* ((state (hashq-ref completion-states host))
-             (selected-id (and state (vector-ref state 1)))
-             (selected-index (and selected-id
-                                  (completion-index item-ids selected-id)))
-             (index (or selected-index 0))
-             (id (vector-ref item-ids index)))
-        (hashq-set! completion-states host (vector item-ids id index))
-        index)))
+  (let ((state (hashq-ref completion-states host)))
+    (if (zero? (vector-length item-ids))
+        (begin
+          (hashq-set! completion-states
+                      host
+                      (vector item-ids #f #f (and state (vector-ref state 3))))
+          #f)
+        (let* ((selected-id (and state (vector-ref state 1)))
+               (selected-index (and selected-id
+                                    (completion-index item-ids selected-id)))
+               (index (or selected-index 0))
+               (id (vector-ref item-ids index)))
+          (hashq-set! completion-states
+                      host
+                      (vector item-ids id index (and state (vector-ref state 3))))
+          index))))
 
 (define (completion-transition! host item-ids automatic? pending?)
   (unless (and (boolean? automatic?) (boolean? pending?))

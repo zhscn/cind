@@ -50,7 +50,7 @@ void EditorModel::layout_view(int rows, int columns, float visible_text_rows) {
     const ChromeContent chrome = application_.chrome_content(preedit_);
     const std::vector<ChromeItem> completions = completion_items(application_);
     const std::optional<std::size_t> completion_selection = application_.completion_selection();
-    application_.resolve_completion_window(completion_viewport_.first_item(), 8);
+    application_.resolve_completion_window(completion_viewport_.first_item());
 
     if (application_.window_layout().leaves().size() > 1) {
         const WindowPartition partition = application_.window_layout().partition(rows - 1, columns);
@@ -157,7 +157,7 @@ ui::Scene EditorModel::compose(int rows, int columns, float visible_text_rows) {
     EditSession& session = application_.session();
     const DocumentSnapshot snapshot = session.snapshot();
     const ChromeContent chrome = application_.chrome_content(preedit_);
-    application_.resolve_completion_window(completion_viewport_.first_item(), 8);
+    application_.resolve_completion_window(completion_viewport_.first_item());
     const std::vector<ChromeItem> completions = completion_items(application_);
     const CompletionState* completion = application_.completion().state();
     const std::optional<std::size_t> completion_selection = application_.completion_selection();

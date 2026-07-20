@@ -5222,7 +5222,7 @@ SCM synchronize_lsp_session(SCM host_object, SCM buffer_value, SCM session_value
 }
 
 SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM providers_value,
-                     SCM trigger_value) {
+                     SCM trigger_value, SCM policy_value) {
     HostLease& host = require_host(host_object, "start-completion!");
     if (!host.services.start_completion) {
         scm_misc_error("start-completion!", "completion capability is unavailable", SCM_EOL);
@@ -5239,6 +5239,36 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
         } else {
             scm_wrong_type_arg_msg("start-completion!", 5, trigger_value, "'manual or 'automatic");
         }
+        if (!scm_is_vector(policy_value) || scm_c_vector_length(policy_value) != 4 ||
+            !symbol_is(scm_c_vector_ref(policy_value, 0), "completion-policy") ||
+            !scm_is_vector(scm_c_vector_ref(policy_value, 1)) ||
+            !scheme_boolean(scm_c_vector_ref(policy_value, 2)) ||
+            scm_is_unsigned_integer(scm_c_vector_ref(policy_value, 3), 0,
+                                    std::numeric_limits<std::size_t>::max()) == 0) {
+            scm_wrong_type_arg_msg("start-completion!", 6, policy_value, "completion policy");
+        }
+        CompletionSessionPolicy policy;
+        policy.rank_keys.clear();
+        const SCM rank_keys = scm_c_vector_ref(policy_value, 1);
+        const std::size_t rank_key_count = scm_c_vector_length(rank_keys);
+        policy.rank_keys.reserve(rank_key_count);
+        for (std::size_t index = 0; index < rank_key_count; ++index) {
+            const SCM key = scm_c_vector_ref(rank_keys, index);
+            if (symbol_is(key, "match-tier")) {
+                policy.rank_keys.push_back(CompletionRankKey::MatchTier);
+            } else if (symbol_is(key, "fuzzy-score")) {
+                policy.rank_keys.push_back(CompletionRankKey::FuzzyScore);
+            } else if (symbol_is(key, "sort-text")) {
+                policy.rank_keys.push_back(CompletionRankKey::SortText);
+            } else if (symbol_is(key, "kind")) {
+                policy.rank_keys.push_back(CompletionRankKey::Kind);
+            } else if (symbol_is(key, "label")) {
+                policy.rank_keys.push_back(CompletionRankKey::Label);
+            } else {
+                scm_wrong_type_arg_msg("start-completion!", 6, key, "completion rank key");
+            }
+        }
+        policy.visible_resolve_count = scm_to_size_t(scm_c_vector_ref(policy_value, 3));
         if (!scm_is_vector(providers_value)) {
             scm_wrong_type_arg_msg("start-completion!", 4, providers_value,
                                    "completion provider vector");
@@ -5274,7 +5304,7 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
             }
         }
         std::expected<void, std::string> started = host.services.start_completion(
-            target, anchor, std::move(providers), std::move(trigger));
+            target, anchor, std::move(providers), std::move(trigger), std::move(policy));
         if (!started) {
             raise_host_error("start-completion!", started.error());
         }
@@ -5754,7 +5784,7 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(attach_lsp_diagnostics));
     (void)scm_c_define_gsubr("synchronize-lsp-session!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(synchronize_lsp_session));
-    (void)scm_c_define_gsubr("start-completion!", 5, 0, 0,
+    (void)scm_c_define_gsubr("start-completion!", 6, 0, 0,
                              reinterpret_cast<scm_t_subr>(start_completion));
     (void)scm_c_define_gsubr("focus-completion!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(focus_completion));

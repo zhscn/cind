@@ -9,7 +9,6 @@
 #include <memory>
 #include <set>
 #include <stdexcept>
-#include <tuple>
 #include <utility>
 
 namespace cind {
@@ -70,6 +69,25 @@ bool overlaps(TextRange left, TextRange right) {
     return left.start < right.end && right.start < left.end;
 }
 
+int compare_completion_match(const CompletionMatch& left, const CompletionMatch& right,
+                             CompletionRankKey key) {
+    switch (key) {
+    case CompletionRankKey::MatchTier:
+        return left.tier < right.tier ? -1 : left.tier > right.tier ? 1 : 0;
+    case CompletionRankKey::FuzzyScore:
+        return left.score > right.score ? -1 : left.score < right.score ? 1 : 0;
+    case CompletionRankKey::SortText:
+        return left.item.sort_text < right.item.sort_text   ? -1
+               : left.item.sort_text > right.item.sort_text ? 1
+                                                            : 0;
+    case CompletionRankKey::Kind:
+        return left.item.kind < right.item.kind ? -1 : left.item.kind > right.item.kind ? 1 : 0;
+    case CompletionRankKey::Label:
+        return left.item.label < right.item.label ? -1 : left.item.label > right.item.label ? 1 : 0;
+    }
+    throw std::logic_error("unknown completion rank key");
+}
+
 } // namespace
 
 std::string completion_provider_name(CompletionProvider provider) {
@@ -100,9 +118,18 @@ CompletionPipeline::CompletionPipeline(EditorRuntime& runtime, AsyncRuntime& asy
 
 std::expected<void, std::string>
 CompletionPipeline::start(CommandContext& context, TextOffset anchor,
-                          std::vector<CompletionProvider> providers, CompletionTrigger trigger) {
+                          std::vector<CompletionProvider> providers, CompletionTrigger trigger,
+                          CompletionSessionPolicy policy) {
     if (providers.empty()) {
         return std::unexpected("completion requires at least one provider");
+    }
+    if (policy.rank_keys.empty()) {
+        return std::unexpected("completion ranking requires at least one key");
+    }
+    std::vector<CompletionRankKey> unique_rank_keys = policy.rank_keys;
+    std::ranges::sort(unique_rank_keys);
+    if (std::ranges::adjacent_find(unique_rank_keys) != unique_rank_keys.end()) {
+        return std::unexpected("completion ranking contains duplicate keys");
     }
     std::ranges::sort(providers);
     if (std::ranges::adjacent_find(providers) != providers.end()) {
@@ -144,8 +171,10 @@ CompletionPipeline::start(CommandContext& context, TextOffset anchor,
                            .is_incomplete = false,
                            .error = {}});
     }
-    state_.emplace(
-        CompletionState{.request = request, .providers = std::move(sources), .matches = {}});
+    state_.emplace(CompletionState{.request = request,
+                                   .providers = std::move(sources),
+                                   .matches = {},
+                                   .policy = std::move(policy)});
     dispatching_batch_ = true;
     for (CompletionProvider provider : providers) {
         request_provider(provider, request);
@@ -515,12 +544,16 @@ void CompletionPipeline::rebuild_matches() {
             }
         }
     }
+    const std::vector<CompletionRankKey>& rank_keys = state_->policy.rank_keys;
     std::ranges::stable_sort(
-        matches, [](const CompletionMatch& left, const CompletionMatch& right) {
-            return std::tuple(left.tier, -left.score, left.item.sort_text, left.item.kind,
-                              left.item.label, left.item.id) <
-                   std::tuple(right.tier, -right.score, right.item.sort_text, right.item.kind,
-                              right.item.label, right.item.id);
+        matches, [&rank_keys](const CompletionMatch& left, const CompletionMatch& right) {
+            for (const CompletionRankKey key : rank_keys) {
+                const int ordering = compare_completion_match(left, right, key);
+                if (ordering != 0) {
+                    return ordering < 0;
+                }
+            }
+            return left.item.id < right.item.id;
         });
     state_->matches = std::move(matches);
 }

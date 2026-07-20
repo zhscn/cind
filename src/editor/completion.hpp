@@ -128,10 +128,26 @@ struct CompletionProviderState {
     std::string error;
 };
 
+enum class CompletionRankKey : std::uint8_t {
+    MatchTier,
+    FuzzyScore,
+    SortText,
+    Kind,
+    Label,
+};
+
+struct CompletionSessionPolicy {
+    std::vector<CompletionRankKey> rank_keys{
+        CompletionRankKey::MatchTier, CompletionRankKey::FuzzyScore, CompletionRankKey::SortText,
+        CompletionRankKey::Kind, CompletionRankKey::Label};
+    std::size_t visible_resolve_count = 8;
+};
+
 struct CompletionState {
     CompletionRequest request;
     std::vector<CompletionProviderState> providers;
     std::vector<CompletionMatch> matches;
+    CompletionSessionPolicy policy;
 };
 
 struct CompletionApplyOptions {
@@ -165,7 +181,8 @@ public:
 
     std::expected<void, std::string> start(CommandContext& context, TextOffset anchor,
                                            std::vector<CompletionProvider> providers,
-                                           CompletionTrigger trigger = {});
+                                           CompletionTrigger trigger = {},
+                                           CompletionSessionPolicy policy = {});
     // Advances a complete session without provider RPC when input remains a
     // prefix extension. Incomplete sources are re-requested and replace only
     // their own entries.

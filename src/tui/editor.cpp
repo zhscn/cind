@@ -250,7 +250,7 @@ private:
         const DocumentSnapshot snap = session().snapshot();
         const TermSize size = term_.size();
         const ChromeContent chrome_content = application_.chrome_content();
-        application_.resolve_completion_window(completion_viewport_.first_item(), 8);
+        application_.resolve_completion_window(completion_viewport_.first_item());
         std::vector<ChromeItem> completion_items;
         const CompletionState* completion = application_.completion().state();
         if (completion != nullptr) {

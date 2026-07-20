@@ -291,9 +291,10 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                },
            .start_completion =
                [this](CommandTarget target, TextOffset anchor,
-                      std::vector<CompletionProvider> providers, CompletionTrigger trigger) {
-                   return start_completion(target, anchor, std::move(providers),
-                                           std::move(trigger));
+                      std::vector<CompletionProvider> providers, CompletionTrigger trigger,
+                      CompletionSessionPolicy policy) {
+                   return start_completion(target, anchor, std::move(providers), std::move(trigger),
+                                           std::move(policy));
                },
            .focus_completion = [this](std::size_t selected) { return focus_completion(selected); },
            .apply_completion = [this](std::size_t selected,
@@ -1120,7 +1121,7 @@ bool EditorApplication::execute_command(CommandId command, const CommandInvocati
 std::expected<void, std::string>
 EditorApplication::start_completion(CommandTarget target, TextOffset anchor,
                                     std::vector<CompletionProvider> providers,
-                                    CompletionTrigger trigger) {
+                                    CompletionTrigger trigger, CompletionSessionPolicy policy) {
     if (interaction_.active()) {
         return std::unexpected("completion is unavailable while the minibuffer owns focus");
     }
@@ -1136,7 +1137,8 @@ EditorApplication::start_completion(CommandTarget target, TextOffset anchor,
         return std::unexpected("completion requires at least one provider");
     }
     CommandContext context(runtime_, target.window, target.buffer, target.view);
-    return completion_->start(context, anchor, std::move(providers), std::move(trigger));
+    return completion_->start(context, anchor, std::move(providers), std::move(trigger),
+                              std::move(policy));
 }
 
 std::optional<std::size_t> EditorApplication::completion_selection() const {

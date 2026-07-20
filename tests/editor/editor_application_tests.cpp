@@ -573,6 +573,29 @@ TEST_CASE("user initialization owns root keymap policy") {
     CHECK(application.chrome_content().echo.empty());
 }
 
+TEST_CASE("user completion policy is projected into native sessions") {
+    TemporaryFile init(std::format("cind-completion-policy-{}.scm", static_cast<long>(::getpid())),
+                       R"((configure-completion-policy!
+ host
+ (lambda (host context trigger)
+   #(completion-policy #(kind match-tier label) #t 3)))
+)");
+    EditorApplication application({.path = "sample.scm",
+                                   .initial_text = "(def",
+                                   .initial_line = 0,
+                                   .platform_services = {},
+                                   .init_file = init.path().string()});
+    application.session().set_caret(TextOffset{4});
+
+    send_keys(application, "C-M-i");
+    const CompletionState* state = application.completion().state();
+    REQUIRE(state != nullptr);
+    CHECK(state->policy.rank_keys == std::vector{CompletionRankKey::Kind,
+                                                 CompletionRankKey::MatchTier,
+                                                 CompletionRankKey::Label});
+    CHECK(state->policy.visible_resolve_count == 3);
+}
+
 TEST_CASE("shared echo policy follows active bindings and input lifetime") {
     EditorApplication application = make_application("sample.cc", "text");
     const std::string idle = application.chrome_content().echo;

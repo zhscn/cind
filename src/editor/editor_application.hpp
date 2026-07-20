@@ -185,10 +185,15 @@ public:
     bool execute_command(std::string_view name, const CommandInvocation& invocation = {});
     std::expected<void, std::string> start_completion(CommandTarget target, TextOffset anchor,
                                                       std::vector<CompletionProvider> providers,
-                                                      CompletionTrigger trigger = {});
+                                                      CompletionTrigger trigger,
+                                                      CompletionSessionPolicy policy);
     bool focus_completion(std::size_t selected);
-    void resolve_completion_window(std::size_t first, std::size_t count) {
-        completion_->resolve_visible(first, count, completion_selection());
+    void resolve_completion_window(std::size_t first) {
+        const CompletionState* state = completion_->state();
+        if (state != nullptr) {
+            completion_->resolve_visible(first, state->policy.visible_resolve_count,
+                                         completion_selection());
+        }
     }
     std::expected<void, std::string> apply_completion(std::size_t selected, bool replace = false);
     bool cancel_completion();

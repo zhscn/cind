@@ -314,6 +314,30 @@ TEST_CASE("Guile completion selection follows stable item ids") {
     CHECK(result->values == std::vector<std::string>{"(0 1 1 1 0 #(#f #f) #(#f #t) #f)"});
 }
 
+TEST_CASE("Guile completion policy is resolved and retained by the session") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    const std::expected<GuileEvaluationResult, std::string> result =
+        guile.evaluate({.source = R"((use-modules (cind completion))
+(configure-completion-policy!
+ host
+ (lambda (host context trigger)
+   #(completion-policy #(kind match-tier label) #t 3)))
+(let ((policy (resolve-completion-policy host #f 'automatic)))
+  (begin-completion! host policy)
+  (list policy
+        (completion-session-replace? host)
+        (begin
+          (finish-completion! host)
+          (completion-session-replace? host)))))",
+                        .source_name = "completion-policy-test.scm"});
+    REQUIRE(result.has_value());
+    CHECK_FALSE(result->error.has_value());
+    CHECK(result->values ==
+          std::vector<std::string>{"(#(completion-policy #(kind match-tier label) #t 3) #t #f)"});
+}
+
 TEST_CASE("Guile command feedback owns message and command input state") {
     EditorRuntime runtime;
     std::size_t completion_refreshes = 0;

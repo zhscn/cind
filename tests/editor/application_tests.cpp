@@ -1793,6 +1793,59 @@ TEST_CASE("completion pipeline merges fixed providers and addresses duplicate la
     CHECK(pipeline.state()->providers.size() == 2);
 }
 
+TEST_CASE("completion pipeline executes the session ranking policy") {
+    EditorRuntime runtime;
+    const BufferId buffer = runtime.buffers().create({.name = "completion-ranking",
+                                                      .initial_text = "f",
+                                                      .kind = BufferKind::Scratch,
+                                                      .resource_uri = std::nullopt,
+                                                      .read_only = false});
+    const ViewId view = runtime.views().create(buffer, TextOffset{1});
+    const WindowId window = runtime.windows().create(view);
+    CommandContext context(runtime, window, buffer, view);
+    AsyncRuntime async;
+    CompletionPipeline pipeline(
+        runtime, async,
+        [](CompletionProvider provider,
+           const CompletionRequest& request) -> CompletionProviderResult {
+            const auto item = [&](std::uint64_t id, std::string label, std::string kind) {
+                return CompletionItem{
+                    .id = id,
+                    .provider = provider,
+                    .filter_text = label,
+                    .label = label,
+                    .kind = kind,
+                    .detail = {},
+                    .edit = CompletionEdit{.insert_range = {request.anchor, request.caret},
+                                           .replace_range = {request.anchor, request.caret},
+                                           .new_text = label},
+                    .sort_text = label,
+                    .resolved = true,
+                    .resolving = false,
+                    .resolve_error = {},
+                    .documentation = {},
+                    .additional_edits = {},
+                    .raw = {}};
+            };
+            return CompletionProviderResponse{
+                .provider = provider,
+                .items = {item(1, "f", "z-exact"), item(2, "far", "a-prefix")},
+                .is_incomplete = false};
+        });
+
+    CompletionSessionPolicy policy{
+        .rank_keys = {CompletionRankKey::Kind, CompletionRankKey::MatchTier},
+        .visible_resolve_count = 3};
+    REQUIRE(
+        pipeline.start(context, TextOffset{}, {CompletionProvider::word()}, {}, std::move(policy))
+            .has_value());
+    REQUIRE(pipeline.state() != nullptr);
+    REQUIRE(pipeline.state()->matches.size() == 2);
+    CHECK(pipeline.state()->matches[0].item.label == "far");
+    CHECK(pipeline.state()->matches[1].item.label == "f");
+    CHECK(pipeline.state()->policy.visible_resolve_count == 3);
+}
+
 TEST_CASE("completion pipeline delegates empty automatic session policy") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "completion-policy",

@@ -272,8 +272,9 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(std::uint64_t)> attach_lsp_diagnostics;
     std::function<std::expected<void, std::string>(BufferId, std::uint64_t)>
         synchronize_lsp_session;
-    std::function<std::expected<void, std::string>(
-        CommandTarget, TextOffset, std::vector<CompletionProvider>, CompletionTrigger)>
+    std::function<std::expected<void, std::string>(CommandTarget, TextOffset,
+                                                   std::vector<CompletionProvider>,
+                                                   CompletionTrigger, CompletionSessionPolicy)>
         start_completion;
     std::function<bool(std::size_t)> focus_completion;
     std::function<std::expected<void, std::string>(std::size_t, bool)> apply_completion;

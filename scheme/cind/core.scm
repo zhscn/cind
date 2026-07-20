@@ -2089,15 +2089,22 @@
               (else (vector anchor enabled))))))))
 
 (define (start-mode-completion! host context trigger)
-  (let* ((policy (mode-completion-policy host context))
-         (plan (completion-start-plan host context (vector-ref policy 3) trigger)))
+  (let* ((mode-policy (mode-completion-policy host context))
+         (plan (completion-start-plan host context (vector-ref mode-policy 3) trigger)))
     (if (vector? plan)
-        (begin
-          (start-completion! host context (vector-ref plan 0)
-                             (resolve-completion-providers host context
-                                                           (vector-ref plan 1))
-                             trigger)
-          #t)
+        (let ((session-policy (resolve-completion-policy host context trigger)))
+          (catch #t
+            (lambda ()
+              (begin-completion! host session-policy)
+              (start-completion! host context (vector-ref plan 0)
+                                 (resolve-completion-providers host context
+                                                               (vector-ref plan 1))
+                                 trigger
+                                 session-policy)
+              #t)
+            (lambda arguments
+              (finish-completion! host)
+              (apply throw arguments))))
         plan)))
 
 (define (completion-start host context invocation)
@@ -2238,7 +2245,7 @@
 (define (completion-accept host context invocation)
   (let ((selected (completion-selection host)))
     (if selected
-        (apply-completion! host selected #f)
+        (apply-completion! host selected (completion-session-replace? host))
         (set-message! host "no completion candidate is selected")))
   (request-redraw! host)
   (command-completed/preserve))
