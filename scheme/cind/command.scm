@@ -6,6 +6,9 @@
             command-completed/collapse
             command-completed/selection
             command-prefix
+            command-prefix-state
+            set-command-prefix-state!
+            clear-command-prefix-state!
             command-error
             command-feedback-state
             command-input!
@@ -77,6 +80,47 @@
             selection-with-ranges))
 
 (define command-feedback-states (make-weak-key-hash-table))
+(define command-prefix-states (make-weak-key-hash-table))
+
+(define (valid-command-prefix-extra? extra)
+  (and (list? extra)
+       (let loop ((entries extra)
+                  (names '()))
+         (if (null? entries)
+             #t
+             (let ((entry (car entries)))
+               (and (pair? entry)
+                    (string? (car entry))
+                    (> (string-length (car entry)) 0)
+                    (not (member (car entry) names))
+                    (let ((value (cdr entry)))
+                      (or (boolean? value)
+                          (real? value)
+                          (string? value)))
+                    (loop (cdr entries) (cons (car entry) names))))))))
+
+(define (validate-command-prefix-state state)
+  (unless (and (vector? state)
+               (= (vector-length state) 3)
+               (let ((count (vector-ref state 0)))
+                 (or (not count) (integer? count)))
+               (let ((register (vector-ref state 1)))
+                 (or (not register)
+                     (and (string? register) (> (string-length register) 0))))
+               (valid-command-prefix-extra? (vector-ref state 2)))
+    (error "invalid command prefix state" state))
+  state)
+
+(define (command-prefix-state host)
+  (or (hashq-ref command-prefix-states host) #(#f #f ())))
+
+(define (set-command-prefix-state! host state)
+  (validate-command-prefix-state state)
+  (hashq-set! command-prefix-states host state)
+  state)
+
+(define (clear-command-prefix-state! host)
+  (hashq-remove! command-prefix-states host))
 
 (define (command-feedback-entry host)
   (or (hashq-ref command-feedback-states host)

@@ -1978,6 +1978,7 @@
 
 (define (keyboard-quit host context invocation)
   (reset-input-states! host (context-view context))
+  (clear-command-prefix-state! host)
   (cancel-pending-input! host)
   (cancel-lsp-navigation! host)
   (clear-minibuffer-navigation! host)

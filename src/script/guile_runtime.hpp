@@ -435,6 +435,8 @@ public:
     std::expected<void, std::string> completion_finished();
     std::expected<std::optional<std::size_t>, std::string> completion_selection() const;
     std::expected<GuileCommandFeedbackState, std::string> command_feedback_state() const;
+    std::expected<CommandPrefix, std::string> command_prefix_state() const;
+    std::expected<void, std::string> set_command_prefix_state(const CommandPrefix& prefix);
     std::expected<GuileApplicationState, std::string> application_state() const;
     std::expected<void, std::string> set_caret_reveal(bool reveal);
     std::expected<void, std::string> set_page_rows(std::uint32_t rows);

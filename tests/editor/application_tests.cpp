@@ -1054,8 +1054,8 @@ TEST_CASE("keymaps resolve layered chords and command loop repeat counts") {
     REQUIRE(completions.size() == 1);
     CHECK(format_key_stroke(completions.front().key) == "C-f");
     CHECK(completions.front().command == base);
-    loop.set_repeat_count(4);
-    const CommandLoopResult chord_result = loop.dispatch(chord[1], context);
+    const CommandLoopResult chord_result =
+        loop.dispatch(chord[1], context, {.count = 4, .register_name = {}, .extra = {}});
     CHECK(chord_result.status == CommandLoopStatus::Executed);
     CHECK(chord_result.key_sequence == "C-x C-f");
     CHECK(base_calls == 1);
@@ -1140,18 +1140,21 @@ TEST_CASE("command loop pending prefixes survive layer refresh and flow through 
     const CommandLoopResult prefix_result = loop.dispatch(prefix_key, context);
     CHECK(prefix_result.status == CommandLoopStatus::PrefixArgument);
     CHECK(prefix_result.message == "7 \"a scope=word flag=true");
-    CHECK(loop.pending_prefix() == expected);
+    CHECK(prefix_result.next_prefix == expected);
 
     loop.set_keymap_layers(layers);
-    CHECK(loop.pending_prefix() == expected);
-    CHECK(loop.dispatch(relay_key, context).status == CommandLoopStatus::Executed);
+    const CommandLoopResult relay_result =
+        loop.dispatch(relay_key, context, prefix_result.next_prefix);
+    CHECK(relay_result.status == CommandLoopStatus::Executed);
     CHECK(received == expected);
-    CHECK(loop.pending_prefix().empty());
+    CHECK(relay_result.next_prefix.empty());
 
-    CHECK(loop.dispatch(prefix_key, context).status == CommandLoopStatus::PrefixArgument);
-    CHECK(loop.dispatch(parse_key_sequence("z")->front(), context).status ==
-          CommandLoopStatus::NotHandled);
-    CHECK(loop.pending_prefix().empty());
+    const CommandLoopResult second_prefix = loop.dispatch(prefix_key, context);
+    CHECK(second_prefix.status == CommandLoopStatus::PrefixArgument);
+    const CommandLoopResult undefined =
+        loop.dispatch(parse_key_sequence("z")->front(), context, second_prefix.next_prefix);
+    CHECK(undefined.status == CommandLoopStatus::NotHandled);
+    CHECK(undefined.next_prefix.empty());
 }
 
 TEST_CASE("command loop contains command exceptions") {

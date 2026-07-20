@@ -966,7 +966,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
                               [](const KeymapLayer& layer) { return layer.scope == "editor"; }));
     CHECK(std::ranges::any_of(base_layers,
                               [](const KeymapLayer& layer) { return layer.scope == "global"; }));
-    application.command_loop().set_pending_prefix(
+    application.set_pending_command_prefix(
         {.count = 7, .register_name = std::string("a"), .extra = {}});
     CHECK(application.handle_key(KeyStroke::character_key(U'd'), 10));
     CHECK(selected == 3);
@@ -974,7 +974,7 @@ TEST_CASE("per-view input states precede window layers and may handle keys") {
     CHECK(std::get<std::string>(handled_invocation.arguments.front()) == "captured");
     CHECK(handled_invocation.prefix.count == 7);
     CHECK(handled_invocation.prefix.register_name == std::optional<std::string>{"a"});
-    CHECK(application.command_loop().pending_prefix().empty());
+    CHECK(application.pending_command_prefix().empty());
     CHECK(handler_window == application.window_id());
     CHECK(application.handle_key(KeyStroke::character_key(U'p'), 10));
     CHECK(application.pending_key_sequence_text() == "C-x");
@@ -1072,7 +1072,7 @@ TEST_CASE("input states select the command that interprets text") {
                                        .on_enter = {},
                                        .on_exit = {}});
     runtime.views().set_base_input_state(application.view_id(), state);
-    application.command_loop().set_pending_prefix(
+    application.set_pending_command_prefix(
         {.count = 3, .register_name = std::string("a"), .extra = {}});
 
     application.insert_text("é");
@@ -1082,7 +1082,7 @@ TEST_CASE("input states select the command that interprets text") {
     CHECK(received.prefix.count == 3);
     CHECK(received.prefix.register_name == std::optional<std::string>{"a"});
     CHECK(application.last_command() == "test.text-policy");
-    CHECK(application.command_loop().pending_prefix().empty());
+    CHECK(application.pending_command_prefix().empty());
     CHECK(application.session().snapshot().content().to_string() == "text");
 }
 
@@ -1100,7 +1100,7 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     CHECK(application.input_state().name == "meow-numeric");
     CHECK(application.pending_prefix_text() == "12");
     CHECK(application.chrome_content().pending_key == "12");
-    CHECK(application.command_loop().pending_prefix().count == 12);
+    CHECK(application.pending_command_prefix().count == 12);
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{12});
     CHECK(application.input_state().name == "meow-normal");
@@ -1114,8 +1114,7 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
     send_keys(application, "a");
     CHECK(application.input_state().name == "meow-normal");
     CHECK(application.chrome_content().pending_key == "3 \"a");
-    CHECK(application.command_loop().pending_prefix().register_name ==
-          std::optional<std::string>{"a"});
+    CHECK(application.pending_command_prefix().register_name == std::optional<std::string>{"a"});
     send_keys(application, "l");
     CHECK(application.session().caret() == TextOffset{3});
     CHECK(application.chrome_content().pending_key.empty());
@@ -1132,8 +1131,7 @@ TEST_CASE("Guile meow keypad translates through base layers and preserves the es
 
     send_keys(application, "\" b");
     CHECK(application.input_state().name == "meow-normal");
-    CHECK(application.command_loop().pending_prefix().register_name ==
-          std::optional<std::string>{"b"});
+    CHECK(application.pending_command_prefix().register_name == std::optional<std::string>{"b"});
     send_keys(application, "l");
     CHECK(application.chrome_content().pending_key.empty());
 
@@ -1591,10 +1589,9 @@ TEST_CASE("region commands preserve per-range kill entries and edit atomically")
                                 .metadata = "(region . multi)"};
 
     runtime.views().set_selection(application.view_id(), regions);
-    application.command_loop().set_pending_prefix(
-        {.count = std::nullopt, .register_name = "a", .extra = {}});
+    const CommandPrefix register_a{.count = std::nullopt, .register_name = "a", .extra = {}};
     CHECK(application.command_loop()
-              .execute(require_command(runtime, "edit.copy-region"), context)
+              .execute(require_command(runtime, "edit.copy-region"), context, register_a)
               .status == CommandLoopStatus::Executed);
     CHECK(clipboard == "one\ntwo\n");
     CHECK_FALSE(application.session().active_selection().has_value());
@@ -1605,11 +1602,9 @@ TEST_CASE("region commands preserve per-range kill entries and edit atomically")
                                  {.anchor = TextOffset{14}, .head = TextOffset{14}}},
                       .primary = 1,
                       .metadata = "(yank . multi)"});
-    application.command_loop().set_pending_prefix(
-        {.count = std::nullopt, .register_name = "a", .extra = {}});
-    CHECK(
-        application.command_loop().execute(require_command(runtime, "edit.yank"), context).status ==
-        CommandLoopStatus::Executed);
+    CHECK(application.command_loop()
+              .execute(require_command(runtime, "edit.yank"), context, register_a)
+              .status == CommandLoopStatus::Executed);
     CHECK(application.session().snapshot().content() == "oneone\ntwo\nthree\ntwo\n");
     CHECK(application.session().undo());
     CHECK(application.session().snapshot().content() == "one\ntwo\nthree\n");

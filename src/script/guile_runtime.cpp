@@ -6697,6 +6697,8 @@ struct GuileCall {
         CompletionFinished,
         CompletionSelection,
         CommandFeedbackState,
+        CommandPrefixState,
+        SetCommandPrefixState,
         ApplicationState,
         SetCaretReveal,
         SetPageRows,
@@ -6840,6 +6842,7 @@ struct GuileCall {
     bool completion_automatic = false;
     bool completion_pending = false;
     GuileCommandFeedbackState command_feedback;
+    CommandPrefix command_prefix;
     GuileApplicationState application_state;
     std::uint32_t page_rows = 1;
     int delta = 1;
@@ -6945,28 +6948,34 @@ SCM setting_value(const SettingValue& value) {
     return scm_from_utf8_string(std::get<std::string>(value).c_str());
 }
 
+SCM command_prefix_value(const CommandPrefix& prefix) {
+    SCM extra = SCM_EOL;
+    for (auto iterator = prefix.extra.rbegin(); iterator != prefix.extra.rend(); ++iterator) {
+        extra = scm_cons(
+            scm_cons(scm_from_utf8_string(iterator->name.c_str()), setting_value(iterator->value)),
+            extra);
+    }
+    SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
+    scm_c_vector_set_x(result, 0, prefix.count ? scm_from_int64(*prefix.count) : SCM_BOOL_F);
+    scm_c_vector_set_x(result, 1,
+                       prefix.register_name ? scm_from_utf8_string(prefix.register_name->c_str())
+                                            : SCM_BOOL_F);
+    scm_c_vector_set_x(result, 2, extra);
+    return result;
+}
+
 SCM command_invocation_value(const CommandInvocation& invocation) {
     SCM arguments = scm_c_make_vector(invocation.arguments.size(), SCM_UNSPECIFIED);
     for (std::size_t index = 0; index < invocation.arguments.size(); ++index) {
         scm_c_vector_set_x(arguments, index, setting_value(invocation.arguments[index]));
     }
-    SCM extra = SCM_EOL;
-    for (auto iterator = invocation.prefix.extra.rbegin();
-         iterator != invocation.prefix.extra.rend(); ++iterator) {
-        extra = scm_cons(
-            scm_cons(scm_from_utf8_string(iterator->name.c_str()), setting_value(iterator->value)),
-            extra);
-    }
+    const SCM prefix = command_prefix_value(invocation.prefix);
     SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
     scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("invocation"));
     scm_c_vector_set_x(result, 1, arguments);
-    scm_c_vector_set_x(
-        result, 2, invocation.prefix.count ? scm_from_int64(*invocation.prefix.count) : SCM_BOOL_F);
-    scm_c_vector_set_x(result, 3,
-                       invocation.prefix.register_name
-                           ? scm_from_utf8_string(invocation.prefix.register_name->c_str())
-                           : SCM_BOOL_F);
-    scm_c_vector_set_x(result, 4, extra);
+    scm_c_vector_set_x(result, 2, scm_c_vector_ref(prefix, 0));
+    scm_c_vector_set_x(result, 3, scm_c_vector_ref(prefix, 1));
+    scm_c_vector_set_x(result, 4, scm_c_vector_ref(prefix, 2));
     return result;
 }
 
@@ -7620,6 +7629,21 @@ SCM call_body(void* data) {
             call.command_feedback.message = scheme_string(scm_c_vector_ref(call.result, 0));
             call.command_feedback.last_key = scheme_string(scm_c_vector_ref(call.result, 1));
             call.command_feedback.last_command = scheme_string(scm_c_vector_ref(call.result, 2));
+            break;
+        case GuileCall::Operation::CommandPrefixState:
+            call.result =
+                scm_call_1(scm_c_public_ref("cind command", "command-prefix-state"), call.host);
+            if (!scm_is_vector(call.result) || scm_c_vector_length(call.result) != 3) {
+                scm_misc_error("command-prefix-state",
+                               "command prefix state must be #(count register extra)", SCM_EOL);
+            }
+            call.command_prefix = command_prefix_from_scheme(
+                scm_c_vector_ref(call.result, 0), scm_c_vector_ref(call.result, 1),
+                scm_c_vector_ref(call.result, 2), "command-prefix-state");
+            break;
+        case GuileCall::Operation::SetCommandPrefixState:
+            call.result = scm_call_2(scm_c_public_ref("cind command", "set-command-prefix-state!"),
+                                     call.host, command_prefix_value(call.command_prefix));
             break;
         case GuileCall::Operation::ApplicationState:
             call.result =
@@ -9271,6 +9295,35 @@ public:
         return std::move(call.command_feedback);
     }
 
+    std::expected<CommandPrefix, std::string> command_prefix_state() const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::CommandPrefixState;
+        call.host = host_;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.command_prefix);
+    }
+
+    std::expected<void, std::string> set_command_prefix_state(const CommandPrefix& prefix) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetCommandPrefixState;
+        call.host = host_;
+        call.command_prefix = prefix;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
     std::expected<GuileApplicationState, std::string> application_state() const {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -10753,6 +10806,15 @@ std::expected<std::optional<std::size_t>, std::string> GuileRuntime::completion_
 
 std::expected<GuileCommandFeedbackState, std::string> GuileRuntime::command_feedback_state() const {
     return impl_->command_feedback_state();
+}
+
+std::expected<CommandPrefix, std::string> GuileRuntime::command_prefix_state() const {
+    return impl_->command_prefix_state();
+}
+
+std::expected<void, std::string>
+GuileRuntime::set_command_prefix_state(const CommandPrefix& prefix) {
+    return impl_->set_command_prefix_state(prefix);
 }
 
 std::expected<GuileApplicationState, std::string> GuileRuntime::application_state() const {

@@ -255,6 +255,8 @@ public:
     }
     std::string pending_key_sequence_text() const;
     std::string pending_prefix_text() const;
+    CommandPrefix pending_command_prefix() const;
+    void set_pending_command_prefix(const CommandPrefix& prefix);
     std::string pending_input_state_name() const;
     std::vector<KeyBindingHint> pending_key_hints() const;
     PositionHintProviderResult position_hints(WindowId window);
@@ -377,6 +379,7 @@ private:
     void register_keymaps();
     void register_presentation_policies();
     void sync_keymaps();
+    void cancel_pending_input();
     const InputFeedback* active_input_feedback() const;
     bool handle_loop_result(CommandLoopResult result);
     bool execute_command(CommandId command, const CommandInvocation& invocation);

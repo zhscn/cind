@@ -32,6 +32,7 @@ struct CommandLoopResult {
     std::string key_sequence;
     std::string message;
     std::optional<InteractionRequest> interaction;
+    CommandPrefix next_prefix;
 };
 
 struct KeymapLayer {
@@ -52,21 +53,17 @@ public:
     void set_override_keymaps(std::vector<KeymapId> keymaps);
     std::span<const KeymapId> override_keymaps() const { return override_keymaps_; }
 
-    CommandLoopResult dispatch(KeyStroke key, CommandContext& context);
+    CommandLoopResult dispatch(KeyStroke key, CommandContext& context, CommandPrefix prefix = {});
     std::optional<CommandLoopResult> dispatch_override(KeyStroke key, CommandContext& context);
-    CommandLoopResult execute(CommandId command, CommandContext& context);
+    CommandLoopResult execute(CommandId command, CommandContext& context,
+                              CommandPrefix prefix = {});
     CommandLoopResult execute(CommandId command, CommandContext& context,
                               const CommandInvocation& invocation);
-    void cancel_pending();
+    void cancel_sequence();
     std::span<const KeyStroke> pending_sequence() const { return pending_; }
     std::string pending_sequence_text() const { return format_key_sequence(pending_); }
     std::optional<KeymapId> pending_keymap() const { return pending_keymap_; }
     std::vector<KeymapCompletion> pending_completions() const;
-
-    const CommandPrefix& pending_prefix() const { return pending_prefix_; }
-    void set_pending_prefix(CommandPrefix prefix) { pending_prefix_ = std::move(prefix); }
-    void set_repeat_count(std::optional<std::int64_t> count) { pending_prefix_.count = count; }
-    std::optional<std::int64_t> repeat_count() const { return pending_prefix_.count; }
 
 private:
     CommandLoopResult invoke(CommandId command, CommandContext& context,
@@ -83,7 +80,6 @@ private:
     std::vector<KeymapLayer> keymap_layers_;
     KeySequence pending_;
     std::optional<KeymapId> pending_keymap_;
-    CommandPrefix pending_prefix_;
 };
 
 } // namespace cind

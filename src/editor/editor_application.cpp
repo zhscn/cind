@@ -300,7 +300,7 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
            .apply_completion = [this](std::size_t selected,
                                       bool replace) { return apply_completion(selected, replace); },
            .cancel_completion = [this] { return cancel_completion(); },
-           .cancel_pending_input = [this] { command_loop_.cancel_pending(); },
+           .cancel_pending_input = [this] { command_loop_.cancel_sequence(); },
            .view_position =
                [this](ViewId view) {
                    const EditSession& active = session_for(view);
@@ -943,25 +943,25 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 }
                 InputStateHandlerResult handled = definition.handler(context, key);
                 if (!handled) {
-                    command_loop_.cancel_pending();
+                    cancel_pending_input();
                     set_message(handled.error());
                     sync_keymaps();
                     return true;
                 }
                 if (handled->kind == InputStateHandlerActionKind::Consume) {
-                    command_loop_.cancel_pending();
+                    cancel_pending_input();
                     sync_keymaps();
                     return true;
                 }
                 if (handled->kind == InputStateHandlerActionKind::Dispatch) {
                     if (!handled->command) {
-                        command_loop_.cancel_pending();
+                        cancel_pending_input();
                         set_message("input state handler returned an invalid command");
                         sync_keymaps();
                         return true;
                     }
                     if (handled->invocation.prefix.empty()) {
-                        handled->invocation.prefix = command_loop_.pending_prefix();
+                        handled->invocation.prefix = pending_command_prefix();
                     }
                     const bool consumed = handle_loop_result(
                         command_loop_.execute(handled->command, context, handled->invocation));
@@ -970,13 +970,13 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                 }
                 if (handled->kind == InputStateHandlerActionKind::Pending) {
                     if (!handled->feedback) {
-                        command_loop_.cancel_pending();
+                        cancel_pending_input();
                         set_message("input state handler returned pending without feedback");
                         sync_keymaps();
                         return true;
                     }
                     runtime_.views().set_input_feedback(active_view.id(), *handled->feedback);
-                    command_loop_.cancel_pending();
+                    cancel_pending_input();
                     sync_keymaps();
                     return true;
                 }
@@ -985,8 +985,8 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
         }
     }
     CommandContext context = command_context();
-    const CommandPrefix text_prefix = command_loop_.pending_prefix();
-    CommandLoopResult result = command_loop_.dispatch(key, context);
+    const CommandPrefix text_prefix = pending_command_prefix();
+    CommandLoopResult result = command_loop_.dispatch(key, context, text_prefix);
     const bool preserve_prefix_for_text = result.status == CommandLoopStatus::NotHandled &&
                                           !result.consumed && !text_prefix.empty() &&
                                           key.code == KeyCode::Character && key.character >= U' ' &&
@@ -996,7 +996,7 @@ bool EditorApplication::handle_key(KeyStroke key, int page_rows) {
                                           text_input_policy() == TextInputPolicy::Accept;
     const bool consumed = handle_loop_result(std::move(result));
     if (preserve_prefix_for_text) {
-        command_loop_.set_pending_prefix(text_prefix);
+        set_pending_command_prefix(text_prefix);
     }
     sync_keymaps();
     return consumed;
@@ -1103,7 +1103,7 @@ bool EditorApplication::execute_command(std::string_view name,
                                         const CommandInvocation& invocation) {
     const std::optional<CommandId> command = runtime_.commands().find(name);
     if (!command) {
-        command_loop_.cancel_pending();
+        cancel_pending_input();
         set_message(std::format("unknown command '{}'", name));
         sync_keymaps();
         return false;
@@ -1215,21 +1215,21 @@ void EditorApplication::insert_text(std::string_view text) {
         return;
     }
     if (!state.text_command) {
-        command_loop_.cancel_pending();
+        cancel_pending_input();
         set_message(std::format("input state '{}' has no text command", state.name));
         record_command_input("text", false);
         return;
     }
     const std::optional<CommandId> command = runtime_.commands().find(*state.text_command);
     if (!command) {
-        command_loop_.cancel_pending();
+        cancel_pending_input();
         set_message(std::format("unknown input text command '{}'", *state.text_command));
         record_command_input("text", false);
         return;
     }
     CommandContext context = command_context();
     CommandInvocation invocation{.arguments = {std::string(text)},
-                                 .prefix = command_loop_.pending_prefix()};
+                                 .prefix = pending_command_prefix()};
     (void)handle_loop_result(command_loop_.execute(*command, context, invocation));
     record_command_input("text", false);
     sync_keymaps();
@@ -1503,7 +1503,7 @@ bool EditorApplication::focus_window(WorkbenchId workbench_id, WindowId window) 
     }
     const bool active = workbench_id == this->workbench_id();
     if (active && window != active_window(workbench_id)) {
-        command_loop_.cancel_pending();
+        cancel_pending_input();
     }
     if (!guile_.workbench_visit_buffer(workbench_id, buffer_id(window))) {
         return false;
@@ -1736,7 +1736,7 @@ bool EditorApplication::switch_workbench(WorkbenchId workbench) {
     }
     const WorkbenchId previous = workbench_id();
     if (workbench != previous) {
-        command_loop_.cancel_pending();
+        cancel_pending_input();
     }
     const WindowId selected_window = active_window(workbench);
     if (!guile_.workbench_visit_buffer(workbench, buffer_id(selected_window))) {
@@ -1818,7 +1818,7 @@ bool EditorApplication::close_workbench(WorkbenchId workbench) {
         if (!guile_.workbench_visit_buffer(*replacement, buffer_id(selected_window))) {
             return false;
         }
-        command_loop_.cancel_pending();
+        cancel_pending_input();
         show_caret();
         sync_keymaps();
     }
@@ -2614,7 +2614,24 @@ std::string EditorApplication::pending_key_sequence_text() const {
 }
 
 std::string EditorApplication::pending_prefix_text() const {
-    return format_command_prefix(command_loop_.pending_prefix());
+    return format_command_prefix(pending_command_prefix());
+}
+
+CommandPrefix EditorApplication::pending_command_prefix() const {
+    const std::expected<CommandPrefix, std::string> prefix = guile_.command_prefix_state();
+    return prefix.value_or(CommandPrefix{});
+}
+
+void EditorApplication::set_pending_command_prefix(const CommandPrefix& prefix) {
+    if (const std::expected<void, std::string> updated = guile_.set_command_prefix_state(prefix);
+        !updated) {
+        set_message(std::format("command prefix state failed: {}", updated.error()));
+    }
+}
+
+void EditorApplication::cancel_pending_input() {
+    command_loop_.cancel_sequence();
+    set_pending_command_prefix({});
 }
 
 std::string EditorApplication::pending_input_state_name() const {
@@ -3380,6 +3397,7 @@ void EditorApplication::record_command_input(std::string_view key, bool clear_me
 }
 
 bool EditorApplication::handle_loop_result(CommandLoopResult result) {
+    set_pending_command_prefix(result.next_prefix);
     std::optional<std::string_view> command;
     if (result.command) {
         command = runtime_.commands().definition(*result.command).name;

@@ -383,18 +383,19 @@ EditorStateSnapshot EditorModel::inspect() {
     const CommandLoop& command_loop = application_.command_loop();
     const EditorRuntime& runtime = application_.runtime();
     const GuileCommandFeedbackState feedback = application_.command_feedback();
-    CommandLoopStateSnapshot command_state{
-        .keymaps = {},
-        .layers = {},
-        .override_keymaps = {},
-        .pending_keys = application_.pending_key_sequence_text(),
-        .pending_keymap = {},
-        .pending_input_state = application_.pending_input_state_name(),
-        .repeat_count = command_loop.repeat_count(),
-        .register_name = command_loop.pending_prefix().register_name,
-        .prefix_extra = command_loop.pending_prefix().extra,
-        .prefix_text = application_.pending_prefix_text(),
-        .last_command = feedback.last_command};
+    const CommandPrefix prefix = application_.pending_command_prefix();
+    CommandLoopStateSnapshot command_state{.keymaps = {},
+                                           .layers = {},
+                                           .override_keymaps = {},
+                                           .pending_keys = application_.pending_key_sequence_text(),
+                                           .pending_keymap = {},
+                                           .pending_input_state =
+                                               application_.pending_input_state_name(),
+                                           .repeat_count = prefix.count,
+                                           .register_name = prefix.register_name,
+                                           .prefix_extra = prefix.extra,
+                                           .prefix_text = format_command_prefix(prefix),
+                                           .last_command = feedback.last_command};
     for (const KeymapLayer& layer : command_loop.keymap_layers()) {
         command_state.keymaps.push_back(runtime.keymaps().definition(layer.keymap).name);
         KeymapLayerStateSnapshot layer_state{.name =

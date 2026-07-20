@@ -406,6 +406,22 @@ TEST_CASE("Guile command feedback owns message and command input state") {
     CHECK(completion_refreshes == 5);
 }
 
+TEST_CASE("Guile owns command prefix state") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+    const CommandPrefix prefix{.count = -3,
+                               .register_name = "selection",
+                               .extra = {{.name = "scope", .value = std::string("word")},
+                                         {.name = "extend", .value = true}}};
+
+    REQUIRE(guile.set_command_prefix_state(prefix).has_value());
+    const std::expected<CommandPrefix, std::string> stored = guile.command_prefix_state();
+    REQUIRE(stored.has_value());
+    CHECK(*stored == prefix);
+    REQUIRE(guile.set_command_prefix_state({}).has_value());
+    CHECK(guile.command_prefix_state().value_or(prefix).empty());
+}
+
 TEST_CASE("Guile buffer edit observers own post-edit policy") {
     EditorRuntime runtime;
     const BufferId buffer = runtime.buffers().create({.name = "edit-observer",
@@ -2472,9 +2488,9 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(feedback_message() == "mark cleared");
 
     runtime.views().set_selection(view, {.anchor = TextOffset{0}, .head = TextOffset{1}});
-    command_loop.set_pending_prefix({.count = std::nullopt, .register_name = "a", .extra = {}});
-    CHECK(command_loop.execute(require_command(runtime, "edit.copy-region"), context).status ==
-          CommandLoopStatus::Executed);
+    const CommandPrefix register_a{.count = std::nullopt, .register_name = "a", .extra = {}};
+    CHECK(command_loop.execute(require_command(runtime, "edit.copy-region"), context, register_a)
+              .status == CommandLoopStatus::Executed);
     CHECK(clipboard == "a");
     CHECK(feedback_message() == "copied");
     CHECK_FALSE(runtime.views().mark(view).has_value());
@@ -2498,11 +2514,11 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(clipboard == "abc");
 
     runtime.views().set_caret(view, TextOffset{0});
-    command_loop.set_pending_prefix({.count = std::nullopt, .register_name = "a", .extra = {}});
-    CHECK(command_loop.execute(require_command(runtime, "edit.yank"), context).status ==
-          CommandLoopStatus::Executed);
+    const CommandLoopResult registered_yank =
+        command_loop.execute(require_command(runtime, "edit.yank"), context, register_a);
+    CHECK(registered_yank.status == CommandLoopStatus::Executed);
     CHECK(runtime.buffers().get(buffer).snapshot().content().to_string() == "a\n");
-    CHECK(command_loop.pending_prefix().empty());
+    CHECK(registered_yank.next_prefix.empty());
 
     const GuileRuntimeSnapshot snapshot = guile.snapshot();
     CHECK(snapshot.command_revision == 1);
