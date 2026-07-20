@@ -7,10 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -80,23 +78,5 @@ private:
     JumpNodeId next_node_ = 0;
     std::uint64_t clock_ = 0;
 };
-
-class JumpWalk {
-public:
-    bool record(JumpNodeId node);
-    std::optional<JumpNodeId> move(std::int64_t delta);
-    std::optional<JumpNodeId> current() const;
-    std::span<const JumpNodeId> entries() const { return entries_; }
-    std::optional<std::size_t> cursor() const { return cursor_; }
-    void forget(std::span<const JumpNodeId> nodes);
-    void restore(std::vector<JumpNodeId> entries, std::optional<std::size_t> cursor);
-    void clear();
-
-private:
-    std::vector<JumpNodeId> entries_;
-    std::optional<std::size_t> cursor_;
-};
-
-std::string jump_edge_kind(std::string_view intent);
 
 } // namespace cind

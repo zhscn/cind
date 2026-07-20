@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -1563,6 +1564,34 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(guile.workbench_transaction_group_movable(workbench, 1, true).value_or(false));
     REQUIRE(guile.workbench_transaction_group_moved(workbench, 1, true, true).has_value());
     CHECK(guile.workbench_transaction_group_movable(workbench, 1, false).value_or(false));
+    REQUIRE(guile.workbench_jump_record(window, 1).value_or(false));
+    REQUIRE(guile.workbench_jump_record(window, 2).value_or(false));
+    REQUIRE(guile.workbench_jump_record(window, 3).value_or(false));
+    CHECK(guile.workbench_jump_move(window, -2).value_or(std::nullopt) ==
+          std::optional<std::uint64_t>{1});
+    REQUIRE(guile.workbench_jump_record(window, 4).value_or(false));
+    GuileJumpWalkState jump_walk = guile.workbench_jump_walk(window).value();
+    CHECK(jump_walk.entries == std::vector<std::uint64_t>{1, 2, 3, 4});
+    CHECK(jump_walk.cursor == std::optional<std::size_t>{3});
+    CHECK_FALSE(guile.workbench_jump_move(window, std::numeric_limits<std::int64_t>::min())
+                    .value_or(std::nullopt)
+                    .has_value());
+    CHECK_FALSE(guile.workbench_jump_move(window, 1).value_or(std::nullopt).has_value());
+    REQUIRE(guile.workbench_jump_restore(window, {1, 2, 3, 4}, 2).has_value());
+    REQUIRE(guile.workbench_jump_forget(workbench, {2, 3}).has_value());
+    jump_walk = guile.workbench_jump_walk(window).value();
+    CHECK(jump_walk.entries == std::vector<std::uint64_t>{1, 4});
+    CHECK(jump_walk.cursor == std::optional<std::size_t>{0});
+    CHECK(guile.workbench_jump_move(window, 1).value_or(std::nullopt) ==
+          std::optional<std::uint64_t>{4});
+    REQUIRE(guile.workbench_jump_restore(window, {1, 2, 3, 4, 5, 6}, 4).has_value());
+    const GuileJumpWalkState session_walk =
+        guile.workbench_jump_session_walk(window, {2, 3, 5, 6}, 4).value();
+    CHECK(session_walk.entries == std::vector<std::uint64_t>{3, 5, 6});
+    CHECK(session_walk.cursor == std::optional<std::size_t>{1});
+    CHECK(guile.workbench_jump_edge_kind("definition").value_or("") == "def");
+    CHECK(guile.workbench_jump_edge_kind("references").value_or("") == "ref");
+    CHECK(guile.workbench_jump_edge_kind("edit").value_or("") == "open");
     {
         EditorRuntime parallel_runtime;
         GuileRuntime parallel(parallel_runtime);

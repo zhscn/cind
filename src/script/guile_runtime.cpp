@@ -6096,6 +6096,29 @@ std::optional<std::size_t> optional_size_from_scheme(SCM value, const char* call
     return scm_to_size_t(value);
 }
 
+GuileJumpWalkState jump_walk_state_from_scheme(SCM value, const char* caller) {
+    if (!scm_is_vector(value) || scm_c_vector_length(value) != 2 ||
+        !scm_is_vector(scm_c_vector_ref(value, 0))) {
+        scm_wrong_type_arg_msg(caller, 0, value, "#(jump-node-vector cursor-or-#f)");
+    }
+    const SCM entries = scm_c_vector_ref(value, 0);
+    GuileJumpWalkState state;
+    state.entries.reserve(scm_c_vector_length(entries));
+    for (std::size_t index = 0; index < scm_c_vector_length(entries); ++index) {
+        const SCM node = scm_c_vector_ref(entries, index);
+        if (scm_is_unsigned_integer(node, 1, std::numeric_limits<std::uint64_t>::max()) == 0) {
+            scm_wrong_type_arg_msg(caller, 0, node, "positive 64-bit jump node");
+        }
+        state.entries.push_back(scm_to_uint64(node));
+    }
+    state.cursor = optional_size_from_scheme(scm_c_vector_ref(value, 1), caller);
+    if ((state.entries.empty() && state.cursor) || (!state.entries.empty() && !state.cursor) ||
+        (state.cursor && *state.cursor >= state.entries.size())) {
+        scm_wrong_type_arg_msg(caller, 0, value, "jump walk with a valid cursor");
+    }
+    return state;
+}
+
 ChromeContent chrome_content_from_scheme(SCM value, const char* caller) {
     if (!scm_is_vector(value) || scm_c_vector_length(value) != 10 ||
         !symbol_is(scm_c_vector_ref(value, 0), "chrome") ||
@@ -6659,6 +6682,14 @@ struct GuileCall {
         WorkbenchTransactionGroupRecorded,
         WorkbenchTransactionGroupMovable,
         WorkbenchTransactionGroupMoved,
+        WorkbenchJumpRecord,
+        WorkbenchJumpMove,
+        WorkbenchJumpCurrent,
+        WorkbenchJumpForget,
+        WorkbenchJumpRestore,
+        WorkbenchJumpWalk,
+        WorkbenchJumpSessionWalk,
+        WorkbenchJumpEdgeKind,
         ReplaceWorkbenchMru,
         WorkbenchName,
         WorkbenchFindByName,
@@ -6749,8 +6780,10 @@ struct GuileCall {
     WorkbenchId workbench;
     std::vector<BufferId> buffers;
     std::vector<ProjectId> projects;
+    std::vector<std::uint64_t> jump_nodes;
     GuileLocationNavigation location_navigation;
     std::vector<GuileLocationListPolicyState> location_list_states;
+    GuileJumpWalkState jump_walk;
     GuileWorkbenchWindowState workbench_window_state;
     std::vector<GuileDisplaySlot> display_slots;
     std::optional<std::string> role;
@@ -6769,6 +6802,11 @@ struct GuileCall {
     int delta = 1;
     std::uint64_t lsp_session = 0;
     std::uint64_t transaction_group = 0;
+    std::uint64_t jump_node_id = 0;
+    std::int64_t jump_delta = 0;
+    std::optional<std::uint64_t> selected_jump;
+    std::optional<std::size_t> jump_cursor;
+    std::size_t maximum_entries = 0;
     CommandLoopStatus command_status = CommandLoopStatus::NotHandled;
     std::optional<std::string> command_name;
     Operation operation = Operation::Load;
@@ -7719,6 +7757,91 @@ SCM call_body(void* data) {
                            call.host, entity_id(call.workbench.slot, call.workbench.generation),
                            scm_from_uint64(call.transaction_group), scm_from_bool(call.redo),
                            scm_from_bool(call.changed));
+            break;
+        case GuileCall::Operation::WorkbenchJumpRecord:
+            call.result = scm_call_3(scm_c_public_ref("cind workbench", "workbench-jump-record!"),
+                                     call.host, entity_id(call.window.slot, call.window.generation),
+                                     scm_from_uint64(call.jump_node_id));
+            if (!scheme_boolean(call.result)) {
+                scm_wrong_type_arg_msg("workbench-jump-record!", 0, call.result, "boolean");
+            }
+            call.enabled = scheme_true(call.result);
+            break;
+        case GuileCall::Operation::WorkbenchJumpMove:
+            call.result = scm_call_3(scm_c_public_ref("cind workbench", "workbench-jump-move!"),
+                                     call.host, entity_id(call.window.slot, call.window.generation),
+                                     scm_from_int64(call.jump_delta));
+            if (scheme_false(call.result)) {
+                call.selected_jump.reset();
+            } else if (scm_is_unsigned_integer(call.result, 1,
+                                               std::numeric_limits<std::uint64_t>::max()) != 0) {
+                call.selected_jump = scm_to_uint64(call.result);
+            } else {
+                scm_wrong_type_arg_msg("workbench-jump-move!", 0, call.result,
+                                       "positive 64-bit jump node or #f");
+            }
+            break;
+        case GuileCall::Operation::WorkbenchJumpCurrent:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-jump-current"), call.host,
+                           entity_id(call.window.slot, call.window.generation));
+            if (scheme_false(call.result)) {
+                call.selected_jump.reset();
+            } else if (scm_is_unsigned_integer(call.result, 1,
+                                               std::numeric_limits<std::uint64_t>::max()) != 0) {
+                call.selected_jump = scm_to_uint64(call.result);
+            } else {
+                scm_wrong_type_arg_msg("workbench-jump-current", 0, call.result,
+                                       "positive 64-bit jump node or #f");
+            }
+            break;
+        case GuileCall::Operation::WorkbenchJumpForget: {
+            SCM nodes = scm_c_make_vector(call.jump_nodes.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.jump_nodes.size(); ++index) {
+                scm_c_vector_set_x(nodes, index, scm_from_uint64(call.jump_nodes[index]));
+            }
+            call.result =
+                scm_call_3(scm_c_public_ref("cind workbench", "workbench-jump-forget!"), call.host,
+                           entity_id(call.workbench.slot, call.workbench.generation), nodes);
+            break;
+        }
+        case GuileCall::Operation::WorkbenchJumpRestore: {
+            SCM entries = scm_c_make_vector(call.jump_nodes.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.jump_nodes.size(); ++index) {
+                scm_c_vector_set_x(entries, index, scm_from_uint64(call.jump_nodes[index]));
+            }
+            call.result =
+                scm_call_4(scm_c_public_ref("cind workbench", "workbench-jump-restore!"), call.host,
+                           entity_id(call.window.slot, call.window.generation), entries,
+                           call.jump_cursor ? scm_from_size_t(*call.jump_cursor) : SCM_BOOL_F);
+            break;
+        }
+        case GuileCall::Operation::WorkbenchJumpWalk:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind workbench", "workbench-jump-walk"), call.host,
+                           entity_id(call.window.slot, call.window.generation));
+            call.jump_walk = jump_walk_state_from_scheme(call.result, "workbench-jump-walk");
+            break;
+        case GuileCall::Operation::WorkbenchJumpSessionWalk: {
+            SCM nodes = scm_c_make_vector(call.jump_nodes.size(), SCM_UNSPECIFIED);
+            for (std::size_t index = 0; index < call.jump_nodes.size(); ++index) {
+                scm_c_vector_set_x(nodes, index, scm_from_uint64(call.jump_nodes[index]));
+            }
+            call.result =
+                scm_call_4(scm_c_public_ref("cind workbench", "workbench-jump-session-walk"),
+                           call.host, entity_id(call.window.slot, call.window.generation), nodes,
+                           scm_from_size_t(call.maximum_entries));
+            call.jump_walk =
+                jump_walk_state_from_scheme(call.result, "workbench-jump-session-walk");
+            break;
+        }
+        case GuileCall::Operation::WorkbenchJumpEdgeKind:
+            call.result = scm_call_1(scm_c_public_ref("cind workbench", "workbench-jump-edge-kind"),
+                                     scm_from_utf8_stringn(call.intent.data(), call.intent.size()));
+            if (!scm_is_string(call.result)) {
+                scm_wrong_type_arg_msg("workbench-jump-edge-kind", 0, call.result, "string");
+            }
+            call.source = scheme_string(call.result);
             break;
         case GuileCall::Operation::ReplaceWorkbenchMru: {
             SCM buffers = scm_c_make_vector(call.buffers.size(), SCM_UNSPECIFIED);
@@ -9383,6 +9506,140 @@ public:
         return {};
     }
 
+    std::expected<bool, std::string> workbench_jump_record(WindowId window, std::uint64_t node) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpRecord;
+        call.host = host_;
+        call.window = window;
+        call.jump_node_id = node;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled;
+    }
+
+    std::expected<std::optional<std::uint64_t>, std::string>
+    workbench_jump_move(WindowId window, std::int64_t delta) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpMove;
+        call.host = host_;
+        call.window = window;
+        call.jump_delta = delta;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.selected_jump;
+    }
+
+    std::expected<std::optional<std::uint64_t>, std::string>
+    workbench_jump_current(WindowId window) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpCurrent;
+        call.host = host_;
+        call.window = window;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.selected_jump;
+    }
+
+    std::expected<void, std::string>
+    workbench_jump_forget(WorkbenchId workbench, const std::vector<std::uint64_t>& nodes) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpForget;
+        call.host = host_;
+        call.workbench = workbench;
+        call.jump_nodes = nodes;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<void, std::string>
+    workbench_jump_restore(WindowId window, const std::vector<std::uint64_t>& entries,
+                           std::optional<std::size_t> cursor) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpRestore;
+        call.host = host_;
+        call.window = window;
+        call.jump_nodes = entries;
+        call.jump_cursor = cursor;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<GuileJumpWalkState, std::string> workbench_jump_walk(WindowId window) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpWalk;
+        call.host = host_;
+        call.window = window;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.jump_walk);
+    }
+
+    std::expected<GuileJumpWalkState, std::string>
+    workbench_jump_session_walk(WindowId window, const std::vector<std::uint64_t>& durable_nodes,
+                                std::size_t maximum_entries) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpSessionWalk;
+        call.host = host_;
+        call.window = window;
+        call.jump_nodes = durable_nodes;
+        call.maximum_entries = maximum_entries;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.jump_walk);
+    }
+
+    std::expected<std::string, std::string>
+    workbench_jump_edge_kind(std::string_view intent) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::WorkbenchJumpEdgeKind;
+        call.intent = intent;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return std::move(call.source);
+    }
+
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers) {
         require_owner_thread();
@@ -10427,6 +10684,50 @@ std::expected<void, std::string>
 GuileRuntime::workbench_transaction_group_moved(WorkbenchId workbench, std::uint64_t group,
                                                 bool redo, bool changed) {
     return impl_->workbench_transaction_group_moved(workbench, group, redo, changed);
+}
+
+std::expected<bool, std::string> GuileRuntime::workbench_jump_record(WindowId window,
+                                                                     std::uint64_t node) {
+    return impl_->workbench_jump_record(window, node);
+}
+
+std::expected<std::optional<std::uint64_t>, std::string>
+GuileRuntime::workbench_jump_move(WindowId window, std::int64_t delta) {
+    return impl_->workbench_jump_move(window, delta);
+}
+
+std::expected<std::optional<std::uint64_t>, std::string>
+GuileRuntime::workbench_jump_current(WindowId window) const {
+    return impl_->workbench_jump_current(window);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_jump_forget(WorkbenchId workbench,
+                                    const std::vector<std::uint64_t>& nodes) {
+    return impl_->workbench_jump_forget(workbench, nodes);
+}
+
+std::expected<void, std::string>
+GuileRuntime::workbench_jump_restore(WindowId window, const std::vector<std::uint64_t>& entries,
+                                     std::optional<std::size_t> cursor) {
+    return impl_->workbench_jump_restore(window, entries, cursor);
+}
+
+std::expected<GuileJumpWalkState, std::string>
+GuileRuntime::workbench_jump_walk(WindowId window) const {
+    return impl_->workbench_jump_walk(window);
+}
+
+std::expected<GuileJumpWalkState, std::string>
+GuileRuntime::workbench_jump_session_walk(WindowId window,
+                                          const std::vector<std::uint64_t>& durable_nodes,
+                                          std::size_t maximum_entries) const {
+    return impl_->workbench_jump_session_walk(window, durable_nodes, maximum_entries);
+}
+
+std::expected<std::string, std::string>
+GuileRuntime::workbench_jump_edge_kind(std::string_view intent) const {
+    return impl_->workbench_jump_edge_kind(intent);
 }
 
 std::expected<void, std::string>

@@ -4,7 +4,6 @@
 #include "editor/jump.hpp"
 
 #include <cstdint>
-#include <limits>
 #include <string>
 
 using namespace cind;
@@ -60,21 +59,6 @@ TEST_CASE("jump graph detaches closed buffers without losing their resource posi
     CHECK(removed == 9);
 }
 
-TEST_CASE("jump walk is append-only and bounds every movement") {
-    JumpWalk walk;
-    REQUIRE(walk.record(1));
-    REQUIRE(walk.record(2));
-    REQUIRE(walk.record(3));
-    REQUIRE(walk.move(-2) == std::optional<JumpNodeId>{1});
-    REQUIRE(walk.record(4));
-    CHECK(walk.entries().size() == 4);
-    CHECK(walk.entries()[1] == 2);
-    CHECK(walk.entries()[2] == 3);
-    CHECK(walk.current() == std::optional<JumpNodeId>{4});
-    CHECK_FALSE(walk.move(std::numeric_limits<std::int64_t>::min()).has_value());
-    CHECK_FALSE(walk.move(1).has_value());
-}
-
 TEST_CASE("jump graph eviction preserves persistent manual edges") {
     JumpGraph graph;
     const BufferId buffer{0, 1};
@@ -92,24 +76,6 @@ TEST_CASE("jump graph eviction preserves persistent manual edges") {
     CHECK(graph.find(manual) != nullptr);
     CHECK(graph.find(target) != nullptr);
     CHECK(graph.edges().size() == 1);
-}
-
-TEST_CASE("jump walk removes evicted entries without losing its logical cursor") {
-    JumpWalk walk;
-    REQUIRE(walk.record(1));
-    REQUIRE(walk.record(2));
-    REQUIRE(walk.record(3));
-    REQUIRE(walk.record(4));
-    REQUIRE(walk.move(-1) == std::optional<JumpNodeId>{3});
-
-    const std::vector<JumpNodeId> removed{2, 3};
-    walk.forget(removed);
-
-    REQUIRE(walk.entries().size() == 2);
-    CHECK(walk.entries()[0] == 1);
-    CHECK(walk.entries()[1] == 4);
-    CHECK(walk.current() == std::optional<JumpNodeId>{1});
-    CHECK(walk.move(1) == std::optional<JumpNodeId>{4});
 }
 
 TEST_CASE("jump graph restores durable closed positions and preserves its clock") {

@@ -6,8 +6,9 @@ Window, and named Window slots. A Project remains a tooling and configuration bo
 not own the workbench or its layout.
 
 Guile owns workbench names, name uniqueness, project scope, Buffer recency, Window roles, pinning,
-display-policy provenance, role-derived Window slots, the active workbench and each workbench's
-active Window. Native workbench objects own the WindowLayout and navigation data.
+display-policy provenance, role-derived Window slots, the active workbench, each workbench's active
+Window, and each Window's ordered jump walk and cursor. Native workbench objects own the
+WindowLayout and jump graph nodes, edges, Buffer anchors and fallback positions.
 
 The editor always owns at least one workbench and has exactly one active workbench. Switching
 workbenches changes the presented layout without destroying inactive Windows or Views. Their
@@ -95,6 +96,7 @@ The session format stores stable values rather than runtime IDs:
 - scoped Project root paths and MRU resource paths;
 - the complete split tree, branch axes and ratios;
 - each leaf's resource path, caret byte offset, role, pinned state and policy provenance;
+- durable jump graph nodes and edges, plus each leaf's bounded jump walk;
 - the active leaf in each workbench.
 
 Session file reads and writes use the asynchronous runtime. The native preparation mechanism

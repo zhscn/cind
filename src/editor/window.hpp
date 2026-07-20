@@ -1,7 +1,6 @@
 #pragma once
 
 #include "editor/ids.hpp"
-#include "editor/jump.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -94,8 +93,6 @@ public:
     ViewId view_id() const { return view_id_; }
     std::vector<KeymapId>& keymaps() { return keymaps_; }
     const std::vector<KeymapId>& keymaps() const { return keymaps_; }
-    JumpWalk& jump_walk() { return jump_walk_; }
-    const JumpWalk& jump_walk() const { return jump_walk_; }
 
 private:
     friend class WindowRegistry;
@@ -105,7 +102,6 @@ private:
     WindowId id_;
     ViewId view_id_;
     std::vector<KeymapId> keymaps_;
-    JumpWalk jump_walk_;
 };
 
 class WindowRegistry {

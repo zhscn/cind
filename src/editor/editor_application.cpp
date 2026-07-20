@@ -1341,11 +1341,20 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     }
     const std::optional<JumpNodeId> to = capture_jump(workbench, target);
     if (from && to) {
-        Window& target_window = runtime_.windows().get(target);
-        (void)target_window.jump_walk().record(*from);
-        (void)target_window.jump_walk().record(*to);
+        const std::expected<bool, std::string> recorded_from =
+            guile_.workbench_jump_record(target, *from);
+        const std::expected<bool, std::string> recorded_to =
+            guile_.workbench_jump_record(target, *to);
+        if (!recorded_from || !recorded_to) {
+            return std::unexpected(!recorded_from ? recorded_from.error() : recorded_to.error());
+        }
         if (*from != *to) {
-            (void)workbench.jumps().link(*from, *to, jump_edge_kind(intent));
+            const std::expected<std::string, std::string> kind =
+                guile_.workbench_jump_edge_kind(intent);
+            if (!kind) {
+                return std::unexpected(kind.error());
+            }
+            (void)workbench.jumps().link(*from, *to, *kind);
         }
     }
     (void)evict_jump_graph(workbench, default_jump_graph_limit);
@@ -1358,36 +1367,45 @@ bool EditorApplication::navigate_jump(WindowId window, std::int64_t delta) {
     if (!owner || target_window == nullptr) {
         return false;
     }
-    JumpWalk& walk = target_window->jump_walk();
-    const std::optional<std::size_t> previous = walk.cursor();
-    const std::optional<JumpNodeId> target = walk.move(delta);
+    const std::expected<GuileJumpWalkState, std::string> previous =
+        guile_.workbench_jump_walk(window);
+    if (!previous) {
+        throw std::runtime_error(previous.error());
+    }
+    const std::expected<std::optional<std::uint64_t>, std::string> target =
+        guile_.workbench_jump_move(window, delta);
     if (!target) {
+        throw std::runtime_error(target.error());
+    }
+    if (!*target) {
         return false;
     }
-    if (restore_jump(workbenches_.get(*owner), window, *target)) {
+    if (restore_jump(workbenches_.get(*owner), window, **target)) {
         return true;
     }
-    const std::optional<std::size_t> current = walk.cursor();
-    if (previous && current) {
-        const std::int64_t rollback =
-            static_cast<std::int64_t>(*previous) - static_cast<std::int64_t>(*current);
-        (void)walk.move(rollback);
+    if (const std::expected<void, std::string> restored =
+            guile_.workbench_jump_restore(window, previous->entries, previous->cursor);
+        !restored) {
+        throw std::runtime_error(restored.error());
     }
     return false;
 }
 
 std::vector<JumpEdge> EditorApplication::jump_branches(WindowId window, bool incoming) const {
     const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
-    const Window* target = runtime_.windows().try_get(window);
-    if (!owner || target == nullptr) {
+    if (!owner || runtime_.windows().try_get(window) == nullptr) {
         return {};
     }
-    const std::optional<JumpNodeId> current = target->jump_walk().current();
+    const std::expected<std::optional<std::uint64_t>, std::string> current =
+        guile_.workbench_jump_current(window);
     if (!current) {
+        throw std::runtime_error(current.error());
+    }
+    if (!*current) {
         return {};
     }
     const JumpGraph& graph = workbenches_.get(*owner).jumps();
-    return incoming ? graph.incoming(*current) : graph.outgoing(*current);
+    return incoming ? graph.incoming(**current) : graph.outgoing(**current);
 }
 
 std::optional<JumpNode> EditorApplication::jump_node(WindowId window, JumpNodeId node) const {
@@ -1406,11 +1424,15 @@ std::size_t EditorApplication::evict_jumps(WindowId window, std::size_t maximum_
 
 bool EditorApplication::visit_jump(WindowId window, JumpNodeId node) {
     const std::optional<WorkbenchId> owner = workbenches_.find_by_window(window);
-    Window* target = runtime_.windows().try_get(window);
-    if (!owner || target == nullptr || !restore_jump(workbenches_.get(*owner), window, node)) {
+    if (!owner || runtime_.windows().try_get(window) == nullptr ||
+        !restore_jump(workbenches_.get(*owner), window, node)) {
         return false;
     }
-    (void)target->jump_walk().record(node);
+    if (const std::expected<bool, std::string> recorded =
+            guile_.workbench_jump_record(window, node);
+        !recorded) {
+        throw std::runtime_error(recorded.error());
+    }
     return true;
 }
 
@@ -1421,7 +1443,11 @@ std::optional<JumpNodeId> EditorApplication::mark_jump(WindowId window) {
     }
     std::optional<JumpNodeId> node = capture_jump(workbenches_.get(*owner), window);
     if (node) {
-        (void)runtime_.windows().get(window).jump_walk().record(*node);
+        const std::expected<bool, std::string> recorded =
+            guile_.workbench_jump_record(window, *node);
+        if (!recorded) {
+            throw std::runtime_error(recorded.error());
+        }
     }
     return node;
 }
@@ -1494,7 +1520,11 @@ bool EditorApplication::split_window(WindowId target, WindowSplitAxis axis) {
         return false;
     }
     if (const std::optional<JumpNodeId> start = capture_jump(workbench, window)) {
-        (void)runtime_.windows().get(window).jump_walk().record(*start);
+        const std::expected<bool, std::string> recorded =
+            guile_.workbench_jump_record(window, *start);
+        if (!recorded) {
+            throw std::runtime_error(recorded.error());
+        }
     }
     show_caret();
     return true;
@@ -1859,11 +1889,13 @@ std::vector<WorkbenchJumpSnapshot> EditorApplication::jump_graphs() const {
             .walks = {}};
         snapshot.walks.reserve(workbench.layout().leaves().size());
         for (const WindowId window : workbench.layout().leaves()) {
-            const JumpWalk& walk = runtime_.windows().get(window).jump_walk();
+            const std::expected<GuileJumpWalkState, std::string> walk =
+                guile_.workbench_jump_walk(window);
+            if (!walk) {
+                throw std::runtime_error(walk.error());
+            }
             snapshot.walks.push_back(
-                {.window = window,
-                 .entries = std::vector<JumpNodeId>(walk.entries().begin(), walk.entries().end()),
-                 .cursor = walk.cursor()});
+                {.window = window, .entries = walk->entries, .cursor = walk->cursor});
         }
         result.push_back(std::move(snapshot));
     }
@@ -1877,49 +1909,6 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
     const std::vector<WorkbenchId> ids = workbenches_.all();
     const WorkbenchId selected_workbench = workbench_id();
     state.workbenches.reserve(ids.size());
-    const auto capture_walk = [](const JumpWalk& walk) {
-        constexpr std::size_t maximum_entries = 128;
-        std::vector<JumpNodeId> entries(walk.entries().begin(), walk.entries().end());
-        std::optional<std::size_t> cursor = walk.cursor();
-        if (entries.size() > maximum_entries && cursor) {
-            const std::size_t half = maximum_entries / 2;
-            const std::size_t first = std::min(std::max<std::size_t>(*cursor, half) - half,
-                                               entries.size() - maximum_entries);
-            entries =
-                std::vector(entries.begin() + static_cast<std::ptrdiff_t>(first),
-                            entries.begin() + static_cast<std::ptrdiff_t>(first + maximum_entries));
-            cursor = *cursor - first;
-        }
-        return std::pair{std::move(entries), cursor};
-    };
-    const auto capture_layout = [&](this const auto& self,
-                                    const WindowLayoutNode& node) -> WorkbenchLayoutSessionState {
-        if (!node.leaf()) {
-            return {.window = std::nullopt,
-                    .axis = node.axis,
-                    .ratio = node.ratio,
-                    .first = std::make_unique<WorkbenchLayoutSessionState>(self(*node.first)),
-                    .second = std::make_unique<WorkbenchLayoutSessionState>(self(*node.second))};
-        }
-        const Window& window = runtime_.windows().get(node.window);
-        const Buffer& buffer =
-            runtime_.buffers().get(runtime_.views().get(window.view_id()).buffer_id());
-        const GuileWorkbenchWindowState policy = window_policy(node.window);
-        auto [jump_walk, jump_cursor] = capture_walk(window.jump_walk());
-        return {
-            .window =
-                WorkbenchWindowSessionState{.resource = buffer.resource_uri(),
-                                            .caret = runtime_.views().caret(window.view_id()).value,
-                                            .role = policy.window.role,
-                                            .pinned = policy.window.pinned,
-                                            .created_by_policy = policy.window.created_by_policy,
-                                            .jump_walk = std::move(jump_walk),
-                                            .jump_cursor = jump_cursor},
-            .axis = WindowSplitAxis::Rows,
-            .ratio = 0.5F,
-            .first = nullptr,
-            .second = nullptr};
-    };
     for (std::size_t index = 0; index < ids.size(); ++index) {
         const Workbench& workbench = workbenches_.get(ids[index]);
         const std::expected<std::string, std::string> name = guile_.workbench_name(ids[index]);
@@ -1929,7 +1918,7 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
         WorkbenchSessionEntry entry{.name = *name,
                                     .scope_roots = {},
                                     .mru_resources = {},
-                                    .layout = capture_layout(*workbench.layout().root()),
+                                    .layout = {},
                                     .active_leaf = 0,
                                     .jump_nodes = {},
                                     .jump_edges = {}};
@@ -1982,29 +1971,43 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
                                             .persistent = edge.persistent});
             }
         }
-        const auto filter_walk = [&](this const auto& self,
-                                     WorkbenchLayoutSessionState& node) -> void {
+        const std::vector<JumpNodeId> durable_node_ids(durable_nodes.begin(), durable_nodes.end());
+        const auto capture_layout =
+            [&](this const auto& self,
+                const WindowLayoutNode& node) -> WorkbenchLayoutSessionState {
             if (!node.leaf()) {
-                self(*node.first);
-                self(*node.second);
-                return;
+                return {.window = std::nullopt,
+                        .axis = node.axis,
+                        .ratio = node.ratio,
+                        .first = std::make_unique<WorkbenchLayoutSessionState>(self(*node.first)),
+                        .second =
+                            std::make_unique<WorkbenchLayoutSessionState>(self(*node.second))};
             }
-            WorkbenchWindowSessionState& window = *node.window;
-            JumpWalk filtered;
-            if (window.jump_cursor) {
-                filtered.restore(std::move(window.jump_walk), window.jump_cursor);
-                std::vector<JumpNodeId> transient;
-                for (const JumpNodeId jump : filtered.entries()) {
-                    if (!durable_nodes.contains(jump)) {
-                        transient.push_back(jump);
-                    }
-                }
-                filtered.forget(transient);
+            constexpr std::size_t maximum_entries = 128;
+            const Window& window = runtime_.windows().get(node.window);
+            const Buffer& buffer =
+                runtime_.buffers().get(runtime_.views().get(window.view_id()).buffer_id());
+            const GuileWorkbenchWindowState policy = window_policy(node.window);
+            const std::expected<GuileJumpWalkState, std::string> walk =
+                guile_.workbench_jump_session_walk(node.window, durable_node_ids, maximum_entries);
+            if (!walk) {
+                throw std::runtime_error(walk.error());
             }
-            window.jump_walk.assign(filtered.entries().begin(), filtered.entries().end());
-            window.jump_cursor = filtered.cursor();
+            return {.window =
+                        WorkbenchWindowSessionState{
+                            .resource = buffer.resource_uri(),
+                            .caret = runtime_.views().caret(window.view_id()).value,
+                            .role = policy.window.role,
+                            .pinned = policy.window.pinned,
+                            .created_by_policy = policy.window.created_by_policy,
+                            .jump_walk = walk->entries,
+                            .jump_cursor = walk->cursor},
+                    .axis = WindowSplitAxis::Rows,
+                    .ratio = 0.5F,
+                    .first = nullptr,
+                    .second = nullptr};
         };
-        filter_walk(entry.layout);
+        entry.layout = capture_layout(*workbench.layout().root());
         if (ids[index] == selected_workbench) {
             state.active_workbench = index;
         }
@@ -2253,8 +2256,11 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                     !created) {
                     throw std::runtime_error(created.error());
                 }
-                runtime_.windows().get(target).jump_walk().restore(leaf.jump_walk,
-                                                                   leaf.jump_cursor);
+                if (const std::expected<void, std::string> walk =
+                        guile_.workbench_jump_restore(target, leaf.jump_walk, leaf.jump_cursor);
+                    !walk) {
+                    throw std::runtime_error(walk.error());
+                }
             };
             apply_node(source.layout, root_window);
             const std::vector<WindowId> leaves(workbench.layout().leaves().begin(),
@@ -3213,10 +3219,10 @@ std::size_t EditorApplication::evict_jump_graph(Workbench& workbench, std::size_
             }
         }
     }
-    for (const WindowId window : workbench.layout().leaves()) {
-        if (Window* target = runtime_.windows().try_get(window)) {
-            target->jump_walk().forget(ids);
-        }
+    if (const std::expected<void, std::string> forgotten =
+            guile_.workbench_jump_forget(workbench.id(), ids);
+        !forgotten) {
+        throw std::runtime_error(forgotten.error());
     }
     return removed.size();
 }

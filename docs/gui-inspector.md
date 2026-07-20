@@ -206,7 +206,7 @@ cmk run -p gui cind-ui-inspect -- pick 15 15
   generational ID、具名 slot、active Window、递归 layout 节点，以及 inactive layout 中仍然
   存活的 Window/View/Buffer 绑定。`jumps` 按 Workbench 暴露节点、边与每个 Window 的 walk。
   节点同时包含 resource fallback、anchor attachment 和访问时钟，边包含 kind 与 persistent
-  状态，walk 包含完整条目和当前 cursor。Command loop 的 layer 同时记录 keymap
+  状态；walk 从 Guile workbench policy 读取完整条目和当前 cursor。Command loop 的 layer 同时记录 keymap
   名称、parent chain 和 window/view/buffer/mode/editor/global/minibuffer 作用域；
   `pending_keymap` 标识普通 prefix 的来源，`pending_input_state` 标识 handler feedback 的
   所有者；交互状态的 `input_cursor` 是 minibuffer UTF-8 输入中的 byte offset，

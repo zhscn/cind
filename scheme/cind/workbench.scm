@@ -29,6 +29,14 @@
             workbench-transaction-group-recorded!
             workbench-transaction-group-movable?
             workbench-transaction-group-moved!
+            workbench-jump-record!
+            workbench-jump-move!
+            workbench-jump-current
+            workbench-jump-forget!
+            workbench-jump-restore!
+            workbench-jump-walk
+            workbench-jump-session-walk
+            workbench-jump-edge-kind
             replace-workbench-mru!
             workbench-name
             workbench-find-by-name
@@ -49,8 +57,9 @@
 ;; #(workbench name mru-list scope-list window-list active-window
 ;;   location-list-records current-location-list-or-#f
 ;;   transaction-group-records).
-;; Window records are #(window role-or-#f pinned? created-by-policy?). Window
-;; layouts, LocationList items, transaction entries, anchors and entity
+;; Window records are
+;; #(window role-or-#f pinned? created-by-policy? jump-list jump-cursor-or-#f).
+;; Window layouts, LocationList items, transaction entries, anchors and entity
 ;; lifetimes are native data-plane state. Selection, descriptive, membership,
 ;; navigation, undo direction and display policy state is owned by Guile.
 ;; Location records are
@@ -138,7 +147,7 @@
                               name
                               (if initial-buffer (list initial-buffer) '())
                               (unique-values (vector->list scope))
-                              (list (vector root-window #f #f #f))
+                              (list (vector root-window #f #f #f '() #f))
                               root-window
                               '()
                               #f
@@ -428,6 +437,158 @@
       (vector-set! record 1 (not redo?))))
   changed?)
 
+(define (require-jump-node node)
+  (unless (and (integer? node) (> node 0))
+    (error "jump node must be a positive integer" node)))
+
+(define (jump-walk-without entries cursor removed)
+  (let loop ((remaining entries)
+             (index 0)
+             (retained '())
+             (retained-count 0)
+             (retained-cursor #f))
+    (if (null? remaining)
+        (let ((walk (reverse retained)))
+          (vector walk
+                  (if (null? walk)
+                      #f
+                      (if retained-cursor retained-cursor 0))))
+        (if (member (car remaining) removed)
+            (loop (cdr remaining) (+ index 1) retained retained-count retained-cursor)
+            (loop (cdr remaining)
+                  (+ index 1)
+                  (cons (car remaining) retained)
+                  (+ retained-count 1)
+                  (if (<= index cursor) retained-count retained-cursor))))))
+
+(define (workbench-jump-record! host window node)
+  (require-jump-node node)
+  (let* ((state (cdr (require-window-entry-with-workbench host window)))
+         (entries (vector-ref state 4))
+         (cursor (vector-ref state 5)))
+    (if (and (pair? entries)
+             (= (list-ref entries (- (length entries) 1)) node)
+             cursor
+             (= cursor (- (length entries) 1)))
+        #f
+        (begin
+          (vector-set! state 4 (append entries (list node)))
+          (vector-set! state 5 (length entries))
+          #t))))
+
+(define (workbench-jump-move! host window delta)
+  (unless (integer? delta)
+    (error "jump movement must be an integer" delta))
+  (let* ((state (cdr (require-window-entry-with-workbench host window)))
+         (entries (vector-ref state 4))
+         (cursor (vector-ref state 5))
+         (target (and cursor (+ cursor delta))))
+    (if (or (not target)
+            (= delta 0)
+            (< target 0)
+            (>= target (length entries)))
+        #f
+        (begin
+          (vector-set! state 5 target)
+          (list-ref entries target)))))
+
+(define (workbench-jump-current host window)
+  (let* ((state (cdr (require-window-entry-with-workbench host window)))
+         (cursor (vector-ref state 5)))
+    (and cursor (list-ref (vector-ref state 4) cursor))))
+
+(define (workbench-jump-forget! host workbench nodes)
+  (unless (vector? nodes)
+    (error "forgotten jump nodes must be a vector" nodes))
+  (for-each require-jump-node (vector->list nodes))
+  (let ((entry (require-workbench-entry host workbench))
+        (removed (vector->list nodes)))
+    (for-each
+     (lambda (state)
+       (let ((cursor (vector-ref state 5)))
+         (when cursor
+           (let ((walk (jump-walk-without (vector-ref state 4) cursor removed)))
+             (vector-set! state 4 (vector-ref walk 0))
+             (vector-set! state 5 (vector-ref walk 1))))))
+     (vector-ref entry 4)))
+  (vector-length nodes))
+
+(define (workbench-jump-restore! host window entries cursor)
+  (unless (vector? entries)
+    (error "restored jump walk must be a vector" entries))
+  (let ((walk (vector->list entries)))
+    (for-each require-jump-node walk)
+    (unless (or (and (null? walk) (not cursor))
+                (and (pair? walk)
+                     (integer? cursor)
+                     (>= cursor 0)
+                     (< cursor (length walk))))
+      (error "restored jump cursor is invalid" cursor))
+    (let ((state (cdr (require-window-entry-with-workbench host window))))
+      (vector-set! state 4 walk)
+      (vector-set! state 5 cursor)))
+  window)
+
+(define (workbench-jump-walk host window)
+  (let ((state (cdr (require-window-entry-with-workbench host window))))
+    (vector (list->vector (vector-ref state 4))
+            (vector-ref state 5))))
+
+(define (drop-values values count)
+  (if (= count 0)
+      values
+      (drop-values (cdr values) (- count 1))))
+
+(define (take-values values count)
+  (if (= count 0)
+      '()
+      (cons (car values) (take-values (cdr values) (- count 1)))))
+
+(define (workbench-jump-session-walk host window durable-nodes maximum-entries)
+  (unless (vector? durable-nodes)
+    (error "durable jump nodes must be a vector" durable-nodes))
+  (for-each require-jump-node (vector->list durable-nodes))
+  (unless (and (integer? maximum-entries) (> maximum-entries 0))
+    (error "jump session limit must be a positive integer" maximum-entries))
+  (let* ((state (cdr (require-window-entry-with-workbench host window)))
+         (source (vector-ref state 4))
+         (source-cursor (vector-ref state 5))
+         (count (length source))
+         (half (quotient maximum-entries 2))
+         (first (if (and source-cursor (> count maximum-entries))
+                    (min (- (max source-cursor half) half)
+                         (- count maximum-entries))
+                    0))
+         (entries (if (> count maximum-entries)
+                      (take-values (drop-values source first) maximum-entries)
+                      source))
+         (cursor (and source-cursor (- source-cursor first)))
+         (durable (vector->list durable-nodes))
+         (transient (if cursor
+                        (let loop ((remaining entries) (result '()))
+                          (if (null? remaining)
+                              result
+                              (loop (cdr remaining)
+                                    (if (member (car remaining) durable)
+                                        result
+                                        (cons (car remaining) result)))))
+                        '()))
+         (filtered (if cursor
+                       (jump-walk-without entries cursor transient)
+                       (vector '() #f))))
+    (vector (list->vector (vector-ref filtered 0))
+            (vector-ref filtered 1))))
+
+(define (workbench-jump-edge-kind intent)
+  (unless (and (string? intent) (> (string-length intent) 0))
+    (error "jump display intent must be a non-empty string" intent))
+  (cond ((string=? intent "list") "list")
+        ((member intent '("definition" "declaration" "implementation")) "def")
+        ((member intent '("reference" "references")) "ref")
+        ((string=? intent "search") "search")
+        ((string=? intent "manual") "manual")
+        (else "open")))
+
 (define (replace-workbench-mru! host workbench buffers)
   (unless (vector? buffers)
     (error "workbench MRU must be a vector" buffers))
@@ -476,7 +637,7 @@
       (error "window policy state already exists" window))
     (vector-set! entry 4
                  (append (vector-ref entry 4)
-                         (list (vector window #f #f #f)))))
+                         (list (vector window #f #f #f '() #f)))))
   window)
 
 (define (without-window windows window)

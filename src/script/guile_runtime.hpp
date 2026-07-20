@@ -221,6 +221,11 @@ struct GuileJumpNode {
     std::uint64_t last_visit = 0;
 };
 
+struct GuileJumpWalkState {
+    std::vector<std::uint64_t> entries;
+    std::optional<std::size_t> cursor;
+};
+
 struct GuileDisplayPosition {
     EncodedLinePosition position;
 };
@@ -456,6 +461,21 @@ public:
     std::expected<void, std::string> workbench_transaction_group_moved(WorkbenchId workbench,
                                                                        std::uint64_t group,
                                                                        bool redo, bool changed);
+    std::expected<bool, std::string> workbench_jump_record(WindowId window, std::uint64_t node);
+    std::expected<std::optional<std::uint64_t>, std::string>
+    workbench_jump_move(WindowId window, std::int64_t delta);
+    std::expected<std::optional<std::uint64_t>, std::string>
+    workbench_jump_current(WindowId window) const;
+    std::expected<void, std::string> workbench_jump_forget(WorkbenchId workbench,
+                                                           const std::vector<std::uint64_t>& nodes);
+    std::expected<void, std::string>
+    workbench_jump_restore(WindowId window, const std::vector<std::uint64_t>& entries,
+                           std::optional<std::size_t> cursor);
+    std::expected<GuileJumpWalkState, std::string> workbench_jump_walk(WindowId window) const;
+    std::expected<GuileJumpWalkState, std::string>
+    workbench_jump_session_walk(WindowId window, const std::vector<std::uint64_t>& durable_nodes,
+                                std::size_t maximum_entries) const;
+    std::expected<std::string, std::string> workbench_jump_edge_kind(std::string_view intent) const;
     std::expected<void, std::string> replace_workbench_mru(WorkbenchId workbench,
                                                            const std::vector<BufferId>& buffers);
     std::expected<std::string, std::string> workbench_name(WorkbenchId workbench) const;

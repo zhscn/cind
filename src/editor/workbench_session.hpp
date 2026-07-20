@@ -1,5 +1,6 @@
 #pragma once
 
+#include "document/text_types.hpp"
 #include "editor/window.hpp"
 
 #include <cstdint>
