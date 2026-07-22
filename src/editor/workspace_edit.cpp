@@ -23,10 +23,10 @@ struct PendingTransaction {
     EditTransaction transaction;
 };
 
-// Buffer names are policy and live in Guile (design/09-guile-first.md section
-// 3.4), so identify a buffer in diagnostics by the values this layer owns.
+// Names and resources are policy and live in Guile (design/09-guile-first.md
+// section 3.4), so identify a buffer in diagnostics by the id this layer owns.
 std::string buffer_label(const Buffer& buffer) {
-    return buffer.resource_uri().value_or(std::format("buffer {}", buffer.id().slot));
+    return std::format("buffer {}", buffer.id().slot);
 }
 
 std::expected<std::vector<PreparedBufferEdit>, std::string>

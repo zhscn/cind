@@ -20,6 +20,17 @@ using namespace cind;
 
 namespace {
 
+// The resource a buffer visits is policy state too.
+void assign_resource(GuileRuntime& guile, BufferId buffer, std::string_view resource) {
+    const std::expected<GuileEvaluationResult, std::string> assigned = guile.evaluate(
+        {.source = std::format("(use-modules (cind buffers))\n"
+                               "(set-buffer-resource! host '#({} {}) \"{}\" 'file)",
+                               buffer.slot, buffer.generation, resource),
+         .source_name = "assign-resource.scm"});
+    REQUIRE(assigned.has_value());
+    REQUIRE_FALSE(assigned->error.has_value());
+}
+
 // The buffer-to-project association is policy state, so a test drives it the
 // way policy code does rather than through a native setter.
 void assign_project(GuileRuntime& guile, BufferId buffer, std::optional<ProjectId> project) {
@@ -36,9 +47,11 @@ void assign_project(GuileRuntime& guile, BufferId buffer, std::optional<ProjectI
 
 // Buffer names are policy and live in Guile, so a test that creates a buffer
 // through the registry announces it the way the application would.
-GuileBufferIdentityFacts identity_of(std::string name) {
-    return {
-        .requested_name = std::move(name), .kind = BufferKind::Scratch, .resource = std::nullopt};
+GuileBufferIdentityFacts identity_of(std::string name,
+                                     std::optional<std::string> resource = std::nullopt) {
+    return {.requested_name = std::move(name),
+            .kind = resource ? BufferKind::File : BufferKind::Scratch,
+            .resource = std::move(resource)};
 }
 
 CommandId define_command(EditorRuntime& runtime, std::string name) {
@@ -724,6 +737,13 @@ TEST_CASE("Guile interaction providers transform cancellable async host results"
                                   .kind = BufferKind::File,
                                   .resource_uri = (directory / "current.cpp").string(),
                                   .read_only = false});
+    REQUIRE(guile
+                .buffer_created(buffer, "test",
+                                GuileBufferIdentityFacts{
+                                    .requested_name = "current.cpp",
+                                    .kind = BufferKind::File,
+                                    .resource = (directory / "current.cpp").string()})
+                .has_value());
     const ViewId view = runtime.views().create(buffer);
     const WindowId window = runtime.windows().create(view);
     CommandContext context(runtime, window, buffer, view);
@@ -1834,7 +1854,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     REQUIRE(guile.lsp_diagnostics_failed("invalid response").has_value());
     CHECK(feedback_message() == "LSP diagnostics failed: invalid response");
     const CommandId save = require_command(runtime, "file.save");
-    runtime.buffers().set_resource(buffer, "/tmp/sample", BufferKind::File);
+    assign_resource(guile, buffer, "/tmp/sample");
 
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), cpp_mode);
     const CommandResult definition =
@@ -1890,8 +1910,10 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(guile.workbench_mru(workbench).value_or(std::vector<BufferId>{}).empty());
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), fundamental_mode);
     // The native buffer outlives the release here, and the rest of the case
-    // keeps using it, so put it back in the registry that owns names.
-    REQUIRE(guile.buffer_created(buffer, "test style", identity_of("sample")).has_value());
+    // keeps using it, so put it back in the registry that owns its identity --
+    // including the resource it was visiting.
+    REQUIRE(guile.buffer_created(buffer, "test style", identity_of("sample", "/tmp/sample"))
+                .has_value());
 
     const std::uint32_t save_generation = runtime.buffers().get(buffer).save_generation();
     const CommandResult saved = runtime.commands().invoke(save, context);
@@ -2186,7 +2208,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
         save_as_request->accept_command, context,
         CommandInvocation{.arguments = {std::string("/tmp/written.cpp")}, .prefix = {}});
     REQUIRE(save_as_accepted.has_value());
-    CHECK(runtime.buffers().get(buffer).resource_uri() == "/tmp/written.cpp");
+    CHECK(guile.buffer_resource(buffer).value_or(std::nullopt) == "/tmp/written.cpp");
     CHECK(guile.buffer_name(buffer).value_or("") == "written.cpp");
     CHECK(runtime.buffers().get(buffer).modes().major() == fundamental_mode);
     CHECK_FALSE(guile.buffer_project(buffer).value_or(std::optional<ProjectId>{}).has_value());

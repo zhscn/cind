@@ -1084,7 +1084,6 @@ ModelineContent EditorApplication::modeline(WindowId window_id) {
     CommandContext context(runtime_, window_id, buffer.id(), view.id());
     const InputStateRegistry::Definition& state = input_state(window_id);
     const ModelineFacts facts{
-        .resource = buffer.resource_uri().value_or(std::string()),
         .dirty = buffer.modified(),
         .line = position.line + 1,
         .column = static_cast<std::uint32_t>(
@@ -1943,8 +1942,11 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
         }
         for (const BufferId buffer : *mru) {
             const Buffer* definition = runtime_.buffers().try_get(buffer);
-            if (definition != nullptr && definition->resource_uri()) {
-                entry.mru_resources.push_back(*definition->resource_uri());
+            if (definition == nullptr) {
+                continue;
+            }
+            if (const std::optional<std::string> resource = buffer_resource(buffer)) {
+                entry.mru_resources.push_back(*resource);
             }
         }
         const auto active =
@@ -1998,7 +2000,7 @@ WorkbenchSessionState EditorApplication::capture_workbench_session() const {
             }
             return {.window =
                         WorkbenchWindowSessionState{
-                            .resource = buffer.resource_uri(),
+                            .resource = buffer_resource(buffer.id()),
                             .caret = runtime_.views().caret(window.view_id()).value,
                             .role = policy.window.role,
                             .pinned = policy.window.pinned,
@@ -2231,7 +2233,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                 BufferId displayed = fallback;
                 if (leaf.resource) {
                     if (const std::optional<BufferId> existing =
-                            runtime_.buffers().find_by_resource(*leaf.resource)) {
+                            guile_.buffer_id_by_resource(*leaf.resource).value_or(std::nullopt)) {
                         displayed = *existing;
                     } else {
                         resources[*leaf.resource].push_back(
@@ -2274,7 +2276,7 @@ EditorApplication::prepare_workbench_session_restore(std::string_view serialized
                 throw std::runtime_error(focused.error());
             }
             for (const std::string& resource : source.mru_resources) {
-                if (!runtime_.buffers().find_by_resource(resource)) {
+                if (!guile_.buffer_id_by_resource(resource).value_or(std::nullopt)) {
                     (void)resources[resource];
                 }
             }
@@ -2395,8 +2397,10 @@ std::expected<void, std::string> EditorApplication::release_buffer(BufferId buff
         it = views_.erase(it);
     }
     if (const Buffer* released = runtime_.buffers().try_get(buffer);
-        released != nullptr && released->resource_uri()) {
-        (void)lsp_sessions_->close_document(path_to_file_uri(*released->resource_uri()));
+        released != nullptr) {
+        if (const std::optional<std::string> resource = buffer_resource(buffer)) {
+            (void)lsp_sessions_->close_document(path_to_file_uri(*resource));
+        }
     }
     buffers_.erase(found);
     if (!runtime_.buffers().erase(buffer)) {
@@ -2425,7 +2429,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
             {.buffer = state.buffer,
              .view = view != nullptr ? std::optional(view->view) : std::nullopt,
              .name = buffer_name(state.buffer),
-             .resource = buffer.resource_uri(),
+             .resource = buffer_resource(state.buffer),
              .modified = buffer.modified(),
              .active = state.buffer == buffer_id(),
              .saving = guile_.buffer_saving(state.buffer).value_or(false),
@@ -2709,6 +2713,18 @@ std::optional<ProjectId> EditorApplication::buffer_project(BufferId buffer) cons
     return guile_.buffer_project(buffer).value_or(std::nullopt);
 }
 
+std::optional<std::string> EditorApplication::buffer_resource(BufferId buffer) const {
+    return guile_.buffer_resource(buffer).value_or(std::nullopt);
+}
+
+BufferKind EditorApplication::buffer_kind(BufferId buffer) const {
+    return guile_.buffer_kind(buffer).value_or(BufferKind::Scratch);
+}
+
+std::optional<BufferId> EditorApplication::buffer_id_by_resource(std::string_view resource) const {
+    return guile_.buffer_id_by_resource(resource).value_or(std::nullopt);
+}
+
 std::string EditorApplication::path() const {
     return path(window_id());
 }
@@ -2717,8 +2733,8 @@ std::string EditorApplication::path() const {
 // lives in Guile, so this cannot return a reference into the buffer.
 std::string EditorApplication::path(WindowId window) const {
     const Buffer& buffer = session(window).buffer();
-    if (buffer.resource_uri()) {
-        return *buffer.resource_uri();
+    if (const std::optional<std::string> resource = buffer_resource(buffer.id())) {
+        return *resource;
     }
     return buffer_name(buffer.id());
 }
@@ -2813,23 +2829,30 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
     const GuileBufferIdentityFacts identity{
         .requested_name = spec.name, .kind = spec.kind, .resource = spec.resource_uri};
     const BufferId buffer = runtime_.buffers().create(std::move(spec));
+    bool announced = false;
     try {
         runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(), major_mode);
         auto state = std::make_unique<BufferState>();
         state->buffer = buffer;
         state->style = std::make_shared<CppIndentStyle>(style);
         buffers_.push_back(std::move(state));
-        resolve_location_lists(buffer);
-        resolve_jump_nodes(buffer);
+        // Announce before resolving: both resolvers match on the resource the
+        // buffer visits, which is only knowable once the policy has recorded it.
         if (const std::expected<void, std::string> recorded =
                 guile_.buffer_created(buffer, style_origin, identity);
             !recorded) {
             throw std::runtime_error(recorded.error());
         }
+        announced = true;
+        resolve_location_lists(buffer);
+        resolve_jump_nodes(buffer);
     } catch (...) {
         std::erase_if(buffers_, [buffer](const std::unique_ptr<BufferState>& state) {
             return state->buffer == buffer;
         });
+        if (announced) {
+            (void)guile_.buffer_released(buffer);
+        }
         (void)runtime_.buffers().erase(buffer);
         throw;
     }
@@ -2926,7 +2949,7 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
         if (*existing) {
             buffer = **existing;
             Buffer& target = runtime_.buffers().get(buffer);
-            if (target.kind() != BufferKind::Generated) {
+            if (buffer_kind(buffer) != BufferKind::Generated) {
                 return std::unexpected(std::format("buffer '{}' is not generated", name));
             }
             target.set_read_only(false);
@@ -3022,8 +3045,7 @@ EditorApplication::publish_location_list(WindowId window, BufferId buffer, std::
         const LocationListId list =
             workbench.location_lists().publish(std::move(source), std::move(items), buffer);
         for (const std::unique_ptr<BufferState>& state : buffers_) {
-            const Buffer& candidate = runtime_.buffers().get(state->buffer);
-            if (candidate.resource_uri()) {
+            if (buffer_resource(state->buffer)) {
                 resolve_location_lists(state->buffer);
             }
         }
@@ -3049,26 +3071,28 @@ std::optional<LocationItem> EditorApplication::location_item(WorkbenchId workben
 
 void EditorApplication::resolve_location_lists(BufferId buffer_id) {
     Buffer& buffer = runtime_.buffers().get(buffer_id);
-    if (!buffer.resource_uri()) {
+    const std::optional<std::string> resource = buffer_resource(buffer_id);
+    if (!resource) {
         return;
     }
     for (const WorkbenchId workbench : workbenches_.all()) {
         workbenches_.get(workbench).location_lists().resolve_resource(
-            *buffer.resource_uri(),
+            *resource,
             [&](const LocationItem& item) { return resolve_location(buffer, item); });
     }
 }
 
 void EditorApplication::resolve_jump_nodes(BufferId buffer_id) {
     Buffer& buffer = runtime_.buffers().get(buffer_id);
-    if (!buffer.resource_uri()) {
+    const std::optional<std::string> resource = buffer_resource(buffer_id);
+    if (!resource) {
         return;
     }
     const DocumentSnapshot snapshot = buffer.snapshot();
     const Text& text = snapshot.content();
     for (const WorkbenchId workbench : workbenches_.all()) {
         workbenches_.get(workbench).jumps().attach_buffer(
-            *buffer.resource_uri(), buffer_id, [&](const JumpPosition& position) {
+            *resource, buffer_id, [&](const JumpPosition& position) {
                 std::uint32_t line = std::min(position.fallback.line, text.line_count() - 1);
                 const auto matches = [&](std::uint32_t candidate) {
                     return position.excerpt.empty() ||
@@ -3202,7 +3226,7 @@ std::optional<JumpNodeId> EditorApplication::capture_jump(Workbench& workbench, 
     const AnchorId anchor = buffer.create_navigation_anchor(caret);
     JumpInternResult result =
         workbench.jumps().intern({.buffer = buffer_id,
-                                  .resource = buffer.resource_uri().value_or(std::string()),
+                                  .resource = buffer_resource(buffer_id).value_or(std::string()),
                                   .anchor = anchor,
                                   .fallback = fallback,
                                   .excerpt = snapshot.content().substring(
@@ -3462,7 +3486,8 @@ EditorApplication::ensure_lsp_session(CommandTarget target, ScriptLspProviderSpe
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
     const View* view = runtime_.views().try_get(target.view);
     if (buffer == nullptr || view == nullptr || view->buffer_id() != target.buffer ||
-        runtime_.windows().try_get(target.window) == nullptr || !buffer->resource_uri()) {
+        runtime_.windows().try_get(target.window) == nullptr ||
+        !buffer_resource(target.buffer)) {
         return std::unexpected("LSP provider requires a file-backed buffer");
     }
     std::vector<std::string> capabilities;
@@ -3525,7 +3550,8 @@ void EditorApplication::publish_lsp_diagnostics(LspSessionId session_id,
         report_lsp_diagnostics_failure(resource.error());
         return;
     }
-    const std::optional<BufferId> buffer_id = runtime_.buffers().find_by_resource(*resource);
+    const std::optional<BufferId> buffer_id =
+        guile_.buffer_id_by_resource(*resource).value_or(std::nullopt);
     if (!buffer_id) {
         return;
     }
@@ -3563,12 +3589,13 @@ std::expected<void, std::string>
 EditorApplication::synchronize_lsp_session(BufferId buffer_id, LspSessionId session_id) {
     Buffer* buffer = runtime_.buffers().try_get(buffer_id);
     LspSession* session = lsp_sessions_->find(session_id);
-    if (buffer == nullptr || session == nullptr || !buffer->resource_uri()) {
+    const std::optional<std::string> resource = buffer_resource(buffer_id);
+    if (buffer == nullptr || session == nullptr || !resource) {
         return std::unexpected("LSP synchronization target is unavailable");
     }
     const DocumentSnapshot snapshot = buffer->snapshot();
     if (std::expected<void, std::string> synchronized =
-            session->synchronize_document({.uri = path_to_file_uri(*buffer->resource_uri()),
+            session->synchronize_document({.uri = path_to_file_uri(*resource),
                                            .language_id = session->config().language_id,
                                            .revision = snapshot.revision(),
                                            .text = snapshot.content()});
@@ -3596,8 +3623,9 @@ EditorApplication::start_lsp_navigation(const ScriptLspNavigationRequest& reques
     const CommandTarget target = request.target;
     const Buffer* buffer = runtime_.buffers().try_get(target.buffer);
     const View* view = runtime_.views().try_get(target.view);
+    const std::optional<std::string> resource = buffer_resource(target.buffer);
     if (buffer == nullptr || view == nullptr || view->buffer_id() != target.buffer ||
-        runtime_.windows().try_get(target.window) == nullptr || !buffer->resource_uri()) {
+        runtime_.windows().try_get(target.window) == nullptr || !resource) {
         return std::unexpected("LSP navigation target is unavailable");
     }
     LspSession* lsp = lsp_sessions_->find(LspSessionId{request.session});
@@ -3607,7 +3635,7 @@ EditorApplication::start_lsp_navigation(const ScriptLspNavigationRequest& reques
     const DocumentSnapshot snapshot = buffer->snapshot();
     std::expected<LspSession::Cancel, std::string> started = LspNavigationFeature::request(
         *lsp, kind,
-        {.uri = path_to_file_uri(*buffer->resource_uri()),
+        {.uri = path_to_file_uri(*resource),
          .language_id = lsp->config().language_id,
          .revision = snapshot.revision(),
          .text = snapshot.content(),
@@ -3664,7 +3692,8 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
         if (session == nullptr) {
             throw std::runtime_error("completion references an unknown LSP session");
         }
-        if (!buffer->resource_uri()) {
+        const std::optional<std::string> resource = buffer_resource(buffer->id());
+        if (!resource) {
             throw std::runtime_error("LSP completion requires a file-backed buffer");
         }
         LspCompletionTriggerKind trigger = LspCompletionTriggerKind::Invoked;
@@ -3673,7 +3702,7 @@ EditorApplication::dispatch_completion_provider(CompletionProvider provider,
         } else if (request.trigger.kind == CompletionTriggerKind::Incomplete) {
             trigger = LspCompletionTriggerKind::TriggerForIncompleteCompletions;
         }
-        LspCompletionRequest lsp_request{.uri = path_to_file_uri(*buffer->resource_uri()),
+        LspCompletionRequest lsp_request{.uri = path_to_file_uri(*resource),
                                          .language_id = session->config().language_id,
                                          .revision = request.revision,
                                          .text = snapshot.content(),

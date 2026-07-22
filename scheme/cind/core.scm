@@ -985,7 +985,7 @@
                   (resource (normalize-resource-path host path))
                   (mode (or (resource-mode host resource) 'fundamental-mode))
                   (project (project-for-resource host resource)))
-             (set-buffer-resource! host buffer resource)
+             (set-buffer-resource! host buffer resource 'file)
              (rename-buffer! host buffer (path-filename host resource))
              (set-buffer-major-mode! host buffer mode)
              (set-buffer-project! host buffer project)

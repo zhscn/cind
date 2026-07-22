@@ -74,12 +74,15 @@ object as an explicit first argument. A host object is valid only for its owning
 does not expose raw editor pointers to Scheme.
 
 Some names listed here are no longer native. Buffer identity -- `buffer-name`, `buffer-id-by-name`,
-`rename-buffer!`, `buffer-project-id`, `set-buffer-project!` -- now lives in `(cind buffers)`, and
+`rename-buffer!`, `buffer-project-id`, `set-buffer-project!`, `buffer-kind`, `buffer-resource`,
+`buffer-id-by-resource` and `set-buffer-resource!` -- now lives in `(cind buffers)`, and
 `interaction-origin-project` in `(cind command)`, because the state they read belongs to Scheme
 (design/09-guile-first.md section 3.4). They resolve unchanged in an init file, which imports both
-modules, so this is a note about where the answer comes from rather than a call-site change. The
-native primitive underneath `interaction-origin-project` is now `interaction-origin-buffer`, which
-reports the mechanism's own origin target and leaves the project association to the policy.
+modules, so this is a note about where the answer comes from rather than a call-site change. Two
+signatures did change: `set-buffer-resource!` now takes the buffer kind alongside the path, since a
+buffer's kind and the resource it visits are recorded together; and the native primitive underneath
+`interaction-origin-project` is now `interaction-origin-buffer`, which reports the mechanism's own
+origin target and leaves the project association to the policy.
 
 The native module exports:
 
@@ -137,7 +140,6 @@ The native module exports:
 (project-root host project-id)
 (project-files host project-id)
 (active-key-bindings host)
-(buffer-resource host buffer-id)
 (path-parent host path)
 (path-relative host path base)
 (path-filename host path)
@@ -206,8 +208,6 @@ The native module exports:
 (project-index-state host project-id)
 (request-project-index! host project-id)
 (normalize-resource-path host path)
-(set-buffer-resource! host buffer-id path)
-(buffer-id-by-resource host path)
 (resource-mode host path)
 (project-for-resource host path)
 (project-provider-definitions host)
@@ -311,10 +311,12 @@ keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
 
-`keymap-context-snapshot` returns the focused Buffer kind, the named keymaps attached to the
-InputState stack, Window, View, Buffer, active minor modes, and major mode, and whether display
-policy created the Window. It exposes attachment and activation facts without assigning precedence
-or selecting global roots.
+`keymap-context-snapshot` returns the named keymaps attached to the InputState stack, Window, View,
+Buffer, active minor modes, and major mode, and whether display policy created the Window. It
+exposes attachment and activation facts without assigning precedence or selecting global roots. It
+no longer reports a Buffer kind: the only thing the policy read that for was whether the focused
+buffer is the transient interaction surface, which `interaction-mechanism-status` already answers
+and which is a fact about the mechanism rather than a classification of the buffer.
 
 `(cind command)` owns the corresponding policy interface:
 

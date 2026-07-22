@@ -1,6 +1,7 @@
 (define-module (cind lsp)
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
+  #:use-module (cind buffers)
   #:use-module (cind command)
   #:use-module (cind host)
   #:use-module (cind state)

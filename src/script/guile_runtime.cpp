@@ -1001,20 +1001,21 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             major = named_keymap_source_value(runtime, "major-mode", mode.name, keymaps);
         }
 
-        SCM result = scm_c_make_vector(10, SCM_UNSPECIFIED);
+        // No buffer kind: the only thing the policy read it for was "is this the
+        // transient interaction surface", which the mechanism already reports.
+        SCM result = scm_c_make_vector(9, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
-        scm_c_vector_set_x(result, 1, buffer_kind_symbol(buffer.kind()));
-        scm_c_vector_set_x(result, 2, states);
-        scm_c_vector_set_x(result, 3, keymap_names_value(runtime, window.keymaps()));
-        scm_c_vector_set_x(result, 4, keymap_names_value(runtime, view.keymaps()));
-        scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
-        scm_c_vector_set_x(result, 6, minors);
-        scm_c_vector_set_x(result, 7, major);
+        scm_c_vector_set_x(result, 1, states);
+        scm_c_vector_set_x(result, 2, keymap_names_value(runtime, window.keymaps()));
+        scm_c_vector_set_x(result, 3, keymap_names_value(runtime, view.keymaps()));
+        scm_c_vector_set_x(result, 4, keymap_names_value(runtime, buffer.keymaps()));
+        scm_c_vector_set_x(result, 5, minors);
+        scm_c_vector_set_x(result, 6, major);
         const SCM window_state =
             scheme_workbench_window_state(host_object, window.id(), "keymap-context-snapshot");
-        scm_c_vector_set_x(result, 8, scm_c_vector_ref(window_state, 3));
+        scm_c_vector_set_x(result, 7, scm_c_vector_ref(window_state, 3));
         scm_c_vector_set_x(
-            result, 9,
+            result, 8,
             scm_from_bool(host.services.completion_active && host.services.completion_active()));
         return result;
     });
@@ -2981,19 +2982,6 @@ SCM read_clipboard(SCM host_object) {
     });
 }
 
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
-SCM buffer_resource(SCM host_object, SCM buffer_value) {
-    return host_primitive("buffer-resource", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "buffer-resource");
-        const BufferId buffer =
-            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-resource", 2);
-        const std::optional<std::string>& resource =
-            host.runtime->buffers().get(buffer).resource_uri();
-        return resource ? scm_from_utf8_string(resource->c_str()) : SCM_BOOL_F;
-    });
-}
-
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
 SCM buffer_text(SCM host_object, SCM buffer_value) {
@@ -3809,31 +3797,6 @@ SCM normalize_resource(SCM host_object, SCM path_value) {
         raise_host_error("normalize-resource-path", path.error());
     }
     return scm_from_utf8_string(path->c_str());
-}
-
-SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
-    if (!scm_is_string(path_value)) {
-        scm_wrong_type_arg_msg("set-buffer-resource!", 3, path_value, "string");
-    }
-    HostLease& host = require_host(host_object, "set-buffer-resource!");
-    const BufferId buffer =
-        entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-resource!", 2);
-    return host_primitive("set-buffer-resource!", [&]() -> SCM {
-        host.runtime->buffers().set_resource(buffer, scheme_string(path_value), BufferKind::File);
-        return SCM_UNSPECIFIED;
-    });
-}
-
-SCM buffer_id_by_resource(SCM host_object, SCM path_value) {
-    if (!scm_is_string(path_value)) {
-        scm_wrong_type_arg_msg("buffer-id-by-resource", 2, path_value, "string");
-    }
-    return host_primitive("buffer-id-by-resource", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "buffer-id-by-resource");
-        const std::optional<BufferId> buffer =
-            host.runtime->buffers().find_by_resource(scheme_string(path_value));
-        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
-    });
 }
 
 SCM resource_mode(SCM host_object, SCM path_value) {
@@ -4750,8 +4713,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(write_clipboard));
     (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(read_clipboard));
-    (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(buffer_resource));
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
@@ -4864,10 +4825,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(request_project_index));
     (void)scm_c_define_gsubr("normalize-resource-path", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(normalize_resource));
-    (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_buffer_resource));
-    (void)scm_c_define_gsubr("buffer-id-by-resource", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(buffer_id_by_resource));
     (void)scm_c_define_gsubr("resource-mode", 2, 0, 0, reinterpret_cast<scm_t_subr>(resource_mode));
     (void)scm_c_define_gsubr("project-for-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(project_for_resource));
@@ -4919,7 +4876,7 @@ void initialize_host_module(void*) {
         "close-workbench!", "workbench-session-state", "prepare-workbench-session-restore!",
         "show-buffer-in-window!", "project-list", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "path-resolve", "active-key-bindings",
-        "buffer-resource", "buffer-text", "buffer-byte-size",
+        "buffer-text", "buffer-byte-size",
         "buffer-editable-start", "set-buffer-editable-start!", "create-buffer-marker!",
         "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
         "set-buffer-locations!", "publish-location-list-data!", "buffer-read-only?", "path-parent",
@@ -4942,7 +4899,7 @@ void initialize_host_module(void*) {
         "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
         "view-identifier-words", "location-list-item-target", "position-buffer-view!",
         "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
         "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
@@ -5724,6 +5681,9 @@ struct GuileCall {
         BufferCreated,
         BufferName,
         BufferProject,
+        BufferResource,
+        BufferKindOf,
+        BufferIdByResource,
         BufferIdByName,
         BufferStyleOrigin,
         BufferReleased,
@@ -5840,6 +5800,7 @@ struct GuileCall {
     ViewId view;
     RevisionId revision = 0;
     ProjectId project;
+    BufferKind buffer_kind = BufferKind::Scratch;
     WorkbenchId workbench;
     std::vector<BufferId> buffers;
     std::vector<ProjectId> projects;
@@ -6730,6 +6691,26 @@ SCM call_body(void* data) {
                                ? ProjectId{}
                                : entity_id_from_scheme<ProjectTag>(call.result, "buffer-project-id",
                                                                    0);
+            break;
+        case GuileCall::Operation::BufferResource:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind buffers", "buffer-resource"), call.host,
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            call.enabled = !scheme_false(call.result);
+            call.source = call.enabled ? scheme_string(call.result) : std::string();
+            break;
+        case GuileCall::Operation::BufferKindOf:
+            call.result = scm_call_2(scm_c_public_ref("cind buffers", "buffer-kind"), call.host,
+                                     entity_id(call.buffer.slot, call.buffer.generation));
+            call.buffer_kind = buffer_kind_from_scheme(call.result, "buffer-kind", 0);
+            break;
+        case GuileCall::Operation::BufferIdByResource:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind buffers", "buffer-id-by-resource"), call.host,
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            call.buffer = scheme_false(call.result) ? BufferId{}
+                                                    : entity_id_from_scheme<BufferTag>(
+                                                          call.result, "buffer-id-by-resource", 0);
             break;
         case GuileCall::Operation::BufferIdByName:
             call.result =
@@ -8512,6 +8493,52 @@ public:
         return call.project.valid() ? std::optional(call.project) : std::nullopt;
     }
 
+    std::expected<std::optional<std::string>, std::string> buffer_resource(BufferId buffer) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferResource;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.enabled ? std::optional(call.source) : std::nullopt;
+    }
+
+    std::expected<BufferKind, std::string> buffer_kind(BufferId buffer) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferKindOf;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.buffer_kind;
+    }
+
+    std::expected<std::optional<BufferId>, std::string>
+    buffer_id_by_resource(std::string_view resource) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferIdByResource;
+        call.host = host_;
+        call.source = resource;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.buffer.valid() ? std::optional(call.buffer) : std::nullopt;
+    }
+
     std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -9966,6 +9993,20 @@ std::expected<std::string, std::string> GuileRuntime::buffer_name(BufferId buffe
 std::expected<std::optional<ProjectId>, std::string>
 GuileRuntime::buffer_project(BufferId buffer) const {
     return impl_->buffer_project(buffer);
+}
+
+std::expected<std::optional<std::string>, std::string>
+GuileRuntime::buffer_resource(BufferId buffer) const {
+    return impl_->buffer_resource(buffer);
+}
+
+std::expected<BufferKind, std::string> GuileRuntime::buffer_kind(BufferId buffer) const {
+    return impl_->buffer_kind(buffer);
+}
+
+std::expected<std::optional<BufferId>, std::string>
+GuileRuntime::buffer_id_by_resource(std::string_view resource) const {
+    return impl_->buffer_id_by_resource(resource);
 }
 
 std::expected<std::optional<BufferId>, std::string>

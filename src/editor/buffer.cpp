@@ -11,8 +11,8 @@ namespace cind {
 
 Buffer::Buffer(BufferId id, DocumentId document_id, BufferSpec spec,
                const SettingRegistry& settings, ModeRegistry& modes)
-    : id_(id), kind_(spec.kind), resource_uri_(std::move(spec.resource_uri)),
-      read_only_(spec.read_only), document_(std::move(spec.initial_text), document_id),
+    : id_(id), read_only_(spec.read_only),
+      document_(std::move(spec.initial_text), document_id),
       save_point_(document_.snapshot().content()), settings_(settings, SettingScope::Buffer),
       modes_(id, modes) {}
 
@@ -104,9 +104,6 @@ TextOffset Buffer::navigation_anchor_offset(AnchorId anchor) const {
 }
 
 BufferId BufferRegistry::create(BufferSpec spec) {
-    if (spec.resource_uri && by_resource_.contains(*spec.resource_uri)) {
-        throw std::invalid_argument("a buffer already owns this resource");
-    }
     std::uint32_t slot = 0;
     if (free_slots_.empty()) {
         if (slots_.size() >= BufferId::invalid_slot) {
@@ -126,9 +123,6 @@ BufferId BufferRegistry::create(BufferSpec spec) {
     const DocumentId document_id = next_document_id_++;
     entry.value =
         std::unique_ptr<Buffer>(new Buffer(id, document_id, std::move(spec), *settings_, *modes_));
-    if (entry.value->resource_uri()) {
-        by_resource_.emplace(*entry.value->resource_uri(), id);
-    }
     return id;
 }
 
@@ -139,9 +133,6 @@ bool BufferRegistry::erase(BufferId id) {
     }
     if (buffer->attached_view_count() != 0) {
         return false;
-    }
-    if (buffer->resource_uri()) {
-        by_resource_.erase(*buffer->resource_uri());
     }
     Slot& slot = slots_[id.slot];
     slot.value.reset();
@@ -176,11 +167,6 @@ const Buffer& BufferRegistry::get(BufferId id) const {
     return const_cast<BufferRegistry*>(this)->get(id);
 }
 
-std::optional<BufferId> BufferRegistry::find_by_resource(std::string_view uri) const {
-    auto it = by_resource_.find(std::string(uri));
-    return it == by_resource_.end() ? std::nullopt : std::optional<BufferId>(it->second);
-}
-
 std::vector<BufferId> BufferRegistry::all() const {
     std::vector<BufferId> ids;
     ids.reserve(slots_.size() - free_slots_.size());
@@ -190,24 +176,6 @@ std::vector<BufferId> BufferRegistry::all() const {
         }
     }
     return ids;
-}
-
-void BufferRegistry::set_resource(BufferId id, std::optional<std::string> uri, BufferKind kind) {
-    Buffer& buffer = get(id);
-    if (uri) {
-        auto it = by_resource_.find(*uri);
-        if (it != by_resource_.end() && it->second != id) {
-            throw std::invalid_argument("another buffer already owns this resource");
-        }
-    }
-    if (buffer.resource_uri_) {
-        by_resource_.erase(*buffer.resource_uri_);
-    }
-    buffer.resource_uri_ = std::move(uri);
-    buffer.kind_ = kind;
-    if (buffer.resource_uri_) {
-        by_resource_.emplace(*buffer.resource_uri_, id);
-    }
 }
 
 void BufferRegistry::set_locations(BufferId id, std::vector<BufferLocation> locations) {

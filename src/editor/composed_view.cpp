@@ -92,7 +92,7 @@ ComposedSnapshot ComposedViewModel::snapshot() const {
         if (!projection.empty()) {
             projection += '\n';
         }
-        projection += std::format("── {} ──\n", buffer.resource_uri().value_or(excerpt.label));
+        projection += std::format("── {} ──\n", excerpt.label);
         const TextRange source{buffer.navigation_anchor_offset(excerpt.context_start),
                                buffer.navigation_anchor_offset(excerpt.context_end)};
         const TextOffset start = projection_offset(projection.size());

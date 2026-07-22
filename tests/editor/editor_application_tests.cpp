@@ -794,7 +794,7 @@ TEST_CASE("user initialization owns startup buffer policy before native bootstra
 
     const Buffer& buffer = application.session().buffer();
     CHECK(application.buffer_name(buffer.id()) == "*Welcome*");
-    CHECK(buffer.kind() == BufferKind::Generated);
+    CHECK(application.buffer_kind(buffer.id()) == BufferKind::Generated);
     CHECK(buffer.read_only());
     CHECK(buffer.snapshot().content().empty());
     const ModeId mode = buffer.modes().major().value_or(ModeId{});
@@ -1678,8 +1678,8 @@ TEST_CASE("scripted save-as policy configures and saves a file buffer") {
     REQUIRE(wake.wait());
     CHECK(application.poll_background_work());
     CHECK_FALSE(application.has_background_work());
-    CHECK(application.session().buffer().kind() == BufferKind::File);
-    CHECK(application.session().buffer().resource_uri() == path.string());
+    CHECK(application.buffer_kind(application.session().buffer().id()) == BufferKind::File);
+    CHECK(application.buffer_resource(application.session().buffer().id()) == path.string());
     CHECK(application.buffer_name(application.session().buffer().id()) == path.filename().string());
     std::ifstream input(path, std::ios::binary);
     const std::string saved{std::istreambuf_iterator<char>(input),
@@ -1708,7 +1708,7 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
                               .wake_event_loop = [&wake] { wake.notify(); }},
         .init_file = std::nullopt,
     });
-    CHECK(application.session().buffer().kind() == BufferKind::Scratch);
+    CHECK(application.buffer_kind(application.session().buffer().id()) == BufferKind::Scratch);
     CHECK(application.has_background_work());
 
     while (application.has_background_work()) {
@@ -1717,8 +1717,8 @@ TEST_CASE("initial files load through the async runtime and replace the startup 
     }
     CHECK_FALSE(application.has_background_work());
     CHECK(application.buffer_count() == 1);
-    CHECK(application.session().buffer().kind() == BufferKind::File);
-    CHECK(application.session().buffer().resource_uri() == path.string());
+    CHECK(application.buffer_kind(application.session().buffer().id()) == BufferKind::File);
+    CHECK(application.buffer_resource(application.session().buffer().id()) == path.string());
     CHECK(application.session().snapshot().content() == "first\nsecond\nthird\n");
     CHECK(application.session().caret().value == 6);
 
@@ -1859,7 +1859,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             REQUIRE(wake.wait());
             (void)application.poll_background_work();
         }
-        CHECK(application.session().buffer().resource_uri() ==
+        CHECK(application.buffer_resource(application.session().buffer().id()) ==
               (root / "src" / "other.cpp").string());
 
         send_keys(application, "C-x p g");
@@ -1873,7 +1873,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             (void)application.poll_background_work();
         }
         CHECK_FALSE(application.project_search_running());
-        CHECK(application.session().buffer().kind() == BufferKind::Process);
+        CHECK(application.buffer_kind(application.session().buffer().id()) == BufferKind::Process);
         CHECK(application.session().buffer().read_only());
         CHECK(application.session().snapshot().content().to_string().find("src/other.cpp") !=
               std::string::npos);
@@ -1914,7 +1914,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             REQUIRE(wake.wait());
             (void)application.poll_background_work();
         }
-        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.buffer_resource(application.session().buffer().id()) == second.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
               resolve_line_position(application.session().snapshot().content(), second.target)
                   .value());
@@ -1930,14 +1930,14 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             REQUIRE(wake.wait());
             (void)application.poll_background_work();
         }
-        CHECK(application.session().buffer().resource_uri() == third.resource);
+        CHECK(application.buffer_resource(application.session().buffer().id()) == third.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
               resolve_line_position(application.session().snapshot().content(), third.target)
                   .value());
         CHECK(application.location_navigation().selected_index == 2);
 
         send_keys(application, "M-g p");
-        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.buffer_resource(application.session().buffer().id()) == second.resource);
         CHECK(application.session().snapshot().content().position(application.session().caret()) ==
               LinePosition{.line = second.target.line + 1, .byte_column = second.target.column});
         CHECK(application.location_navigation().selected_index == 1);
@@ -1956,7 +1956,7 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
         CHECK_FALSE(application.location_navigation().buffer.has_value());
         CHECK(application.location_navigation().location_count == 3);
         send_keys(application, "M-g p");
-        CHECK(application.session().buffer().resource_uri() == second.resource);
+        CHECK(application.buffer_resource(application.session().buffer().id()) == second.resource);
         CHECK(application.location_navigation().selected_index == 1);
     }
     std::filesystem::remove_all(root);
@@ -2393,7 +2393,7 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     CHECK_FALSE(code_snapshot->active);
     CHECK(notes_snapshot->active);
     REQUIRE(notes_snapshot->mru.size() == 1);
-    CHECK(application.runtime().buffers().get(notes_snapshot->mru.front()).resource_uri() ==
+    CHECK(application.buffer_resource(notes_snapshot->mru.front()) ==
           std::optional{visitor.string()});
     CHECK(application.session().caret() == TextOffset{3});
 
@@ -2401,11 +2401,11 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     CHECK(application.runtime().projects().get(code_snapshot->scope.front()).roots() ==
           std::vector<std::string>{directory.path().string()});
     REQUIRE(code_snapshot->mru.size() == 3);
-    CHECK(application.runtime().buffers().get(code_snapshot->mru[0]).resource_uri() ==
+    CHECK(application.buffer_resource(code_snapshot->mru[0]) ==
           std::optional{visitor.string()});
-    CHECK(application.runtime().buffers().get(code_snapshot->mru[1]).resource_uri() ==
+    CHECK(application.buffer_resource(code_snapshot->mru[1]) ==
           std::optional{main.string()});
-    CHECK_FALSE(application.runtime().buffers().get(code_snapshot->mru[2]).resource_uri());
+    CHECK_FALSE(application.buffer_resource(code_snapshot->mru[2]));
 
     REQUIRE(application.switch_workbench(code_snapshot->workbench));
     REQUIRE(application.window_layout().root() != nullptr);
@@ -2416,7 +2416,7 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     const WindowId source_window = application.window_layout().leaves().front();
     const WindowId tool_window = application.window_layout().leaves().back();
     CHECK(
-        application.runtime().buffers().get(application.buffer_id(source_window)).resource_uri() ==
+        application.buffer_resource(application.buffer_id(source_window)) ==
         std::optional{main.string()});
     CHECK(application.session(source_window).caret() == TextOffset{5});
     CHECK(application.window_snapshot(source_window).pinned);
@@ -2429,7 +2429,7 @@ TEST_CASE("workbench session restore rebuilds durable state and tolerates missin
     CHECK(application.window_id() == tool_window);
     CHECK(application.window_snapshot(tool_window).role == std::optional<std::string>{"tools"});
     CHECK(application.window_snapshot(tool_window).created_by_policy);
-    CHECK_FALSE(application.runtime().buffers().find_by_resource(missing.string()));
+    CHECK_FALSE(application.buffer_id_by_resource(missing.string()));
     CHECK(application.message() == "workbench session restored · 1 resources unavailable");
 }
 
@@ -2722,19 +2722,19 @@ TEST_CASE("jump replay asynchronously reopens a released buffer without recordin
     REQUIRE(application.navigate_jump(window, -1));
     CHECK(application.buffer_id() == source);
     REQUIRE(application.release_buffer(target, source).has_value());
-    CHECK_FALSE(application.runtime().buffers().find_by_resource(target_path.string()));
+    CHECK_FALSE(application.buffer_id_by_resource(target_path.string()));
 
     REQUIRE(application.navigate_jump(window, 1));
     while (application.has_background_work()) {
         REQUIRE(wake.wait());
         (void)application.poll_background_work();
     }
-    CHECK(application.runtime().buffers().get(application.buffer_id()).resource_uri() ==
+    CHECK(application.buffer_resource(application.buffer_id()) ==
           std::optional{target_path.string()});
     REQUIRE(application.navigate_jump(window, -1));
     CHECK(application.buffer_id() == source);
     REQUIRE(application.navigate_jump(window, 1));
-    CHECK(application.runtime().buffers().get(application.buffer_id()).resource_uri() ==
+    CHECK(application.buffer_resource(application.buffer_id()) ==
           std::optional{target_path.string()});
 }
 
@@ -2907,7 +2907,7 @@ TEST_CASE("asynchronous display completion stays with its origin workbench") {
     CHECK(application.workbench_id() == foreground_workbench);
     CHECK(application.buffer_id() == foreground_buffer);
     const std::optional<BufferId> opened =
-        application.runtime().buffers().find_by_resource(source.path().string());
+        application.buffer_id_by_resource(source.path().string());
     REQUIRE(opened.has_value());
     const std::vector<BufferId> foreground = application.workbench_buffers(foreground_workbench);
     CHECK(std::ranges::find(foreground, *opened) == foreground.end());
@@ -2915,7 +2915,7 @@ TEST_CASE("asynchronous display completion stays with its origin workbench") {
     REQUIRE(application.switch_workbench(origin_workbench));
     CHECK(application.window_id() == origin_window);
     CHECK(application.buffer_id() == *opened);
-    CHECK(application.session().buffer().resource_uri() ==
+    CHECK(application.buffer_resource(application.session().buffer().id()) ==
           std::optional<std::string>{source.path().string()});
 }
 
@@ -3135,7 +3135,7 @@ TEST_CASE("Scheme buffer and region evaluation share a persistent user module") 
     CHECK(result != source);
     const Buffer& result_buffer = runtime.buffers().get(result);
     CHECK(application.buffer_name(result_buffer.id()) == "*Scheme Evaluation*");
-    CHECK(result_buffer.kind() == BufferKind::Generated);
+    CHECK(application.buffer_kind(result_buffer.id()) == BufferKind::Generated);
     CHECK(result_buffer.read_only());
     CHECK(application.style_origin() == "scheme evaluation");
     const std::string result_text = result_buffer.snapshot().content().to_string();
@@ -3169,7 +3169,7 @@ TEST_CASE("Scheme REPL is an editor buffer with persistent evaluation and input 
     CHECK(application.last_command() == "scheme.repl");
     const Buffer& repl = runtime.buffers().get(application.buffer_id());
     CHECK(application.buffer_name(repl.id()) == "*Scheme REPL*");
-    CHECK(repl.kind() == BufferKind::Process);
+    CHECK(application.buffer_kind(repl.id()) == BufferKind::Process);
     CHECK_FALSE(repl.read_only());
     const std::optional<ModeId> major = repl.modes().major();
     REQUIRE(major.has_value());
@@ -3550,7 +3550,7 @@ TEST_CASE("describe commands display reusable generated help buffers") {
     const BufferId help = application.buffer_id();
     const Buffer& help_buffer = runtime.buffers().get(help);
     CHECK(application.buffer_name(help_buffer.id()) == "*Help*");
-    CHECK(help_buffer.kind() == BufferKind::Generated);
+    CHECK(application.buffer_kind(help_buffer.id()) == BufferKind::Generated);
     CHECK(help_buffer.read_only());
     const ModeId help_mode = help_buffer.modes().major().value_or(ModeId{});
     REQUIRE(help_mode);
@@ -3817,7 +3817,7 @@ TEST_CASE("LSP navigation feeds location lists and the workbench jump graph") {
     CHECK(diagnostics[0].severity == DiagnosticSeverity::Warning);
     CHECK(diagnostics[0].source == "cind-test");
     REQUIRE(application.execute_command("diagnostic.list"));
-    CHECK(application.session().buffer().kind() == BufferKind::Process);
+    CHECK(application.buffer_kind(application.session().buffer().id()) == BufferKind::Process);
     CHECK(application.session().buffer().locations().size() == 1);
     send_keys(application, "RET");
     CHECK(application.buffer_id() == origin);

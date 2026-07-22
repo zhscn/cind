@@ -454,6 +454,10 @@ public:
                                                     const GuileBufferIdentityFacts& identity);
     std::expected<std::string, std::string> buffer_name(BufferId buffer) const;
     std::expected<std::optional<ProjectId>, std::string> buffer_project(BufferId buffer) const;
+    std::expected<std::optional<std::string>, std::string> buffer_resource(BufferId buffer) const;
+    std::expected<BufferKind, std::string> buffer_kind(BufferId buffer) const;
+    std::expected<std::optional<BufferId>, std::string>
+    buffer_id_by_resource(std::string_view resource) const;
     std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name);
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);

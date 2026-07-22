@@ -272,6 +272,9 @@ public:
     // keeping a native copy (design/09-guile-first.md section 3.4).
     std::string buffer_name(BufferId buffer) const;
     std::optional<ProjectId> buffer_project(BufferId buffer) const;
+    std::optional<std::string> buffer_resource(BufferId buffer) const;
+    BufferKind buffer_kind(BufferId buffer) const;
+    std::optional<BufferId> buffer_id_by_resource(std::string_view resource) const;
     std::string style_origin() const;
     std::string style_origin(WindowId window) const;
     std::uint32_t save_generation() const;

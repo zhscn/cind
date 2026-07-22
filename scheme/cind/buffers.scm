@@ -10,6 +10,10 @@
             buffer-project-id
             set-buffer-project!
             project-has-buffers?
+            buffer-kind
+            buffer-resource
+            buffer-id-by-resource
+            set-buffer-resource!
             register-buffer-name!
             forget-buffer-name!))
 
@@ -19,7 +23,7 @@
 ;; creates the document; this module decides what it is called and keeps the
 ;; only copy of the answer (design/09-guile-first.md section 3.4).
 ;;
-;; Entries are #(buffer name project). Entity IDs marshal as fresh two-element vectors
+;; Entries are #(buffer name project kind resource). Entity IDs marshal as fresh two-element vectors
 ;; on every crossing, so they compare with equal? and cannot key a hashq table;
 ;; the surrounding modules use association lists for the same reason. Buffer
 ;; counts are in the tens, so the linear scan is not worth trading for a
@@ -90,8 +94,41 @@
 
 (define (set-buffer-project! host buffer project)
   (let ((entry (require-identity host buffer)))
-    (replace-entry! host buffer (vector buffer (vector-ref entry 1) project)))
+    (replace-entry! host buffer (vector buffer (vector-ref entry 1) project
+                                        (vector-ref entry 3) (vector-ref entry 4))))
   project)
+
+(define (buffer-kind host buffer)
+  (vector-ref (require-identity host buffer) 3))
+
+(define (buffer-resource host buffer)
+  (vector-ref (require-identity host buffer) 4))
+
+(define (buffer-id-by-resource host resource)
+  (let loop ((entries (identities host)))
+    (cond ((null? entries) #f)
+          ((equal? resource (vector-ref (car entries) 4))
+           (vector-ref (car entries) 0))
+          (else (loop (cdr entries))))))
+
+;; A resource is visited by at most one buffer: the association is the reason
+;; opening the same file twice reuses a buffer, so the uniqueness check belongs
+;; wherever the association lives.
+(define (require-unclaimed-resource host resource self)
+  (let ((holder (and resource (buffer-id-by-resource host resource))))
+    (when (and holder (not (equal? holder self)))
+      (error "another buffer already visits this resource" resource))))
+
+(define (set-buffer-resource! host buffer resource kind)
+  (unless (or (not resource) (string? resource))
+    (error "buffer resource must be a string or #f" resource))
+  (unless (symbol? kind)
+    (error "buffer kind must be a symbol" kind))
+  (let ((entry (require-identity host buffer)))
+    (require-unclaimed-resource host resource buffer)
+    (replace-entry! host buffer (vector buffer (vector-ref entry 1) (vector-ref entry 2)
+                                        kind resource)))
+  resource)
 
 ;; Answers what the native project registry used to answer by scanning buffers:
 ;; the association is here now, so the question is answered here.
@@ -134,9 +171,12 @@
   entry)
 
 (define (store-name! host buffer name)
-  (let ((project (let ((entry (identity-of host buffer)))
-                   (and entry (vector-ref entry 2)))))
-    (replace-entry! host buffer (vector buffer name project)))
+  (let ((entry (identity-of host buffer)))
+    (replace-entry! host buffer
+                    (vector buffer name
+                            (and entry (vector-ref entry 2))
+                            (and entry (vector-ref entry 3))
+                            (and entry (vector-ref entry 4)))))
   name)
 
 ;; Called from the creation hook. The requested name is what the caller asked
@@ -153,7 +193,10 @@
       (let ((chosen ((policy-ref host 'buffer-naming) host requested kind resource)))
         (unless (string? chosen)
           (error "buffer naming policy must return a string" chosen))
-        (store-name! host buffer (unique-name host chosen #f)))))
+        (require-unclaimed-resource host resource buffer)
+        (replace-entry! host buffer
+                        (vector buffer (unique-name host chosen #f) #f kind resource))
+        (buffer-name host buffer))))
 
 (define (rename-buffer! host buffer requested)
   (unless (string? requested)

@@ -3,7 +3,6 @@
   #:use-module (cind state)
   #:use-module ((cind host)
                 #:select (open-buffer-ids
-                          buffer-resource
                           buffer-modified?
                           project-root))
   #:export (workbench-created!
