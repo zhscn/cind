@@ -4,6 +4,8 @@
 #include "commands/editor_commands.hpp"
 #include "cpp_lexer/lexer.hpp"
 #include "document/document.hpp"
+#include "editor/editor_application.hpp"
+#include "script/guile_call_stats.hpp"
 #include "syntax/analysis.hpp"
 #include "syntax/syntax_tree.hpp"
 #include "tui/editor.hpp"
@@ -232,6 +234,147 @@ int cmd_perf(const char* path) {
     return 0;
 }
 
+// Measures the whole application keystroke path, including the C++ -> Guile
+// entries it already performs, and reports what share of a keystroke is spent
+// inside Scheme. This is the gate for design/09-guile-first.md §7: state
+// ownership can only move to Guile if the path retains its latency budget.
+int cmd_guile_perf(const char* path, int repetitions) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::cerr << "indent-core: cannot open " << path << "\n";
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    std::string text = buffer.str();
+
+    cind::guile_stats::timing_enabled.store(true, std::memory_order_relaxed);
+    cind::EditorApplication application({.path = path,
+                                         .initial_text = std::move(text),
+                                         .initial_line = 0,
+                                         .platform_services = {},
+                                         .init_file = std::nullopt});
+
+    const std::uint32_t lines = application.session().snapshot().content().line_count();
+
+    const cind::KeyStroke key = cind::KeyStroke::character_key(U'x');
+    auto keystroke = [&] {
+        if (!application.handle_key(key, 40)) {
+            application.insert_text("x");
+        }
+    };
+    // Typing forever at one spot degenerates into a tiny damage window in one
+    // identifier. Roam the caret so edits land in varied syntactic contexts and
+    // the incremental paths pay their real cost.
+    std::uint32_t roam = 0;
+    auto move_caret = [&] {
+        roam = (roam * 1103515245u + 12345u) % lines;
+        const cind::DocumentSnapshot snapshot = application.session().snapshot();
+        application.session().set_caret(snapshot.content().line_start(roam));
+    };
+    constexpr int roam_interval = 8;
+
+    constexpr int warmup = 200;
+    for (int index = 0; index < warmup; ++index) {
+        if (index % roam_interval == 0) {
+            move_caret();
+        }
+        keystroke();
+    }
+
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(repetitions));
+    const cind::guile_stats::Sample before = cind::guile_stats::sample();
+    const auto measured_start = std::chrono::steady_clock::now();
+    // Per-keystroke Guile time attributes the latency tail: a slow keystroke is
+    // either a Scheme/GC pause or kernel work (full reparse), and the two ask
+    // for different fixes.
+    std::vector<double> guile_samples;
+    guile_samples.reserve(static_cast<std::size_t>(repetitions));
+    for (int index = 0; index < repetitions; ++index) {
+        if (index % roam_interval == 0) {
+            move_caret();
+        }
+        const cind::guile_stats::Sample key_before = cind::guile_stats::sample();
+        const auto t0 = std::chrono::steady_clock::now();
+        keystroke();
+        const auto t1 = std::chrono::steady_clock::now();
+        samples.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        guile_samples.push_back(
+            static_cast<double>(cind::guile_stats::since(key_before).nanoseconds) / 1e6);
+    }
+    const double total_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - measured_start)
+            .count();
+    const cind::guile_stats::Sample guile = cind::guile_stats::since(before);
+
+    std::vector<double> sorted = samples;
+    std::sort(sorted.begin(), sorted.end());
+    auto quantile = [&](double fraction) {
+        const std::size_t index =
+            static_cast<std::size_t>(fraction * static_cast<double>(sorted.size() - 1));
+        return sorted[index];
+    };
+
+    const double guile_total_ms = static_cast<double>(guile.nanoseconds) / 1e6;
+    const double calls_per_key = static_cast<double>(guile.calls) / repetitions;
+
+    std::printf("file:            %s\n", path);
+    std::printf("lines:           %u\n", lines);
+    std::printf("keystrokes:      %d (after %d warmup)\n", repetitions, warmup);
+    std::printf("\n-- keystroke latency (full application path) --\n");
+    std::printf("median:          %8.3f ms\n", quantile(0.50));
+    std::printf("p90:             %8.3f ms\n", quantile(0.90));
+    std::printf("p99:             %8.3f ms\n", quantile(0.99));
+    std::printf("max:             %8.3f ms   (includes GC pauses)\n", sorted.back());
+    std::printf("\n-- Guile share (already on today's key path) --\n");
+    std::printf("calls/keystroke: %8.2f\n", calls_per_key);
+    std::printf("guile/keystroke: %8.3f ms\n", guile_total_ms / repetitions);
+    std::printf("guile share:     %8.1f %%\n", 100.0 * guile_total_ms / total_ms);
+    std::printf("per call:        %8.3f us\n",
+                guile.calls > 0 ? (guile_total_ms * 1000.0) / static_cast<double>(guile.calls)
+                                : 0.0);
+
+    std::vector<std::size_t> order(samples.size());
+    for (std::size_t index = 0; index < order.size(); ++index) {
+        order[index] = index;
+    }
+    std::sort(order.begin(), order.end(),
+              [&](std::size_t left, std::size_t right) { return samples[left] > samples[right]; });
+    std::printf("\n-- latency tail attribution (slowest 5 keystrokes) --\n");
+    for (std::size_t rank = 0; rank < 5 && rank < order.size(); ++rank) {
+        const std::size_t index = order[rank];
+        const double total = samples[index];
+        const double in_guile = guile_samples[index];
+        std::printf("  #%-6zu %8.3f ms  guile %7.3f ms (%5.1f %%)  %s\n", index, total, in_guile,
+                    total > 0.0 ? 100.0 * in_guile / total : 0.0,
+                    in_guile > 0.5 * total ? "scheme/GC" : "kernel");
+    }
+    // A periodic tail points at recurring work on the key path; a scattered one
+    // points at allocation-driven collection.
+    std::size_t over_1ms = 0;
+    std::size_t over_5ms = 0;
+    for (const double value : samples) {
+        over_1ms += value > 1.0 ? 1 : 0;
+        over_5ms += value > 5.0 ? 1 : 0;
+    }
+    std::printf("keystrokes > 1ms: %zu / %zu     > 5ms: %zu\n", over_1ms, samples.size(), over_5ms);
+    if (over_5ms > 1) {
+        std::vector<std::size_t> spikes;
+        for (std::size_t index = 0; index < samples.size(); ++index) {
+            if (samples[index] > 5.0) {
+                spikes.push_back(index);
+            }
+        }
+        std::printf("spike gaps:      ");
+        for (std::size_t index = 1; index < spikes.size() && index < 12; ++index) {
+            std::printf("%zu ", spikes[index] - spikes[index - 1]);
+        }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -277,6 +420,11 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && command == "perf") {
         return cmd_perf(argv[2]);
+    }
+    if (argc >= 3 && command == "guile-perf") {
+        const int repetitions =
+            argc >= 4 ? static_cast<int>(std::strtol(argv[3], nullptr, 10)) : 2000;
+        return cmd_guile_perf(argv[2], repetitions);
     }
     if (argc >= 3 && command == "bench") {
         cind::BenchOptions options;

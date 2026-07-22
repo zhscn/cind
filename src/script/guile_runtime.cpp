@@ -6,11 +6,13 @@
 #include "editor/runtime.hpp"
 #include "editor/scheme_mode.hpp"
 #include "script/guile_async_bridge.hpp"
+#include "script/guile_call_stats.hpp"
 
 #include <libguile.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -8324,7 +8326,24 @@ SCM call_handler(void* data, SCM tag, SCM arguments) {
 }
 
 std::expected<SCM, std::string> run_guile_call(GuileCall& call) {
+    // Only the outermost entry is timed: a host primitive that calls policy back
+    // would otherwise count its own nesting twice.
+    thread_local unsigned call_depth = 0;
+    const bool outermost =
+        call_depth == 0 && guile_stats::timing_enabled.load(std::memory_order_relaxed);
+    const std::chrono::steady_clock::time_point entered =
+        outermost ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    ++call_depth;
     (void)scm_c_catch(SCM_BOOL_T, call_body, &call, call_handler, &call, nullptr, nullptr);
+    --call_depth;
+    if (outermost) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 std::chrono::steady_clock::now() - entered)
+                                 .count();
+        guile_stats::call_nanoseconds.fetch_add(static_cast<std::uint64_t>(elapsed),
+                                                std::memory_order_relaxed);
+    }
+    guile_stats::call_count.fetch_add(1, std::memory_order_relaxed);
     if (call.cpp_failure) {
         try {
             std::rethrow_exception(call.cpp_failure);

@@ -8,7 +8,9 @@
 
 ## 实现状态
 
-**未实现——本文是提案**，唯一一篇纯前瞻文档。已发生的先行步：截至 2026-07-22 的最近八个 commit 全部是 "move X to Guile"（transaction group / window walk / display transition / completion selection / settle / session policy / prefix state），证明方向已在逐项执行；本文把逐项偿还升级为一次有终态定义的倒置。三个前置问题（§4 状态模型、§5 事务边界、§7 GC 测量）未定稿前不动手。
+**提案，P0 进行中**。已发生的先行步：截至 2026-07-22 的最近八个 commit 全部是 "move X to Guile"（transaction group / window walk / display transition / completion selection / settle / session policy / prefix state），证明方向已在逐项执行；本文把逐项偿还升级为一次有终态定义的倒置。
+
+P0 进度：**§7 性能 gate 已完成并通过**（测量工具 `indent-core guile-perf` 已入库；结论见 §7：按键路径 95% 的时间今天就在 Scheme 内，倒置预期减负而非加负，真正风险是 GC 停顿）。**§4 状态模型与 §5 事务边界仍是草案**，P1 动手前需定稿。
 
 ## 需求背景
 
@@ -26,7 +28,7 @@
 6. **inspector 蒸发**：状态即 Scheme 数据，检视 = 结构化打印 + Ares REPL 直查活状态；inspection.cpp 的逐字段序列化不再需要。Emacs 的真正卖点（对活系统的可检视/可修补）在这里兑现。
 7. **containment 立场切换**（§6）：从"边界校验、Scheme 不可能破坏 native 不变量"切换到"native 只守值不变量，组合层错误是 Scheme 条件"。这是哲学变更，必须显式接受而非默默发生。
 8. **迁移走 strangler，不走 big-bang，也不再走逐 export**：在旧组合根旁立 Guile 组合根，按子系统整块切换并删除旧侧；fixture/pty 测试在行为层，天然支持双跑对比。
-9. **三个前置问题先落纸再动手**：Guile 状态模型、事务边界、按键路径 GC 测量。不落纸，倒置会在中途重新长出今天这层桥。
+9. **三个前置问题先落纸再动手**：Guile 状态模型、事务边界、按键路径测量。不落纸，倒置会在中途重新长出今天这层桥。第三项已完成（§7）：实测推翻了"倒置会吃掉按键预算"的担忧——95% 的按键时间本就在 Scheme 内，48.5 次/键的跨界往返正是要消除的东西；风险改判为 GC 停顿，约束是大宗数据不进 Guile 堆。
 
 ## 1. 现状解剖（2026-07-22）
 
@@ -89,19 +91,43 @@ buffer/view/window/workbench registry（"哪些实体存在、叫什么、怎么
 
 今天：typed boundary 校验一切，Scheme bug 被挡在门口（代价就是 11.2k 行门）。之后：native 只守三类不变量——值合法性（Text/树/anchor）、句柄生命周期、派生缓存一致性；组合层 bug 是 Scheme 条件，表现为命令报错而非进程损坏。接受依据：Emacs 四十年证明该模型对单用户编辑器足够；cind 的文档层甚至更硬（undo 树使任何状态错乱都不威胁数据）。**不接受的部分**：涉及句柄释放的路径（buffer 释放、window 删除）保留 native 校验——悬垂是值不变量问题，不是策略问题。
 
-## 7. 性能前置测量（gate）
+## 7. 性能前置测量（gate，已完成）
 
-倒置把按键路径的编排放进 Scheme（keymap 查找除外，§3.4）。动手前测三件事，任一不达标则采用降级路线：
+工具：`indent-core guile-perf <file> [keystrokes]`（`src/cli/main.cpp`）驱动真实 `EditorApplication` 的完整按键路径（`handle_key` → 未消费则 `insert_text`），光标每 8 键漫游到伪随机行以免退化为单点最优；`run_guile_call` 是唯一的 C++→Guile 入口，在此计数与计时（`src/script/guile_call_stats.hpp`，计时按需开启，编辑会话不付钟表开销）。语料为 LLVM `llvm/lib/Support/*.cpp` 拼接。Release，空闲机况（**测量必须在无并发构建下进行**：与构建争用时同一档位的尾部从 5ms 劣化到 21ms）。
 
-1. C++↔Guile 往返开销：每键 1 次进入 + 若干原语调用的实测（预期 µs 级）；
-2. Boehm GC 停顿：在状态根全量迁入、持续编辑负载下的 p99 停顿；
-3. 端到端：522k 行文件每键中位 < 1ms、p99 < 5ms（现状 0.49ms 中位，允许倒置花掉一部分预算）。
+| 语料 | 中位 | p90 | p99 | max | Guile 调用/键 | Guile 占比 | 每次调用 |
+|---|---|---|---|---|---|---|---|
+| 21k 行 | 0.122 ms | 0.159 ms | 0.308 ms | 6.47 ms | 48.5 | 94.4 % | 2.97 µs |
+| 78k 行 | 0.126 ms | 0.180 ms | 0.464 ms | 4.86 ms | 48.5 | 94.8 % | 3.08 µs |
+| 522k 行 | 0.123 ms | 0.191 ms | 0.363 ms | 7.53 ms | 48.5 | 95.0 % | 3.16 µs |
 
-降级路线（Emacs 同款）：self-insert 与光标移动留 native fast path，其余命令进 Scheme——机制上就是保留今天的 typed-char 管线直通，只有命令分发进 Guile。
+### 7.1 结论：问题被测反了
+
+**按键路径今天已经在 Scheme 里**——每键 48.5 次进入 Guile，占按键时间 **95%**；内核（增量 relex + reparse + 缩进 + 提交）只占剩下的 5%，且中位数从 21k 到 522k 行几乎不变（0.12 ms）。原 gate 设想的"把编排搬进 Scheme 会不会吃掉预算"是个伪问题：编排早就在那里，native 侧留下的只有状态与校验。
+
+由此，**倒置的预期是减负而非加负**：今天每次决策都要"取状态→过界→算→回写"的往返，48 次调用正是这笔账；状态归 Guile 后，同一个决策在 Scheme 内直接读自己的数据，跨界次数应显著下降。3 µs/次的边际成本乘以调用数才是真正的支出项。
+
+gate 判定（原阈值中位 < 1 ms、p99 < 5 ms）：中位 0.12 ms（8× 余量）、p99 0.36–0.46 ms（10× 余量）——**通过**，且降级路线（self-insert fast path）当前无需启用。
+
+### 7.2 真正的风险：GC 尾部
+
+max 4.9–7.5 ms 的尖峰 **99.6 % 以上落在 Guile 内**，周期约每 200–250 次按键一次，**幅度与文档规模无关**（21k 与 522k 同为 ~5–7 ms）——即 Boehm 对 Guile 自身堆的整堆回收，由每键的稳定分配速率驱动，与内核数据无关（文本/树/token 在 native 堆）。
+
+这把风险从"吞吐"移到"停顿"，并给出明确的设计约束：
+
+1. **大宗数据永不进 Guile 堆**（§3 的三类 native 状态本就如此）：状态根持 handle 与元数据，文本、树、token、诊断区间表留 native。倒置若把 per-buffer 大数组搬进 Scheme，周期会缩短、停顿会变长——这是唯一需要划红线的地方。
+2. **每键分配速率是可优化量**：48 次调用的 marshalling 是当前分配的主要来源，跨界次数下降会同时降低 GC 频率。
+3. **迁移期需要回归监测**：每个 P 阶段后重跑本工具，盯 `calls/keystroke`、`guile share` 与尖峰周期三项；周期显著缩短即为倒置引入了新的按键路径分配。
+
+顺带记录一个既有缺陷：~200 键一次 5–7 ms 卡顿在今天已经存在（约每 20 秒一次连续输入的可感顿挫），与倒置无关，可独立处理（Boehm 参数调优或降低每键分配）。归入开放问题 7。
+
+### 7.3 未采用 perf-cpp 的理由
+
+评估过 [perf-cpp](https://github.com/jmuehlig/perf-cpp)（Linux perf_event 的 C++ 封装，硬件计数器：cycles/instructions/cache-miss/branch-miss）。本机 `perf_event_paranoid = 2`，用户态计数可用，技术上可接入。不在本阶段引入：gate 要回答的是"时间花在界的哪一侧"，墙钟 + 调用计数已给出 95% 这个决定性答案；剩下的尾部问题是 **GC 停顿**，需要的是 GC 统计（回收次数、堆大小、mark 时间，Guile 的 `(gc-stats)` 直接可得），硬件计数器不直接回答。若将来要优化 marshalling 本身（3 µs/次里指令数、cache miss、分支预测各占多少），perf-cpp 是合适工具，届时按可选依赖引入（Linux-only，需 guard macOS 构建）。
 
 ## 8. 迁移路线
 
-- **P0**：§4–§6 三个立场定稿 + §7 测量原型。产物：本文修订 + 测量数据入文。
+- **P0**：§4–§6 三个立场定稿 + §7 测量原型。§7 **已完成**（工具入库、数据入文、gate 通过）；§4/§5 待定稿。每阶段结束重跑 `guile-perf` 作回归监测（§7.2）。
 - **P1**：Guile 状态根骨架 + 已多半在 Guile 的子系统整块收编（workbench 元数据、jump walk、location 当前引用、completion 会话）——删除对应 native 半边与桥原语，验证"删得动"。
 - **P2**：buffer/window registry、placement、interaction 迁移；EditorApplication 的编排逐块改为薄转发。
 - **P3**：command loop 编排与 keymap 所有权（native trie 降为派生缓存）；modeline/chrome 等 presentation 政策的 fact 收集改为读 Guile 状态。
@@ -124,3 +150,4 @@ buffer/view/window/workbench registry（"哪些实体存在、叫什么、怎么
 4. 多 application 隔离（现有 per-host 状态键控）在状态根模型下的映射——一个 Guile VM 多个状态根的边界执法。
 5. inspector 的 native 残余（渲染缓存、damage、动画）与 Guile 状态投影如何在一个面板里拼合。
 6. 迁移期间 docs/ 的维护策略：逐步改写 vs P4 一次性改写（倾向后者，期间 docs/ 加"倒置进行中"注记）。
+7. 既有的 GC 卡顿（~200 键一次 5–7 ms，§7.2）如何处理：Boehm 参数调优（增量/分代模式、堆下限）vs 降低每键分配（跨界次数下降是倒置的顺带收益）。需要先用 `(gc-stats)` 确认回收类型与堆规模，再决定是否独立立项。
