@@ -153,16 +153,27 @@ Use the non-GUI `build` directory instead to run only the frontend-independent a
 suite. Replace `Release` with `Debug` in the configure command when debug symbols and assertions are
 preferred.
 
-## Design documentation
+## Documentation
 
-- [GUI architecture](docs/gui-architecture.md)
-- [GUI inspector](docs/gui-inspector.md)
+Editor core and interaction:
+
 - [Command and interaction architecture](docs/command-loop.md)
 - [Guile scripting architecture](docs/scripting.md)
 - [Asynchronous runtime](docs/async-runtime.md)
-- [LSP sessions and semantic completion](docs/lsp.md)
-- [Diagnostics](docs/diagnostics.md)
-- [Workspace edits](docs/workspace-edits.md)
+- [GUI architecture](docs/gui-architecture.md)
+
+Workbenches and navigation:
+
 - [Projects](docs/projects.md)
 - [Workbenches](docs/workbenches.md)
 - [Location lists](docs/location-lists.md)
+- [Workspace edits](docs/workspace-edits.md)
+
+Language services:
+
+- [LSP sessions and semantic completion](docs/lsp.md)
+- [Diagnostics](docs/diagnostics.md)
+
+Tooling:
+
+- [GUI inspector](docs/gui-inspector.md)
