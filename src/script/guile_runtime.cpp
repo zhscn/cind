@@ -5015,9 +5015,7 @@ void initialize_host_module(void*) {
         "create-project!", "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!",
         "open-buffer-ids", "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!",
         "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
-        "window-view-id", "window-buffer-id", "window-role", "set-window-role!", "window-pinned?",
-        "set-window-pinned!", "window-created-by-policy?", "workbench-slot", "focus-window!",
-        nullptr);
+        "window-view-id", "window-buffer-id", "focus-window!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -5705,31 +5703,15 @@ SessionPlan session_plan_from_scheme(HostLease& host, SCM value, const SessionFa
 SCM display_facts_value(const GuileDisplayFacts& facts) {
     SCM windows = scm_c_make_vector(facts.windows.size(), SCM_UNSPECIFIED);
     for (std::size_t index = 0; index < facts.windows.size(); ++index) {
-        const GuileDisplayWindow& source = facts.windows[index];
-        SCM window = scm_c_make_vector(5, SCM_UNSPECIFIED);
-        scm_c_vector_set_x(window, 0, name_symbol("display-window"));
-        scm_c_vector_set_x(window, 1, entity_id(source.window.slot, source.window.generation));
-        scm_c_vector_set_x(window, 2, source.role ? name_symbol(*source.role) : SCM_BOOL_F);
-        scm_c_vector_set_x(window, 3, scm_from_bool(source.pinned));
-        scm_c_vector_set_x(window, 4, scm_from_bool(source.created_by_policy));
-        scm_c_vector_set_x(windows, index, window);
+        const WindowId window = facts.windows[index];
+        scm_c_vector_set_x(windows, index, entity_id(window.slot, window.generation));
     }
-    SCM slots = scm_c_make_vector(facts.slots.size(), SCM_UNSPECIFIED);
-    for (std::size_t index = 0; index < facts.slots.size(); ++index) {
-        const GuileDisplaySlot& source = facts.slots[index];
-        SCM slot = scm_c_make_vector(3, SCM_UNSPECIFIED);
-        scm_c_vector_set_x(slot, 0, name_symbol("display-slot"));
-        scm_c_vector_set_x(slot, 1, name_symbol(source.role));
-        scm_c_vector_set_x(slot, 2, entity_id(source.window.slot, source.window.generation));
-        scm_c_vector_set_x(slots, index, slot);
-    }
-    SCM result = scm_c_make_vector(6, SCM_UNSPECIFIED);
+    SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
     scm_c_vector_set_x(result, 0, name_symbol("display-facts"));
     scm_c_vector_set_x(result, 1, name_symbol(facts.intent));
     scm_c_vector_set_x(result, 2, entity_id(facts.origin.slot, facts.origin.generation));
     scm_c_vector_set_x(result, 3, entity_id(facts.active.slot, facts.active.generation));
     scm_c_vector_set_x(result, 4, windows);
-    scm_c_vector_set_x(result, 5, slots);
     return result;
 }
 

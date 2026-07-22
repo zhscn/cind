@@ -183,8 +183,8 @@ struct GuileDisplayFacts {
     std::string intent;
     WindowId origin;
     WindowId active;
-    std::vector<GuileDisplayWindow> windows;
-    std::vector<GuileDisplaySlot> slots;
+    // Layout order only. Role, pinning and slots are the policy's own state.
+    std::vector<WindowId> windows;
 };
 
 struct GuileDisplayPlan {

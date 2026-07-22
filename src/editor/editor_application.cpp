@@ -1266,37 +1266,25 @@ EditorApplication::display_buffer(BufferId buffer, std::string_view intent, Wind
     }
     const std::optional<JumpNodeId> from =
         *track_jump ? capture_jump(workbench, origin) : std::nullopt;
-    GuileDisplayFacts facts{.intent = std::string(intent),
-                            .origin = origin,
-                            .active = selected_window,
-                            .windows = {},
-                            .slots = {}};
+    // The layout order is native truth and so travels with the request; role,
+    // pinning and slots belong to the display policy's own state and are read
+    // there rather than gathered here and handed back.
+    GuileDisplayFacts facts{
+        .intent = std::string(intent), .origin = origin, .active = selected_window, .windows = {}};
     for (const WindowId window : workbench.layout().leaves()) {
         (void)runtime_.windows().get(window);
-        const GuileWorkbenchWindowState state = window_policy(window);
-        if (state.workbench != workbench_id) {
-            return std::unexpected("window policy owner does not match its native layout");
-        }
-        facts.windows.push_back(state.window);
+        facts.windows.push_back(window);
     }
-    const std::expected<std::vector<GuileDisplaySlot>, std::string> slots =
-        guile_.workbench_slots(workbench_id);
-    if (!slots) {
-        return std::unexpected(slots.error());
-    }
-    facts.slots = *slots;
-    std::ranges::sort(facts.slots, {}, &GuileDisplaySlot::role);
 
     const auto validate_plan = [&](const GuileDisplayPlan& plan) -> std::optional<std::string> {
         if (!workbench.layout().contains(plan.target)) {
             return "selected a window outside the active workbench";
         }
-        const auto metadata =
-            std::ranges::find(facts.windows, plan.target, &GuileDisplayWindow::window);
-        if (metadata == facts.windows.end()) {
+        const GuileWorkbenchWindowState state = window_policy(plan.target);
+        if (state.workbench != workbench_id) {
             return "selected a window without display policy state";
         }
-        if (plan.action == GuileDisplayPlan::Action::Reuse && metadata->pinned &&
+        if (plan.action == GuileDisplayPlan::Action::Reuse && state.window.pinned &&
             intent != "explicit") {
             return "selected a pinned window";
         }

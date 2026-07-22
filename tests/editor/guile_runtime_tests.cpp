@@ -919,18 +919,15 @@ TEST_CASE("Guile display policy resolves deterministic slots and can be replaced
     REQUIRE(guile.install_display_policy().has_value());
     const WindowId active{0, 1};
     const WindowId adjacent{1, 1};
-    GuileDisplayFacts facts{.intent = "jump",
-                            .origin = active,
-                            .active = active,
-                            .windows = {{.window = active,
-                                         .role = std::nullopt,
-                                         .pinned = true,
-                                         .created_by_policy = false},
-                                        {.window = adjacent,
-                                         .role = std::nullopt,
-                                         .pinned = false,
-                                         .created_by_policy = false}},
-                            .slots = {}};
+    // The policy reads role, pinning and slots from its own workbench state;
+    // only the layout order travels in the facts.
+    const WorkbenchId workbench{0, 1};
+    REQUIRE(guile.workbench_created(workbench, "main", active, std::nullopt, {}).has_value());
+    REQUIRE(guile.workbench_window_added(workbench, adjacent).has_value());
+    REQUIRE(guile.workbench_set_window_pinned(active, true).has_value());
+
+    GuileDisplayFacts facts{
+        .intent = "jump", .origin = active, .active = active, .windows = {active, adjacent}};
     std::expected<GuileDisplayPlan, std::string> plan = guile.display_plan(facts);
     REQUIRE(plan.has_value());
     CHECK(plan->action == GuileDisplayPlan::Action::Reuse);
@@ -945,7 +942,7 @@ TEST_CASE("Guile display policy resolves deterministic slots and can be replaced
     CHECK(plan->ratio == doctest::Approx(0.72F));
     CHECK(plan->role == std::optional<std::string>{"tools"});
 
-    facts.slots = {{.role = "tools", .window = adjacent}};
+    REQUIRE(guile.workbench_set_window_role(adjacent, "tools").has_value());
     plan = guile.display_plan(facts);
     REQUIRE(plan.has_value());
     CHECK(plan->action == GuileDisplayPlan::Action::Reuse);

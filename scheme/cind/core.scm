@@ -43,7 +43,9 @@
                           set-window-role!
                           window-pinned?
                           set-window-pinned!
-                          window-created-by-policy?))
+                          window-created-by-policy?
+                          workbench-window-state-or-default
+                          workbench-slot))
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
@@ -164,40 +166,31 @@
              #t)))))
   2)
 
-(define (display-fact-window facts window)
-  (let ((windows (vector-ref facts 4)))
-    (let loop ((index 0))
-      (and (< index (vector-length windows))
-           (let ((candidate (vector-ref windows index)))
-             (if (equal? (vector-ref candidate 1) window)
-                 candidate
-                 (loop (+ index 1))))))))
+(define (display-window-summary host window)
+  (workbench-window-state-or-default host window))
 
-(define (display-fact-slot facts role)
-  (let ((slots (vector-ref facts 5)))
-    (let loop ((index 0))
-      (and (< index (vector-length slots))
-           (let ((slot (vector-ref slots index)))
-             (if (eq? (vector-ref slot 1) role)
-                 (vector-ref slot 2)
-                 (loop (+ index 1))))))))
+(define (display-window-pinned? host window)
+  (vector-ref (display-window-summary host window) 2))
 
-(define (display-window-pinned? facts window)
-  (let ((summary (display-fact-window facts window)))
-    (and summary (vector-ref summary 3))))
+(define (display-window-role host window)
+  (let ((role (vector-ref (display-window-summary host window) 1)))
+    (and role (string->symbol role))))
 
-(define (display-window-role facts window)
-  (let ((summary (display-fact-window facts window)))
-    (and summary (vector-ref summary 2))))
+(define (display-slot host workbench role)
+  (and role (workbench-slot host workbench (symbol->string role))))
 
+;; The window order is the layout's, which is native truth and therefore
+;; travels in the facts; role, pinning and slots are this side's own state and
+;; are read here rather than gathered by C++ and handed back
+;; (design/09-guile-first.md §0.2).
 (define (display-adjacent-window facts window)
   (let* ((windows (vector-ref facts 4))
          (count (vector-length windows)))
     (let loop ((index 0))
       (cond ((= index count) #f)
-            ((equal? (vector-ref (vector-ref windows index) 1) window)
+            ((equal? (vector-ref windows index) window)
              (and (> count 1)
-                  (vector-ref (vector-ref windows (modulo (+ index 1) count)) 1)))
+                  (vector-ref windows (modulo (+ index 1) count))))
             (else (loop (+ index 1)))))))
 
 (define (display-reuse window)
@@ -210,23 +203,24 @@
   (let* ((intent (vector-ref facts 1))
          (origin (vector-ref facts 2))
          (active (vector-ref facts 3))
-         (slot (display-fact-slot facts intent)))
+         (workbench (active-workbench host))
+         (slot (display-slot host workbench intent)))
     (cond ((eq? intent 'explicit)
            (display-reuse origin))
-          ((and slot (not (display-window-pinned? facts slot)))
+          ((and slot (not (display-window-pinned? host slot)))
            (display-reuse slot))
           ((memq intent '(tools doc))
            (display-split active 'rows 0.72 intent))
           ((eq? intent 'pop)
            (display-split active 'columns 0.5 #f))
           ((and (or (eq? intent 'jump) (eq? intent 'list))
-                (or (display-window-pinned? facts active)
-                    (memq (display-window-role facts active) '(tools doc))))
+                (or (display-window-pinned? host active)
+                    (memq (display-window-role host active) '(tools doc))))
            (let ((adjacent (display-adjacent-window facts active)))
-             (if (and adjacent (not (display-window-pinned? facts adjacent)))
+             (if (and adjacent (not (display-window-pinned? host adjacent)))
                  (display-reuse adjacent)
                  (display-split active 'columns 0.5 'jump))))
-          ((not (display-window-pinned? facts active))
+          ((not (display-window-pinned? host active))
            (display-reuse active))
           (else
            (display-split origin 'columns 0.5 #f)))))
