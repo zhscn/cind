@@ -27,7 +27,6 @@ struct ModelineContent {
 };
 
 struct ModelineFacts {
-    std::string buffer_name;
     std::string resource;
     bool dirty = false;
     std::uint32_t line = 0;

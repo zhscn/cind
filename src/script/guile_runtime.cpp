@@ -33,11 +33,11 @@ namespace {
 
 // `state` owns the per-application state root and is loaded before the modules
 // that declare slots in it.
-constexpr std::array<std::string_view, 23> bundled_guile_modules = {
-    "state",      "application", "command",   "completion", "input",      "lsp",
-    "async",      "workbench",   "lifecycle", "pointer",    "extension",  "emacs",
-    "toy-modal",  "meow",        "vim",       "helix",      "structural", "paredit",
-    "minibuffer", "development", "ares",      "introspect", "core",
+constexpr std::array<std::string_view, 24> bundled_guile_modules = {
+    "state",   "buffers",    "application", "command",   "completion", "input",
+    "lsp",     "async",      "workbench",   "lifecycle", "pointer",    "extension",
+    "emacs",   "toy-modal",  "meow",        "vim",       "helix",      "structural",
+    "paredit", "minibuffer", "development", "ares",      "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
@@ -2983,20 +2983,6 @@ SCM read_clipboard(SCM host_object) {
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
-SCM buffer_id_by_name(SCM host_object, SCM name_value) {
-    if (!scm_is_string(name_value)) {
-        scm_wrong_type_arg_msg("buffer-id-by-name", 2, name_value, "string");
-    }
-    return host_primitive("buffer-id-by-name", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "buffer-id-by-name");
-        const std::optional<BufferId> buffer =
-            host.runtime->buffers().find_by_name(scheme_string(name_value));
-        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
-    });
-}
-
-// The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
-// and validation preserve the semantic order.
 SCM buffer_resource(SCM host_object, SCM buffer_value) {
     return host_primitive("buffer-resource", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-resource");
@@ -3005,17 +2991,6 @@ SCM buffer_resource(SCM host_object, SCM buffer_value) {
         const std::optional<std::string>& resource =
             host.runtime->buffers().get(buffer).resource_uri();
         return resource ? scm_from_utf8_string(resource->c_str()) : SCM_BOOL_F;
-    });
-}
-
-// The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
-// validation preserve their semantic order.
-SCM buffer_name(SCM host_object, SCM buffer_value) {
-    return host_primitive("buffer-name", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "buffer-name");
-        const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-name", 2);
-        const std::string& name = host.runtime->buffers().get(buffer).name();
-        return scm_from_utf8_stringn(name.data(), name.size());
     });
 }
 
@@ -3855,18 +3830,6 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
         entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-resource!", 2);
     return host_primitive("set-buffer-resource!", [&]() -> SCM {
         host.runtime->buffers().set_resource(buffer, scheme_string(path_value), BufferKind::File);
-        return SCM_UNSPECIFIED;
-    });
-}
-
-SCM rename_buffer(SCM host_object, SCM buffer_value, SCM name_value) {
-    if (!scm_is_string(name_value)) {
-        scm_wrong_type_arg_msg("rename-buffer!", 3, name_value, "string");
-    }
-    return host_primitive("rename-buffer!", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "rename-buffer!");
-        const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "rename-buffer!", 2);
-        host.runtime->buffers().rename(buffer, scheme_string(name_value));
         return SCM_UNSPECIFIED;
     });
 }
@@ -4808,9 +4771,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(write_clipboard));
     (void)scm_c_define_gsubr("read-clipboard", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(read_clipboard));
-    (void)scm_c_define_gsubr("buffer-id-by-name", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(buffer_id_by_name));
-    (void)scm_c_define_gsubr("buffer-name", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_name));
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_resource));
     (void)scm_c_define_gsubr("buffer-project-id", 2, 0, 0,
@@ -4929,8 +4889,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(normalize_resource));
     (void)scm_c_define_gsubr("set-buffer-resource!", 3, 0, 0,
                              reinterpret_cast<scm_t_subr>(set_buffer_resource));
-    (void)scm_c_define_gsubr("rename-buffer!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(rename_buffer));
     (void)scm_c_define_gsubr("buffer-id-by-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_id_by_resource));
     (void)scm_c_define_gsubr("resource-mode", 2, 0, 0, reinterpret_cast<scm_t_subr>(resource_mode));
@@ -4986,13 +4944,12 @@ void initialize_host_module(void*) {
         "close-workbench!", "workbench-session-state", "prepare-workbench-session-restore!",
         "show-buffer-in-window!", "project-list", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "path-resolve", "active-key-bindings",
-        "buffer-id-by-name", "buffer-name", "buffer-resource", "buffer-project-id", "buffer-text",
-        "buffer-byte-size", "buffer-editable-start", "set-buffer-editable-start!",
-        "create-buffer-marker!", "buffer-marker-offset", "remove-buffer-marker!",
-        "buffer-locations", "buffer-diagnostics", "set-buffer-locations!",
-        "publish-location-list-data!", "buffer-read-only?", "path-parent", "directory-path?",
-        "path-as-directory", "view-caret", "view-mark", "view-selection", "set-selection!",
-        "clear-selection!", "push-selection-history!", "pop-selection-history!",
+        "buffer-resource", "buffer-project-id", "buffer-text", "buffer-byte-size",
+        "buffer-editable-start", "set-buffer-editable-start!", "create-buffer-marker!",
+        "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
+        "set-buffer-locations!", "publish-location-list-data!", "buffer-read-only?", "path-parent",
+        "directory-path?", "path-as-directory", "view-caret", "view-mark", "view-selection",
+        "set-selection!", "clear-selection!", "push-selection-history!", "pop-selection-history!",
         "clear-selection-history!", "selection-history-depth", "replace-selection!",
         "selection-texts", "buffer-substring", "find-buffer-text", "erase-range!", "insert-text!",
         "soft-kill-range", "set-view-caret!", "reset-preferred-column!", "thing-selection",
@@ -5010,12 +4967,12 @@ void initialize_host_module(void*) {
         "cancel-completion!", "view-position", "view-line-prefix", "view-syntax-token",
         "view-identifier-words", "location-list-item-target", "position-buffer-view!",
         "project-index-state", "request-project-index!", "normalize-resource-path",
-        "set-buffer-resource!", "rename-buffer!", "buffer-id-by-resource", "resource-mode",
-        "project-for-resource", "project-provider-definitions", "project-id-by-root",
-        "create-project!", "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!",
-        "open-buffer-ids", "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!",
-        "delete-window!", "delete-other-windows!", "open-window-ids", "active-window-id",
-        "window-view-id", "window-buffer-id", "focus-window!", nullptr);
+        "set-buffer-resource!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
+        "project-provider-definitions", "project-id-by-root", "create-project!",
+        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
+        "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
+        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
+        "window-buffer-id", "focus-window!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }
 
@@ -5073,20 +5030,19 @@ GuileKeymapPolicy keymap_policy_from_scheme(HostLease& host, SCM value, const ch
 }
 
 SCM modeline_facts_value(const ModelineFacts& facts) {
-    SCM value = scm_c_make_vector(11, SCM_UNSPECIFIED);
+    SCM value = scm_c_make_vector(10, SCM_UNSPECIFIED);
     scm_c_vector_set_x(value, 0, scm_from_utf8_symbol("modeline-facts"));
-    scm_c_vector_set_x(value, 1, scm_from_utf8_string(facts.buffer_name.c_str()));
-    scm_c_vector_set_x(value, 2,
+    scm_c_vector_set_x(value, 1,
                        facts.resource.empty() ? SCM_BOOL_F
                                               : scm_from_utf8_string(facts.resource.c_str()));
-    scm_c_vector_set_x(value, 3, scm_from_bool(facts.dirty));
-    scm_c_vector_set_x(value, 4, scm_from_uint32(facts.line));
-    scm_c_vector_set_x(value, 5, scm_from_uint32(facts.column));
-    scm_c_vector_set_x(value, 6, scm_from_uint32(facts.line_count));
-    scm_c_vector_set_x(value, 7, scm_from_uint64(facts.revision));
-    scm_c_vector_set_x(value, 8, scm_from_utf8_string(facts.style_origin.c_str()));
-    scm_c_vector_set_x(value, 9, scm_from_utf8_string(""));
-    scm_c_vector_set_x(value, 10, scm_from_utf8_string(facts.input_state.c_str()));
+    scm_c_vector_set_x(value, 2, scm_from_bool(facts.dirty));
+    scm_c_vector_set_x(value, 3, scm_from_uint32(facts.line));
+    scm_c_vector_set_x(value, 4, scm_from_uint32(facts.column));
+    scm_c_vector_set_x(value, 5, scm_from_uint32(facts.line_count));
+    scm_c_vector_set_x(value, 6, scm_from_uint64(facts.revision));
+    scm_c_vector_set_x(value, 7, scm_from_utf8_string(facts.style_origin.c_str()));
+    scm_c_vector_set_x(value, 8, scm_from_utf8_string(""));
+    scm_c_vector_set_x(value, 9, scm_from_utf8_string(facts.input_state.c_str()));
     return value;
 }
 
@@ -5791,6 +5747,9 @@ struct GuileCall {
         SetPageRows,
         LspSessionBound,
         BufferCreated,
+        BufferName,
+        BufferIdByName,
+        SetBufferName,
         BufferStyleOrigin,
         BufferReleased,
         WorkbenchCreated,
@@ -5879,6 +5838,7 @@ struct GuileCall {
     const ModelineFacts* modeline_facts = nullptr;
     const ChromeFacts* chrome_facts = nullptr;
     const GuileDisplayFacts* display_facts = nullptr;
+    const GuileBufferIdentityFacts* buffer_identity = nullptr;
     const InteractionRequest* interaction_request = nullptr;
     std::exception_ptr cpp_failure;
     ScrollInput scroll_input;
@@ -6766,9 +6726,40 @@ SCM call_body(void* data) {
             }
             call.enabled = scheme_true(call.result);
             break;
-        case GuileCall::Operation::BufferCreated:
-            call.result = scm_call_3(scm_c_public_ref("cind lifecycle", "buffer-created!"),
-                                     call.host, entity_id(call.buffer.slot, call.buffer.generation),
+        case GuileCall::Operation::BufferCreated: {
+            const GuileBufferIdentityFacts& identity = *call.buffer_identity;
+            const SCM arguments[] = {
+                call.host,
+                entity_id(call.buffer.slot, call.buffer.generation),
+                scm_from_utf8_stringn(call.source.data(), call.source.size()),
+                scm_from_utf8_stringn(identity.requested_name.data(),
+                                      identity.requested_name.size()),
+                buffer_kind_symbol(identity.kind),
+                identity.resource ? scm_from_utf8_string(identity.resource->c_str()) : SCM_BOOL_F};
+            call.result = scm_call_n(scm_c_public_ref("cind lifecycle", "buffer-created!"),
+                                     const_cast<SCM*>(arguments), std::size(arguments));
+            break;
+        }
+        case GuileCall::Operation::BufferName:
+            call.result = scm_call_2(scm_c_public_ref("cind buffers", "buffer-name"), call.host,
+                                     entity_id(call.buffer.slot, call.buffer.generation));
+            if (!scm_is_string(call.result)) {
+                scm_wrong_type_arg_msg("buffer-name", 0, call.result, "string");
+            }
+            call.source = scheme_string(call.result);
+            break;
+        case GuileCall::Operation::BufferIdByName:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind buffers", "buffer-id-by-name"), call.host,
+                           scm_from_utf8_stringn(call.source.data(), call.source.size()));
+            call.buffer =
+                scheme_false(call.result)
+                    ? BufferId{}
+                    : entity_id_from_scheme<BufferTag>(call.result, "buffer-id-by-name", 0);
+            break;
+        case GuileCall::Operation::SetBufferName:
+            call.result = scm_call_3(scm_c_public_ref("cind buffers", "rename-buffer!"), call.host,
+                                     entity_id(call.buffer.slot, call.buffer.generation),
                                      scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
         case GuileCall::Operation::BufferStyleOrigin:
@@ -8495,8 +8486,8 @@ public:
         return call.enabled;
     }
 
-    std::expected<void, std::string> buffer_created(BufferId buffer,
-                                                    std::string_view style_origin) {
+    std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin,
+                                                    const GuileBufferIdentityFacts& identity) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
         GuileCall call;
@@ -8504,6 +8495,53 @@ public:
         call.host = host_;
         call.buffer = buffer;
         call.source = style_origin;
+        call.buffer_identity = &identity;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return {};
+    }
+
+    std::expected<std::string, std::string> buffer_name(BufferId buffer) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferName;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.source;
+    }
+
+    std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferIdByName;
+        call.host = host_;
+        call.source = name;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.buffer.valid() ? std::optional(call.buffer) : std::nullopt;
+    }
+
+    std::expected<void, std::string> set_buffer_name(BufferId buffer, std::string_view name) {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::SetBufferName;
+        call.host = host_;
+        call.buffer = buffer;
+        call.source = name;
         if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
             state_->last_error = result.error();
             return std::unexpected(*state_->last_error);
@@ -9938,9 +9976,24 @@ std::expected<bool, std::string> GuileRuntime::lsp_session_bound(BufferId buffer
     return impl_->lsp_session_bound(buffer, session);
 }
 
-std::expected<void, std::string> GuileRuntime::buffer_created(BufferId buffer,
-                                                              std::string_view style_origin) {
-    return impl_->buffer_created(buffer, style_origin);
+std::expected<void, std::string>
+GuileRuntime::buffer_created(BufferId buffer, std::string_view style_origin,
+                             const GuileBufferIdentityFacts& identity) {
+    return impl_->buffer_created(buffer, style_origin, identity);
+}
+
+std::expected<std::string, std::string> GuileRuntime::buffer_name(BufferId buffer) const {
+    return impl_->buffer_name(buffer);
+}
+
+std::expected<std::optional<BufferId>, std::string>
+GuileRuntime::buffer_id_by_name(std::string_view name) {
+    return impl_->buffer_id_by_name(name);
+}
+
+std::expected<void, std::string> GuileRuntime::set_buffer_name(BufferId buffer,
+                                                               std::string_view name) {
+    return impl_->set_buffer_name(buffer, name);
 }
 
 std::expected<std::string, std::string> GuileRuntime::buffer_style_origin(BufferId buffer) const {

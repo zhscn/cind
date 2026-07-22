@@ -266,8 +266,11 @@ public:
     RevisionId revision(WindowId window) const { return session(window).snapshot().revision(); }
     bool dirty() const { return session().buffer().modified(); }
     bool dirty(WindowId window) const { return session(window).buffer().modified(); }
-    const std::string& path() const;
-    const std::string& path(WindowId window) const;
+    std::string path() const;
+    std::string path(WindowId window) const;
+    // Names are policy and live in Guile; this asks the owner rather than
+    // keeping a native copy (design/09-guile-first.md section 3.4).
+    std::string buffer_name(BufferId buffer) const;
     std::string style_origin() const;
     std::string style_origin(WindowId window) const;
     std::uint32_t save_generation() const;

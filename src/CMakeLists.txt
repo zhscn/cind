@@ -131,6 +131,7 @@ set(CIND_SCHEME_MODULES
   application
   ares
   async
+  buffers
   command
   completion
   core

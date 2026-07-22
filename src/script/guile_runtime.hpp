@@ -179,6 +179,14 @@ struct GuileWorkbenchWindowState {
     GuileDisplayWindow window;
 };
 
+// What the host was asked to create. The policy turns this into the buffer's
+// name and keeps it; the host stores no name of its own.
+struct GuileBufferIdentityFacts {
+    std::string requested_name;
+    BufferKind kind = BufferKind::Scratch;
+    std::optional<std::string> resource;
+};
+
 struct GuileDisplayFacts {
     std::string intent;
     WindowId origin;
@@ -442,7 +450,11 @@ public:
     std::expected<void, std::string> set_page_rows(std::uint32_t rows);
     std::expected<bool, std::string> lsp_session_bound(BufferId buffer,
                                                        std::uint64_t session) const;
-    std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin);
+    std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin,
+                                                    const GuileBufferIdentityFacts& identity);
+    std::expected<std::string, std::string> buffer_name(BufferId buffer) const;
+    std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name);
+    std::expected<void, std::string> set_buffer_name(BufferId buffer, std::string_view name);
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);
     std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,

@@ -191,9 +191,11 @@ TEST_CASE("editor application owns normalized interaction dispatch") {
     send_keys(application, "C-s");
     REQUIRE(application.interaction().state() != nullptr);
     CHECK(interaction_policy(application).prompt == "search: ");
+    // The interaction mechanism creates its buffer without announcing it, so
+    // it has no name in the registry that owns names; the interaction carries
+    // its own. Folding interaction buffers into that registry is the next P2
+    // slice (design/09-guile-first.md section 8).
     CHECK(interaction_policy(application).buffer_name == " *minibuffer*");
-    CHECK(application.runtime().buffers().get(application.interaction().state()->buffer).name() ==
-          " *minibuffer*");
     CHECK(application.last_command() == "search.prompt");
 
     application.insert_text("two");
@@ -611,12 +613,14 @@ TEST_CASE("shared echo policy follows active bindings and input lifetime") {
 
 TEST_CASE("user initialization owns modeline content policy") {
     TemporaryFile init(std::format("cind-modeline-policy-{}.scm", static_cast<long>(::getpid())),
-                       R"((configure-modeline-policy!
+                       R"((use-modules (cind buffers))
+(configure-modeline-policy!
  host
  (lambda (host context facts)
    (vector 'modeline
            (vector (vector 'modeline-segment 'left 'salient 'strong #f
-                           (string-append "custom:" (vector-ref facts 1)))))))
+                           (string-append "custom:"
+                                          (buffer-name host (context-buffer context))))))))
 )");
     EditorApplication application({.path = "sample.cc",
                                    .initial_text = "text",
@@ -790,7 +794,7 @@ TEST_CASE("user initialization owns startup buffer policy before native bootstra
                                    .init_file = init.path().string()});
 
     const Buffer& buffer = application.session().buffer();
-    CHECK(buffer.name() == "*Welcome*");
+    CHECK(application.buffer_name(buffer.id()) == "*Welcome*");
     CHECK(buffer.kind() == BufferKind::Generated);
     CHECK(buffer.read_only());
     CHECK(buffer.snapshot().content().empty());
@@ -817,7 +821,7 @@ TEST_CASE("user initialization owns the last-buffer fallback policy") {
 
     REQUIRE(application.execute_command("buffer.force-kill"));
     CHECK(application.buffer_count() == 1);
-    CHECK(application.session().buffer().name() == "*Fallback*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*Fallback*");
     CHECK(application.session().snapshot().content() == "ready\n");
     CHECK(application.style_origin() == "custom fallback");
 }
@@ -1677,7 +1681,7 @@ TEST_CASE("scripted save-as policy configures and saves a file buffer") {
     CHECK_FALSE(application.has_background_work());
     CHECK(application.session().buffer().kind() == BufferKind::File);
     CHECK(application.session().buffer().resource_uri() == path.string());
-    CHECK(application.session().buffer().name() == path.filename().string());
+    CHECK(application.buffer_name(application.session().buffer().id()) == path.filename().string());
     std::ifstream input(path, std::ios::binary);
     const std::string saved{std::istreambuf_iterator<char>(input),
                             std::istreambuf_iterator<char>()};
@@ -2109,7 +2113,7 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     application.session().view().viewport().top_line = 0;
 
     send_keys(application, "C-h b");
-    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*Help*");
     const std::vector<BufferId> second_buffers = application.workbench_buffers(second_workbench);
     REQUIRE(second_buffers.size() == 2);
     CHECK(second_buffers.front() == application.buffer_id());
@@ -2122,7 +2126,7 @@ TEST_CASE("workbench switching preserves inactive window and view state") {
     CHECK(application.workbench_buffers(first_workbench).size() == 1);
 
     REQUIRE(application.switch_workbench(second_workbench));
-    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*Help*");
     CHECK(application.session().caret() == TextOffset{0});
     REQUIRE(application.close_workbench(second_workbench));
     CHECK(application.workbench_id() == first_workbench);
@@ -2753,7 +2757,7 @@ TEST_CASE("invalid display plans fall back to the default Scheme policy") {
 
     REQUIRE(application.open_windows().size() == 2);
     CHECK(application.window_id() != edit_window);
-    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*Help*");
     CHECK(application.window_snapshot(application.window_id()).role ==
           std::optional<std::string>{"doc"});
 }
@@ -2812,7 +2816,8 @@ TEST_CASE("buffer picker defaults to the active workbench and can widen globally
         (void)application.poll_background_work();
     }
     const BufferId first_only = application.buffer_id();
-    const std::string first_only_name = application.session().buffer().name();
+    const std::string first_only_name =
+        application.buffer_name(application.session().buffer().id());
     REQUIRE(application.switch_buffer(initial));
 
     const WorkbenchId second = application.create_workbench("second");
@@ -2944,7 +2949,7 @@ TEST_CASE("describe bindings and command palette use shared command state") {
     EditorApplication application = make_application("sample.cc", "text");
 
     send_keys(application, "C-h b");
-    CHECK(application.session().buffer().name() == "*Help*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*Help*");
     const std::string help = application.session().snapshot().content().to_string();
     CHECK(help.find("C-x C-s  file.save") != std::string::npos);
     CHECK(help.find("C-x C-c  application.quit") != std::string::npos);
@@ -3129,7 +3134,7 @@ TEST_CASE("Scheme buffer and region evaluation share a persistent user module") 
     const BufferId result = application.buffer_id();
     CHECK(result != source);
     const Buffer& result_buffer = runtime.buffers().get(result);
-    CHECK(result_buffer.name() == "*Scheme Evaluation*");
+    CHECK(application.buffer_name(result_buffer.id()) == "*Scheme Evaluation*");
     CHECK(result_buffer.kind() == BufferKind::Generated);
     CHECK(result_buffer.read_only());
     CHECK(application.style_origin() == "scheme evaluation");
@@ -3163,7 +3168,7 @@ TEST_CASE("Scheme REPL is an editor buffer with persistent evaluation and input 
     send_keys(application, "C-c C-z");
     CHECK(application.last_command() == "scheme.repl");
     const Buffer& repl = runtime.buffers().get(application.buffer_id());
-    CHECK(repl.name() == "*Scheme REPL*");
+    CHECK(application.buffer_name(repl.id()) == "*Scheme REPL*");
     CHECK(repl.kind() == BufferKind::Process);
     CHECK_FALSE(repl.read_only());
     const std::optional<ModeId> major = repl.modes().major();
@@ -3489,8 +3494,7 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
                                   application.buffer_id(), application.view_id());
     const CommandResult switched = application.runtime().commands().invoke(
         switch_buffer, switch_context,
-        CommandInvocation{.arguments = {application.runtime().buffers().get(first).name()},
-                          .prefix = {}});
+        CommandInvocation{.arguments = {application.buffer_name(first)}, .prefix = {}});
     INFO((switched ? std::string{} : switched.error().message));
     REQUIRE(switched.has_value());
     CHECK(application.session().snapshot().content().to_string() == "Afirst");
@@ -3525,7 +3529,7 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
                                      application.buffer_id(), application.view_id());
     REQUIRE(application.runtime().commands().invoke(force_kill, kill_last_context).has_value());
     CHECK(application.buffer_count() == 1);
-    CHECK(application.session().buffer().name() == "*scratch*");
+    CHECK(application.buffer_name(application.session().buffer().id()) == "*scratch*");
     CHECK_FALSE(application.dirty());
 
     std::filesystem::remove_all(directory, ignored);
@@ -3544,7 +3548,7 @@ TEST_CASE("describe commands display reusable generated help buffers") {
     REQUIRE(first.has_value());
     const BufferId help = application.buffer_id();
     const Buffer& help_buffer = runtime.buffers().get(help);
-    CHECK(help_buffer.name() == "*Help*");
+    CHECK(application.buffer_name(help_buffer.id()) == "*Help*");
     CHECK(help_buffer.kind() == BufferKind::Generated);
     CHECK(help_buffer.read_only());
     const ModeId help_mode = help_buffer.modes().major().value_or(ModeId{});

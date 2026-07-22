@@ -29,6 +29,8 @@ enum class BufferKind : std::uint8_t {
 };
 
 struct BufferSpec {
+    // What the creator would like the buffer called. The name itself is policy
+    // and lives in Guile; this is forwarded to it and not stored here.
     std::string name;
     std::string initial_text;
     BufferKind kind = BufferKind::Scratch;
@@ -52,7 +54,6 @@ class Buffer {
 public:
     BufferId id() const { return id_; }
     DocumentId document_id() const { return document_.id(); }
-    const std::string& name() const { return name_; }
     BufferKind kind() const { return kind_; }
     const std::optional<std::string>& resource_uri() const { return resource_uri_; }
     std::optional<ProjectId> project_id() const { return project_id_; }
@@ -102,7 +103,6 @@ private:
     void require_writable() const;
 
     BufferId id_;
-    std::string name_;
     BufferKind kind_;
     std::optional<std::string> resource_uri_;
     std::optional<ProjectId> project_id_;
@@ -133,11 +133,9 @@ public:
     Buffer* try_get(BufferId id);
     const Buffer* try_get(BufferId id) const;
 
-    std::optional<BufferId> find_by_name(std::string_view name) const;
     std::optional<BufferId> find_by_resource(std::string_view uri) const;
     std::vector<BufferId> all() const;
 
-    void rename(BufferId id, std::string requested_name);
     void set_resource(BufferId id, std::optional<std::string> uri, BufferKind kind);
     void set_locations(BufferId id, std::vector<BufferLocation> locations);
     void set_diagnostics(BufferId id, std::string owner, RevisionId revision,
@@ -150,15 +148,10 @@ private:
         std::unique_ptr<Buffer> value;
     };
 
-    std::string unique_name(std::string requested,
-                            std::optional<BufferId> self = std::nullopt) const;
-    static std::string fallback_name(const BufferSpec& spec);
-
     const SettingRegistry* settings_;
     ModeRegistry* modes_;
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_slots_;
-    std::unordered_map<std::string, BufferId> by_name_;
     std::unordered_map<std::string, BufferId> by_resource_;
     DocumentId next_document_id_ = 1;
 };

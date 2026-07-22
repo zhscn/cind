@@ -37,6 +37,16 @@ BufferId create_session_buffer(EditorRuntime& runtime, std::string initial_text)
                    .resource_uri = buffer_plan.resource,
                    .read_only = buffer_plan.read_only});
     runtime.buffers().get(buffer).modes().set_major(runtime.modes(), buffer_plan.major_mode);
+    // The name lives in Guile, so a buffer created outside
+    // EditorApplication::create_buffer still has to be announced.
+    if (const std::expected<void, std::string> recorded =
+            guile.buffer_created(buffer, "session bootstrap",
+                                 GuileBufferIdentityFacts{.requested_name = buffer_plan.name,
+                                                          .kind = buffer_plan.kind,
+                                                          .resource = buffer_plan.resource});
+        !recorded) {
+        throw std::runtime_error("cannot record session bootstrap buffer: " + recorded.error());
+    }
     return buffer;
 }
 

@@ -15,10 +15,14 @@ struct ComposedExcerptSpec {
     BufferId buffer;
     TextRange context;
     TextRange primary;
+    // Heading shown for a buffer with no resource. Buffer names are policy and
+    // live in Guile, so whoever composes the view supplies the label.
+    std::string label;
 };
 
 struct ComposedExcerpt {
     BufferId buffer;
+    std::string label;
     AnchorId context_start = 0;
     AnchorId context_end = 0;
     AnchorId primary_start = 0;

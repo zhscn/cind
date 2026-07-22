@@ -633,8 +633,8 @@ TEST_CASE("buffers have stable identities and outlive their views") {
                                                       .resource_uri = std::nullopt,
                                                       .read_only = false});
 
-    CHECK(runtime.buffers().get(first).name() == "main.cc");
-    CHECK(runtime.buffers().get(second).name() == "main.cc<2>");
+    // Names, and the disambiguation of colliding ones, are policy and live in
+    // Guile; the registry indexes only the resource it owns.
     CHECK(runtime.buffers().find_by_resource("file:///tmp/main.cc") == first);
 
     const ViewId view = runtime.views().create(first, TextOffset{1});
@@ -1464,7 +1464,6 @@ TEST_CASE("interaction controller owns non-blocking command input") {
     const ViewId minibuffer_view = interaction.state()->view;
     const WindowId minibuffer_window = interaction.state()->window;
     CHECK(runtime.buffers().get(minibuffer).kind() == BufferKind::Minibuffer);
-    CHECK(runtime.buffers().get(minibuffer).name() == " *test-minibuffer*");
     CHECK(runtime.buffers().all().size() == initial_buffers + 1);
     CHECK(runtime.windows().all().size() == initial_windows + 1);
     CHECK(interaction.state()->origin ==

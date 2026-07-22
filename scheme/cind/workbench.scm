@@ -1,9 +1,9 @@
 (define-module (cind workbench)
+  #:use-module (cind buffers)
   #:use-module (cind state)
   #:use-module ((cind host)
                 #:select (open-buffer-ids
                           buffer-project-id
-                          buffer-name
                           buffer-resource
                           buffer-modified?
                           project-root))

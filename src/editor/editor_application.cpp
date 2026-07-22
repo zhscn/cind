@@ -1084,7 +1084,6 @@ ModelineContent EditorApplication::modeline(WindowId window_id) {
     CommandContext context(runtime_, window_id, buffer.id(), view.id());
     const InputStateRegistry::Definition& state = input_state(window_id);
     const ModelineFacts facts{
-        .buffer_name = buffer.name(),
         .resource = buffer.resource_uri().value_or(std::string()),
         .dirty = buffer.modified(),
         .line = position.line + 1,
@@ -2425,7 +2424,7 @@ std::vector<OpenBufferSnapshot> EditorApplication::open_buffers() const {
         result.push_back(
             {.buffer = state.buffer,
              .view = view != nullptr ? std::optional(view->view) : std::nullopt,
-             .name = buffer.name(),
+             .name = buffer_name(state.buffer),
              .resource = buffer.resource_uri(),
              .modified = buffer.modified(),
              .active = state.buffer == buffer_id(),
@@ -2702,14 +2701,22 @@ PositionHintProviderResult EditorApplication::position_hints(WindowId window) {
     return view_state.position_hints->result;
 }
 
-const std::string& EditorApplication::path() const {
-    const Buffer& buffer = session().buffer();
-    return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();
+std::string EditorApplication::buffer_name(BufferId buffer) const {
+    return guile_.buffer_name(buffer).value_or(std::string());
 }
 
-const std::string& EditorApplication::path(WindowId window) const {
+std::string EditorApplication::path() const {
+    return path(window_id());
+}
+
+// A buffer with no resource is identified by its name, which is policy and
+// lives in Guile, so this cannot return a reference into the buffer.
+std::string EditorApplication::path(WindowId window) const {
     const Buffer& buffer = session(window).buffer();
-    return buffer.resource_uri() ? *buffer.resource_uri() : buffer.name();
+    if (buffer.resource_uri()) {
+        return *buffer.resource_uri();
+    }
+    return buffer_name(buffer.id());
 }
 
 std::string EditorApplication::style_origin() const {
@@ -2799,6 +2806,8 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
                                           std::string_view style_origin,
                                           std::optional<ModeId> major_mode, TextOffset caret) {
     (void)caret;
+    const GuileBufferIdentityFacts identity{
+        .requested_name = spec.name, .kind = spec.kind, .resource = spec.resource_uri};
     const BufferId buffer = runtime_.buffers().create(std::move(spec));
     try {
         runtime_.buffers().get(buffer).modes().set_major(runtime_.modes(), major_mode);
@@ -2809,7 +2818,7 @@ BufferId EditorApplication::create_buffer(BufferSpec spec, CppIndentStyle style,
         resolve_location_lists(buffer);
         resolve_jump_nodes(buffer);
         if (const std::expected<void, std::string> recorded =
-                guile_.buffer_created(buffer, style_origin);
+                guile_.buffer_created(buffer, style_origin, identity);
             !recorded) {
             throw std::runtime_error(recorded.error());
         }
@@ -2905,8 +2914,13 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
     try {
         (void)runtime_.modes().definition(mode);
         BufferId buffer;
-        if (const std::optional<BufferId> existing = runtime_.buffers().find_by_name(name)) {
-            buffer = *existing;
+        const std::expected<std::optional<BufferId>, std::string> existing =
+            guile_.buffer_id_by_name(name);
+        if (!existing) {
+            return std::unexpected(existing.error());
+        }
+        if (*existing) {
+            buffer = **existing;
             Buffer& target = runtime_.buffers().get(buffer);
             if (target.kind() != BufferKind::Generated) {
                 return std::unexpected(std::format("buffer '{}' is not generated", name));
@@ -2924,8 +2938,13 @@ EditorApplication::display_generated_buffer(WindowId origin, std::string name, s
                 throw;
             }
             target.modes().set_major(runtime_.modes(), mode);
+            // Re-announcing an existing buffer refreshes its style origin; the
+            // name it already has is kept.
             if (const std::expected<void, std::string> recorded =
-                    guile_.buffer_created(buffer, style_origin);
+                    guile_.buffer_created(buffer, style_origin,
+                                          GuileBufferIdentityFacts{.requested_name = name,
+                                                                   .kind = BufferKind::Generated,
+                                                                   .resource = std::nullopt});
                 !recorded) {
                 return std::unexpected(recorded.error());
             }

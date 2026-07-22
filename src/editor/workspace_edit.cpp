@@ -23,6 +23,12 @@ struct PendingTransaction {
     EditTransaction transaction;
 };
 
+// Buffer names are policy and live in Guile (design/09-guile-first.md section
+// 3.4), so identify a buffer in diagnostics by the values this layer owns.
+std::string buffer_label(const Buffer& buffer) {
+    return buffer.resource_uri().value_or(std::format("buffer {}", buffer.id().slot));
+}
+
 std::expected<std::vector<PreparedBufferEdit>, std::string>
 prepare_workspace_edit(BufferRegistry& buffers, std::span<const WorkspaceBufferEdit> source) {
     std::map<BufferId, PreparedBufferEdit> merged;
@@ -33,21 +39,21 @@ prepare_workspace_edit(BufferRegistry& buffers, std::span<const WorkspaceBufferE
         }
         const DocumentSnapshot snapshot = buffer->snapshot();
         if (requested.revision != snapshot.revision()) {
-            return std::unexpected(std::format("workspace edit for '{}' is stale", buffer->name()));
+            return std::unexpected(
+                std::format("workspace edit for '{}' is stale", buffer_label(*buffer)));
         }
         if (buffer->read_only()) {
-            return std::unexpected(
-                std::format("workspace edit cannot modify read-only buffer '{}'", buffer->name()));
+            return std::unexpected(std::format("workspace edit cannot modify read-only buffer '{}'",
+                                               buffer_label(*buffer)));
         }
         auto [found, inserted] = merged.try_emplace(
-            requested.buffer,
-            PreparedBufferEdit{.buffer = requested.buffer,
-                               .revision = requested.revision,
-                               .before = buffer->undo_position(),
-                               .edits = {}});
+            requested.buffer, PreparedBufferEdit{.buffer = requested.buffer,
+                                                 .revision = requested.revision,
+                                                 .before = buffer->undo_position(),
+                                                 .edits = {}});
         if (!inserted && found->second.revision != requested.revision) {
-            return std::unexpected(
-                std::format("workspace edit has conflicting revisions for '{}'", buffer->name()));
+            return std::unexpected(std::format("workspace edit has conflicting revisions for '{}'",
+                                               buffer_label(*buffer)));
         }
         found->second.edits.insert(found->second.edits.end(), requested.edits.begin(),
                                    requested.edits.end());
@@ -73,7 +79,7 @@ prepare_workspace_edit(BufferRegistry& buffers, std::span<const WorkspaceBufferE
                  value.old_range.start == previous_start)) {
                 return std::unexpected(
                     std::format("workspace edit contains overlapping or invalid ranges for '{}'",
-                                buffer.name()));
+                                buffer_label(buffer)));
             }
             previous_start = value.old_range.start;
             previous_end = value.old_range.end;
@@ -101,8 +107,8 @@ apply_workspace_edit(BufferRegistry& buffers, std::span<const WorkspaceBufferEdi
         std::vector<PendingTransaction> pending;
         pending.reserve(prepared->size());
         for (PreparedBufferEdit& entry : *prepared) {
-            pending.push_back({.edit = &entry,
-                               .transaction = buffers.get(entry.buffer).begin_transaction()});
+            pending.push_back(
+                {.edit = &entry, .transaction = buffers.get(entry.buffer).begin_transaction()});
         }
         for (PendingTransaction& entry : pending) {
             for (auto current = entry.edit->edits.rbegin(); current != entry.edit->edits.rend();

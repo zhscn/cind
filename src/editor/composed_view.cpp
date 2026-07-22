@@ -55,6 +55,7 @@ ComposedViewModel::ComposedViewModel(BufferRegistry& buffers,
             Buffer& buffer = buffers.get(excerpt.buffer);
             excerpts_.push_back(
                 {.buffer = excerpt.buffer,
+                 .label = excerpt.label,
                  .context_start = buffer.create_navigation_anchor(excerpt.context.start,
                                                                   AnchorAffinity::BeforeInsertion),
                  .context_end = buffer.create_navigation_anchor(excerpt.context.end),
@@ -91,7 +92,7 @@ ComposedSnapshot ComposedViewModel::snapshot() const {
         if (!projection.empty()) {
             projection += '\n';
         }
-        projection += std::format("── {} ──\n", buffer.resource_uri().value_or(buffer.name()));
+        projection += std::format("── {} ──\n", buffer.resource_uri().value_or(excerpt.label));
         const TextRange source{buffer.navigation_anchor_offset(excerpt.context_start),
                                buffer.navigation_anchor_offset(excerpt.context_end)};
         const TextOffset start = projection_offset(projection.size());

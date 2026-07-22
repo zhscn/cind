@@ -1,5 +1,6 @@
 (define-module (cind development)
   #:use-module (ares repl)
+  #:use-module (cind buffers)
   #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-13)

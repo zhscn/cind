@@ -1,4 +1,5 @@
 (define-module (cind lifecycle)
+  #:use-module (cind buffers)
   #:use-module (cind host)
   #:use-module (cind lsp)
   #:use-module (cind state)
@@ -46,13 +47,17 @@
          (cons (car entries)
                (without-buffer-style-origin (cdr entries) buffer)))))
 
-(define (buffer-created! host buffer style-origin)
+;; The host has created the document and now reports what it was asked for;
+;; naming it is this side's decision, so the returned name is the buffer's name
+;; and the host keeps no copy (design/09-guile-first.md section 3.4).
+(define (buffer-created! host buffer style-origin requested-name kind resource)
   (unless (string? style-origin)
     (error "buffer style origin must be a string" style-origin))
   (state-set! host 'buffer-style-origins
               (cons (vector buffer style-origin)
                     (without-buffer-style-origin
                      (host-buffer-style-origins host) buffer)))
+  (register-buffer-name! host buffer requested-name kind resource)
   buffer)
 
 (define (buffer-style-origin host buffer)
@@ -70,6 +75,7 @@
     (state-clear! host 'startup-placeholder))
   (state-set! host 'buffer-style-origins
               (without-buffer-style-origin (host-buffer-style-origins host) buffer))
+  (forget-buffer-name! host buffer)
   (lsp-buffer-released! host buffer)
   (workbench-forget-buffer! host buffer))
 
