@@ -1584,11 +1584,8 @@ EditorApplication::set_window_role(WindowId window, std::optional<std::string> r
         return std::unexpected("window role must not be empty");
     }
     (void)workbenches_.get(*owner);
-    try {
-        (void)window_policy(window);
-    } catch (const std::exception& exception) {
-        return std::unexpected(exception.what());
-    }
+    // The Scheme setter resolves the window's workbench entry and raises when
+    // it has none, so a separate existence probe would only repeat that work.
     return guile_.workbench_set_window_role(window, role ? std::optional<std::string_view>(*role)
                                                          : std::nullopt);
 }
@@ -1599,11 +1596,6 @@ std::expected<void, std::string> EditorApplication::set_window_pinned(WindowId w
     if (target == nullptr || !workbenches_.find_by_window(window)) {
         return std::unexpected("unknown workbench window");
     }
-    try {
-        (void)window_policy(window);
-    } catch (const std::exception& exception) {
-        return std::unexpected(exception.what());
-    }
     return guile_.workbench_set_window_pinned(window, pinned);
 }
 
@@ -1612,11 +1604,6 @@ std::expected<void, std::string> EditorApplication::set_window_created_by_policy
     const Window* target = runtime_.windows().try_get(window);
     if (target == nullptr || !workbenches_.find_by_window(window)) {
         return std::unexpected("unknown workbench window");
-    }
-    try {
-        (void)window_policy(window);
-    } catch (const std::exception& exception) {
-        return std::unexpected(exception.what());
     }
     return guile_.workbench_set_window_created_by_policy(window, created);
 }
