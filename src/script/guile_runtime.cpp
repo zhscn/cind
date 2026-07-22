@@ -34,10 +34,10 @@ namespace {
 // `state` owns the per-application state root and is loaded before the modules
 // that declare slots in it.
 constexpr std::array<std::string_view, 23> bundled_guile_modules = {
-    "state",     "application", "command",   "completion", "input",      "lsp",
-    "async",     "workbench",   "lifecycle", "pointer",    "extension",  "emacs",
-    "toy-modal", "meow",        "vim",       "helix",      "structural", "paredit",
-    "minibuffer", "development", "ares",     "introspect", "core",
+    "state",      "application", "command",   "completion", "input",      "lsp",
+    "async",      "workbench",   "lifecycle", "pointer",    "extension",  "emacs",
+    "toy-modal",  "meow",        "vim",       "helix",      "structural", "paredit",
+    "minibuffer", "development", "ares",      "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
