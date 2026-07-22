@@ -17,7 +17,6 @@
 namespace cind {
 
 class EditSession;
-class ProjectRegistry;
 class ViewRegistry;
 
 enum class BufferKind : std::uint8_t {
@@ -56,7 +55,6 @@ public:
     DocumentId document_id() const { return document_.id(); }
     BufferKind kind() const { return kind_; }
     const std::optional<std::string>& resource_uri() const { return resource_uri_; }
-    std::optional<ProjectId> project_id() const { return project_id_; }
 
     bool read_only() const { return read_only_; }
     void set_read_only(bool read_only) { read_only_ = read_only; }
@@ -95,7 +93,6 @@ public:
 private:
     friend class BufferRegistry;
     friend class EditSession;
-    friend class ProjectRegistry;
     friend class ViewRegistry;
 
     Buffer(BufferId id, DocumentId document_id, BufferSpec spec, const SettingRegistry& settings,
@@ -105,7 +102,6 @@ private:
     BufferId id_;
     BufferKind kind_;
     std::optional<std::string> resource_uri_;
-    std::optional<ProjectId> project_id_;
     bool read_only_ = false;
     Document document_;
     Text save_point_;

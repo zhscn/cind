@@ -2994,16 +2994,6 @@ SCM buffer_resource(SCM host_object, SCM buffer_value) {
     });
 }
 
-SCM buffer_project_id(SCM host_object, SCM buffer_value) {
-    return host_primitive("buffer-project-id", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "buffer-project-id");
-        const BufferId buffer =
-            entity_id_from_scheme<BufferTag>(buffer_value, "buffer-project-id", 2);
-        const std::optional<ProjectId> project = host.runtime->buffers().get(buffer).project_id();
-        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
-    });
-}
-
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
 SCM buffer_text(SCM host_object, SCM buffer_value) {
@@ -3926,20 +3916,6 @@ SCM create_project(SCM host_object, SCM name_value, SCM roots_value, SCM provide
     });
 }
 
-SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
-    return host_primitive("set-buffer-project!", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "set-buffer-project!");
-        const BufferId buffer =
-            entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-project!", 2);
-        std::optional<ProjectId> project;
-        if (!scheme_false(project_value)) {
-            project = entity_id_from_scheme<ProjectTag>(project_value, "set-buffer-project!", 3);
-        }
-        host.runtime->projects().assign(buffer, project);
-        return SCM_UNSPECIFIED;
-    });
-}
-
 SCM buffer_save_snapshot(SCM host_object, SCM buffer_value) {
     return host_primitive("buffer-save-snapshot", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-save-snapshot");
@@ -4183,13 +4159,16 @@ SCM interaction_mechanism_status(SCM host_object) {
     });
 }
 
-SCM interaction_origin_project(SCM host_object) {
-    HostLease& host = require_host(host_object, "interaction-origin-project");
-    return host_primitive("interaction-origin-project", [&]() -> SCM {
-        const std::optional<ProjectId> project = host.services.interaction_origin_project
-                                                     ? host.services.interaction_origin_project()
-                                                     : std::nullopt;
-        return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
+// The origin target is the interaction mechanism's own state; the project it
+// belongs to is not, so this reports the buffer and lets the policy resolve the
+// association it owns.
+SCM interaction_origin_buffer(SCM host_object) {
+    HostLease& host = require_host(host_object, "interaction-origin-buffer");
+    return host_primitive("interaction-origin-buffer", [&]() -> SCM {
+        const std::optional<BufferId> buffer = host.services.interaction_origin_buffer
+                                                   ? host.services.interaction_origin_buffer()
+                                                   : std::nullopt;
+        return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
     });
 }
 
@@ -4773,8 +4752,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(read_clipboard));
     (void)scm_c_define_gsubr("buffer-resource", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_resource));
-    (void)scm_c_define_gsubr("buffer-project-id", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(buffer_project_id));
     (void)scm_c_define_gsubr("buffer-text", 2, 0, 0, reinterpret_cast<scm_t_subr>(buffer_text));
     (void)scm_c_define_gsubr("buffer-byte-size", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_byte_size));
@@ -4840,8 +4817,8 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(structural_edit));
     (void)scm_c_define_gsubr("interaction-mechanism-status", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(interaction_mechanism_status));
-    (void)scm_c_define_gsubr("interaction-origin-project", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(interaction_origin_project));
+    (void)scm_c_define_gsubr("interaction-origin-buffer", 1, 0, 0,
+                             reinterpret_cast<scm_t_subr>(interaction_origin_buffer));
     (void)scm_c_define_gsubr("refresh-interaction-mechanism!", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(refresh_interaction_mechanism));
     (void)scm_c_define_gsubr("submit-interaction-mechanism!", 3, 0, 0,
@@ -4900,8 +4877,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(project_id_by_root));
     (void)scm_c_define_gsubr("create-project!", 5, 0, 0,
                              reinterpret_cast<scm_t_subr>(create_project));
-    (void)scm_c_define_gsubr("set-buffer-project!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_buffer_project));
     (void)scm_c_define_gsubr("buffer-save-snapshot", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(buffer_save_snapshot));
     (void)scm_c_define_gsubr("mark-buffer-saved!", 3, 0, 0,
@@ -4944,7 +4919,7 @@ void initialize_host_module(void*) {
         "close-workbench!", "workbench-session-state", "prepare-workbench-session-restore!",
         "show-buffer-in-window!", "project-list", "owned-user-modules", "project-root",
         "project-files", "path-relative", "path-filename", "path-resolve", "active-key-bindings",
-        "buffer-resource", "buffer-project-id", "buffer-text", "buffer-byte-size",
+        "buffer-resource", "buffer-text", "buffer-byte-size",
         "buffer-editable-start", "set-buffer-editable-start!", "create-buffer-marker!",
         "buffer-marker-offset", "remove-buffer-marker!", "buffer-locations", "buffer-diagnostics",
         "set-buffer-locations!", "publish-location-list-data!", "buffer-read-only?", "path-parent",
@@ -4959,7 +4934,7 @@ void initialize_host_module(void*) {
         "jump-branches", "evaluate-scheme!", "move-caret-to-line!", "scroll-view-lines!", "undo!",
         "redo!", "move-caret-lines!", "move-caret-line-boundary!", "delete-grapheme!", "newline!",
         "indent!", "type-text!", "structural-edit!", "interaction-mechanism-status",
-        "interaction-origin-project", "refresh-interaction-mechanism!",
+        "interaction-origin-buffer", "refresh-interaction-mechanism!",
         "submit-interaction-mechanism!", "replace-interaction-input!",
         "cancel-interaction-mechanism!", "cancel-pending-input!", "completion-active?",
         "refresh-completion!", "ensure-lsp-session!", "attach-lsp-diagnostics!",
@@ -4969,7 +4944,7 @@ void initialize_host_module(void*) {
         "project-index-state", "request-project-index!", "normalize-resource-path",
         "set-buffer-resource!", "buffer-id-by-resource", "resource-mode", "project-for-resource",
         "project-provider-definitions", "project-id-by-root", "create-project!",
-        "set-buffer-project!", "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
+        "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
         "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
         "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
         "window-buffer-id", "focus-window!", nullptr);
@@ -5748,8 +5723,8 @@ struct GuileCall {
         LspSessionBound,
         BufferCreated,
         BufferName,
+        BufferProject,
         BufferIdByName,
-        SetBufferName,
         BufferStyleOrigin,
         BufferReleased,
         WorkbenchCreated,
@@ -5970,16 +5945,15 @@ void discard_state_tail(GuileState& state, const GuileState& checkpoint) {
 }
 
 SCM command_context_value(const CommandContext& context) {
-    const std::optional<ProjectId> project = context.project_id();
-    return scm_list_4(
+    // No project entry: the buffer-to-project association is the policy's own
+    // state, so carrying it here would hand Guile back what it already has.
+    return scm_list_3(
         scm_cons(scm_from_utf8_symbol("window"),
                  entity_id(context.window_id().slot, context.window_id().generation)),
         scm_cons(scm_from_utf8_symbol("buffer"),
                  entity_id(context.buffer_id().slot, context.buffer_id().generation)),
         scm_cons(scm_from_utf8_symbol("view"),
-                 entity_id(context.view_id().slot, context.view_id().generation)),
-        scm_cons(scm_from_utf8_symbol("project"),
-                 project ? entity_id(project->slot, project->generation) : SCM_BOOL_F));
+                 entity_id(context.view_id().slot, context.view_id().generation)));
 }
 
 SCM setting_value(const SettingValue& value) {
@@ -6748,6 +6722,15 @@ SCM call_body(void* data) {
             }
             call.source = scheme_string(call.result);
             break;
+        case GuileCall::Operation::BufferProject:
+            call.result =
+                scm_call_2(scm_c_public_ref("cind buffers", "buffer-project-id"), call.host,
+                           entity_id(call.buffer.slot, call.buffer.generation));
+            call.project = scheme_false(call.result)
+                               ? ProjectId{}
+                               : entity_id_from_scheme<ProjectTag>(call.result, "buffer-project-id",
+                                                                   0);
+            break;
         case GuileCall::Operation::BufferIdByName:
             call.result =
                 scm_call_2(scm_c_public_ref("cind buffers", "buffer-id-by-name"), call.host,
@@ -6756,11 +6739,6 @@ SCM call_body(void* data) {
                 scheme_false(call.result)
                     ? BufferId{}
                     : entity_id_from_scheme<BufferTag>(call.result, "buffer-id-by-name", 0);
-            break;
-        case GuileCall::Operation::SetBufferName:
-            call.result = scm_call_3(scm_c_public_ref("cind buffers", "rename-buffer!"), call.host,
-                                     entity_id(call.buffer.slot, call.buffer.generation),
-                                     scm_from_utf8_stringn(call.source.data(), call.source.size()));
             break;
         case GuileCall::Operation::BufferStyleOrigin:
             call.result =
@@ -8519,6 +8497,21 @@ public:
         return call.source;
     }
 
+    std::expected<std::optional<ProjectId>, std::string> buffer_project(BufferId buffer) const {
+        require_owner_thread();
+        std::optional<std::string> previous_error = state_->last_error;
+        GuileCall call;
+        call.operation = GuileCall::Operation::BufferProject;
+        call.host = host_;
+        call.buffer = buffer;
+        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
+            state_->last_error = result.error();
+            return std::unexpected(*state_->last_error);
+        }
+        state_->last_error = std::move(previous_error);
+        return call.project.valid() ? std::optional(call.project) : std::nullopt;
+    }
+
     std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name) {
         require_owner_thread();
         std::optional<std::string> previous_error = state_->last_error;
@@ -8532,22 +8525,6 @@ public:
         }
         state_->last_error = std::move(previous_error);
         return call.buffer.valid() ? std::optional(call.buffer) : std::nullopt;
-    }
-
-    std::expected<void, std::string> set_buffer_name(BufferId buffer, std::string_view name) {
-        require_owner_thread();
-        std::optional<std::string> previous_error = state_->last_error;
-        GuileCall call;
-        call.operation = GuileCall::Operation::SetBufferName;
-        call.host = host_;
-        call.buffer = buffer;
-        call.source = name;
-        if (std::expected<SCM, std::string> result = run_guile_call(call); !result) {
-            state_->last_error = result.error();
-            return std::unexpected(*state_->last_error);
-        }
-        state_->last_error = std::move(previous_error);
-        return {};
     }
 
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const {
@@ -9986,14 +9963,14 @@ std::expected<std::string, std::string> GuileRuntime::buffer_name(BufferId buffe
     return impl_->buffer_name(buffer);
 }
 
+std::expected<std::optional<ProjectId>, std::string>
+GuileRuntime::buffer_project(BufferId buffer) const {
+    return impl_->buffer_project(buffer);
+}
+
 std::expected<std::optional<BufferId>, std::string>
 GuileRuntime::buffer_id_by_name(std::string_view name) {
     return impl_->buffer_id_by_name(name);
-}
-
-std::expected<void, std::string> GuileRuntime::set_buffer_name(BufferId buffer,
-                                                               std::string_view name) {
-    return impl_->set_buffer_name(buffer, name);
 }
 
 std::expected<std::string, std::string> GuileRuntime::buffer_style_origin(BufferId buffer) const {

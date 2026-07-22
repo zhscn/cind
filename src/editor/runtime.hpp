@@ -79,7 +79,8 @@ public:
     void seal_extensions();
     bool extensions_sealed() const { return extensions_sealed_; }
 
-    SettingsResolver settings_for(BufferId buffer, ViewId view) const;
+    SettingsResolver settings_for(BufferId buffer, ViewId view,
+                                  std::optional<ProjectId> project = std::nullopt) const;
     SelectionEditPolicy selection_edit_policy(ViewId view) const;
     std::optional<LanguageProviderId> language_provider(BufferId buffer, LanguageFacet facet) const;
     std::optional<LanguageProviderId> language_provider(ModeId mode, LanguageFacet facet) const;

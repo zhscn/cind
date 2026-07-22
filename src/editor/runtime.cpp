@@ -51,7 +51,8 @@ void EditorRuntime::append_mode_layers(std::vector<const SettingsLayer*>& layers
     }
 }
 
-SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id) const {
+SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id,
+                                             std::optional<ProjectId> project) const {
     const Buffer& buffer = buffers_.get(buffer_id);
     const View& view = views_.get(view_id);
     if (view.buffer_id() != buffer_id) {
@@ -62,8 +63,10 @@ SettingsResolver EditorRuntime::settings_for(BufferId buffer_id, ViewId view_id)
     layers.push_back(&view.settings());
     layers.push_back(&buffer.settings());
 
-    if (buffer.project_id()) {
-        layers.push_back(&projects_.get(*buffer.project_id()).settings());
+    // The buffer-to-project association lives in Guile, so the caller supplies
+    // it rather than this layer reading it back.
+    if (project) {
+        layers.push_back(&projects_.get(*project).settings());
     }
 
     // A workspace layer slots between Project and Application when UI session

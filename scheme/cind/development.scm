@@ -40,6 +40,10 @@
 (define (make-evaluation-module host)
   (or (state-ref host 'evaluation-module)
       (let ((module (make-fresh-user-module)))
+        ;; Buffer identity moved out of (cind host) into (cind buffers); user
+        ;; code documented against buffer-name, rename-buffer! and
+        ;; set-buffer-project! must keep resolving them without a new import.
+        (module-use! module (resolve-interface '(cind buffers)))
         (module-use! module (resolve-interface '(cind application)))
         (module-use! module (resolve-interface '(cind command)))
         (module-use! module (resolve-interface '(cind async)))

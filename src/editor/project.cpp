@@ -65,21 +65,9 @@ ProjectId ProjectRegistry::create(ProjectSpec spec) {
     return id;
 }
 
-bool ProjectRegistry::has_attached_buffers(ProjectId id) const {
-    for (BufferId buffer : buffers_->all()) {
-        if (buffers_->get(buffer).project_id() == id) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool ProjectRegistry::erase(ProjectId id) {
     Project* project = try_get(id);
     if (project == nullptr) {
-        return false;
-    }
-    if (has_attached_buffers(id)) {
         return false;
     }
     Slot& slot = slots_[id.slot];
@@ -124,14 +112,6 @@ std::vector<ProjectId> ProjectRegistry::all() const {
         }
     }
     return ids;
-}
-
-void ProjectRegistry::assign(BufferId buffer_id, std::optional<ProjectId> project_id) {
-    Buffer& buffer = buffers_->get(buffer_id);
-    if (project_id) {
-        get(*project_id);
-    }
-    buffer.project_id_ = project_id;
 }
 
 bool ProjectRegistry::root_is_owned(std::string_view root) const {

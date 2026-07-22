@@ -60,15 +60,6 @@ Buffer& CommandContext::buffer() const {
     return runtime_->buffers().get(buffer_id_);
 }
 
-std::optional<ProjectId> CommandContext::project_id() const {
-    return buffer().project_id();
-}
-
-Project* CommandContext::project() const {
-    const std::optional<ProjectId> id = project_id();
-    return id ? &runtime_->projects().get(*id) : nullptr;
-}
-
 View& CommandContext::view() const {
     return runtime_->views().get(view_id_);
 }
@@ -77,8 +68,8 @@ Window& CommandContext::window() const {
     return runtime_->windows().get(window_id_);
 }
 
-SettingsResolver CommandContext::settings() const {
-    return runtime_->settings_for(buffer_id_, view_id_);
+SettingsResolver CommandContext::settings(std::optional<ProjectId> project) const {
+    return runtime_->settings_for(buffer_id_, view_id_, project);
 }
 
 CommandId CommandRegistry::define(std::string name, Execute execute, Enabled enabled) {

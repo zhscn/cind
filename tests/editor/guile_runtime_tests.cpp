@@ -20,6 +20,20 @@ using namespace cind;
 
 namespace {
 
+// The buffer-to-project association is policy state, so a test drives it the
+// way policy code does rather than through a native setter.
+void assign_project(GuileRuntime& guile, BufferId buffer, std::optional<ProjectId> project) {
+    const std::string target =
+        project ? std::format("'#({} {})", project->slot, project->generation) : "#f";
+    const std::expected<GuileEvaluationResult, std::string> assigned = guile.evaluate(
+        {.source = std::format("(use-modules (cind buffers))\n"
+                               "(set-buffer-project! host '#({} {}) {})",
+                               buffer.slot, buffer.generation, target),
+         .source_name = "assign-project.scm"});
+    REQUIRE(assigned.has_value());
+    REQUIRE_FALSE(assigned->error.has_value());
+}
+
 // Buffer names are policy and live in Guile, so a test that creates a buffer
 // through the registry announces it the way the application would.
 GuileBufferIdentityFacts identity_of(std::string name) {
@@ -1421,7 +1435,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
          .type_text = {},
          .structural_edit = {},
          .interaction_mechanism_status = {},
-         .interaction_origin_project = {},
+         .interaction_origin_buffer = {},
          .refresh_interaction = {},
          .submit_interaction = {},
          .replace_interaction_input = {},
@@ -2175,7 +2189,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
     CHECK(runtime.buffers().get(buffer).resource_uri() == "/tmp/written.cpp");
     CHECK(guile.buffer_name(buffer).value_or("") == "written.cpp");
     CHECK(runtime.buffers().get(buffer).modes().major() == fundamental_mode);
-    CHECK_FALSE(runtime.buffers().get(buffer).project_id().has_value());
+    CHECK_FALSE(guile.buffer_project(buffer).value_or(std::optional<ProjectId>{}).has_value());
     const auto* save_dispatch = std::get_if<CommandDispatch>(&*save_as_accepted);
     REQUIRE(save_dispatch != nullptr);
     CHECK(save_dispatch->command == save);
@@ -2408,7 +2422,7 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                          .roots = {"/tmp/sample"},
                                                          .discovery_provider = {},
                                                          .discovery_marker = {}});
-    runtime.projects().assign(buffer, project);
+    assign_project(guile, buffer, project);
     runtime.projects().replace_index(project,
                                      {"/tmp/sample/src/main.cpp", "/tmp/sample/include/main.hpp"});
     CHECK(runtime.commands().enabled(project_search, context));
@@ -2437,12 +2451,12 @@ TEST_CASE("bundled Guile commands return editor command actions") {
                                                                    .roots = {"/tmp/unindexed"},
                                                                    .discovery_provider = {},
                                                                    .discovery_marker = {}});
-    runtime.projects().assign(buffer, unindexed_project);
+    assign_project(guile, buffer, unindexed_project);
     const CommandResult unindexed_find_file = runtime.commands().invoke(project_find_file, context);
     REQUIRE(unindexed_find_file.has_value());
     REQUIRE(project_index_requested);
     CHECK(indexed_project == unindexed_project);
-    runtime.projects().assign(buffer, project);
+    assign_project(guile, buffer, project);
     project_index_requested = false;
     CHECK(guile.workbench_adopt_project(workbench, project).value_or(false));
     CHECK_FALSE(guile.workbench_adopt_project(workbench, project).value_or(true));

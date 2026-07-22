@@ -73,6 +73,14 @@ checkpoint. The failed condition is retained as the runtime's latest scripting d
 object as an explicit first argument. A host object is valid only for its owning application and
 does not expose raw editor pointers to Scheme.
 
+Some names listed here are no longer native. Buffer identity -- `buffer-name`, `buffer-id-by-name`,
+`rename-buffer!`, `buffer-project-id`, `set-buffer-project!` -- now lives in `(cind buffers)`, and
+`interaction-origin-project` in `(cind command)`, because the state they read belongs to Scheme
+(design/09-guile-first.md section 3.4). They resolve unchanged in an init file, which imports both
+modules, so this is a note about where the answer comes from rather than a call-site change. The
+native primitive underneath `interaction-origin-project` is now `interaction-origin-buffer`, which
+reports the mechanism's own origin target and leaves the project association to the policy.
+
 The native module exports:
 
 ```scheme
@@ -129,9 +137,7 @@ The native module exports:
 (project-root host project-id)
 (project-files host project-id)
 (active-key-bindings host)
-(buffer-id-by-name host name)
 (buffer-resource host buffer-id)
-(buffer-project-id host buffer-id)
 (path-parent host path)
 (path-relative host path base)
 (path-filename host path)
@@ -153,7 +159,6 @@ The native module exports:
 (replace-selection! host view-id selection replacement-or-vector)
 (selection-texts host view-id selection)
 (buffer-substring host buffer-id start end)
-(buffer-name host buffer-id)
 (buffer-text host buffer-id)
 (buffer-byte-size host buffer-id)
 (create-buffer-marker! host buffer-id byte-offset 'before-or-after)
@@ -187,7 +192,7 @@ The native module exports:
 (set-caret-reveal! host reveal?)
 (interaction-status host)
 (interaction-provider host)
-(interaction-origin-project host)
+(interaction-origin-buffer host)
 (refresh-interaction! host)
 (submit-interaction! host)
 (select-interaction-candidate! host zero-based-index)
@@ -202,14 +207,12 @@ The native module exports:
 (request-project-index! host project-id)
 (normalize-resource-path host path)
 (set-buffer-resource! host buffer-id path)
-(rename-buffer! host buffer-id name)
 (buffer-id-by-resource host path)
 (resource-mode host path)
 (project-for-resource host path)
 (project-provider-definitions host)
 (project-id-by-root host root)
 (create-project! host name roots provider marker)
-(set-buffer-project! host buffer-id project-id-or-#f)
 (buffer-save-snapshot host buffer-id)
 (mark-buffer-saved! host buffer-id snapshot-contents)
 (open-buffer-ids host)
@@ -367,7 +370,7 @@ resolution inject the current last key and message into their fact vectors, so p
 and inspector snapshots observe the same Guile-owned state.
 
 A modeline policy receives the explicit host, command context, and
-`#(modeline-facts buffer-name resource-or-#f dirty? line column line-count revision style-origin
+`#(modeline-facts resource-or-#f dirty? line column line-count revision style-origin
 last-key input-state)` vector. It returns `#(modeline segments)`, where each segment is
 `#(modeline-segment group tone weight debug? text)`. Groups are `chip`, `left`, and `right`; tones
 are `strong`, `normal`, `faded`, `faint`, `salient`, and `critical`; weights are `regular` and

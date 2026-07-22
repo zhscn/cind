@@ -848,16 +848,15 @@ TEST_CASE("projects own tooling scope without owning editor windows") {
 
     CHECK(runtime.projects().find_for_resource("file:///work/readme") == outer);
     CHECK(runtime.projects().find_for_resource("file:///work/sub/main.cc") == inner);
-    runtime.projects().assign(buffer, inner);
-    CHECK(runtime.settings_for(buffer, view).get_as<std::string>(server) == "clangd");
+    // The buffer-to-project association is Guile state; the resolver takes it
+    // as a parameter rather than reading it back.
+    CHECK(runtime.settings_for(buffer, view, inner).get_as<std::string>(server) == "clangd");
     runtime.projects().begin_index(inner);
     CHECK(runtime.projects().get(inner).indexing());
     runtime.projects().replace_index(inner, {"/work/sub/z.cpp", "/work/sub/a.cpp"});
     CHECK(runtime.projects().get(inner).files() ==
           std::vector<std::string>{"/work/sub/a.cpp", "/work/sub/z.cpp"});
     CHECK(runtime.projects().get(inner).index_revision() == 1);
-    CHECK_FALSE(runtime.projects().erase(inner));
-    runtime.projects().assign(buffer, std::nullopt);
     CHECK(runtime.projects().erase(inner));
     CHECK(runtime.projects().try_get(inner) == nullptr);
 }

@@ -64,6 +64,9 @@ public:
         : buffers_(&buffers), settings_(&settings) {}
 
     ProjectId create(ProjectSpec spec);
+    // Does not refuse a project that buffers still reference: the
+    // buffer-to-project association is Guile state now, so that guard belongs
+    // with whoever deletes projects (design/09-guile-first.md section 3.4).
     bool erase(ProjectId id);
 
     Project& get(ProjectId id);
@@ -72,7 +75,6 @@ public:
     const Project* try_get(ProjectId id) const;
     std::vector<ProjectId> all() const;
 
-    void assign(BufferId buffer, std::optional<ProjectId> project);
     std::optional<ProjectId> find_by_root(std::string_view root) const;
     std::optional<ProjectId> find_for_resource(std::string_view uri) const;
     void begin_index(ProjectId project);
@@ -87,7 +89,6 @@ private:
     };
 
     bool root_is_owned(std::string_view root) const;
-    bool has_attached_buffers(ProjectId id) const;
 
     BufferRegistry* buffers_;
     const SettingRegistry* settings_;

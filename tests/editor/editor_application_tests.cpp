@@ -613,8 +613,7 @@ TEST_CASE("shared echo policy follows active bindings and input lifetime") {
 
 TEST_CASE("user initialization owns modeline content policy") {
     TemporaryFile init(std::format("cind-modeline-policy-{}.scm", static_cast<long>(::getpid())),
-                       R"((use-modules (cind buffers))
-(configure-modeline-policy!
+                       R"((configure-modeline-policy!
  host
  (lambda (host context facts)
    (vector 'modeline
@@ -1825,7 +1824,8 @@ TEST_CASE("project discovery indexes files and feeds the project file picker") {
             (void)application.poll_background_work();
         }
 
-        const std::optional<ProjectId> project_id = application.session().buffer().project_id();
+        const std::optional<ProjectId> project_id =
+            application.buffer_project(application.session().buffer().id());
         REQUIRE(project_id.has_value());
         const Project& project = application.runtime().projects().get(*project_id);
         CHECK(project.roots() == std::vector<std::string>{root.string()});
@@ -2208,7 +2208,7 @@ TEST_CASE("workbench project scope unifies repositories without leaking into oth
     }
     const BufferId backend_buffer = application.buffer_id();
     const ProjectId backend_project =
-        application.runtime().buffers().get(backend_buffer).project_id().value_or(ProjectId{});
+        application.buffer_project(backend_buffer).value_or(ProjectId{});
     REQUIRE(backend_project);
 
     REQUIRE(application.open_file(frontend_source.string()).has_value());
@@ -2218,7 +2218,7 @@ TEST_CASE("workbench project scope unifies repositories without leaking into oth
     }
     const BufferId frontend_buffer = application.buffer_id();
     const ProjectId frontend_project =
-        application.runtime().buffers().get(frontend_buffer).project_id().value_or(ProjectId{});
+        application.buffer_project(frontend_buffer).value_or(ProjectId{});
     REQUIRE(frontend_project);
     CHECK(frontend_project != backend_project);
 
@@ -3479,9 +3479,10 @@ TEST_CASE("buffers retain independent document view and lifecycle state") {
     }
     const BufferId second = application.buffer_id();
     CHECK(second != first);
-    REQUIRE(application.session().buffer().project_id().has_value());
-    const Project& project =
-        application.runtime().projects().get(*application.session().buffer().project_id());
+    const std::optional<ProjectId> project_id =
+        application.buffer_project(application.session().buffer().id());
+    REQUIRE(project_id.has_value());
+    const Project& project = application.runtime().projects().get(*project_id);
     CHECK(project.discovery_provider() == "cind.vcs");
     CHECK(project.discovery_marker() == ".git");
     application.insert_text("B");

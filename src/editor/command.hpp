@@ -145,12 +145,10 @@ public:
     WindowId window_id() const { return window_id_; }
     BufferId buffer_id() const { return buffer_id_; }
     ViewId view_id() const { return view_id_; }
-    std::optional<ProjectId> project_id() const;
     Buffer& buffer() const;
-    Project* project() const;
     View& view() const;
     Window& window() const;
-    SettingsResolver settings() const;
+    SettingsResolver settings(std::optional<ProjectId> project = std::nullopt) const;
 
 private:
     EditorRuntime* runtime_;

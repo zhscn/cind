@@ -574,7 +574,7 @@
   (let ((scope (workbench-scope host (active-workbench host))))
     (if (> (vector-length scope) 0)
         scope
-        (let ((project (context-project context)))
+        (let ((project (context-project host context)))
           (if project (vector project) (vector))))))
 
 (define (project-files-provider host context query)
@@ -1103,7 +1103,7 @@
           ((zero? (string-length name))
            (command-error "workbench name is empty"))
           (else
-           (new-workbench! host name (context-project context))
+           (new-workbench! host name (context-project host context))
            (set-message! host (string-append "workbench " name))
            (command-completed)))))
 

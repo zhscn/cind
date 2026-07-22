@@ -247,13 +247,13 @@ EditorApplication::EditorApplication(EditorApplicationSpec spec)
                        .candidate_revision =
                            state != nullptr ? state->candidate_revision : std::uint64_t{0}};
                },
-           .interaction_origin_project = [this]() -> std::optional<ProjectId> {
+           .interaction_origin_buffer = [this]() -> std::optional<BufferId> {
                const InteractionMechanismState* state = interaction_.state();
-               if (state == nullptr) {
+               if (state == nullptr ||
+                   runtime_.buffers().try_get(state->origin.buffer) == nullptr) {
                    return std::nullopt;
                }
-               const Buffer* buffer = runtime_.buffers().try_get(state->origin.buffer);
-               return buffer != nullptr ? buffer->project_id() : std::nullopt;
+               return state->origin.buffer;
            },
            .refresh_interaction =
                [this](std::string_view provider) {
@@ -2705,6 +2705,10 @@ std::string EditorApplication::buffer_name(BufferId buffer) const {
     return guile_.buffer_name(buffer).value_or(std::string());
 }
 
+std::optional<ProjectId> EditorApplication::buffer_project(BufferId buffer) const {
+    return guile_.buffer_project(buffer).value_or(std::nullopt);
+}
+
 std::string EditorApplication::path() const {
     return path(window_id());
 }
@@ -3475,12 +3479,17 @@ EditorApplication::ensure_lsp_session(CommandTarget target, ScriptLspProviderSpe
                 std::format("LSP provider '{}' has unknown feature '{}'", provider.name, feature));
         }
     }
-    std::expected<LspSessionId, std::string> session = lsp_sessions_->ensure(
-        buffer->project_id(), {.command = provider.command,
-                               .arguments = provider.arguments,
-                               .root = provider.root,
-                               .language_id = provider.language_id,
-                               .client_capabilities = std::move(capabilities)});
+    const std::expected<std::optional<ProjectId>, std::string> project =
+        guile_.buffer_project(buffer->id());
+    if (!project) {
+        return std::unexpected(project.error());
+    }
+    std::expected<LspSessionId, std::string> session =
+        lsp_sessions_->ensure(*project, {.command = provider.command,
+                                         .arguments = provider.arguments,
+                                         .root = provider.root,
+                                         .language_id = provider.language_id,
+                                         .client_capabilities = std::move(capabilities)});
     if (!session) {
         return std::unexpected(std::move(session.error()));
     }

@@ -71,7 +71,7 @@
     definition))
 
 (define (provider-root host context)
-  (let ((project (context-project context)))
+  (let ((project (context-project host context)))
     (if project
         (project-root host project)
         (let ((resource (buffer-resource host (context-buffer context))))

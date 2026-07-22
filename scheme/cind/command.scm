@@ -1,5 +1,6 @@
 (define-module (cind command)
   #:use-module (ice-9 optargs)
+  #:use-module (cind buffers)
   #:use-module (cind host)
   #:use-module (cind state)
   #:export (command-completed
@@ -43,6 +44,7 @@
             context-buffer
             context-view
             context-project
+            interaction-origin-project
             configure-keymap-policy!
             resolve-keymap-policy
             resolve-base-keymap-policy
@@ -303,8 +305,15 @@
 (define (context-view context)
   (context-value context 'view))
 
-(define (context-project context)
-  (context-value context 'project))
+;; The host reports the interaction's origin buffer; the association from a
+;; buffer to its project is this side's state, so resolve it here. Kept under
+;; its documented name -- what changed is where the answer comes from.
+(define (interaction-origin-project host)
+  (let ((buffer (interaction-origin-buffer host)))
+    (and buffer (buffer-project-id host buffer))))
+
+(define (context-project host context)
+  (buffer-project-id host (context-buffer context)))
 
 (define default-keymap-root-policy
   (vector (vector 'editor.default)

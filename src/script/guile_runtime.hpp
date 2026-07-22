@@ -266,7 +266,7 @@ struct GuileHostServices {
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> type_text;
     std::function<std::expected<void, std::string>(ViewId, std::string_view)> structural_edit;
     std::function<GuileInteractionMechanismStatus()> interaction_mechanism_status;
-    std::function<std::optional<ProjectId>()> interaction_origin_project;
+    std::function<std::optional<BufferId>()> interaction_origin_buffer;
     std::function<std::expected<void, std::string>(std::string_view)> refresh_interaction;
     std::function<std::expected<std::string, std::string>(std::optional<std::size_t>, bool)>
         submit_interaction;
@@ -453,8 +453,8 @@ public:
     std::expected<void, std::string> buffer_created(BufferId buffer, std::string_view style_origin,
                                                     const GuileBufferIdentityFacts& identity);
     std::expected<std::string, std::string> buffer_name(BufferId buffer) const;
+    std::expected<std::optional<ProjectId>, std::string> buffer_project(BufferId buffer) const;
     std::expected<std::optional<BufferId>, std::string> buffer_id_by_name(std::string_view name);
-    std::expected<void, std::string> set_buffer_name(BufferId buffer, std::string_view name);
     std::expected<std::string, std::string> buffer_style_origin(BufferId buffer) const;
     std::expected<void, std::string> buffer_released(BufferId buffer);
     std::expected<void, std::string> workbench_created(WorkbenchId workbench, std::string_view name,

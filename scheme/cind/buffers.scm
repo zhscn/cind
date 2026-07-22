@@ -7,6 +7,9 @@
             buffer-id-by-name
             buffer-names
             rename-buffer!
+            buffer-project-id
+            set-buffer-project!
+            project-has-buffers?
             register-buffer-name!
             forget-buffer-name!))
 
@@ -16,7 +19,7 @@
 ;; creates the document; this module decides what it is called and keeps the
 ;; only copy of the answer (design/09-guile-first.md section 3.4).
 ;;
-;; Entries are #(buffer name). Entity IDs marshal as fresh two-element vectors
+;; Entries are #(buffer name project). Entity IDs marshal as fresh two-element vectors
 ;; on every crossing, so they compare with equal? and cannot key a hashq table;
 ;; the surrounding modules use association lists for the same reason. Buffer
 ;; counts are in the tens, so the linear scan is not worth trading for a
@@ -64,16 +67,39 @@
         ((equal? buffer (vector-ref (car entries) 0)) (cdr entries))
         (else (cons (car entries) (without-buffer (cdr entries) buffer)))))
 
-(define (registered-name host buffer)
+(define (identity-of host buffer)
   (let loop ((entries (identities host)))
     (cond ((null? entries) #f)
-          ((equal? buffer (vector-ref (car entries) 0))
-           (vector-ref (car entries) 1))
+          ((equal? buffer (vector-ref (car entries) 0)) (car entries))
           (else (loop (cdr entries))))))
+
+(define (require-identity host buffer)
+  (or (identity-of host buffer)
+      (error "buffer is not registered" buffer)))
+
+(define (registered-name host buffer)
+  (let ((entry (identity-of host buffer)))
+    (and entry (vector-ref entry 1))))
 
 (define (buffer-name host buffer)
   (or (registered-name host buffer)
       (error "buffer has no name" buffer)))
+
+(define (buffer-project-id host buffer)
+  (vector-ref (require-identity host buffer) 2))
+
+(define (set-buffer-project! host buffer project)
+  (let ((entry (require-identity host buffer)))
+    (replace-entry! host buffer (vector buffer (vector-ref entry 1) project)))
+  project)
+
+;; Answers what the native project registry used to answer by scanning buffers:
+;; the association is here now, so the question is answered here.
+(define (project-has-buffers? host project)
+  (let loop ((entries (identities host)))
+    (cond ((null? entries) #f)
+          ((equal? project (vector-ref (car entries) 2)) #t)
+          (else (loop (cdr entries))))))
 
 (define (buffer-id-by-name host name)
   (let loop ((entries (identities host)))
@@ -102,10 +128,15 @@
                 candidate
                 (loop (+ suffix 1))))))))
 
-(define (store-name! host buffer name)
+(define (replace-entry! host buffer entry)
   (state-set! host 'buffer-identities
-              (cons (vector buffer name)
-                    (without-buffer (identities host) buffer)))
+              (cons entry (without-buffer (identities host) buffer)))
+  entry)
+
+(define (store-name! host buffer name)
+  (let ((project (let ((entry (identity-of host buffer)))
+                   (and entry (vector-ref entry 2)))))
+    (replace-entry! host buffer (vector buffer name project)))
   name)
 
 ;; Called from the creation hook. The requested name is what the caller asked
