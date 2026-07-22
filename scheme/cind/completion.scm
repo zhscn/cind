@@ -1,4 +1,5 @@
 (define-module (cind completion)
+  #:use-module (cind state)
   #:export (configure-completion-policy!
             resolve-completion-policy
             completion-policy-replace?
@@ -15,7 +16,8 @@
 ;; The procedure is resolved when a session starts, so modes and extensions
 ;; can vary behavior using the command context without changing the native
 ;; completion mechanism.
-(define completion-policies (make-weak-key-hash-table))
+(define-policy-slot! 'completion (lambda (host context trigger)
+                                   (default-completion-policy host context trigger)))
 
 (define (default-completion-policy host context trigger)
   (vector 'completion-policy
@@ -47,15 +49,10 @@
   policy)
 
 (define (configure-completion-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "completion policy must be a procedure" procedure))
-  (hashq-set! completion-policies host procedure)
-  procedure)
+  (policy-set! host 'completion procedure))
 
 (define (resolve-completion-policy host context trigger)
-  (validate-completion-policy
-   ((or (hashq-ref completion-policies host) default-completion-policy)
-    host context trigger)))
+  (validate-completion-policy ((policy-ref host 'completion) host context trigger)))
 
 (define (completion-policy-replace? policy)
   (validate-completion-policy policy)
@@ -65,15 +62,15 @@
 ;; item id preserves selection while asynchronous providers replace and
 ;; reorder native candidates. The resolved policy remains fixed for the
 ;; lifetime of a session.
-(define completion-states (make-weak-key-hash-table))
+(define-state-slot! 'completion-session (lambda () #f))
 
 (define (begin-completion! host policy)
   (validate-completion-policy policy)
-  (hashq-set! completion-states host (vector #() #f #f policy))
+  (state-set! host 'completion-session (vector #() #f #f policy))
   policy)
 
 (define (completion-session-replace? host)
-  (let ((state (hashq-ref completion-states host)))
+  (let ((state (state-ref host 'completion-session)))
     (and state
          (let ((policy (vector-ref state 3)))
            (and policy (completion-policy-replace? policy))))))
@@ -93,11 +90,10 @@
                           (positive? (vector-ref item-ids index))
                           (loop (+ index 1))))))
     (error "completion item ids must be a vector of positive integers" item-ids))
-  (let ((state (hashq-ref completion-states host)))
+  (let ((state (state-ref host 'completion-session)))
     (if (zero? (vector-length item-ids))
         (begin
-          (hashq-set! completion-states
-                      host
+          (state-set! host 'completion-session
                       (vector item-ids #f #f (and state (vector-ref state 3))))
           #f)
         (let* ((selected-id (and state (vector-ref state 1)))
@@ -105,8 +101,7 @@
                                     (completion-index item-ids selected-id)))
                (index (or selected-index 0))
                (id (vector-ref item-ids index)))
-          (hashq-set! completion-states
-                      host
+          (state-set! host 'completion-session
                       (vector item-ids id index (and state (vector-ref state 3))))
           index))))
 
@@ -122,16 +117,16 @@
     (vector selection cancel?)))
 
 (define (finish-completion! host)
-  (hashq-remove! completion-states host))
+  (state-clear! host 'completion-session))
 
 (define (completion-selection host)
-  (let ((state (hashq-ref completion-states host)))
+  (let ((state (state-ref host 'completion-session)))
     (and state (vector-ref state 2))))
 
 (define (move-completion-selection! host delta)
   (unless (integer? delta)
     (error "completion selection delta must be an integer" delta))
-  (let ((state (hashq-ref completion-states host)))
+  (let ((state (state-ref host 'completion-session)))
     (if (or (not state) (zero? (vector-length (vector-ref state 0))))
         #f
         (let* ((item-ids (vector-ref state 0))

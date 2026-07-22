@@ -71,28 +71,40 @@ application has not configured one; #f makes configuration mandatory."
   (hashq-set! slot-declarations name (vector 'policy default))
   name)
 
+;; Slot access sits on the keystroke path, so a hit must cost one lookup. The
+;; root keeps state and policy values in separate tables: a hit is
+;; root + vector-ref + hashq-ref, and reading a slot with the wrong accessor
+;; simply misses its table and falls into the slow path, which consults the
+;; declaration and raises. Validating the kind on every read would instead put
+;; a second hash lookup on the hot path for a check that only fires on a bug.
 (define (root host)
   (or (hashq-ref state-roots host)
-      (let ((table (make-hash-table)))
-        (hashq-set! state-roots host table)
-        table)))
+      (let ((tables (vector (make-hash-table) (make-hash-table))))
+        (hashq-set! state-roots host tables)
+        tables)))
+
+(define (state-table host) (vector-ref (root host) 0))
+(define (policy-table host) (vector-ref (root host) 1))
 
 (define %missing (list 'missing))
 
+(define (state-ref-slow host name table)
+  (expect-kind name 'state)
+  (let ((initial ((vector-ref (declaration name) 1))))
+    (hashq-set! table name initial)
+    initial))
+
 (define (state-ref host name)
   "Return the value of state slot NAME for HOST, initializing it on first use."
-  (expect-kind name 'state)
-  (let* ((table (root host))
+  (let* ((table (state-table host))
          (value (hashq-ref table name %missing)))
     (if (eq? value %missing)
-        (let ((initial ((vector-ref (declaration name) 1))))
-          (hashq-set! table name initial)
-          initial)
+        (state-ref-slow host name table)
         value)))
 
 (define (state-set! host name value)
   (expect-kind name 'state)
-  (hashq-set! (root host) name value)
+  (hashq-set! (state-table host) name value)
   value)
 
 (define (state-update! host name procedure)
@@ -102,26 +114,27 @@ application has not configured one; #f makes configuration mandatory."
 (define (state-clear! host name)
   "Drop state slot NAME so its initializer runs again on the next reference."
   (expect-kind name 'state)
-  (hashq-remove! (root host) name))
+  (hashq-remove! (state-table host) name))
 
 (define (policy-ref host name)
   "Return the procedure configured for policy slot NAME, or its declared
 default. Raises when a policy without a default is unconfigured."
-  (expect-kind name 'policy)
-  (or (hashq-ref (root host) name)
-      (vector-ref (declaration name) 1)
-      (error "policy is not configured" name)))
+  (or (hashq-ref (policy-table host) name)
+      (begin
+        (expect-kind name 'policy)
+        (or (vector-ref (declaration name) 1)
+            (error "policy is not configured" name)))))
 
 (define (policy-set! host name procedure)
   (expect-kind name 'policy)
   (unless (procedure? procedure)
     (error "policy must be a procedure" name))
-  (hashq-set! (root host) name procedure)
+  (hashq-set! (policy-table host) name procedure)
   procedure)
 
 (define (policy-configured? host name)
   (expect-kind name 'policy)
-  (and (hashq-ref (root host) name) #t))
+  (and (hashq-ref (policy-table host) name) #t))
 
 (define (state-slot-names)
   "All declared slots as (name . kind) pairs, sorted by name."
@@ -134,11 +147,13 @@ default. Raises when a policy without a default is unconfigured."
   "The application's live state as one enumerable value: a list of
 #(name kind value-or-'unset) records in slot-name order. This is the
 inspection payoff of a single root -- no per-subsystem serializer."
-  (let ((table (or (hashq-ref state-roots host) (make-hash-table))))
+  (let ((tables (or (hashq-ref state-roots host)
+                    (vector (make-hash-table) (make-hash-table)))))
     (map (lambda (entry)
            (let* ((name (car entry))
                   (kind (cdr entry))
-                  (value (hashq-ref table name %missing)))
+                  (value (hashq-ref (vector-ref tables (if (eq? kind 'state) 0 1))
+                                    name %missing)))
              (vector name kind (if (eq? value %missing) 'unset value))))
          (state-slot-names))))
 

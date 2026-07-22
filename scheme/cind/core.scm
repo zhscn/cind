@@ -1,4 +1,5 @@
 (define-module (cind core)
+  #:use-module (cind state)
   #:use-module (ice-9 format)
   #:use-module (ice-9 optargs)
   #:use-module (srfi srfi-1)
@@ -702,15 +703,15 @@
 
 ;; Values do not retain the host. Outstanding callback closures keep their host
 ;; alive only until the native task reaches a terminal state.
-(define pending-opens (make-weak-key-hash-table))
+(define-state-slot! 'pending-opens (lambda () '()))
 
 (define (host-pending-opens host)
-  (or (hashq-ref pending-opens host) '()))
+  (state-ref host 'pending-opens))
 
 (define (set-host-pending-opens! host opens)
   (if (null? opens)
-      (hashq-remove! pending-opens host)
-      (hashq-set! pending-opens host opens)))
+      (state-clear! host 'pending-opens)
+      (state-set! host 'pending-opens opens)))
 
 (define (pending-open-live? host open)
   (memq open (host-pending-opens host)))
@@ -1011,7 +1012,7 @@
           ((equal? (vector-ref values index) target) index)
           (else (loop (+ index 1))))))
 
-(define buffer-cycle-states (make-weak-key-hash-table))
+(define-state-slot! 'buffer-cycle (lambda () #f))
 
 (define (same-buffer-set? left right)
   (and (= (vector-length left) (vector-length right))
@@ -1026,10 +1027,10 @@
          (count (vector-length buffers)))
     (if (< count 2)
         (begin
-          (hashq-remove! buffer-cycle-states host)
+          (state-clear! host 'buffer-cycle)
           (command-completed))
         (let* ((current-buffer (context-buffer context))
-               (saved (hashq-ref buffer-cycle-states host))
+               (saved (state-ref host 'buffer-cycle))
                (saved-order (and saved (vector-ref saved 1)))
                (saved-index (and saved (vector-ref saved 2)))
                (continuing?
@@ -1049,7 +1050,7 @@
                 (display-buffer! host (context-window context)
                                  target
                                  'explicit)
-                (hashq-set! buffer-cycle-states host
+                (state-set! host 'buffer-cycle
                             (vector workbench order target-index))
                 (command-completed)))))))
 
@@ -1155,26 +1156,26 @@
   (mru pending-workbench-restore-mru set-pending-workbench-restore-mru!)
   (missing pending-workbench-restore-missing set-pending-workbench-restore-missing!))
 
-(define pending-workbench-session-restores (make-weak-key-hash-table))
+(define-state-slot! 'pending-session-restore (lambda () #f))
 
 (define (workbench-session-restore-live? host restore)
-  (eq? (hashq-ref pending-workbench-session-restores host) restore))
+  (eq? (state-ref host 'pending-session-restore) restore))
 
 (define (remove-workbench-session-restore-task! restore task)
   (set-pending-workbench-restore-tasks!
    restore (delv task (pending-workbench-restore-tasks restore))))
 
 (define (cancel-workbench-session-restore! host)
-  (let ((restore (hashq-ref pending-workbench-session-restores host)))
+  (let ((restore (state-ref host 'pending-session-restore)))
     (when restore
-      (hashq-remove! pending-workbench-session-restores host)
+      (state-clear! host 'pending-session-restore)
       (for-each (lambda (task) (cancel-async-task! host task))
                 (pending-workbench-restore-tasks restore))
       (set-pending-workbench-restore-tasks! restore '()))))
 
 (define (replace-workbench-session-restore! host restore)
   (cancel-workbench-session-restore! host)
-  (hashq-set! pending-workbench-session-restores host restore))
+  (state-set! host 'pending-session-restore restore))
 
 (define (append-unique value values)
   (if (member value values) values (append values (list value))))
@@ -1200,7 +1201,7 @@
 (define (finish-workbench-session-restore! host restore)
   (when (and (workbench-session-restore-live? host restore)
              (null? (pending-workbench-restore-tasks restore)))
-    (hashq-remove! pending-workbench-session-restores host)
+    (state-clear! host 'pending-session-restore)
     (catch #t
       (lambda ()
         (restore-workbench-session-mru!
@@ -1290,7 +1291,7 @@
       (lambda () (begin-workbench-session-restore! host restore serialized))
       (lambda (key . arguments)
         (when (workbench-session-restore-live? host restore)
-          (hashq-remove! pending-workbench-session-restores host))
+          (state-clear! host 'pending-session-restore))
         (apply throw key arguments)))))
 
 (define (workbench-save-session context invocation)
@@ -1344,27 +1345,27 @@
                              (begin-workbench-session-restore!
                               host restore (vector-ref result 3)))
                            (lambda (key . arguments)
-                             (hashq-remove! pending-workbench-session-restores host)
+                             (state-clear! host 'pending-session-restore)
                              (set-message!
                               host
                               (string-append
                                "workbench session restore failed: "
                                (format #f "~S: ~S" key arguments)))))
                          (begin
-                           (hashq-remove! pending-workbench-session-restores host)
+                           (state-clear! host 'pending-session-restore)
                            (set-message! host
                                          "workbench session file does not exist")))))
                  #:failed
                  (lambda (failed message)
                    (when (workbench-session-restore-live? host restore)
-                     (hashq-remove! pending-workbench-session-restores host)
+                     (state-clear! host 'pending-session-restore)
                      (set-message! host
                                    (string-append
                                     "workbench session restore failed: " message))))
                  #:cancelled
                  (lambda (cancelled)
                    (when (workbench-session-restore-live? host restore)
-                     (hashq-remove! pending-workbench-session-restores host)
+                     (state-clear! host 'pending-session-restore)
                      (set-message! host "workbench session restore cancelled")))))
           (set-pending-workbench-restore-tasks! restore (list task))
           (set-message! host "reading workbench session…")
@@ -1567,13 +1568,13 @@
   (root pending-project-search-root)
   (tasks pending-project-search-tasks set-pending-project-search-tasks!))
 
-(define pending-project-searches (make-weak-key-hash-table))
+(define-state-slot! 'pending-project-search (lambda () #f))
 
 (define (project-search-running? host)
-  (and (hashq-ref pending-project-searches host) #t))
+  (and (state-ref host 'pending-project-search) #t))
 
 (define (project-search-live? host search)
-  (eq? search (hashq-ref pending-project-searches host)))
+  (eq? search (state-ref host 'pending-project-search)))
 
 (define (remove-project-search-task! search task)
   (set-pending-project-search-tasks!
@@ -1586,14 +1587,14 @@
 
 (define (clear-project-search! host search)
   (when (project-search-live? host search)
-    (hashq-remove! pending-project-searches host)))
+    (state-clear! host 'pending-project-search)))
 
 (define (replace-project-search! host search)
-  (let ((previous (hashq-ref pending-project-searches host)))
+  (let ((previous (state-ref host 'pending-project-search)))
     (when previous
-      (hashq-remove! pending-project-searches host)
+      (state-clear! host 'pending-project-search)
       (cancel-project-search-tasks! host previous))
-    (hashq-set! pending-project-searches host search)))
+    (state-set! host 'pending-project-search search)))
 
 (define (trim-line-endings text)
   (let loop ((end (string-length text)))
@@ -2526,30 +2527,30 @@
   (window pending-lsp-navigation-window)
   (source pending-lsp-navigation-source))
 
-(define pending-lsp-navigations (make-weak-key-hash-table))
+(define-state-slot! 'pending-lsp-navigation (lambda () #f))
 
 (define (pending-lsp-navigation-live? host task)
-  (let ((pending (hashq-ref pending-lsp-navigations host)))
+  (let ((pending (state-ref host 'pending-lsp-navigation)))
     (and pending (= task (pending-lsp-navigation-task pending)))))
 
 (define (clear-lsp-navigation! host task)
   (when (pending-lsp-navigation-live? host task)
-    (hashq-remove! pending-lsp-navigations host)))
+    (state-clear! host 'pending-lsp-navigation)))
 
 (define (cancel-lsp-navigation! host)
-  (let ((pending (hashq-ref pending-lsp-navigations host)))
+  (let ((pending (state-ref host 'pending-lsp-navigation)))
     (and pending
          (begin
-           (hashq-remove! pending-lsp-navigations host)
+           (state-clear! host 'pending-lsp-navigation)
            (cancel-async-task! host (pending-lsp-navigation-task pending))))))
 
 (define (replace-lsp-navigation! host pending)
   (cancel-lsp-navigation! host)
-  (hashq-set! pending-lsp-navigations host pending))
+  (state-set! host 'pending-lsp-navigation pending))
 
 (define (complete-lsp-navigation! host task result)
   (when (pending-lsp-navigation-live? host task)
-    (let ((pending (hashq-ref pending-lsp-navigations host)))
+    (let ((pending (state-ref host 'pending-lsp-navigation)))
       (clear-lsp-navigation! host task)
       (if (and (vector? result)
                (= (vector-length result) 2)
@@ -2564,7 +2565,7 @@
 (define (fail-lsp-navigation! host task message)
   (when (pending-lsp-navigation-live? host task)
     (let ((source (pending-lsp-navigation-source
-                   (hashq-ref pending-lsp-navigations host))))
+                   (state-ref host 'pending-lsp-navigation))))
       (clear-lsp-navigation! host task)
       (set-message! host
                     (format #f "LSP ~a failed: ~a"
@@ -2683,10 +2684,10 @@
           (command-completed/preserve))
         (command-error "current position cannot be marked"))))
 
-(define jump-link-origins (make-weak-key-hash-table))
+(define-state-slot! 'jump-link-origins (lambda () '()))
 
 (define (jump-link-origin host window)
-  (let loop ((entries (or (hashq-ref jump-link-origins host) '())))
+  (let loop ((entries (state-ref host 'jump-link-origins)))
     (and (pair? entries)
          (if (equal? (caar entries) window)
              (cdar entries)
@@ -2694,8 +2695,8 @@
 
 (define (set-jump-link-origin! host window node)
   (let ((remaining (filter (lambda (entry) (not (equal? (car entry) window)))
-                           (or (hashq-ref jump-link-origins host) '()))))
-    (hashq-set! jump-link-origins host
+                           (state-ref host 'jump-link-origins))))
+    (state-set! host 'jump-link-origins
                 (if node (cons (cons window node) remaining) remaining))))
 
 (define (jump-link host context)

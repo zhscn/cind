@@ -1,4 +1,5 @@
 (define-module (cind workbench)
+  #:use-module (cind state)
   #:use-module ((cind host)
                 #:select (open-buffer-ids
                           buffer-project-id
@@ -66,11 +67,13 @@
 ;; Location records are
 ;; #(list-id materialized-buffer-or-#f item-count selected-index-or-#f).
 ;; Transaction records are #(group-id undone?).
-(define workbench-states (make-weak-key-hash-table))
-(define active-workbenches (make-weak-key-hash-table))
+;; The active workbench is #f only before the first one is created; every
+;; accessor treats that as an unavailable selection.
+(define-state-slot! 'workbenches (lambda () '()))
+(define-state-slot! 'active-workbench (lambda () #f))
 
 (define (host-workbench-states host)
-  (or (hashq-ref workbench-states host) '()))
+  (state-ref host 'workbenches))
 
 (define (workbench-entry host workbench)
   (let loop ((entries (host-workbench-states host)))
@@ -143,7 +146,7 @@
   (unless (vector? scope)
     (error "workbench scope must be a vector" scope))
   (let ((entries (host-workbench-states host)))
-    (hashq-set! workbench-states host
+    (state-set! host 'workbenches
                 (cons (vector workbench
                               name
                               (if initial-buffer (list initial-buffer) '())
@@ -155,11 +158,11 @@
                               '())
                       entries))
     (when (null? entries)
-      (hashq-set! active-workbenches host workbench)))
+      (state-set! host 'active-workbench workbench)))
   workbench)
 
 (define (active-workbench host)
-  (or (hashq-ref active-workbenches host)
+  (or (state-ref host 'active-workbench)
       (error "workbench selection state is unavailable")))
 
 (define (workbench-summaries host)
@@ -173,7 +176,7 @@
 
 (define (workbench-activate! host workbench)
   (require-workbench-entry host workbench)
-  (hashq-set! active-workbenches host workbench)
+  (state-set! host 'active-workbench workbench)
   workbench)
 
 (define (workbench-next host workbench delta)
@@ -234,9 +237,9 @@
       (error "cannot release the active workbench" workbench))
     (if (null? remaining)
         (begin
-          (hashq-remove! workbench-states host)
-          (hashq-remove! active-workbenches host))
-        (hashq-set! workbench-states host remaining))
+          (state-clear! host 'workbenches)
+          (state-clear! host 'active-workbench))
+        (state-set! host 'workbenches remaining))
     entry))
 
 (define (workbench-mru host workbench)

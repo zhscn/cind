@@ -7,6 +7,7 @@
   #:use-module (cind command)
   #:use-module (cind host)
   #:use-module (cind minibuffer)
+  #:use-module (cind state)
   #:export (development-command-definitions
             install-development-documentation!
             make-evaluation-module
@@ -20,17 +21,14 @@
   (string-append "Cind Scheme REPL\n"
                  "Definitions share the editor's persistent evaluation module.\n\n"
                  repl-prompt))
-(define evaluation-modules (make-weak-key-hash-table))
-(define repl-states (make-weak-key-hash-table))
+(define-state-slot! 'evaluation-module (lambda () #f))
+(define-state-slot! 'repl-buffers (lambda () (make-hash-table)))
 
 (define (utf8-length text)
   (bytevector-length (string->utf8 text)))
 
 (define (host-repl-states host)
-  (or (hashq-ref repl-states host)
-      (let ((states (make-hash-table)))
-        (hashq-set! repl-states host states)
-        states)))
+  (state-ref host 'repl-buffers))
 
 (define (repl-state host buffer)
   (hash-ref (host-repl-states host) buffer))
@@ -39,7 +37,7 @@
   (hash-set! (host-repl-states host) buffer state))
 
 (define (make-evaluation-module host)
-  (or (hashq-ref evaluation-modules host)
+  (or (state-ref host 'evaluation-module)
       (let ((module (make-fresh-user-module)))
         (module-use! module (resolve-interface '(cind application)))
         (module-use! module (resolve-interface '(cind command)))
@@ -48,8 +46,7 @@
         (module-use! module (resolve-interface '(cind minibuffer)))
         (module-use! module (resolve-interface '(cind host)))
         (module-define! module 'host host)
-        (hashq-set! evaluation-modules host module)
-        module)))
+        (state-set! host 'evaluation-module module))))
 
 (define (render-value value)
   (call-with-output-string

@@ -3,6 +3,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (cind command)
   #:use-module (cind host)
+  #:use-module (cind state)
   #:export (define-lsp-provider!
             resolve-lsp-provider
             lsp-provider?
@@ -17,14 +18,11 @@
             lsp-buffer-released!
             lsp-diagnostics-failed!))
 
-(define provider-tables (make-weak-key-hash-table))
-(define session-bindings (make-weak-key-hash-table))
+(define-state-slot! 'lsp-providers (lambda () (make-hash-table)))
+(define-state-slot! 'lsp-session-bindings (lambda () '()))
 
 (define (host-provider-table host)
-  (or (hashq-ref provider-tables host)
-      (let ((table (make-hash-table)))
-        (hashq-set! provider-tables host table)
-        table)))
+  (state-ref host 'lsp-providers))
 
 (define (non-empty-string? value)
   (and (string? value) (> (string-length value) 0)))
@@ -135,7 +133,7 @@
 ;; definitions and bindings are application-local policy state; native session
 ;; objects remain opaque mechanism handles.
 (define (host-session-bindings host)
-  (or (hashq-ref session-bindings host) '()))
+  (state-ref host 'lsp-session-bindings))
 
 (define (binding-for host buffer name)
   (let loop ((bindings (host-session-bindings host)))
@@ -168,7 +166,7 @@
                                 (lsp-provider-features validated))))
           (when (lsp-provider-supports? validated "diagnostics")
             (attach-lsp-diagnostics! host id))
-          (hashq-set! session-bindings host
+          (state-set! host 'lsp-session-bindings
                       (cons (vector buffer name validated session)
                             (without-binding (host-session-bindings host)
                                              buffer name)))
@@ -208,9 +206,7 @@
          (filter (lambda (binding)
                    (not (equal? buffer (vector-ref binding 0))))
                  (host-session-bindings host))))
-    (if (null? remaining)
-        (hashq-remove! session-bindings host)
-        (hashq-set! session-bindings host remaining))))
+    (state-set! host 'lsp-session-bindings remaining)))
 
 (define (lsp-diagnostics-failed! host message)
   (unless (string? message)

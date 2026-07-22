@@ -1,4 +1,5 @@
 (define-module (cind application)
+  #:use-module (cind state)
   #:export (application-state
             exit-editor!
             request-redraw!
@@ -7,16 +8,11 @@
             page-rows
             set-page-rows!))
 
-;; #(exit-requested? caret-reveal? page-rows). Application instances are
-;; represented by weak host capabilities, so state disappears with the owning
-;; editor.
-(define application-states (make-weak-key-hash-table))
+;; #(exit-requested? caret-reveal? page-rows).
+(define-state-slot! 'application (lambda () (vector #f #t 1)))
 
 (define (host-application-state host)
-  (or (hashq-ref application-states host)
-      (let ((state (vector #f #t 1)))
-        (hashq-set! application-states host state)
-        state)))
+  (state-ref host 'application))
 
 (define (application-state host)
   (let ((state (host-application-state host)))

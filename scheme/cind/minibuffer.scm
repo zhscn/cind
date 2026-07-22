@@ -1,4 +1,5 @@
 (define-module (cind minibuffer)
+  #:use-module (cind state)
   #:use-module (ice-9 optargs)
   #:use-module (srfi srfi-13)
   #:use-module (cind command)
@@ -27,11 +28,13 @@
             submit-interaction!
             cancel-interaction!))
 
-(define history-policies (make-weak-key-hash-table))
-(define histories (make-weak-key-hash-table))
-(define minibuffer-navigations (make-weak-key-hash-table))
-(define minibuffer-selections (make-weak-key-hash-table))
-(define interactions (make-weak-key-hash-table))
+;; #f means "no active interaction" / "not navigating history", which the
+;; initializers preserve (design/09-guile-first.md §4).
+(define-policy-slot! 'minibuffer-history)
+(define-state-slot! 'minibuffer-histories (lambda () (make-hash-table)))
+(define-state-slot! 'minibuffer-navigation (lambda () #f))
+(define-state-slot! 'minibuffer-selection (lambda () #f))
+(define-state-slot! 'interaction (lambda () #f))
 
 (define (interaction-started! host state)
   (unless (and (vector? state)
@@ -49,12 +52,12 @@
                (and (vector? (vector-ref state 10))
                     (= (vector-length (vector-ref state 10)) 3)))
     (error "invalid interaction policy state" state))
-  (hashq-set! interactions host state)
-  (hashq-remove! minibuffer-selections host)
+  (state-set! host 'interaction state)
+  (state-clear! host 'minibuffer-selection)
   state)
 
 (define (interaction-policy-state host)
-  (let ((state (hashq-ref interactions host))
+  (let ((state (state-ref host 'interaction))
         (mechanism (interaction-mechanism-status host)))
     (if (and state (vector-ref mechanism 0))
         (vector (vector-ref state 0)
@@ -66,17 +69,17 @@
                 (vector-ref state 6)
                 (vector-ref state 7))
         (begin
-          (hashq-remove! interactions host)
+          (state-clear! host 'interaction)
           #f))))
 
 (define (interaction-selection-for host revision count)
-  (let ((state (hashq-ref minibuffer-selections host)))
+  (let ((state (state-ref host 'minibuffer-selection)))
     (cond
      ((zero? count)
-      (hashq-remove! minibuffer-selections host)
+      (state-clear! host 'minibuffer-selection)
       #f)
      ((or (not state) (not (= revision (vector-ref state 0))))
-      (hashq-set! minibuffer-selections host (vector revision 0))
+      (state-set! host 'minibuffer-selection (vector revision 0))
       0)
      ((>= (vector-ref state 1) count)
       (vector-set! state 1 0)
@@ -85,7 +88,7 @@
 
 (define (interaction-status host)
   (let ((mechanism (interaction-mechanism-status host))
-        (state (hashq-ref interactions host)))
+        (state (state-ref host 'interaction)))
     (if (vector-ref mechanism 0)
         (begin
           (unless state
@@ -102,26 +105,26 @@
                     (vector-ref mechanism 2)
                     (vector-ref mechanism 3))))
         (begin
-          (hashq-remove! interactions host)
-          (hashq-remove! minibuffer-selections host)
+          (state-clear! host 'interaction)
+          (state-clear! host 'minibuffer-selection)
           (vector #f #f #f #f #f 0 #f #f)))))
 
 (define (interaction-selection host)
   (vector-ref (interaction-status host) 4))
 
 (define (interaction-provider host)
-  (let ((state (hashq-ref interactions host)))
+  (let ((state (state-ref host 'interaction)))
     (and state (vector-ref state 7))))
 
 (define (refresh-interaction! host)
-  (let ((state (hashq-ref interactions host)))
+  (let ((state (state-ref host 'interaction)))
     (when state
       (refresh-interaction-mechanism! host (vector-ref state 7)))))
 
 (define (set-interaction-provider! host provider)
   (unless (string? provider)
     (error "interaction provider must be a string" provider))
-  (let ((state (hashq-ref interactions host)))
+  (let ((state (state-ref host 'interaction)))
     (unless (and state (eq? (vector-ref state 0) 'picker))
       (error "no picker interaction is active"))
     (let ((previous (vector-ref state 7)))
@@ -134,22 +137,19 @@
 
 (define (set-interaction-selection! host index)
   (let* ((mechanism (interaction-mechanism-status host))
-         (state (hashq-ref interactions host))
+         (state (state-ref host 'interaction))
          (count (vector-ref mechanism 1)))
     (and (vector-ref mechanism 0)
          state
          (eq? (vector-ref state 0) 'picker)
          (< index count)
          (begin
-           (hashq-set! minibuffer-selections host
+           (state-set! host 'minibuffer-selection
                        (vector (vector-ref mechanism 4) index))
            #t))))
 
 (define (host-histories host)
-  (or (hashq-ref histories host)
-      (let ((table (make-hash-table)))
-        (hashq-set! histories host table)
-        table)))
+  (state-ref host 'minibuffer-histories))
 
 (define (minibuffer-history host name)
   (unless (string? name)
@@ -164,10 +164,10 @@
   (hash-set! (host-histories host) name entries))
 
 (define (clear-minibuffer-navigation! host)
-  (hashq-remove! minibuffer-navigations host))
+  (state-clear! host 'minibuffer-navigation))
 
 (define (minibuffer-navigation host buffer)
-  (let ((navigation (hashq-ref minibuffer-navigations host)))
+  (let ((navigation (state-ref host 'minibuffer-navigation)))
     (and navigation (equal? buffer (vector-ref navigation 0)) navigation)))
 
 (define (minibuffer-history-state host buffer name)
@@ -200,10 +200,7 @@
       (list->vector (list-tail values overflow)))))
 
 (define (configure-minibuffer-history-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "minibuffer history policy must be a procedure" procedure))
-  (hashq-set! history-policies host procedure)
-  procedure)
+  (policy-set! host 'minibuffer-history procedure))
 
 (define (string-vector? value)
   (and (vector? value)
@@ -221,9 +218,7 @@
   (when (and name
              (> (string-length name) 0)
              (> (string-length value) 0))
-    (let ((policy (hashq-ref history-policies host)))
-      (unless policy
-        (error "minibuffer history policy is not configured"))
+    (let ((policy (policy-ref host 'minibuffer-history)))
       (let ((entries (policy (minibuffer-history host name) value)))
         (unless (string-vector? entries)
           (error "minibuffer history policy must return a string vector" entries))
@@ -240,7 +235,7 @@
           host (modulo (+ selected delta) count)))))
 
 (define (submit-interaction! host)
-  (let* ((state (hashq-ref interactions host))
+  (let* ((state (state-ref host 'interaction))
          (selected (interaction-selection host)))
     (unless state
       (error "no interaction policy state is active"))
@@ -248,8 +243,8 @@
                   host selected (vector-ref state 6)))
           (arguments (vector-ref state 9))
           (target (vector-ref state 10)))
-      (hashq-remove! interactions host)
-      (hashq-remove! minibuffer-selections host)
+      (state-clear! host 'interaction)
+      (state-clear! host 'minibuffer-selection)
       (vector (vector-ref state 8)
               (list->vector (append (vector->list arguments) (list value)))
               target
@@ -258,8 +253,8 @@
 
 (define (cancel-interaction! host)
   (let ((cancelled? (cancel-interaction-mechanism! host)))
-    (hashq-remove! interactions host)
-    (hashq-remove! minibuffer-selections host)
+    (state-clear! host 'interaction)
+    (state-clear! host 'minibuffer-selection)
     cancelled?))
 
 (define (move-minibuffer-history! host context delta)
@@ -281,7 +276,7 @@
         (and target
              (let ((revision
                     (replace-interaction-input! host (vector-ref entries target))))
-               (hashq-set! minibuffer-navigations host
+               (state-set! host 'minibuffer-navigation
                            (vector (context-buffer context) target draft revision))
                #t))))
      ((not index) #f)
@@ -289,12 +284,12 @@
       (let ((target (+ index 1)))
         (let ((revision
                (replace-interaction-input! host (vector-ref entries target))))
-          (hashq-set! minibuffer-navigations host
+          (state-set! host 'minibuffer-navigation
                       (vector (context-buffer context) target stored-draft revision))
           #t)))
      (else
       (let ((revision (replace-interaction-input! host stored-draft)))
-        (hashq-set! minibuffer-navigations host
+        (state-set! host 'minibuffer-navigation
                     (vector (context-buffer context) #f stored-draft revision))
         #t)))))
 
