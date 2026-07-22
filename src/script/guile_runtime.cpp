@@ -4846,120 +4846,6 @@ SCM window_view(SCM host_object, SCM window_value) {
     return SCM_BOOL_F;
 }
 
-SCM window_role(SCM host_object, SCM window_value) {
-    HostLease& host = require_host(host_object, "window-role");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-role", 2);
-    try {
-        (void)host.runtime->windows().get(window);
-        const SCM state = scheme_workbench_window_state(host_object, window, "window-role");
-        const SCM role = scm_c_vector_ref(state, 1);
-        return scheme_false(role) ? SCM_BOOL_F : name_symbol(scheme_string(role));
-    } catch (const std::exception& exception) {
-        raise_host_error("window-role", exception.what());
-    } catch (...) {
-        scm_misc_error("window-role", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_window_role(SCM host_object, SCM window_value, SCM role_value) {
-    HostLease& host = require_host(host_object, "set-window-role!");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "set-window-role!", 2);
-    if (!scheme_false(role_value) && !scheme_true(scm_symbol_p(role_value))) {
-        scm_wrong_type_arg_msg("set-window-role!", 3, role_value, "symbol or #f");
-    }
-    try {
-        (void)host.runtime->windows().get(window);
-        const std::optional<std::string> role =
-            scheme_false(role_value)
-                ? std::nullopt
-                : std::optional(scheme_name(role_value, "set-window-role!", 3));
-        (void)scm_call_3(scm_c_public_ref("cind workbench", "workbench-set-window-role!"),
-                         host_object, window_value,
-                         role ? scm_from_utf8_stringn(role->data(), role->size()) : SCM_BOOL_F);
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-window-role!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-window-role!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM window_pinned(SCM host_object, SCM window_value) {
-    HostLease& host = require_host(host_object, "window-pinned?");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-pinned?", 2);
-    try {
-        (void)host.runtime->windows().get(window);
-        const SCM state = scheme_workbench_window_state(host_object, window, "window-pinned?");
-        return scm_c_vector_ref(state, 2);
-    } catch (const std::exception& exception) {
-        raise_host_error("window-pinned?", exception.what());
-    } catch (...) {
-        scm_misc_error("window-pinned?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM set_window_pinned(SCM host_object, SCM window_value, SCM pinned_value) {
-    if (!scheme_boolean(pinned_value)) {
-        scm_wrong_type_arg_msg("set-window-pinned!", 3, pinned_value, "boolean");
-    }
-    HostLease& host = require_host(host_object, "set-window-pinned!");
-    const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "set-window-pinned!", 2);
-    try {
-        (void)host.runtime->windows().get(window);
-        (void)scm_call_3(scm_c_public_ref("cind workbench", "workbench-set-window-pinned!"),
-                         host_object, window_value, pinned_value);
-        return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-window-pinned!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-window-pinned!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
-}
-
-SCM window_created_by_policy(SCM host_object, SCM window_value) {
-    HostLease& host = require_host(host_object, "window-created-by-policy?");
-    const WindowId window =
-        entity_id_from_scheme<WindowTag>(window_value, "window-created-by-policy?", 2);
-    try {
-        (void)host.runtime->windows().get(window);
-        const SCM state =
-            scheme_workbench_window_state(host_object, window, "window-created-by-policy?");
-        return scm_c_vector_ref(state, 3);
-    } catch (const std::exception& exception) {
-        raise_host_error("window-created-by-policy?", exception.what());
-    } catch (...) {
-        scm_misc_error("window-created-by-policy?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
-SCM workbench_slot(SCM host_object, SCM workbench_value, SCM role_value) {
-    if (!scheme_true(scm_symbol_p(role_value))) {
-        scm_wrong_type_arg_msg("workbench-slot", 3, role_value, "symbol");
-    }
-    HostLease& host = require_host(host_object, "workbench-slot");
-    (void)entity_id_from_scheme<WorkbenchTag>(workbench_value, "workbench-slot", 2);
-    try {
-        const SCM window = scm_call_3(
-            scm_c_public_ref("cind workbench", "workbench-slot"), host_object, workbench_value,
-            scm_from_utf8_string(scheme_name(role_value, "workbench-slot", 3).c_str()));
-        if (!scheme_false(window)) {
-            const WindowId id = entity_id_from_scheme<WindowTag>(window, "workbench-slot", 0);
-            (void)host.runtime->windows().get(id);
-        }
-        return window;
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-slot", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-slot", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
-}
-
 SCM focus_window(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "focus-window!");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "focus-window!", 2);
@@ -5856,17 +5742,6 @@ void initialize_host_module(void*) {
     (void)scm_c_define_gsubr("window-view-id", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_view));
     (void)scm_c_define_gsubr("window-buffer-id", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(window_buffer));
-    (void)scm_c_define_gsubr("window-role", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_role));
-    (void)scm_c_define_gsubr("set-window-role!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_window_role));
-    (void)scm_c_define_gsubr("window-pinned?", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(window_pinned));
-    (void)scm_c_define_gsubr("set-window-pinned!", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(set_window_pinned));
-    (void)scm_c_define_gsubr("window-created-by-policy?", 2, 0, 0,
-                             reinterpret_cast<scm_t_subr>(window_created_by_policy));
-    (void)scm_c_define_gsubr("workbench-slot", 3, 0, 0,
-                             reinterpret_cast<scm_t_subr>(workbench_slot));
     (void)scm_c_define_gsubr("focus-window!", 2, 0, 0, reinterpret_cast<scm_t_subr>(focus_window));
     scm_c_export(
         "define-command!", "set-command-documentation!", "define-interaction-provider!",

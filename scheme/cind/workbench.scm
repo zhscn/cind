@@ -53,7 +53,12 @@
             workbench-set-window-pinned!
             workbench-set-window-created-by-policy!
             workbench-slot
-            workbench-slots))
+            workbench-slots
+            window-role
+            set-window-role!
+            window-pinned?
+            set-window-pinned!
+            window-created-by-policy?))
 
 ;; Entries are
 ;; #(workbench name mru-list scope-list window-list active-window
@@ -727,6 +732,28 @@
     (error "window policy provenance must be boolean" created?))
   (vector-set! (cdr (require-window-entry-with-workbench host window)) 3 created?)
   window)
+
+;; Commands name roles with symbols while the stored form is a string. These
+;; used to be host primitives that validated the window and then called back
+;; into this module for the value; the state has always lived here, so the
+;; round trip through C++ bought nothing (design/09-guile-first.md §0.2).
+(define (window-role host window)
+  (let ((role (vector-ref (workbench-window-state-or-default host window) 1)))
+    (and role (string->symbol role))))
+
+(define (set-window-role! host window role)
+  (unless (or (not role) (symbol? role))
+    (error "window role must be a symbol or #f" role))
+  (workbench-set-window-role! host window (and role (symbol->string role))))
+
+(define (window-pinned? host window)
+  (vector-ref (workbench-window-state-or-default host window) 2))
+
+(define (set-window-pinned! host window pinned?)
+  (workbench-set-window-pinned! host window pinned?))
+
+(define (window-created-by-policy? host window)
+  (vector-ref (workbench-window-state-or-default host window) 3))
 
 (define (workbench-slot host workbench role)
   (unless (and (string? role) (> (string-length role) 0))

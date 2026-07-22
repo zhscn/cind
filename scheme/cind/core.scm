@@ -38,7 +38,12 @@
                           workbench-location-navigation
                           workbench-set-location-navigation!
                           workbench-location-list-key
-                          workbench-move-location-list!))
+                          workbench-move-location-list!
+                          window-role
+                          set-window-role!
+                          window-pinned?
+                          set-window-pinned!
+                          window-created-by-policy?))
   #:export (install-core-commands!
             install-core-providers!
             install-input-states!
