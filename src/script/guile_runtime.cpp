@@ -362,6 +362,20 @@ void raise_host_error(const char* caller, const std::string& message) {
     scm_misc_error(caller, "host operation failed: ~A",
                    scm_list_1(scm_from_utf8_string(message.c_str())));
 }
+// Every host primitive shares one failure contract: a C++ exception becomes a
+// Guile error naming the primitive, and an unrecognized one is reported rather
+// than unwinding across the boundary. Wrapping it here keeps each primitive to
+// its own logic instead of repeating the same three-clause epilogue.
+template <typename Body> SCM host_primitive(const char* caller, Body&& body) {
+    try {
+        return body();
+    } catch (const std::exception& exception) {
+        raise_host_error(caller, exception.what());
+    } catch (...) {
+        scm_misc_error(caller, "unknown C++ host failure", SCM_EOL);
+    }
+    return SCM_BOOL_F;
+}
 
 void finalize_host(SCM object) {
     delete static_cast<HostLease*>(scm_foreign_object_ref(object, 0));
@@ -467,7 +481,7 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
         scm_misc_error("define-command!", "Guile runtime has expired", SCM_EOL);
     }
 
-    try {
+    return host_primitive("define-command!", [&]() -> SCM {
         const std::string name = scheme_string(name_value);
         const std::size_t command_index = state->commands.size();
         (void)scm_gc_protect_object(execute_value);
@@ -520,12 +534,8 @@ SCM define_command(SCM host_object, SCM name_value, SCM execute_value, SCM enabl
             }
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-command!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-command!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation_value) {
@@ -535,7 +545,7 @@ SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation
     if (!scm_is_string(documentation_value)) {
         scm_wrong_type_arg_msg("set-command-documentation!", 3, documentation_value, "string");
     }
-    try {
+    return host_primitive("set-command-documentation!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-command-documentation!");
         const std::string name = scheme_string(name_value);
         const std::optional<CommandId> command = host.runtime->commands().find(name);
@@ -547,12 +557,7 @@ SCM set_command_documentation(SCM host_object, SCM name_value, SCM documentation
         host.runtime->commands().describe(*command, scheme_string(documentation_value),
                                           definition.source);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-command-documentation!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-command-documentation!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -570,7 +575,7 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
         scm_misc_error("define-interaction-provider!", "Guile runtime has expired", SCM_EOL);
     }
 
-    try {
+    return host_primitive("define-interaction-provider!", [&]() -> SCM {
         const std::string name = scheme_string(name_value);
         const std::size_t provider_index = state->providers.size();
         (void)scm_gc_protect_object(complete_value);
@@ -603,12 +608,8 @@ SCM define_interaction_provider(SCM host_object, SCM name_value, SCM complete_va
             (void)scm_gc_unprotect_object(complete_value);
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-interaction-provider!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-interaction-provider!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_value,
@@ -631,7 +632,7 @@ SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_val
         scm_misc_error("define-completion-provider!", "Guile runtime has expired", SCM_EOL);
     }
 
-    try {
+    return host_primitive("define-completion-provider!", [&]() -> SCM {
         const std::string name = scheme_string(name_value);
         const std::size_t provider_index = state->completion_providers.size();
         (void)scm_gc_protect_object(complete_value);
@@ -656,12 +657,8 @@ SCM define_completion_provider(SCM host_object, SCM name_value, SCM complete_val
             }
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-completion-provider!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-completion-provider!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
@@ -670,7 +667,7 @@ SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM c
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("bind-key-if-command!", 3, keys_value, "string");
     }
-    try {
+    return host_primitive("bind-key-if-command!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "bind-key-if-command!");
         const KeymapId keymap = require_keymap(host, keymap_value, "bind-key-if-command!", 2);
         const std::string keys = scheme_string(keys_value);
@@ -682,16 +679,11 @@ SCM bind_key_if_command(SCM host_object, SCM keymap_value, SCM keys_value, SCM c
         host.runtime->keymaps().bind(keymap, keys, *command);
         ++host.bindings_installed;
         return SCM_BOOL_T;
-    } catch (const std::exception& exception) {
-        scm_misc_error("bind-key-if-command!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("bind-key-if-command!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM define_keymap(SCM host_object, SCM name_value, SCM parent_value) {
-    try {
+    return host_primitive("define-keymap!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-keymap!");
         const std::string name = scheme_name(name_value, "define-keymap!", 2);
         std::optional<KeymapId> parent;
@@ -702,19 +694,14 @@ SCM define_keymap(SCM host_object, SCM name_value, SCM parent_value) {
         const KeymapId keymap = existing ? *existing : host.runtime->keymaps().define(name);
         host.runtime->keymaps().set_parent(keymap, parent);
         return scm_from_uint32(keymap.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-keymap!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-keymap!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM bind_key(SCM host_object, SCM keymap_value, SCM keys_value, SCM binding_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("bind-key!", 3, keys_value, "string");
     }
-    try {
+    return host_primitive("bind-key!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "bind-key!");
         const KeymapId keymap = require_keymap(host, keymap_value, "bind-key!", 2);
         const std::string keys = scheme_string(keys_value);
@@ -742,16 +729,11 @@ SCM bind_key(SCM host_object, SCM keymap_value, SCM keys_value, SCM binding_valu
         }
         ++host.bindings_installed;
         return SCM_BOOL_T;
-    } catch (const std::exception& exception) {
-        scm_misc_error("bind-key!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("bind-key!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM bind_remap(SCM host_object, SCM keymap_value, SCM command_value, SCM replacement_value) {
-    try {
+    return host_primitive("bind-remap!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "bind-remap!");
         const KeymapId keymap = require_keymap(host, keymap_value, "bind-remap!", 2);
         const CommandId command = require_command(host, command_value, "bind-remap!", 3);
@@ -759,17 +741,12 @@ SCM bind_remap(SCM host_object, SCM keymap_value, SCM command_value, SCM replace
         host.runtime->keymaps().bind_remap(keymap, command, replacement);
         ++host.bindings_installed;
         return SCM_BOOL_T;
-    } catch (const std::exception& exception) {
-        scm_misc_error("bind-remap!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("bind-remap!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; validation preserves their semantic order.
 SCM keymap_bindings(SCM host_object, SCM keymap_value) {
-    try {
+    return host_primitive("keymap-bindings", [&]() -> SCM {
         HostLease& host = require_host(host_object, "keymap-bindings");
         const KeymapId keymap = require_keymap(host, keymap_value, "keymap-bindings", 2);
         const std::vector<KeymapEntry> entries = host.runtime->keymaps().entries(keymap);
@@ -807,12 +784,7 @@ SCM keymap_bindings(SCM host_object, SCM keymap_value) {
             scm_c_vector_set_x(result, index++, value);
         }
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("keymap-bindings", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("keymap-bindings", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 std::vector<KeymapId> keymap_layers_from_scheme(HostLease& host, SCM layers_value,
@@ -889,7 +861,7 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("resolve-key-sequence", 3, keys_value, "string");
     }
-    try {
+    return host_primitive("resolve-key-sequence", [&]() -> SCM {
         HostLease& host = require_host(host_object, "resolve-key-sequence");
         const std::vector<KeymapId> layers =
             keymap_layers_from_scheme(host, layers_value, "resolve-key-sequence");
@@ -921,12 +893,7 @@ SCM resolve_key_sequence(SCM host_object, SCM layers_value, SCM keys_value) {
         scm_c_vector_set_x(result, source_index,
                            name_symbol(host.runtime->keymaps().definition(*match.source).name));
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("resolve-key-sequence", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("resolve-key-sequence", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM keymap_names_value(const EditorRuntime& runtime, std::span<const KeymapId> keymaps) {
@@ -997,7 +964,7 @@ SCM scheme_workbench_window_state(SCM host_object, WindowId window, const char* 
 }
 
 SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
-    try {
+    return host_primitive("keymap-context-snapshot", [&]() -> SCM {
         HostLease& host = require_host(host_object, "keymap-context-snapshot");
         const CommandContext context =
             command_context_from_scheme(host, context_value, "keymap-context-snapshot");
@@ -1050,12 +1017,7 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             result, 9,
             scm_from_bool(host.services.completion_active && host.services.completion_active()));
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("keymap-context-snapshot", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("keymap-context-snapshot", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; validation preserves their semantic order.
@@ -1063,7 +1025,7 @@ SCM key_sequence_completions(SCM host_object, SCM layers_value, SCM keys_value) 
     if (!scm_is_string(keys_value)) {
         scm_wrong_type_arg_msg("key-sequence-completions", 3, keys_value, "string");
     }
-    try {
+    return host_primitive("key-sequence-completions", [&]() -> SCM {
         HostLease& host = require_host(host_object, "key-sequence-completions");
         const std::vector<KeymapId> layers =
             keymap_layers_from_scheme(host, layers_value, "key-sequence-completions");
@@ -1092,12 +1054,7 @@ SCM key_sequence_completions(SCM host_object, SCM layers_value, SCM keys_value) 
             scm_c_vector_set_x(result, index, value);
         }
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("key-sequence-completions", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("key-sequence-completions", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; validation preserves their semantic order.
@@ -1105,31 +1062,23 @@ SCM set_input_feedback(SCM host_object, SCM view_value, SCM sequence_value, SCM 
     if (!scm_is_string(sequence_value)) {
         scm_wrong_type_arg_msg("set-input-feedback!", 3, sequence_value, "string");
     }
-    try {
+    return host_primitive("set-input-feedback!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-input-feedback!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-input-feedback!", 2);
         host.runtime->views().set_input_feedback(
             view, {.sequence = scheme_string(sequence_value),
                    .hints = input_hints_from_scheme(hints_value, "set-input-feedback!", 4)});
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-input-feedback!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-input-feedback!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM clear_input_feedback(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("clear-input-feedback!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "clear-input-feedback!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "clear-input-feedback!", 2);
         host.runtime->views().clear_input_feedback(view);
-    } catch (const std::exception& exception) {
-        scm_misc_error("clear-input-feedback!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("clear-input-feedback!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 // The low-level Guile ABI fixes eight adjacent SCM arguments. The `(cind
@@ -1144,7 +1093,7 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
     if (!scheme_false(handler_value) && !scheme_true(scm_procedure_p(handler_value))) {
         scm_wrong_type_arg_msg("%define-input-state!", 8, handler_value, "procedure or #f");
     }
-    try {
+    return host_primitive("%define-input-state!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "%define-input-state!");
         const std::string name = scheme_name(name_value, "%define-input-state!", 2);
         const std::vector<KeymapId> keymaps =
@@ -1231,12 +1180,8 @@ SCM define_input_state(SCM host_object, SCM name_value, SCM keymaps_value, SCM t
             }
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("%define-input-state!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("%define-input-state!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_value,
@@ -1247,7 +1192,7 @@ SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_valu
     if (!scheme_false(on_exit_value) && !scheme_true(scm_procedure_p(on_exit_value))) {
         scm_wrong_type_arg_msg("set-input-state-lifecycle!", 4, on_exit_value, "procedure or #f");
     }
-    try {
+    return host_primitive("set-input-state-lifecycle!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-input-state-lifecycle!");
         const std::string name = scheme_name(name_value, "set-input-state-lifecycle!", 2);
         const std::optional<InputStateId> state_id = host.runtime->input_states().find(name);
@@ -1317,12 +1262,8 @@ SCM set_input_state_lifecycle(SCM host_object, SCM name_value, SCM on_enter_valu
             }
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-input-state-lifecycle!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-input-state-lifecycle!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 // The provider is an optional capability of a named state rather than part of
@@ -1332,7 +1273,7 @@ SCM set_input_state_position_hints(SCM host_object, SCM name_value, SCM provider
         scm_wrong_type_arg_msg("set-input-state-position-hints!", 3, provider_value,
                                "procedure or #f");
     }
-    try {
+    return host_primitive("set-input-state-position-hints!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-input-state-position-hints!");
         const std::string name = scheme_name(name_value, "set-input-state-position-hints!", 2);
         const std::optional<InputStateId> state_id = host.runtime->input_states().find(name);
@@ -1373,12 +1314,8 @@ SCM set_input_state_position_hints(SCM host_object, SCM name_value, SCM provider
             (void)scm_gc_unprotect_object(provider_value);
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-input-state-position-hints!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-input-state-position-hints!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 InputStateId require_input_state(HostLease& host, SCM value, const char* caller, int position) {
@@ -1414,7 +1351,7 @@ SelectionEditPolicy selection_edit_policy_from_scheme(SCM value, const char* cal
 // The Guile ABI fixes five adjacent SCM arguments; validation preserves their semantic order.
 SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SCM interface_value,
                           SCM selection_policy_value) {
-    try {
+    return host_primitive("define-input-strategy!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-input-strategy!");
         const std::string name = scheme_name(name_value, "define-input-strategy!", 2);
         InputStrategyRegistry::Definition definition{
@@ -1435,30 +1372,21 @@ SCM define_input_strategy(SCM host_object, SCM name_value, SCM editing_value, SC
         host.runtime->views().refresh_mode_input_states();
         ++host.input_strategies_installed;
         return scm_from_uint32(id.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-input-strategy!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-input-strategy!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_default_input_strategy(SCM host_object, SCM strategy_value) {
-    try {
+    return host_primitive("set-default-input-strategy!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-default-input-strategy!");
         const InputStrategyId strategy =
             require_input_strategy(host, strategy_value, "set-default-input-strategy!", 2);
         host.runtime->set_default_input_strategy(strategy);
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-default-input-strategy!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-default-input-strategy!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM set_view_input_strategy(SCM host_object, SCM view_value, SCM strategy_value) {
-    try {
+    return host_primitive("set-view-input-strategy!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-view-input-strategy!");
         const ViewId view =
             entity_id_from_scheme<ViewTag>(view_value, "set-view-input-strategy!", 2);
@@ -1467,16 +1395,12 @@ SCM set_view_input_strategy(SCM host_object, SCM view_value, SCM strategy_value)
             strategy = require_input_strategy(host, strategy_value, "set-view-input-strategy!", 3);
         }
         host.runtime->views().set_input_strategy(view, strategy);
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-view-input-strategy!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-view-input-strategy!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM view_input_strategy(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("view-input-strategy", [&]() -> SCM {
         HostLease& host = require_host(host_object, "view-input-strategy");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-input-strategy", 2);
         const View& selected = host.runtime->views().get(view);
@@ -1485,12 +1409,8 @@ SCM view_input_strategy(SCM host_object, SCM view_value) {
                                       : host.runtime->input_strategies().default_strategy();
         return strategy ? name_symbol(host.runtime->input_strategies().definition(*strategy).name)
                         : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        scm_misc_error("view-input-strategy", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("view-input-strategy", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 ModeId require_mode(HostLease& host, SCM value, const char* caller, int position) {
@@ -1667,7 +1587,7 @@ MotionMechanism motion_mechanism_from_scheme(SCM value, const char* caller, int 
 }
 
 SCM define_thing(SCM host_object, SCM name_value, SCM pattern_value) {
-    try {
+    return host_primitive("define-thing!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-thing!");
         const std::string name = scheme_name(name_value, "define-thing!", 2);
         ThingPattern pattern = thing_pattern_from_scheme(pattern_value, "define-thing!", 3);
@@ -1678,16 +1598,11 @@ SCM define_thing(SCM host_object, SCM name_value, SCM pattern_value) {
         }
         const ThingId thing = host.runtime->things().define(name, std::move(pattern));
         return scm_from_uint32(thing.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-thing!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-thing!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
-    try {
+    return host_primitive("define-motion!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-motion!");
         const std::string name = scheme_name(name_value, "define-motion!", 2);
         const MotionMechanism mechanism =
@@ -1699,18 +1614,13 @@ SCM define_motion(SCM host_object, SCM name_value, SCM mechanism_value) {
             host.runtime->motions().configure(motion, mechanism);
         }
         return scm_from_uint32(motion.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-motion!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-motion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The public Scheme wrapper names the provider/default association lists.
 SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value,
                             SCM defaults_value) {
-    try {
+    return host_primitive("define-language-profile!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-language-profile!");
         const std::string name = scheme_name(name_value, "define-language-profile!", 2);
         if (scm_ilength(providers_value) < 0) {
@@ -1780,12 +1690,7 @@ SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value
             profile_defaults.set(setting, std::move(value));
         }
         return scm_from_uint32(profile.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-language-profile!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-language-profile!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes ten adjacent SCM arguments; the public Scheme wrappers
@@ -1793,7 +1698,7 @@ SCM define_language_profile(SCM host_object, SCM name_value, SCM providers_value
 SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_value,
                 SCM language_value, SCM keymap_value, SCM interaction_class_value,
                 SCM initial_state_value, SCM things_value, SCM completion_providers_value) {
-    try {
+    return host_primitive("%define-mode!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "%define-mode!");
         const std::string name = scheme_name(name_value, "%define-mode!", 2);
         const ModeKind kind =
@@ -1852,12 +1757,7 @@ SCM define_mode(SCM host_object, SCM name_value, SCM kind_value, SCM parent_valu
         }
         ++host.modes_installed;
         return scm_from_uint32(mode.value);
-    } catch (const std::exception& exception) {
-        scm_misc_error("%define-mode!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("%define-mode!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_mode_completion_auto(SCM host_object, SCM mode_value, SCM enabled_value) {
@@ -1865,7 +1765,7 @@ SCM set_mode_completion_auto(SCM host_object, SCM mode_value, SCM enabled_value)
         scm_wrong_type_arg_msg("set-mode-completion-auto!", 3, enabled_value,
                                "boolean or 'inherit");
     }
-    try {
+    return host_primitive("set-mode-completion-auto!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-mode-completion-auto!");
         const ModeId mode = require_mode(host, mode_value, "set-mode-completion-auto!", 2);
         host.runtime->modes().set_completion_auto(
@@ -1873,19 +1773,14 @@ SCM set_mode_completion_auto(SCM host_object, SCM mode_value, SCM enabled_value)
                       ? std::nullopt
                       : std::optional<bool>{scheme_true(enabled_value)});
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-mode-completion-auto!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-mode-completion-auto!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes five adjacent SCM arguments; the public Scheme policy
 // supplies declarative matcher lists.
 SCM define_file_mode_rule(SCM host_object, SCM name_value, SCM mode_value, SCM suffixes_value,
                           SCM filenames_value) {
-    try {
+    return host_primitive("define-file-mode-rule!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-file-mode-rule!");
         const std::string name = scheme_name(name_value, "define-file-mode-rule!", 2);
         const ModeId mode = require_mode(host, mode_value, "define-file-mode-rule!", 3);
@@ -1897,17 +1792,12 @@ SCM define_file_mode_rule(SCM host_object, SCM name_value, SCM mode_value, SCM s
                                                            std::move(filenames));
         ++host.resource_policies_installed;
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-file-mode-rule!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-file-mode-rule!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // Guile requires callbacks to expose one SCM parameter per Scheme argument.
 SCM define_project_provider(SCM host_object, SCM name_value, SCM markers_value) {
-    try {
+    return host_primitive("define-project-provider!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "define-project-provider!");
         const std::string name = scheme_name(name_value, "define-project-provider!", 2);
         std::vector<std::string> markers =
@@ -1915,16 +1805,11 @@ SCM define_project_provider(SCM host_object, SCM name_value, SCM markers_value) 
         host.runtime->resource_policies().define_project_provider(name, std::move(markers));
         ++host.resource_policies_installed;
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("define-project-provider!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("define-project-provider!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM mode_properties(SCM host_object, SCM mode_value) {
-    try {
+    return host_primitive("mode-properties", [&]() -> SCM {
         HostLease& host = require_host(host_object, "mode-properties");
         const ModeId mode = require_mode(host, mode_value, "mode-properties", 2);
         const ModeRegistry::Definition& definition = host.runtime->modes().definition(mode);
@@ -1969,32 +1854,22 @@ SCM mode_properties(SCM host_object, SCM mode_value) {
                 scm_from_utf8_symbol(*definition.completion_auto ? "enabled" : "disabled"));
         }
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("mode-properties", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("mode-properties", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_language_facet_p(SCM host_object, SCM buffer_value, SCM facet_value) {
-    try {
+    return host_primitive("buffer-language-facet?", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-language-facet?");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-language-facet?", 2);
         const LanguageFacet facet =
             language_facet_from_scheme(facet_value, "buffer-language-facet?", 3);
         return scm_from_bool(host.runtime->language_provider(buffer, facet).has_value());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-language-facet?", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-language-facet?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
-    try {
+    return host_primitive("set-buffer-major-mode!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-buffer-major-mode!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-major-mode!", 2);
@@ -2004,19 +1879,14 @@ SCM set_buffer_major_mode(SCM host_object, SCM buffer_value, SCM mode_value) {
         }
         host.runtime->buffers().get(buffer).modes().set_major(host.runtime->modes(), mode);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-buffer-major-mode!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-buffer-major-mode!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM set_buffer_minor_mode(SCM host_object, SCM buffer_value, SCM mode_value, SCM enabled_value) {
     if (!scheme_boolean(enabled_value)) {
         scm_wrong_type_arg_msg("set-buffer-minor-mode!", 4, enabled_value, "boolean");
     }
-    try {
+    return host_primitive("set-buffer-minor-mode!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-buffer-minor-mode!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-minor-mode!", 2);
@@ -2026,33 +1896,24 @@ SCM set_buffer_minor_mode(SCM host_object, SCM buffer_value, SCM mode_value, SCM
                                  ? modes.enable_minor(host.runtime->modes(), mode)
                                  : modes.disable_minor(mode);
         return scm_from_bool(changed);
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-buffer-minor-mode!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-buffer-minor-mode!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_mode_policy(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-mode-policy", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-mode-policy");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-mode-policy", 2);
         return mode_policy_value(
             host.runtime->modes().effective_policy(host.runtime->buffers().get(buffer).modes()),
             *host.runtime);
-    } catch (const std::exception& exception) {
-        scm_misc_error("buffer-mode-policy", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("buffer-mode-policy", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // Returns #(major-mode-or-#f minor-modes effective-policy).
 SCM buffer_mode_summary(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-mode-summary", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-mode-summary");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-mode-summary", 2);
@@ -2073,19 +1934,14 @@ SCM buffer_mode_summary(SCM host_object, SCM buffer_value) {
             result, 2,
             mode_policy_value(host.runtime->modes().effective_policy(modes), *host.runtime));
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("buffer-mode-summary", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("buffer-mode-summary", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
     if (!scheme_true(scm_procedure_p(procedure_value))) {
         scm_wrong_type_arg_msg("observe-mode-policy-changes!", 2, procedure_value, "procedure");
     }
-    try {
+    return host_primitive("observe-mode-policy-changes!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "observe-mode-policy-changes!");
         const std::shared_ptr<GuileState> state = host.state;
         if (!state || !state->active) {
@@ -2114,73 +1970,53 @@ SCM observe_mode_policy_changes(SCM host_object, SCM procedure_value) {
             (void)scm_gc_unprotect_object(procedure_value);
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("observe-mode-policy-changes!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("observe-mode-policy-changes!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM set_base_input_state(SCM host_object, SCM view_value, SCM state_value) {
-    try {
+    return host_primitive("set-base-input-state!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-base-input-state!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-base-input-state!", 2);
         const InputStateId state =
             require_input_state(host, state_value, "set-base-input-state!", 3);
         host.runtime->views().set_base_input_state(view, state);
-    } catch (const std::exception& exception) {
-        scm_misc_error("set-base-input-state!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("set-base-input-state!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM push_input_state(SCM host_object, SCM view_value, SCM state_value) {
-    try {
+    return host_primitive("push-input-state!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "push-input-state!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "push-input-state!", 2);
         const InputStateId state = require_input_state(host, state_value, "push-input-state!", 3);
         host.runtime->views().push_input_state(view, state);
-    } catch (const std::exception& exception) {
-        scm_misc_error("push-input-state!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("push-input-state!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM pop_input_state(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("pop-input-state!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "pop-input-state!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "pop-input-state!", 2);
         const std::optional<InputStateId> removed = host.runtime->views().pop_input_state(view);
         return removed ? name_symbol(host.runtime->input_states().definition(*removed).name)
                        : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        scm_misc_error("pop-input-state!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("pop-input-state!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM reset_input_states(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("reset-input-states!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "reset-input-states!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "reset-input-states!", 2);
         host.runtime->views().reset_input_states(view);
-    } catch (const std::exception& exception) {
-        scm_misc_error("reset-input-states!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("reset-input-states!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+        return SCM_UNSPECIFIED;
+    });
 }
 
 SCM view_input_states(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("view-input-states", [&]() -> SCM {
         HostLease& host = require_host(host_object, "view-input-states");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-input-states", 2);
         const std::vector<InputStateId>& stack =
@@ -2192,19 +2028,14 @@ SCM view_input_states(SCM host_object, SCM view_value) {
                 name_symbol(host.runtime->input_states().definition(stack[index]).name));
         }
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("view-input-states", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("view-input-states", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM observe_input_state_changes(SCM host_object, SCM procedure_value) {
     if (!scheme_true(scm_procedure_p(procedure_value))) {
         scm_wrong_type_arg_msg("observe-input-state-changes!", 2, procedure_value, "procedure");
     }
-    try {
+    return host_primitive("observe-input-state-changes!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "observe-input-state-changes!");
         const std::shared_ptr<GuileState> state = host.state;
         if (!state || !state->active) {
@@ -2233,18 +2064,14 @@ SCM observe_input_state_changes(SCM host_object, SCM procedure_value) {
             (void)scm_gc_unprotect_object(procedure_value);
             throw;
         }
-    } catch (const std::exception& exception) {
-        scm_misc_error("observe-input-state-changes!", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("observe-input-state-changes!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 SCM enabled_command_names(SCM host_object, SCM context_value) {
-    try {
+    return host_primitive("enabled-command-names", [&]() -> SCM {
         HostLease& host = require_host(host_object, "enabled-command-names");
         CommandContext context =
             command_context_from_scheme(host, context_value, "enabled-command-names");
@@ -2259,12 +2086,7 @@ SCM enabled_command_names(SCM host_object, SCM context_value) {
             scm_c_vector_set_x(result, index, scm_from_utf8_string(names[index].c_str()));
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("enabled-command-names", exception.what());
-    } catch (...) {
-        scm_misc_error("enabled-command-names", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // Returns #(name documentation-or-#f source enabled? bindings).
@@ -2272,7 +2094,7 @@ SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("command-properties", 3, name_value, "string");
     }
-    try {
+    return host_primitive("command-properties", [&]() -> SCM {
         HostLease& host = require_host(host_object, "command-properties");
         CommandContext context =
             command_context_from_scheme(host, context_value, "command-properties");
@@ -2306,16 +2128,11 @@ SCM command_properties(SCM host_object, SCM context_value, SCM name_value) {
                            scm_from_bool(host.runtime->commands().enabled(*command, context)));
         scm_c_vector_set_x(result, 4, binding_values);
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("command-properties", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("command-properties", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM project_list(SCM host_object) {
-    try {
+    return host_primitive("project-list", [&]() -> SCM {
         HostLease& host = require_host(host_object, "project-list");
         const std::vector<ProjectId> projects = host.runtime->projects().all();
         SCM result = scm_c_make_vector(projects.size(), SCM_UNSPECIFIED);
@@ -2332,12 +2149,7 @@ SCM project_list(SCM host_object) {
             scm_c_vector_set_x(result, index, summary);
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-list", exception.what());
-    } catch (...) {
-        scm_misc_error("project-list", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM create_workbench(SCM host_object, SCM name_value, SCM project_value) {
@@ -2348,7 +2160,7 @@ SCM create_workbench(SCM host_object, SCM name_value, SCM project_value) {
     if (!host.services.create_workbench) {
         scm_misc_error("new-workbench!", "workbench creation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("new-workbench!", [&]() -> SCM {
         std::optional<ProjectId> project;
         if (!scheme_false(project_value)) {
             project = entity_id_from_scheme<ProjectTag>(project_value, "new-workbench!", 3);
@@ -2359,12 +2171,7 @@ SCM create_workbench(SCM host_object, SCM name_value, SCM project_value) {
             raise_host_error("new-workbench!", created.error());
         }
         return entity_id(created->slot, created->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("new-workbench!", exception.what());
-    } catch (...) {
-        scm_misc_error("new-workbench!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM switch_workbench(SCM host_object, SCM workbench_value) {
@@ -2372,7 +2179,7 @@ SCM switch_workbench(SCM host_object, SCM workbench_value) {
     if (!host.services.switch_workbench) {
         scm_misc_error("switch-workbench!", "workbench switch capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("switch-workbench!", [&]() -> SCM {
         const WorkbenchId workbench =
             entity_id_from_scheme<WorkbenchTag>(workbench_value, "switch-workbench!", 2);
         const std::expected<void, std::string> switched = host.services.switch_workbench(workbench);
@@ -2380,12 +2187,7 @@ SCM switch_workbench(SCM host_object, SCM workbench_value) {
             raise_host_error("switch-workbench!", switched.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("switch-workbench!", exception.what());
-    } catch (...) {
-        scm_misc_error("switch-workbench!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM close_workbench(SCM host_object, SCM workbench_value) {
@@ -2393,7 +2195,7 @@ SCM close_workbench(SCM host_object, SCM workbench_value) {
     if (!host.services.close_workbench) {
         scm_misc_error("close-workbench!", "workbench close capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("close-workbench!", [&]() -> SCM {
         const WorkbenchId workbench =
             entity_id_from_scheme<WorkbenchTag>(workbench_value, "close-workbench!", 2);
         const std::expected<void, std::string> closed = host.services.close_workbench(workbench);
@@ -2401,12 +2203,7 @@ SCM close_workbench(SCM host_object, SCM workbench_value) {
             raise_host_error("close-workbench!", closed.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("close-workbench!", exception.what());
-    } catch (...) {
-        scm_misc_error("close-workbench!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM workbench_session_state(SCM host_object) {
@@ -2415,15 +2212,10 @@ SCM workbench_session_state(SCM host_object) {
         scm_misc_error("workbench-session-state", "workbench session capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("workbench-session-state", [&]() -> SCM {
         const std::string state = host.services.workbench_session_state();
         return scm_from_utf8_stringn(state.data(), state.size());
-    } catch (const std::exception& exception) {
-        raise_host_error("workbench-session-state", exception.what());
-    } catch (...) {
-        scm_misc_error("workbench-session-state", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM prepare_workbench_session_restore(SCM host_object, SCM state_value) {
@@ -2435,7 +2227,7 @@ SCM prepare_workbench_session_restore(SCM host_object, SCM state_value) {
         scm_misc_error("prepare-workbench-session-restore!",
                        "workbench session preparation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("prepare-workbench-session-restore!", [&]() -> SCM {
         const std::string state = scheme_string(state_value);
         std::expected<GuileWorkbenchRestorePlan, std::string> prepared =
             host.services.prepare_workbench_session_restore(state);
@@ -2492,12 +2284,7 @@ SCM prepare_workbench_session_restore(SCM host_object, SCM state_value) {
         scm_c_vector_set_x(result, 1, resources);
         scm_c_vector_set_x(result, 2, mru);
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("prepare-workbench-session-restore!", exception.what());
-    } catch (...) {
-        scm_misc_error("prepare-workbench-session-restore!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM show_buffer_in_window(SCM host_object, SCM window_value, SCM buffer_value, SCM caret_value) {
@@ -2514,19 +2301,14 @@ SCM show_buffer_in_window(SCM host_object, SCM window_value, SCM buffer_value, S
         scm_wrong_type_arg_msg("show-buffer-in-window!", 4, caret_value,
                                "non-negative 32-bit integer");
     }
-    try {
+    return host_primitive("show-buffer-in-window!", [&]() -> SCM {
         const std::expected<void, std::string> shown =
             host.services.show_buffer_in_window(window, buffer, scm_to_uint32(caret_value));
         if (!shown) {
             raise_host_error("show-buffer-in-window!", shown.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("show-buffer-in-window!", exception.what());
-    } catch (...) {
-        scm_misc_error("show-buffer-in-window!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM window_buffer(SCM host_object, SCM window_value) {
@@ -2535,19 +2317,14 @@ SCM window_buffer(SCM host_object, SCM window_value) {
         scm_misc_error("window-buffer-id", "window buffer capability is unavailable", SCM_EOL);
     }
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-buffer-id", 2);
-    try {
+    return host_primitive("window-buffer-id", [&]() -> SCM {
         const BufferId buffer = host.services.window_buffer(window);
         return entity_id(buffer.slot, buffer.generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("window-buffer-id", exception.what());
-    } catch (...) {
-        scm_misc_error("window-buffer-id", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM owned_user_modules(SCM host_object) {
-    try {
+    return host_primitive("owned-user-modules", [&]() -> SCM {
         HostLease& host = require_host(host_object, "owned-user-modules");
         const std::shared_ptr<GuileState> state = host.state;
         if (!state || !state->active) {
@@ -2570,18 +2347,13 @@ SCM owned_user_modules(SCM host_object) {
             scm_c_vector_set_x(result, state->extensions.size(), entry);
         }
         return result;
-    } catch (const std::exception& exception) {
-        scm_misc_error("owned-user-modules", exception.what(), SCM_EOL);
-    } catch (...) {
-        scm_misc_error("owned-user-modules", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 SCM project_root(SCM host_object, SCM project_value) {
-    try {
+    return host_primitive("project-root", [&]() -> SCM {
         HostLease& host = require_host(host_object, "project-root");
         const ProjectId project =
             entity_id_from_scheme<ProjectTag>(project_value, "project-root", 2);
@@ -2589,18 +2361,14 @@ SCM project_root(SCM host_object, SCM project_value) {
         return definition.roots().empty()
                    ? SCM_BOOL_F
                    : scm_from_utf8_string(definition.roots().front().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("project-root", exception.what());
-    } catch (...) {
-        scm_misc_error("project-root", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 SCM project_files(SCM host_object, SCM project_value) {
-    try {
+    return host_primitive("project-files", [&]() -> SCM {
         HostLease& host = require_host(host_object, "project-files");
         const ProjectId project =
             entity_id_from_scheme<ProjectTag>(project_value, "project-files", 2);
@@ -2610,12 +2378,7 @@ SCM project_files(SCM host_object, SCM project_value) {
             scm_c_vector_set_x(result, index, scm_from_utf8_string(files[index].c_str()));
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-files", exception.what());
-    } catch (...) {
-        scm_misc_error("project-files", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -2628,18 +2391,13 @@ SCM path_relative(SCM host_object, SCM path_value, SCM base_value) {
         scm_wrong_type_arg_msg("path-relative", 3, base_value, "string");
     }
     (void)require_host(host_object, "path-relative");
-    try {
+    return host_primitive("path-relative", [&]() -> SCM {
         const std::string relative =
             std::filesystem::path(scheme_string(path_value))
                 .lexically_relative(std::filesystem::path(scheme_string(base_value)))
                 .string();
         return scm_from_utf8_string(relative.c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("path-relative", exception.what());
-    } catch (...) {
-        scm_misc_error("path-relative", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -2649,16 +2407,11 @@ SCM path_filename(SCM host_object, SCM path_value) {
         scm_wrong_type_arg_msg("path-filename", 2, path_value, "string");
     }
     (void)require_host(host_object, "path-filename");
-    try {
+    return host_primitive("path-filename", [&]() -> SCM {
         const std::string filename =
             std::filesystem::path(scheme_string(path_value)).filename().string();
         return scm_from_utf8_string(filename.c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("path-filename", exception.what());
-    } catch (...) {
-        scm_misc_error("path-filename", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -2671,19 +2424,14 @@ SCM path_resolve(SCM host_object, SCM path_value, SCM base_value) {
         scm_wrong_type_arg_msg("path-resolve", 3, base_value, "string");
     }
     (void)require_host(host_object, "path-resolve");
-    try {
+    return host_primitive("path-resolve", [&]() -> SCM {
         std::filesystem::path path(scheme_string(path_value));
         if (path.is_relative()) {
             path = std::filesystem::path(scheme_string(base_value)) / path;
         }
         const std::string resolved = path.lexically_normal().string();
         return scm_from_utf8_string(resolved.c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("path-resolve", exception.what());
-    } catch (...) {
-        scm_misc_error("path-resolve", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM active_key_bindings(SCM host_object) {
@@ -2692,7 +2440,7 @@ SCM active_key_bindings(SCM host_object) {
         scm_misc_error("active-key-bindings", "key-binding snapshot capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("active-key-bindings", [&]() -> SCM {
         const std::vector<GuileKeyBindingSummary> bindings = host.services.active_key_bindings();
         SCM result = scm_c_make_vector(bindings.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < bindings.size(); ++index) {
@@ -2702,12 +2450,7 @@ SCM active_key_bindings(SCM host_object) {
             scm_c_vector_set_x(result, index, binding);
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("active-key-bindings", exception.what());
-    } catch (...) {
-        scm_misc_error("active-key-bindings", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 TextOffset text_offset_from_scheme(SCM value, const char* caller, int position) {
@@ -2811,43 +2554,28 @@ ViewSelection view_selection_from_scheme(SCM value, const char* caller, int posi
 }
 
 SCM view_caret(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("view-caret", [&]() -> SCM {
         HostLease& host = require_host(host_object, "view-caret");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-caret", 2);
         return scm_from_uint32(host.runtime->views().caret(view).value);
-    } catch (const std::exception& exception) {
-        raise_host_error("view-caret", exception.what());
-    } catch (...) {
-        scm_misc_error("view-caret", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM view_mark(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("view-mark", [&]() -> SCM {
         HostLease& host = require_host(host_object, "view-mark");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-mark", 2);
         const std::optional<TextOffset> mark = host.runtime->views().mark(view);
         return mark ? scm_from_uint32(mark->value) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("view-mark", exception.what());
-    } catch (...) {
-        scm_misc_error("view-mark", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM view_selection(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("view-selection", [&]() -> SCM {
         HostLease& host = require_host(host_object, "view-selection");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "view-selection", 2);
         return view_selection_value(host.runtime->views().selection_model(view));
-    } catch (const std::exception& exception) {
-        raise_host_error("view-selection", exception.what());
-    } catch (...) {
-        scm_misc_error("view-selection", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_selection(SCM host_object, SCM view_value, SCM selection_value) {
@@ -2856,16 +2584,11 @@ SCM set_selection(SCM host_object, SCM view_value, SCM selection_value) {
     if (!host.services.set_selection) {
         scm_misc_error("set-selection!", "selection mutation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("set-selection!", [&]() -> SCM {
         ViewSelection selection = view_selection_from_scheme(selection_value, "set-selection!", 3);
         host.services.set_selection(view, std::move(selection));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-selection!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-selection!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM clear_selection(SCM host_object, SCM view_value) {
@@ -2874,75 +2597,50 @@ SCM clear_selection(SCM host_object, SCM view_value) {
     if (!host.services.clear_selection) {
         scm_misc_error("clear-selection!", "selection mutation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("clear-selection!", [&]() -> SCM {
         host.services.clear_selection(view);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("clear-selection!", exception.what());
-    } catch (...) {
-        scm_misc_error("clear-selection!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM push_selection_history(SCM host_object, SCM view_value, SCM selection_value) {
-    try {
+    return host_primitive("push-selection-history!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "push-selection-history!");
         const ViewId view =
             entity_id_from_scheme<ViewTag>(view_value, "push-selection-history!", 2);
         host.runtime->views().push_selection_history(
             view, view_selection_from_scheme(selection_value, "push-selection-history!", 3));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("push-selection-history!", exception.what());
-    } catch (...) {
-        scm_misc_error("push-selection-history!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM pop_selection_history(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("pop-selection-history!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "pop-selection-history!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "pop-selection-history!", 2);
         const std::optional<ViewSelection> selection =
             host.runtime->views().pop_selection_history(view);
         return selection ? view_selection_value(*selection) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("pop-selection-history!", exception.what());
-    } catch (...) {
-        scm_misc_error("pop-selection-history!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM clear_selection_history(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("clear-selection-history!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "clear-selection-history!");
         const ViewId view =
             entity_id_from_scheme<ViewTag>(view_value, "clear-selection-history!", 2);
         host.runtime->views().clear_selection_history(view);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("clear-selection-history!", exception.what());
-    } catch (...) {
-        scm_misc_error("clear-selection-history!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM selection_history_depth(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("selection-history-depth", [&]() -> SCM {
         HostLease& host = require_host(host_object, "selection-history-depth");
         const ViewId view =
             entity_id_from_scheme<ViewTag>(view_value, "selection-history-depth", 2);
         return scm_from_size_t(host.runtime->views().selection_history_size(view));
-    } catch (const std::exception& exception) {
-        raise_host_error("selection-history-depth", exception.what());
-    } catch (...) {
-        scm_misc_error("selection-history-depth", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 std::vector<std::string> selection_replacements_from_scheme(SCM value, std::size_t range_count,
@@ -3005,7 +2703,7 @@ SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
     if (!host.services.replace_selection) {
         scm_misc_error("replace-selection!", "selection edit capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("replace-selection!", [&]() -> SCM {
         ViewSelection selection =
             view_selection_from_scheme(selection_value, "replace-selection!", 3);
         std::vector<std::string> replacements = selection_replacements_from_scheme(
@@ -3016,12 +2714,7 @@ SCM replace_selection(SCM host_object, SCM view_value, SCM selection_value,
             raise_host_error("replace-selection!", result.error());
         }
         return view_selection_value(*result);
-    } catch (const std::exception& exception) {
-        raise_host_error("replace-selection!", exception.what());
-    } catch (...) {
-        scm_misc_error("replace-selection!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
@@ -3031,7 +2724,7 @@ SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
         scm_misc_error("selection-texts", "selection extraction capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("selection-texts", [&]() -> SCM {
         ViewSelection selection = view_selection_from_scheme(selection_value, "selection-texts", 3);
         std::expected<std::vector<std::string>, std::string> result =
             host.services.selection_texts(view, selection);
@@ -3039,18 +2732,13 @@ SCM selection_texts(SCM host_object, SCM view_value, SCM selection_value) {
             raise_host_error("selection-texts", result.error());
         }
         return string_vector_value(*result);
-    } catch (const std::exception& exception) {
-        raise_host_error("selection-texts", exception.what());
-    } catch (...) {
-        scm_misc_error("selection-texts", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end_value) {
-    try {
+    return host_primitive("buffer-substring", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-substring");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-substring", 2);
@@ -3062,12 +2750,7 @@ SCM buffer_substring(SCM host_object, SCM buffer_value, SCM start_value, SCM end
         const std::string text =
             host.runtime->buffers().get(buffer).snapshot().substring(TextRange{start, end});
         return scm_from_utf8_stringn(text.data(), text.size());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-substring", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-substring", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The low-level text search primitive operates on UTF-8 bytes so its ranges
@@ -3077,7 +2760,7 @@ SCM find_buffer_text(SCM host_object, SCM buffer_value, SCM query_value, SCM sta
     if (!scm_is_string(query_value)) {
         scm_wrong_type_arg_msg("find-buffer-text", 3, query_value, "string");
     }
-    try {
+    return host_primitive("find-buffer-text", [&]() -> SCM {
         HostLease& host = require_host(host_object, "find-buffer-text");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "find-buffer-text", 2);
@@ -3103,12 +2786,8 @@ SCM find_buffer_text(SCM host_object, SCM buffer_value, SCM query_value, SCM sta
         return text_range_value(
             TextRange{TextOffset{static_cast<std::uint32_t>(found)},
                       TextOffset{static_cast<std::uint32_t>(found + query.size())}});
-    } catch (const std::exception& exception) {
-        raise_host_error("find-buffer-text", exception.what());
-    } catch (...) {
-        scm_misc_error("find-buffer-text", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
@@ -3124,19 +2803,14 @@ SCM erase_range(SCM host_object, SCM view_value, SCM start_value, SCM end_value)
     if (!host.services.erase_range) {
         scm_misc_error("erase-range!", "text mutation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("erase-range!", [&]() -> SCM {
         const std::expected<void, std::string> erased =
             host.services.erase_range(view, GuileTextRange{start.value, end.value});
         if (!erased) {
             raise_host_error("erase-range!", erased.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("erase-range!", exception.what());
-    } catch (...) {
-        scm_misc_error("erase-range!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -3147,19 +2821,14 @@ SCM insert_text(SCM host_object, SCM view_value, SCM text_value) {
     if (!host.services.insert_text) {
         scm_misc_error("insert-text!", "text mutation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("insert-text!", [&]() -> SCM {
         const std::expected<void, std::string> inserted = host.services.insert_text(
             view, insertion_texts_from_scheme(text_value, "insert-text!", 3));
         if (!inserted) {
             raise_host_error("insert-text!", inserted.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("insert-text!", exception.what());
-    } catch (...) {
-        scm_misc_error("insert-text!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM soft_kill_range(SCM host_object, SCM view_value, SCM mode_value) {
@@ -3172,7 +2841,7 @@ SCM soft_kill_range(SCM host_object, SCM view_value, SCM mode_value) {
     if (!structural && !symbol_is(mode_value, "plain")) {
         scm_wrong_type_arg_msg("soft-kill-range", 3, mode_value, "'structural or 'plain");
     }
-    try {
+    return host_primitive("soft-kill-range", [&]() -> SCM {
         const std::expected<std::optional<GuileTextRange>, std::string> range =
             host.services.soft_kill_range(view, structural);
         if (!range) {
@@ -3181,18 +2850,14 @@ SCM soft_kill_range(SCM host_object, SCM view_value, SCM mode_value) {
         return *range ? text_range_value(
                             TextRange{TextOffset{(*range)->start}, TextOffset{(*range)->end}})
                       : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("soft-kill-range", exception.what());
-    } catch (...) {
-        scm_misc_error("soft-kill-range", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
 // name and validation preserve the semantic order.
 SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
-    try {
+    return host_primitive("set-view-caret!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-view-caret!");
         const ViewId view = entity_id_from_scheme<ViewTag>(view_value, "set-view-caret!", 2);
         const TextOffset offset = text_offset_from_scheme(offset_value, "set-view-caret!", 3);
@@ -3202,27 +2867,17 @@ SCM set_view_caret(SCM host_object, SCM view_value, SCM offset_value) {
             host.runtime->views().set_caret(view, offset);
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-view-caret!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-view-caret!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM reset_preferred_column(SCM host_object, SCM view_value) {
-    try {
+    return host_primitive("reset-preferred-column!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "reset-preferred-column!");
         const ViewId view =
             entity_id_from_scheme<ViewTag>(view_value, "reset-preferred-column!", 2);
         host.runtime->views().get(view).viewport().preferred_column.reset();
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("reset-preferred-column!", exception.what());
-    } catch (...) {
-        scm_misc_error("reset-preferred-column!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM thing_selection(SCM host_object, SCM view_value, SCM selection_value, SCM thing_value,
@@ -3238,19 +2893,14 @@ SCM thing_selection(SCM host_object, SCM view_value, SCM selection_value, SCM th
     if (!host.services.thing_selection) {
         scm_misc_error("thing-selection", "thing query capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("thing-selection", [&]() -> SCM {
         const std::expected<std::optional<ViewSelection>, std::string> selected =
             host.services.thing_selection(view, source, name, bounds);
         if (!selected) {
             raise_host_error("thing-selection", selected.error());
         }
         return *selected ? view_selection_value(**selected) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("thing-selection", exception.what());
-    } catch (...) {
-        scm_misc_error("thing-selection", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM motion_selection(SCM host_object, SCM view_value, SCM selection_value, SCM motion_value,
@@ -3269,19 +2919,14 @@ SCM motion_selection(SCM host_object, SCM view_value, SCM selection_value, SCM m
     if (!host.services.motion_selection) {
         scm_misc_error("motion-selection", "motion query capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("motion-selection", [&]() -> SCM {
         const std::expected<ViewSelection, std::string> selected = host.services.motion_selection(
             view, source, name, scm_to_int64(count_value), scheme_true(extend_value));
         if (!selected) {
             raise_host_error("motion-selection", selected.error());
         }
         return view_selection_value(*selected);
-    } catch (const std::exception& exception) {
-        raise_host_error("motion-selection", exception.what());
-    } catch (...) {
-        scm_misc_error("motion-selection", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM expand_node_selection(SCM host_object, SCM view_value, SCM selection_value) {
@@ -3293,19 +2938,14 @@ SCM expand_node_selection(SCM host_object, SCM view_value, SCM selection_value) 
         scm_misc_error("expand-node-selection", "node expansion capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("expand-node-selection", [&]() -> SCM {
         const std::expected<std::optional<ViewSelection>, std::string> selected =
             host.services.expand_selection(view, source);
         if (!selected) {
             raise_host_error("expand-node-selection", selected.error());
         }
         return *selected ? view_selection_value(**selected) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("expand-node-selection", exception.what());
-    } catch (...) {
-        scm_misc_error("expand-node-selection", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM write_clipboard(SCM host_object, SCM text_value) {
@@ -3316,16 +2956,11 @@ SCM write_clipboard(SCM host_object, SCM text_value) {
     if (!host.services.write_clipboard) {
         return SCM_BOOL_F;
     }
-    try {
+    return host_primitive("write-clipboard!", [&]() -> SCM {
         const std::expected<void, std::string> written =
             host.services.write_clipboard(scheme_string(text_value));
         return written ? SCM_BOOL_F : scm_from_utf8_string(written.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("write-clipboard!", exception.what());
-    } catch (...) {
-        scm_misc_error("write-clipboard!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM read_clipboard(SCM host_object) {
@@ -3334,7 +2969,7 @@ SCM read_clipboard(SCM host_object) {
     if (!host.services.read_clipboard) {
         return result;
     }
-    try {
+    return host_primitive("read-clipboard", [&]() -> SCM {
         const std::expected<std::optional<std::string>, std::string> read =
             host.services.read_clipboard();
         if (!read) {
@@ -3343,12 +2978,7 @@ SCM read_clipboard(SCM host_object) {
             scm_c_vector_set_x(result, 0, scm_from_utf8_stringn((*read)->data(), (*read)->size()));
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("read-clipboard", exception.what());
-    } catch (...) {
-        scm_misc_error("read-clipboard", "unknown C++ host failure", SCM_EOL);
-    }
-    return result;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -3357,118 +2987,84 @@ SCM buffer_id_by_name(SCM host_object, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("buffer-id-by-name", 2, name_value, "string");
     }
-    try {
+    return host_primitive("buffer-id-by-name", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-id-by-name");
         const std::optional<BufferId> buffer =
             host.runtime->buffers().find_by_name(scheme_string(name_value));
         return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-id-by-name", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-id-by-name", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
 // and validation preserve the semantic order.
 SCM buffer_resource(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-resource", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-resource");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-resource", 2);
         const std::optional<std::string>& resource =
             host.runtime->buffers().get(buffer).resource_uri();
         return resource ? scm_from_utf8_string(resource->c_str()) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-resource", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-resource", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
 SCM buffer_name(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-name", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-name");
         const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-name", 2);
         const std::string& name = host.runtime->buffers().get(buffer).name();
         return scm_from_utf8_stringn(name.data(), name.size());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-name", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-name", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_project_id(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-project-id", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-project-id");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-project-id", 2);
         const std::optional<ProjectId> project = host.runtime->buffers().get(buffer).project_id();
         return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-project-id", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-project-id", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; the Scheme-level name and
 // validation preserve their semantic order.
 SCM buffer_text(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-text", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-text");
         const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "buffer-text", 2);
         const std::string text =
             host.runtime->buffers().get(buffer).snapshot().content().to_string();
         return scm_from_utf8_stringn(text.data(), text.size());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-text", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-text", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_byte_size(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-byte-size", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-byte-size");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-byte-size", 2);
         return scm_from_uint32(
             host.runtime->buffers().get(buffer).snapshot().content().size_bytes());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-byte-size", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-byte-size", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_editable_start(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-editable-start", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-editable-start");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-editable-start", 2);
         const std::optional<TextOffset> start =
             host.runtime->buffers().get(buffer).editable_start();
         return start ? scm_from_uint32(start->value) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-editable-start", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-editable-start", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_buffer_editable_start(SCM host_object, SCM buffer_value, SCM offset_value) {
-    try {
+    return host_primitive("set-buffer-editable-start!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-buffer-editable-start!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-editable-start!", 2);
@@ -3478,16 +3074,11 @@ SCM set_buffer_editable_start(SCM host_object, SCM buffer_value, SCM offset_valu
         }
         host.runtime->buffers().get(buffer).set_editable_start(start);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-buffer-editable-start!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-buffer-editable-start!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM create_buffer_marker(SCM host_object, SCM buffer_value, SCM offset_value, SCM affinity_value) {
-    try {
+    return host_primitive("create-buffer-marker!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "create-buffer-marker!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "create-buffer-marker!", 2);
@@ -3501,16 +3092,11 @@ SCM create_buffer_marker(SCM host_object, SCM buffer_value, SCM offset_value, SC
             offset, affinity == "before" ? AnchorAffinity::BeforeInsertion
                                          : AnchorAffinity::AfterInsertion);
         return scm_from_uint32(marker);
-    } catch (const std::exception& exception) {
-        raise_host_error("create-buffer-marker!", exception.what());
-    } catch (...) {
-        scm_misc_error("create-buffer-marker!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_marker_offset(SCM host_object, SCM buffer_value, SCM marker_value) {
-    try {
+    return host_primitive("buffer-marker-offset", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-marker-offset");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-marker-offset", 2);
@@ -3522,16 +3108,11 @@ SCM buffer_marker_offset(SCM host_object, SCM buffer_value, SCM marker_value) {
         const TextOffset offset = host.runtime->buffers().get(buffer).navigation_anchor_offset(
             scm_to_uint32(marker_value));
         return scm_from_uint32(offset.value);
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-marker-offset", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-marker-offset", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM remove_buffer_marker(SCM host_object, SCM buffer_value, SCM marker_value) {
-    try {
+    return host_primitive("remove-buffer-marker!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "remove-buffer-marker!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "remove-buffer-marker!", 2);
@@ -3542,17 +3123,12 @@ SCM remove_buffer_marker(SCM host_object, SCM buffer_value, SCM marker_value) {
         }
         host.runtime->buffers().get(buffer).remove_navigation_anchor(scm_to_uint32(marker_value));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("remove-buffer-marker!", exception.what());
-    } catch (...) {
-        scm_misc_error("remove-buffer-marker!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // Returns #(source-start source-end resource target-line target-column excerpt encoding) entries.
 SCM buffer_locations(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-locations", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-locations");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-locations", 2);
@@ -3573,12 +3149,7 @@ SCM buffer_locations(SCM host_object, SCM buffer_value) {
             scm_c_vector_set_x(result, index, entry);
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-locations", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-locations", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM diagnostic_severity_value(DiagnosticSeverity severity) {
@@ -3597,7 +3168,7 @@ SCM diagnostic_severity_value(DiagnosticSeverity severity) {
 
 // Returns #(start-line start-column end-line end-column severity source code message) entries.
 SCM buffer_diagnostics(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-diagnostics", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-diagnostics");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-diagnostics", 2);
@@ -3624,12 +3195,7 @@ SCM buffer_diagnostics(SCM host_object, SCM buffer_value) {
             scm_c_vector_set_x(result, index, entry);
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-diagnostics", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-diagnostics", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 std::vector<BufferLocation> locations_from_scheme(SCM locations_value, const char* caller,
@@ -3684,16 +3250,11 @@ SCM set_buffer_locations(SCM host_object, SCM buffer_value, SCM locations_value)
     HostLease& host = require_host(host_object, "set-buffer-locations!");
     const BufferId buffer =
         entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-locations!", 2);
-    try {
+    return host_primitive("set-buffer-locations!", [&]() -> SCM {
         host.runtime->buffers().set_locations(
             buffer, locations_from_scheme(locations_value, "set-buffer-locations!", 3));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-buffer-locations!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-buffer-locations!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM publish_location_list_data(SCM host_object, SCM window_value, SCM buffer_value,
@@ -3708,7 +3269,7 @@ SCM publish_location_list_data(SCM host_object, SCM window_value, SCM buffer_val
         scm_misc_error("publish-location-list-data!", "location list capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("publish-location-list-data!", [&]() -> SCM {
         std::expected<GuilePublishedLocationList, std::string> published =
             host.services.publish_location_list(
                 window, buffer, source,
@@ -3724,26 +3285,16 @@ SCM publish_location_list_data(SCM host_object, SCM window_value, SCM buffer_val
                            entity_id(published->buffer.slot, published->buffer.generation));
         scm_c_vector_set_x(result, 3, scm_from_size_t(published->item_count));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("publish-location-list-data!", exception.what());
-    } catch (...) {
-        scm_misc_error("publish-location-list-data!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_read_only_p(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-read-only?", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-read-only?");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-read-only?", 2);
         return scm_from_bool(host.runtime->buffers().get(buffer).read_only());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-read-only?", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-read-only?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -3753,19 +3304,14 @@ SCM path_parent(SCM host_object, SCM path_value) {
         scm_wrong_type_arg_msg("path-parent", 2, path_value, "string");
     }
     (void)require_host(host_object, "path-parent");
-    try {
+    return host_primitive("path-parent", [&]() -> SCM {
         std::filesystem::path path(scheme_string(path_value));
         if (path != path.root_path() && path.filename().empty()) {
             path = path.parent_path();
         }
         const std::string parent = path.parent_path().string();
         return scm_from_utf8_string(parent.c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("path-parent", exception.what());
-    } catch (...) {
-        scm_misc_error("path-parent", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -3775,16 +3321,12 @@ SCM directory_path_p(SCM host_object, SCM path_value) {
         scm_wrong_type_arg_msg("directory-path?", 2, path_value, "string");
     }
     (void)require_host(host_object, "directory-path?");
-    try {
+    return host_primitive("directory-path?", [&]() -> SCM {
         const std::string path = scheme_string(path_value);
         return scm_from_bool(!path.empty() &&
                              path.back() == std::filesystem::path::preferred_separator);
-    } catch (const std::exception& exception) {
-        raise_host_error("directory-path?", exception.what());
-    } catch (...) {
-        scm_misc_error("directory-path?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -3794,19 +3336,14 @@ SCM path_as_directory(SCM host_object, SCM path_value) {
         scm_wrong_type_arg_msg("path-as-directory", 2, path_value, "string");
     }
     (void)require_host(host_object, "path-as-directory");
-    try {
+    return host_primitive("path-as-directory", [&]() -> SCM {
         std::string path =
             std::filesystem::path(scheme_string(path_value)).lexically_normal().string();
         if (path.empty() || path.back() != std::filesystem::path::preferred_separator) {
             path.push_back(std::filesystem::path::preferred_separator);
         }
         return scm_from_utf8_string(path.c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("path-as-directory", exception.what());
-    } catch (...) {
-        scm_misc_error("path-as-directory", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -3819,19 +3356,14 @@ SCM display_buffer(SCM host_object, SCM window_value, SCM buffer_value, SCM inte
     if (!host.services.display_buffer) {
         scm_misc_error("display-buffer!", "display-buffer capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("display-buffer!", [&]() -> SCM {
         const std::expected<WindowId, std::string> displayed =
             host.services.display_buffer(window, buffer, intent, std::nullopt);
         if (!displayed) {
             raise_host_error("display-buffer!", displayed.error());
         }
         return entity_id(displayed->slot, displayed->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("display-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("display-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM intent_value,
@@ -3849,7 +3381,7 @@ SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM i
     if (!host.services.display_buffer) {
         scm_misc_error("display-buffer-at!", "display-buffer capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("display-buffer-at!", [&]() -> SCM {
         const std::expected<WindowId, std::string> displayed = host.services.display_buffer(
             window, buffer, intent,
             GuileDisplayPosition{.position = {.line = scm_to_uint32(line_value),
@@ -3859,12 +3391,7 @@ SCM display_buffer_at(SCM host_object, SCM window_value, SCM buffer_value, SCM i
             raise_host_error("display-buffer-at!", displayed.error());
         }
         return entity_id(displayed->slot, displayed->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("display-buffer-at!", exception.what());
-    } catch (...) {
-        scm_misc_error("display-buffer-at!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM display_buffer_position_at(SCM host_object, SCM window_value, SCM buffer_value,
@@ -3888,7 +3415,7 @@ SCM display_buffer_position_at(SCM host_object, SCM window_value, SCM buffer_val
         scm_misc_error("display-buffer-position-at!", "display-buffer capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("display-buffer-position-at!", [&]() -> SCM {
         const std::expected<WindowId, std::string> displayed = host.services.display_buffer(
             window, buffer, intent,
             GuileDisplayPosition{
@@ -3900,12 +3427,7 @@ SCM display_buffer_position_at(SCM host_object, SCM window_value, SCM buffer_val
             raise_host_error("display-buffer-position-at!", displayed.error());
         }
         return entity_id(displayed->slot, displayed->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("display-buffer-position-at!", exception.what());
-    } catch (...) {
-        scm_misc_error("display-buffer-position-at!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM navigate_jump(SCM host_object, SCM window_value, SCM delta_value) {
@@ -4039,7 +3561,7 @@ SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, 
         scm_misc_error("display-generated-buffer!", "generated-buffer capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("display-generated-buffer!", [&]() -> SCM {
         const ModeId mode = require_mode(host, mode_value, "display-generated-buffer!", 5);
         const std::expected<WindowId, std::string> displayed =
             host.services.display_generated_buffer(window, scheme_string(name_value),
@@ -4049,12 +3571,7 @@ SCM display_generated_buffer(SCM host_object, SCM window_value, SCM name_value, 
             raise_host_error("display-generated-buffer!", displayed.error());
         }
         return entity_id(displayed->slot, displayed->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("display-generated-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("display-generated-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; the Scheme-level name and
@@ -4066,7 +3583,7 @@ SCM evaluate_scheme(SCM host_object, SCM source_value, SCM source_name_value) {
     if (!scm_is_string(source_name_value)) {
         scm_wrong_type_arg_msg("evaluate-scheme!", 3, source_name_value, "string");
     }
-    try {
+    return host_primitive("evaluate-scheme!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "evaluate-scheme!");
         const std::string source = scheme_string(source_value);
         const std::string source_name = scheme_string(source_name_value);
@@ -4089,12 +3606,7 @@ SCM evaluate_scheme(SCM host_object, SCM source_value, SCM source_name_value) {
             result, 3,
             scm_from_utf8_stringn(evaluated->error_output.data(), evaluated->error_output.size()));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("evaluate-scheme!", exception.what());
-    } catch (...) {
-        scm_misc_error("evaluate-scheme!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
@@ -4111,19 +3623,14 @@ SCM move_caret_to_line(SCM host_object, SCM view_value, SCM line_value, SCM colu
     if (!host.services.move_caret_to_line) {
         scm_misc_error("move-caret-to-line!", "caret capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("move-caret-to-line!", [&]() -> SCM {
         const std::expected<void, std::string> moved = host.services.move_caret_to_line(
             view, scm_to_uint32(line_value), scm_to_uint32(column_value));
         if (!moved) {
             raise_host_error("move-caret-to-line!", moved.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("move-caret-to-line!", exception.what());
-    } catch (...) {
-        scm_misc_error("move-caret-to-line!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM scroll_view_lines(SCM host_object, SCM view_value, SCM lines_value) {
@@ -4139,15 +3646,10 @@ SCM scroll_view_lines(SCM host_object, SCM view_value, SCM lines_value) {
     if (!host.services.scroll_view_lines) {
         scm_misc_error("scroll-view-lines!", "viewport scroll capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("scroll-view-lines!", [&]() -> SCM {
         host.services.scroll_view_lines(view, lines);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("scroll-view-lines!", exception.what());
-    } catch (...) {
-        scm_misc_error("scroll-view-lines!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM undo_edit(SCM host_object, SCM view_value) {
@@ -4156,14 +3658,8 @@ SCM undo_edit(SCM host_object, SCM view_value) {
     if (!host.services.undo) {
         scm_misc_error("undo!", "undo capability is unavailable", SCM_EOL);
     }
-    try {
-        return scm_from_bool(host.services.undo(view));
-    } catch (const std::exception& exception) {
-        raise_host_error("undo!", exception.what());
-    } catch (...) {
-        scm_misc_error("undo!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    return host_primitive("undo!",
+                          [&]() -> SCM { return scm_from_bool(host.services.undo(view)); });
 }
 
 SCM redo_edit(SCM host_object, SCM view_value) {
@@ -4172,14 +3668,8 @@ SCM redo_edit(SCM host_object, SCM view_value) {
     if (!host.services.redo) {
         scm_misc_error("redo!", "redo capability is unavailable", SCM_EOL);
     }
-    try {
-        return scm_from_bool(host.services.redo(view));
-    } catch (const std::exception& exception) {
-        raise_host_error("redo!", exception.what());
-    } catch (...) {
-        scm_misc_error("redo!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    return host_primitive("redo!",
+                          [&]() -> SCM { return scm_from_bool(host.services.redo(view)); });
 }
 
 SCM move_caret_lines(SCM host_object, SCM view_value, SCM delta_value) {
@@ -4192,15 +3682,10 @@ SCM move_caret_lines(SCM host_object, SCM view_value, SCM delta_value) {
     if (!host.services.move_caret_lines) {
         scm_misc_error("move-caret-lines!", "vertical caret capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("move-caret-lines!", [&]() -> SCM {
         host.services.move_caret_lines(view, scm_to_int64(delta_value));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("move-caret-lines!", exception.what());
-    } catch (...) {
-        scm_misc_error("move-caret-lines!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM move_caret_line_boundary(SCM host_object, SCM view_value, SCM boundary_value) {
@@ -4216,15 +3701,10 @@ SCM move_caret_line_boundary(SCM host_object, SCM view_value, SCM boundary_value
         scm_misc_error("move-caret-line-boundary!", "line-boundary capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("move-caret-line-boundary!", [&]() -> SCM {
         host.services.move_caret_line_boundary(view, end);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("move-caret-line-boundary!", exception.what());
-    } catch (...) {
-        scm_misc_error("move-caret-line-boundary!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // The Guile ABI fixes four adjacent SCM arguments; their Scheme procedure
@@ -4243,7 +3723,7 @@ SCM delete_grapheme(SCM host_object, SCM view_value, SCM direction_value, SCM mo
     if (!host.services.delete_grapheme) {
         scm_misc_error("delete-grapheme!", "grapheme deletion capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("delete-grapheme!", [&]() -> SCM {
         switch (host.services.delete_grapheme(view, forward, structural)) {
         case GuileDeleteOutcome::Unchanged:
             return name_symbol("unchanged");
@@ -4254,12 +3734,8 @@ SCM delete_grapheme(SCM host_object, SCM view_value, SCM direction_value, SCM mo
         case GuileDeleteOutcome::MovedOverLiteral:
             return name_symbol("moved-over-literal");
         }
-    } catch (const std::exception& exception) {
-        raise_host_error("delete-grapheme!", exception.what());
-    } catch (...) {
-        scm_misc_error("delete-grapheme!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+        return SCM_BOOL_F;
+    });
 }
 
 SCM newline_edit(SCM host_object, SCM view_value) {
@@ -4268,15 +3744,10 @@ SCM newline_edit(SCM host_object, SCM view_value) {
     if (!host.services.newline) {
         scm_misc_error("newline!", "newline capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("newline!", [&]() -> SCM {
         host.services.newline(view);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("newline!", exception.what());
-    } catch (...) {
-        scm_misc_error("newline!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM structural_edit(SCM host_object, SCM view_value, SCM operation_value) {
@@ -4286,19 +3757,14 @@ SCM structural_edit(SCM host_object, SCM view_value, SCM operation_value) {
     if (!host.services.structural_edit) {
         scm_misc_error("structural-edit!", "structural editing capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("structural-edit!", [&]() -> SCM {
         const std::expected<void, std::string> result =
             host.services.structural_edit(view, operation);
         if (!result) {
             raise_host_error("structural-edit!", result.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("structural-edit!", exception.what());
-    } catch (...) {
-        scm_misc_error("structural-edit!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM indent_edit(SCM host_object, SCM view_value) {
@@ -4307,15 +3773,10 @@ SCM indent_edit(SCM host_object, SCM view_value) {
     if (!host.services.indent) {
         scm_misc_error("indent!", "indentation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("indent!", [&]() -> SCM {
         const std::optional<std::string> role = host.services.indent(view);
         return role ? scm_from_utf8_string(role->c_str()) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("indent!", exception.what());
-    } catch (...) {
-        scm_misc_error("indent!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
@@ -4327,26 +3788,21 @@ SCM type_text(SCM host_object, SCM view_value, SCM text_value) {
     if (!host.services.type_text) {
         scm_misc_error("type-text!", "typed-text capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("type-text!", [&]() -> SCM {
         const std::expected<void, std::string> typed =
             host.services.type_text(view, scheme_string(text_value));
         if (!typed) {
             raise_host_error("type-text!", typed.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("type-text!", exception.what());
-    } catch (...) {
-        scm_misc_error("type-text!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM project_index_state(SCM host_object, SCM project_value) {
     HostLease& host = require_host(host_object, "project-index-state");
     const ProjectId project =
         entity_id_from_scheme<ProjectTag>(project_value, "project-index-state", 2);
-    try {
+    return host_primitive("project-index-state", [&]() -> SCM {
         const Project& definition = host.runtime->projects().get(project);
         SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_uint64(definition.index_revision()));
@@ -4356,12 +3812,7 @@ SCM project_index_state(SCM host_object, SCM project_value) {
                                ? scm_from_utf8_string(definition.index_error()->c_str())
                                : SCM_BOOL_F);
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-index-state", exception.what());
-    } catch (...) {
-        scm_misc_error("project-index-state", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM request_project_index(SCM host_object, SCM project_value) {
@@ -4372,19 +3823,14 @@ SCM request_project_index(SCM host_object, SCM project_value) {
         scm_misc_error("request-project-index!", "project-index capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("request-project-index!", [&]() -> SCM {
         const std::expected<void, std::string> requested =
             host.services.request_project_index(project);
         if (!requested) {
             raise_host_error("request-project-index!", requested.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("request-project-index!", exception.what());
-    } catch (...) {
-        scm_misc_error("request-project-index!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM normalize_resource(SCM host_object, SCM path_value) {
@@ -4407,88 +3853,63 @@ SCM set_buffer_resource(SCM host_object, SCM buffer_value, SCM path_value) {
     HostLease& host = require_host(host_object, "set-buffer-resource!");
     const BufferId buffer =
         entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-resource!", 2);
-    try {
+    return host_primitive("set-buffer-resource!", [&]() -> SCM {
         host.runtime->buffers().set_resource(buffer, scheme_string(path_value), BufferKind::File);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-buffer-resource!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-buffer-resource!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM rename_buffer(SCM host_object, SCM buffer_value, SCM name_value) {
     if (!scm_is_string(name_value)) {
         scm_wrong_type_arg_msg("rename-buffer!", 3, name_value, "string");
     }
-    try {
+    return host_primitive("rename-buffer!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "rename-buffer!");
         const BufferId buffer = entity_id_from_scheme<BufferTag>(buffer_value, "rename-buffer!", 2);
         host.runtime->buffers().rename(buffer, scheme_string(name_value));
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("rename-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("rename-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM buffer_id_by_resource(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("buffer-id-by-resource", 2, path_value, "string");
     }
-    try {
+    return host_primitive("buffer-id-by-resource", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-id-by-resource");
         const std::optional<BufferId> buffer =
             host.runtime->buffers().find_by_resource(scheme_string(path_value));
         return buffer ? entity_id(buffer->slot, buffer->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-id-by-resource", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-id-by-resource", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM resource_mode(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("resource-mode", 2, path_value, "string");
     }
-    try {
+    return host_primitive("resource-mode", [&]() -> SCM {
         HostLease& host = require_host(host_object, "resource-mode");
         const std::optional<ModeId> mode =
             host.runtime->resource_policies().mode_for(scheme_string(path_value));
         return mode ? name_symbol(host.runtime->modes().definition(*mode).name) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("resource-mode", exception.what());
-    } catch (...) {
-        scm_misc_error("resource-mode", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM project_for_resource(SCM host_object, SCM path_value) {
     if (!scm_is_string(path_value)) {
         scm_wrong_type_arg_msg("project-for-resource", 2, path_value, "string");
     }
-    try {
+    return host_primitive("project-for-resource", [&]() -> SCM {
         HostLease& host = require_host(host_object, "project-for-resource");
         const std::optional<ProjectId> project =
             host.runtime->projects().find_for_resource(scheme_string(path_value));
         return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-for-resource", exception.what());
-    } catch (...) {
-        scm_misc_error("project-for-resource", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM project_provider_definitions(SCM host_object) {
     HostLease& host = require_host(host_object, "project-provider-definitions");
-    try {
+    return host_primitive("project-provider-definitions", [&]() -> SCM {
         const std::vector<ProjectDiscoveryProvider>& providers =
             host.runtime->resource_policies().project_providers();
         SCM result = scm_c_make_vector(providers.size(), SCM_UNSPECIFIED);
@@ -4505,12 +3926,7 @@ SCM project_provider_definitions(SCM host_object) {
             scm_c_vector_set_x(result, index, definition);
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-provider-definitions", exception.what());
-    } catch (...) {
-        scm_misc_error("project-provider-definitions", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM project_id_by_root(SCM host_object, SCM root_value) {
@@ -4518,16 +3934,11 @@ SCM project_id_by_root(SCM host_object, SCM root_value) {
     if (!scm_is_string(root_value)) {
         scm_wrong_type_arg_msg("project-id-by-root", 2, root_value, "string");
     }
-    try {
+    return host_primitive("project-id-by-root", [&]() -> SCM {
         const std::optional<ProjectId> project =
             host.runtime->projects().find_by_root(scheme_string(root_value));
         return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("project-id-by-root", exception.what());
-    } catch (...) {
-        scm_misc_error("project-id-by-root", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM create_project(SCM host_object, SCM name_value, SCM roots_value, SCM provider_value,
@@ -4542,23 +3953,18 @@ SCM create_project(SCM host_object, SCM name_value, SCM roots_value, SCM provide
     if (!scm_is_string(marker_value)) {
         scm_wrong_type_arg_msg("create-project!", 5, marker_value, "string");
     }
-    try {
+    return host_primitive("create-project!", [&]() -> SCM {
         const ProjectId project = host.runtime->projects().create(
             {.name = scheme_string(name_value),
              .roots = string_sequence_from_scheme(roots_value, "create-project!", 3),
              .discovery_provider = scheme_string(provider_value),
              .discovery_marker = scheme_string(marker_value)});
         return entity_id(project.slot, project.generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("create-project!", exception.what());
-    } catch (...) {
-        scm_misc_error("create-project!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
-    try {
+    return host_primitive("set-buffer-project!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "set-buffer-project!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "set-buffer-project!", 2);
@@ -4568,47 +3974,32 @@ SCM set_buffer_project(SCM host_object, SCM buffer_value, SCM project_value) {
         }
         host.runtime->projects().assign(buffer, project);
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("set-buffer-project!", exception.what());
-    } catch (...) {
-        scm_misc_error("set-buffer-project!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM buffer_save_snapshot(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-save-snapshot", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-save-snapshot");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-save-snapshot", 2);
         const std::string content =
             host.runtime->buffers().get(buffer).snapshot().content().to_string();
         return scm_from_utf8_stringn(content.data(), content.size());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-save-snapshot", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-save-snapshot", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM mark_buffer_saved(SCM host_object, SCM buffer_value, SCM content_value) {
     if (!scm_is_string(content_value)) {
         scm_wrong_type_arg_msg("mark-buffer-saved!", 3, content_value, "string");
     }
-    try {
+    return host_primitive("mark-buffer-saved!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "mark-buffer-saved!");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "mark-buffer-saved!", 2);
         Buffer& target = host.runtime->buffers().get(buffer);
         target.mark_saved(Text(scheme_string_with_nuls(content_value)));
         return scm_from_bool(target.modified());
-    } catch (const std::exception& exception) {
-        raise_host_error("mark-buffer-saved!", exception.what());
-    } catch (...) {
-        scm_misc_error("mark-buffer-saved!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM open_buffers(SCM host_object) {
@@ -4617,7 +4008,7 @@ SCM open_buffers(SCM host_object) {
         scm_misc_error("open-buffer-ids", "open-buffer snapshot capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("open-buffer-ids", [&]() -> SCM {
         const std::vector<BufferId> buffers = host.services.open_buffers();
         SCM result = scm_c_make_vector(buffers.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < buffers.size(); ++index) {
@@ -4625,12 +4016,7 @@ SCM open_buffers(SCM host_object) {
                                entity_id(buffers[index].slot, buffers[index].generation));
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("open-buffer-ids", exception.what());
-    } catch (...) {
-        scm_misc_error("open-buffer-ids", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The low-level ABI is positional; policy wrappers choose names, kinds, modes,
@@ -4650,7 +4036,7 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
     if (!scm_is_string(style_origin_value)) {
         scm_wrong_type_arg_msg("create-buffer!", 9, style_origin_value, "string");
     }
-    try {
+    return host_primitive("create-buffer!", [&]() -> SCM {
         HostLease& host = require_host(host_object, "create-buffer!");
         if (!host.services.create_buffer) {
             scm_misc_error("create-buffer!", "buffer-create capability is unavailable", SCM_EOL);
@@ -4684,26 +4070,16 @@ SCM create_buffer(SCM host_object, SCM name_value, SCM text_value, SCM kind_valu
             raise_host_error("create-buffer!", created.error());
         }
         return entity_id(created->slot, created->generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("create-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("create-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM buffer_modified_p(SCM host_object, SCM buffer_value) {
-    try {
+    return host_primitive("buffer-modified?", [&]() -> SCM {
         HostLease& host = require_host(host_object, "buffer-modified?");
         const BufferId buffer =
             entity_id_from_scheme<BufferTag>(buffer_value, "buffer-modified?", 2);
         return scm_from_bool(host.runtime->buffers().get(buffer).modified());
-    } catch (const std::exception& exception) {
-        raise_host_error("buffer-modified?", exception.what());
-    } catch (...) {
-        scm_misc_error("buffer-modified?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
@@ -4714,16 +4090,11 @@ SCM release_buffer(SCM host_object, SCM buffer_value, SCM replacement_value) {
     if (!host.services.release_buffer) {
         scm_misc_error("release-buffer!", "buffer-release capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("release-buffer!", [&]() -> SCM {
         const std::expected<void, std::string> removed =
             host.services.release_buffer(buffer, replacement);
         return removed ? SCM_BOOL_F : scm_from_utf8_string(removed.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("release-buffer!", exception.what());
-    } catch (...) {
-        scm_misc_error("release-buffer!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 // The Guile ABI fixes three adjacent SCM arguments; their Scheme procedure
@@ -4742,15 +4113,10 @@ SCM split_window(SCM host_object, SCM window_value, SCM axis_value) {
     if (!host.services.split_window) {
         scm_misc_error("split-window!", "window-split capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("split-window!", [&]() -> SCM {
         const std::expected<void, std::string> split = host.services.split_window(window, axis);
         return split ? SCM_BOOL_F : scm_from_utf8_string(split.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("split-window!", exception.what());
-    } catch (...) {
-        scm_misc_error("split-window!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -4761,15 +4127,10 @@ SCM delete_window(SCM host_object, SCM window_value) {
     if (!host.services.delete_window) {
         scm_misc_error("delete-window!", "window-delete capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("delete-window!", [&]() -> SCM {
         const std::expected<void, std::string> removed = host.services.delete_window(window);
         return removed ? SCM_BOOL_F : scm_from_utf8_string(removed.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("delete-window!", exception.what());
-    } catch (...) {
-        scm_misc_error("delete-window!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 // The Guile ABI fixes two adjacent SCM arguments; their Scheme procedure name
@@ -4781,16 +4142,11 @@ SCM delete_other_windows(SCM host_object, SCM window_value) {
     if (!host.services.delete_other_windows) {
         scm_misc_error("delete-other-windows!", "window-retain capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("delete-other-windows!", [&]() -> SCM {
         const std::expected<void, std::string> retained =
             host.services.delete_other_windows(window);
         return retained ? SCM_BOOL_F : scm_from_utf8_string(retained.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("delete-other-windows!", exception.what());
-    } catch (...) {
-        scm_misc_error("delete-other-windows!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM open_windows(SCM host_object) {
@@ -4798,7 +4154,7 @@ SCM open_windows(SCM host_object) {
     if (!host.services.open_windows) {
         scm_misc_error("open-window-ids", "window-list capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("open-window-ids", [&]() -> SCM {
         const std::vector<WindowId> windows = host.services.open_windows();
         SCM result = scm_c_make_vector(windows.size(), SCM_UNSPECIFIED);
         for (std::size_t index = 0; index < windows.size(); ++index) {
@@ -4806,16 +4162,11 @@ SCM open_windows(SCM host_object) {
                                entity_id(windows[index].slot, windows[index].generation));
         }
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("open-window-ids", exception.what());
-    } catch (...) {
-        scm_misc_error("open-window-ids", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM active_window(SCM host_object) {
-    try {
+    return host_primitive("active-window-id", [&]() -> SCM {
         HostLease& host = require_host(host_object, "active-window-id");
         const SCM workbench =
             scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), host_object);
@@ -4824,26 +4175,16 @@ SCM active_window(SCM host_object) {
         const WindowId window = entity_id_from_scheme<WindowTag>(selected, "active-window-id", 0);
         (void)host.runtime->windows().get(window);
         return selected;
-    } catch (const std::exception& exception) {
-        raise_host_error("active-window-id", exception.what());
-    } catch (...) {
-        scm_misc_error("active-window-id", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM window_view(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "window-view-id");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-view-id", 2);
-    try {
+    return host_primitive("window-view-id", [&]() -> SCM {
         const ViewId view = host.runtime->windows().get(window).view_id();
         return entity_id(view.slot, view.generation);
-    } catch (const std::exception& exception) {
-        raise_host_error("window-view-id", exception.what());
-    } catch (...) {
-        scm_misc_error("window-view-id", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM focus_window(SCM host_object, SCM window_value) {
@@ -4852,20 +4193,15 @@ SCM focus_window(SCM host_object, SCM window_value) {
     if (!host.services.focus_window) {
         scm_misc_error("focus-window!", "window-focus capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("focus-window!", [&]() -> SCM {
         const std::expected<void, std::string> selected = host.services.focus_window(window);
         return selected ? SCM_BOOL_F : scm_from_utf8_string(selected.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("focus-window!", exception.what());
-    } catch (...) {
-        scm_misc_error("focus-window!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM interaction_mechanism_status(SCM host_object) {
     HostLease& host = require_host(host_object, "interaction-mechanism-status");
-    try {
+    return host_primitive("interaction-mechanism-status", [&]() -> SCM {
         const GuileInteractionMechanismStatus status =
             host.services.interaction_mechanism_status
                 ? host.services.interaction_mechanism_status()
@@ -4881,27 +4217,17 @@ SCM interaction_mechanism_status(SCM host_object) {
                                        : SCM_BOOL_F);
         scm_c_vector_set_x(result, 4, scm_from_uint64(status.candidate_revision));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("interaction-mechanism-status", exception.what());
-    } catch (...) {
-        scm_misc_error("interaction-mechanism-status", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM interaction_origin_project(SCM host_object) {
     HostLease& host = require_host(host_object, "interaction-origin-project");
-    try {
+    return host_primitive("interaction-origin-project", [&]() -> SCM {
         const std::optional<ProjectId> project = host.services.interaction_origin_project
                                                      ? host.services.interaction_origin_project()
                                                      : std::nullopt;
         return project ? entity_id(project->slot, project->generation) : SCM_BOOL_F;
-    } catch (const std::exception& exception) {
-        raise_host_error("interaction-origin-project", exception.what());
-    } catch (...) {
-        scm_misc_error("interaction-origin-project", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM refresh_interaction_mechanism(SCM host_object, SCM provider_value) {
@@ -4913,19 +4239,14 @@ SCM refresh_interaction_mechanism(SCM host_object, SCM provider_value) {
         scm_misc_error("refresh-interaction-mechanism!",
                        "interaction refresh capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("refresh-interaction-mechanism!", [&]() -> SCM {
         const std::expected<void, std::string> refreshed =
             host.services.refresh_interaction(scheme_string(provider_value));
         if (!refreshed) {
             raise_host_error("refresh-interaction-mechanism!", refreshed.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("refresh-interaction-mechanism!", exception.what());
-    } catch (...) {
-        scm_misc_error("refresh-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM submit_interaction_mechanism(SCM host_object, SCM selected_value,
@@ -4935,7 +4256,7 @@ SCM submit_interaction_mechanism(SCM host_object, SCM selected_value,
         scm_misc_error("submit-interaction-mechanism!",
                        "interaction submission capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("submit-interaction-mechanism!", [&]() -> SCM {
         if (!scheme_boolean(allow_custom_input_value)) {
             scm_wrong_type_arg_msg("submit-interaction-mechanism!", 3, allow_custom_input_value,
                                    "boolean");
@@ -4955,12 +4276,7 @@ SCM submit_interaction_mechanism(SCM host_object, SCM selected_value,
             raise_host_error("submit-interaction-mechanism!", submitted.error());
         }
         return scm_from_utf8_stringn(submitted->data(), submitted->size());
-    } catch (const std::exception& exception) {
-        raise_host_error("submit-interaction-mechanism!", exception.what());
-    } catch (...) {
-        scm_misc_error("submit-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM replace_interaction_input(SCM host_object, SCM input_value) {
@@ -4972,19 +4288,14 @@ SCM replace_interaction_input(SCM host_object, SCM input_value) {
         scm_misc_error("replace-interaction-input!",
                        "interaction input replacement capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("replace-interaction-input!", [&]() -> SCM {
         const std::expected<RevisionId, std::string> revision =
             host.services.replace_interaction_input(scheme_string(input_value));
         if (!revision) {
             raise_host_error("replace-interaction-input!", revision.error());
         }
         return scm_from_uint64(*revision);
-    } catch (const std::exception& exception) {
-        raise_host_error("replace-interaction-input!", exception.what());
-    } catch (...) {
-        scm_misc_error("replace-interaction-input!", "unknown C++ host failure", SCM_EOL);
-    }
-    return scm_from_uint64(0);
+    });
 }
 
 SCM cancel_interaction_mechanism(SCM host_object) {
@@ -4993,14 +4304,9 @@ SCM cancel_interaction_mechanism(SCM host_object) {
         scm_misc_error("cancel-interaction-mechanism!",
                        "interaction cancellation capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("cancel-interaction-mechanism!", [&]() -> SCM {
         return scm_from_bool(host.services.cancel_interaction());
-    } catch (const std::exception& exception) {
-        raise_host_error("cancel-interaction-mechanism!", exception.what());
-    } catch (...) {
-        scm_misc_error("cancel-interaction-mechanism!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM completion_active(SCM host_object) {
@@ -5008,14 +4314,9 @@ SCM completion_active(SCM host_object) {
     if (!host.services.completion_active) {
         return SCM_BOOL_F;
     }
-    try {
+    return host_primitive("completion-active?", [&]() -> SCM {
         return scm_from_bool(host.services.completion_active());
-    } catch (const std::exception& exception) {
-        raise_host_error("completion-active?", exception.what());
-    } catch (...) {
-        scm_misc_error("completion-active?", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM refresh_completion(SCM host_object) {
@@ -5023,15 +4324,10 @@ SCM refresh_completion(SCM host_object) {
     if (!host.services.refresh_completion) {
         return SCM_BOOL_F;
     }
-    try {
+    return host_primitive("refresh-completion!", [&]() -> SCM {
         const std::expected<void, std::string> refreshed = host.services.refresh_completion();
         return refreshed ? SCM_BOOL_F : scm_from_utf8_string(refreshed.error().c_str());
-    } catch (const std::exception& exception) {
-        raise_host_error("refresh-completion!", exception.what());
-    } catch (...) {
-        scm_misc_error("refresh-completion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM ensure_lsp_session(SCM host_object, SCM context_value, SCM provider_value) {
@@ -5039,7 +4335,7 @@ SCM ensure_lsp_session(SCM host_object, SCM context_value, SCM provider_value) {
     if (!host.services.ensure_lsp_session) {
         scm_misc_error("ensure-lsp-session!", "LSP session capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("ensure-lsp-session!", [&]() -> SCM {
         const CommandContext context =
             command_context_from_scheme(host, context_value, "ensure-lsp-session!");
         std::expected<std::uint64_t, std::string> session = host.services.ensure_lsp_session(
@@ -5051,12 +4347,7 @@ SCM ensure_lsp_session(SCM host_object, SCM context_value, SCM provider_value) {
             raise_host_error("ensure-lsp-session!", session.error());
         }
         return scm_from_uint64(*session);
-    } catch (const std::exception& exception) {
-        raise_host_error("ensure-lsp-session!", exception.what());
-    } catch (...) {
-        scm_misc_error("ensure-lsp-session!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM attach_lsp_diagnostics(SCM host_object, SCM session_value) {
@@ -5069,19 +4360,14 @@ SCM attach_lsp_diagnostics(SCM host_object, SCM session_value) {
         scm_misc_error("attach-lsp-diagnostics!", "LSP diagnostics capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("attach-lsp-diagnostics!", [&]() -> SCM {
         const std::expected<void, std::string> attached =
             host.services.attach_lsp_diagnostics(scm_to_uint64(session_value));
         if (!attached) {
             raise_host_error("attach-lsp-diagnostics!", attached.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("attach-lsp-diagnostics!", exception.what());
-    } catch (...) {
-        scm_misc_error("attach-lsp-diagnostics!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM synchronize_lsp_session(SCM host_object, SCM buffer_value, SCM session_value) {
@@ -5096,19 +4382,14 @@ SCM synchronize_lsp_session(SCM host_object, SCM buffer_value, SCM session_value
         scm_misc_error("synchronize-lsp-session!", "LSP synchronization capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("synchronize-lsp-session!", [&]() -> SCM {
         const std::expected<void, std::string> synchronized =
             host.services.synchronize_lsp_session(buffer, scm_to_uint64(session_value));
         if (!synchronized) {
             raise_host_error("synchronize-lsp-session!", synchronized.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("synchronize-lsp-session!", exception.what());
-    } catch (...) {
-        scm_misc_error("synchronize-lsp-session!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM providers_value,
@@ -5117,7 +4398,7 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
     if (!host.services.start_completion) {
         scm_misc_error("start-completion!", "completion capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("start-completion!", [&]() -> SCM {
         const CommandContext context =
             command_context_from_scheme(host, context_value, "start-completion!");
         const TextOffset anchor = text_offset_from_scheme(anchor_value, "start-completion!", 3);
@@ -5199,12 +4480,7 @@ SCM start_completion(SCM host_object, SCM context_value, SCM anchor_value, SCM p
             raise_host_error("start-completion!", started.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("start-completion!", exception.what());
-    } catch (...) {
-        scm_misc_error("start-completion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM focus_completion(SCM host_object, SCM selected_value) {
@@ -5216,14 +4492,9 @@ SCM focus_completion(SCM host_object, SCM selected_value) {
     if (!host.services.focus_completion) {
         scm_misc_error("focus-completion!", "completion focus capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("focus-completion!", [&]() -> SCM {
         return scm_from_bool(host.services.focus_completion(scm_to_size_t(selected_value)));
-    } catch (const std::exception& exception) {
-        raise_host_error("focus-completion!", exception.what());
-    } catch (...) {
-        scm_misc_error("focus-completion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM apply_completion(SCM host_object, SCM selected_value, SCM replace_value) {
@@ -5236,19 +4507,14 @@ SCM apply_completion(SCM host_object, SCM selected_value, SCM replace_value) {
         scm_misc_error("apply-completion!", "completion application capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("apply-completion!", [&]() -> SCM {
         std::expected<void, std::string> applied = host.services.apply_completion(
             scm_to_size_t(selected_value), scheme_true(replace_value));
         if (!applied) {
             raise_host_error("apply-completion!", applied.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("apply-completion!", exception.what());
-    } catch (...) {
-        scm_misc_error("apply-completion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM cancel_completion(SCM host_object) {
@@ -5257,14 +4523,9 @@ SCM cancel_completion(SCM host_object) {
         scm_misc_error("cancel-completion!", "completion cancellation capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("cancel-completion!", [&]() -> SCM {
         return scm_from_bool(host.services.cancel_completion());
-    } catch (const std::exception& exception) {
-        raise_host_error("cancel-completion!", exception.what());
-    } catch (...) {
-        scm_misc_error("cancel-completion!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM cancel_pending_input(SCM host_object) {
@@ -5272,15 +4533,10 @@ SCM cancel_pending_input(SCM host_object) {
     if (!host.services.cancel_pending_input) {
         scm_misc_error("cancel-pending-input!", "command input capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("cancel-pending-input!", [&]() -> SCM {
         host.services.cancel_pending_input();
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("cancel-pending-input!", exception.what());
-    } catch (...) {
-        scm_misc_error("cancel-pending-input!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 SCM view_position(SCM host_object, SCM view_value) {
@@ -5289,7 +4545,7 @@ SCM view_position(SCM host_object, SCM view_value) {
     if (!host.services.view_position) {
         scm_misc_error("view-position", "view position capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("view-position", [&]() -> SCM {
         const GuileViewPosition position = host.services.view_position(view);
         SCM result = scm_c_make_vector(5, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_uint32(position.line));
@@ -5298,12 +4554,7 @@ SCM view_position(SCM host_object, SCM view_value) {
         scm_c_vector_set_x(result, 3, scm_from_uint32(position.byte));
         scm_c_vector_set_x(result, 4, scm_from_uint32(position.byte_count));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("view-position", exception.what());
-    } catch (...) {
-        scm_misc_error("view-position", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM view_line_prefix(SCM host_object, SCM view_value) {
@@ -5312,7 +4563,7 @@ SCM view_line_prefix(SCM host_object, SCM view_value) {
     if (!host.services.view_line_prefix) {
         scm_misc_error("view-line-prefix", "view line query capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("view-line-prefix", [&]() -> SCM {
         const GuileViewLinePrefix prefix = host.services.view_line_prefix(view);
         SCM result = scm_c_make_vector(3, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_uint32(prefix.line_start));
@@ -5320,12 +4571,7 @@ SCM view_line_prefix(SCM host_object, SCM view_value) {
         scm_c_vector_set_x(result, 2,
                            scm_from_utf8_stringn(prefix.text.data(), prefix.text.size()));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("view-line-prefix", exception.what());
-    } catch (...) {
-        scm_misc_error("view-line-prefix", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM view_syntax_token(SCM host_object, SCM view_value, SCM offset_value) {
@@ -5335,7 +4581,7 @@ SCM view_syntax_token(SCM host_object, SCM view_value, SCM offset_value) {
     if (!host.services.view_syntax_token) {
         scm_misc_error("view-syntax-token", "syntax query capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("view-syntax-token", [&]() -> SCM {
         const std::optional<GuileSyntaxToken> token = host.services.view_syntax_token(view, offset);
         if (!token) {
             return SCM_BOOL_F;
@@ -5345,12 +4591,7 @@ SCM view_syntax_token(SCM host_object, SCM view_value, SCM offset_value) {
         scm_c_vector_set_x(result, 1, scm_from_uint32(token->start));
         scm_c_vector_set_x(result, 2, scm_from_uint32(token->end));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("view-syntax-token", exception.what());
-    } catch (...) {
-        scm_misc_error("view-syntax-token", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM view_identifier_words(SCM host_object, SCM view_value) {
@@ -5360,14 +4601,9 @@ SCM view_identifier_words(SCM host_object, SCM view_value) {
         scm_misc_error("view-identifier-words", "identifier query capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("view-identifier-words", [&]() -> SCM {
         return string_vector_value(host.services.view_identifier_words(view));
-    } catch (const std::exception& exception) {
-        raise_host_error("view-identifier-words", exception.what());
-    } catch (...) {
-        scm_misc_error("view-identifier-words", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM location_list_item_target(SCM host_object, SCM workbench_value, SCM list_value,
@@ -5385,7 +4621,7 @@ SCM location_list_item_target(SCM host_object, SCM workbench_value, SCM list_val
         scm_misc_error("location-list-item-target", "location target capability is unavailable",
                        SCM_EOL);
     }
-    try {
+    return host_primitive("location-list-item-target", [&]() -> SCM {
         const std::optional<GuileLocationTarget> target = host.services.location_target(
             workbench, scm_to_uint64(list_value), scm_to_size_t(index_value));
         if (!target) {
@@ -5398,12 +4634,7 @@ SCM location_list_item_target(SCM host_object, SCM workbench_value, SCM list_val
         scm_c_vector_set_x(result, 3, scm_from_bool(target->stale));
         scm_c_vector_set_x(result, 4, position_encoding_value(target->position.encoding));
         return result;
-    } catch (const std::exception& exception) {
-        raise_host_error("location-list-item-target", exception.what());
-    } catch (...) {
-        scm_misc_error("location-list-item-target", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_BOOL_F;
+    });
 }
 
 SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SCM offset_value) {
@@ -5416,19 +4647,14 @@ SCM position_buffer_view(SCM host_object, SCM window_value, SCM buffer_value, SC
     if (!host.services.position_buffer_view) {
         scm_misc_error("position-buffer-view!", "buffer view capability is unavailable", SCM_EOL);
     }
-    try {
+    return host_primitive("position-buffer-view!", [&]() -> SCM {
         const std::expected<void, std::string> positioned =
             host.services.position_buffer_view(window, buffer, offset.value);
         if (!positioned) {
             raise_host_error("position-buffer-view!", positioned.error());
         }
         return SCM_UNSPECIFIED;
-    } catch (const std::exception& exception) {
-        raise_host_error("position-buffer-view!", exception.what());
-    } catch (...) {
-        scm_misc_error("position-buffer-view!", "unknown C++ host failure", SCM_EOL);
-    }
-    return SCM_UNSPECIFIED;
+    });
 }
 
 void initialize_host_module(void*) {
