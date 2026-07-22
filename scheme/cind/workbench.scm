@@ -11,6 +11,7 @@
             workbench-activate!
             workbench-next
             workbench-active-window
+            active-window-id
             workbench-focus-window!
             workbench-visit-buffer!
             workbench-expel-buffer!
@@ -194,6 +195,11 @@
                   ((equal? workbench (vector-ref (car remaining) 0)) index)
                   (else (loop (cdr remaining) (+ index 1)))))))
     (vector-ref (list-ref entries (modulo (+ current delta) count)) 0)))
+
+;; Was a native primitive that called straight back into this module for both
+;; halves of the answer; the host only added an existence probe on the result.
+(define (active-window-id host)
+  (workbench-active-window host (active-workbench host)))
 
 (define (workbench-active-window host workbench)
   (vector-ref (require-workbench-entry host workbench) 5))

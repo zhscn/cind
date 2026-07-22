@@ -1,6 +1,7 @@
 (define-module (cind command)
   #:use-module (ice-9 optargs)
   #:use-module (cind buffers)
+  #:use-module (cind workbench)
   #:use-module (cind host)
   #:use-module (cind state)
   #:export (command-completed
@@ -397,7 +398,7 @@
 
 ;; Slot 1 is "the focused buffer is the transient interaction surface", which the
 ;; mechanism reports about itself -- not a classification of the buffer.
-(define (assemble-base-keymap-layers snapshot roots initial)
+(define (assemble-base-keymap-layers host context snapshot roots initial)
   (let* ((interaction-surface? (vector-ref snapshot 1))
          (window-maps (vector-ref snapshot 3))
          (view-maps (vector-ref snapshot 4))
@@ -406,7 +407,8 @@
          (major-mode (vector-ref snapshot 7))
          (window-layers (append-keymap-vector initial window-maps "window"))
          (policy-window-layers
-          (if (and (not interaction-surface?) (vector-ref snapshot 8))
+          (if (and (not interaction-surface?)
+                   (window-created-by-policy? host (context-window context)))
               (append-keymap-vector window-layers (vector-ref roots 3)
                                     "window:policy-created")
               window-layers))
@@ -429,18 +431,18 @@
 (define (resolve-base-keymap-policy host context)
   (let* ((snapshot (keymap-context-snapshot host context))
          (roots (keymap-root-policy host))
-         (layers (assemble-base-keymap-layers snapshot roots '())))
+         (layers (assemble-base-keymap-layers host context snapshot roots '())))
     (vector 'keymap-policy (list->vector layers) (vector))))
 
 (define (resolve-keymap-policy host context)
   (let* ((snapshot (keymap-context-snapshot host context))
          (roots (keymap-root-policy host))
          (context-layers
-          (if (vector-ref snapshot 9)
+          (if (vector-ref snapshot 8)
               (append-keymap-vector '() (vector-ref roots 4) "completion-active")
               '()))
          (state-layers (append-state-layers context-layers (vector-ref snapshot 2)))
-         (layers (assemble-base-keymap-layers snapshot roots state-layers)))
+         (layers (assemble-base-keymap-layers host context snapshot roots state-layers)))
     (vector 'keymap-policy (list->vector layers) (vector-ref roots 2))))
 
 (define (keymap-policy-names policy include-overrides?)
@@ -490,7 +492,7 @@
 
 (define (resolve-modeline-content host context facts)
   (let ((effective-facts (list->vector (vector->list facts))))
-    (vector-set! effective-facts 9
+    (vector-set! effective-facts 8
                  (if (equal? (context-window context) (active-window-id host))
                      (vector-ref (command-feedback-entry host) 1)
                      ""))

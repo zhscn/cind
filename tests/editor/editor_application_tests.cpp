@@ -643,8 +643,14 @@ TEST_CASE("command feedback exposes the last key only in the active modeline") {
     REQUIRE(windows.size() == 2);
     for (const OpenWindowSnapshot& window : windows) {
         const ModelineContent content = application.modeline(window.window);
-        const bool contains_last_key = std::ranges::any_of(
-            content.segments, [](const ModelineSegment& segment) { return segment.text == "C-f"; });
+        // Weight distinguishes the two right-hand indicators, so matching text
+        // alone cannot tell the last key from the input state. A facts-vector
+        // index slip once wrote the key into the input-state slot and this
+        // check still passed.
+        const bool contains_last_key =
+            std::ranges::any_of(content.segments, [](const ModelineSegment& segment) {
+                return segment.text == "C-f" && segment.weight == ModelineWeight::Regular;
+            });
         CHECK(contains_last_key == window.active);
     }
 }

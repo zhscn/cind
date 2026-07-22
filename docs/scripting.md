@@ -225,7 +225,6 @@ The native module exports:
 (delete-window! host window-id)
 (delete-other-windows! host window-id)
 (open-window-ids host)
-(active-window-id host)
 (window-view-id host window-id)
 (window-role host window-id)
 (set-window-role! host window-id role-or-#f)
@@ -313,7 +312,8 @@ remap using the same high-to-low layer order as command dispatch.
 
 `keymap-context-snapshot` returns whether the focused Buffer is the transient interaction surface,
 the named keymaps attached to the InputState stack, Window, View, Buffer, active minor modes, and
-major mode, and whether display policy created the Window. It exposes attachment and activation
+major mode. It no longer reports whether display policy created the Window: that is the policy's own
+state, and the host was fetching it from Scheme only to hand it straight back. It exposes attachment and activation
 facts without assigning precedence or selecting global roots. The first field replaces the Buffer
 kind it used to report: the only thing the policy read that for was whether the focused buffer is
 the interaction surface, which is a fact the mechanism knows about itself rather than a
@@ -916,7 +916,8 @@ own native event interpretation; Scheme owns editor scroll speed and behavior.
 
 Window capabilities operate on explicit generational IDs. `split-window!` accepts `rows` or
 `columns`; split, delete, retain and focus operations return `#f` on success or an invariant error
-string. `open-window-ids` returns layout order, `active-window-id` identifies the current focus,
+string. `open-window-ids` returns layout order, `active-window-id` (now `(cind workbench)`) identifies the
+current focus,
 and `window-view-id` resolves presentation after a buffer is displayed. The bundled Scheme policy
 uses these mechanisms for window cycling and asynchronous open targeting. `exit-editor!`
 marks the native event loop for termination, and `request-redraw!` requests caret reveal. Scheme

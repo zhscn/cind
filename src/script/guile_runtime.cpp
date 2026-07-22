@@ -31,13 +31,13 @@ namespace cind {
 
 namespace {
 
-// `state` owns the per-application state root and is loaded before the modules
-// that declare slots in it.
+// Loaded in dependency order: `state` owns the per-application state root, and
+// `buffers` and `workbench` own identity that later modules import directly.
 constexpr std::array<std::string_view, 24> bundled_guile_modules = {
-    "state",   "buffers",    "application", "command",   "completion", "input",
-    "lsp",     "async",      "workbench",   "lifecycle", "pointer",    "extension",
-    "emacs",   "toy-modal",  "meow",        "vim",       "helix",      "structural",
-    "paredit", "minibuffer", "development", "ares",      "introspect", "core",
+    "state",   "buffers",    "workbench",   "application", "command",    "completion",
+    "input",   "lsp",        "async",       "lifecycle",   "pointer",    "extension",
+    "emacs",   "toy-modal",  "meow",        "vim",         "helix",      "structural",
+    "paredit", "minibuffer", "development", "ares",        "introspect", "core",
 };
 
 const char* command_loop_status_name(CommandLoopStatus status) {
@@ -946,23 +946,6 @@ BufferKind buffer_kind_from_scheme(SCM value, const char* caller, int position) 
     scm_wrong_type_arg_msg(caller, position, value, "'scratch, 'file, 'generated, or 'process");
 }
 
-SCM scheme_workbench_window_state(SCM host_object, WindowId window, const char* caller) {
-    const SCM state =
-        scm_call_2(scm_c_public_ref("cind workbench", "workbench-window-state-or-default"),
-                   host_object, entity_id(window.slot, window.generation));
-    if (!scm_is_vector(state) || scm_c_vector_length(state) != 4 ||
-        !scheme_boolean(scm_c_vector_ref(state, 2)) ||
-        !scheme_boolean(scm_c_vector_ref(state, 3))) {
-        scm_wrong_type_arg_msg(caller, 0, state,
-                               "#(workbench role-or-#f pinned? created-by-policy?)");
-    }
-    const SCM role = scm_c_vector_ref(state, 1);
-    if (!scheme_false(role) && !scm_is_string(role)) {
-        scm_wrong_type_arg_msg(caller, 0, role, "string or #f");
-    }
-    return state;
-}
-
 SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
     return host_primitive("keymap-context-snapshot", [&]() -> SCM {
         HostLease& host = require_host(host_object, "keymap-context-snapshot");
@@ -1009,7 +992,7 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             host.services.interaction_mechanism_status
                 ? host.services.interaction_mechanism_status()
                 : GuileInteractionMechanismStatus{};
-        SCM result = scm_c_make_vector(10, SCM_UNSPECIFIED);
+        SCM result = scm_c_make_vector(9, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
         scm_c_vector_set_x(
             result, 1,
@@ -1020,11 +1003,10 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
         scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
         scm_c_vector_set_x(result, 6, minors);
         scm_c_vector_set_x(result, 7, major);
-        const SCM window_state =
-            scheme_workbench_window_state(host_object, window.id(), "keymap-context-snapshot");
-        scm_c_vector_set_x(result, 8, scm_c_vector_ref(window_state, 3));
+        // No window provenance: it is the policy's own state, and fetching it
+        // here only to hand it straight back is a round trip on the key path.
         scm_c_vector_set_x(
-            result, 9,
+            result, 8,
             scm_from_bool(host.services.completion_active && host.services.completion_active()));
         return result;
     });
@@ -4076,19 +4058,6 @@ SCM open_windows(SCM host_object) {
     });
 }
 
-SCM active_window(SCM host_object) {
-    return host_primitive("active-window-id", [&]() -> SCM {
-        HostLease& host = require_host(host_object, "active-window-id");
-        const SCM workbench =
-            scm_call_1(scm_c_public_ref("cind workbench", "active-workbench"), host_object);
-        const SCM selected = scm_call_2(
-            scm_c_public_ref("cind workbench", "workbench-active-window"), host_object, workbench);
-        const WindowId window = entity_id_from_scheme<WindowTag>(selected, "active-window-id", 0);
-        (void)host.runtime->windows().get(window);
-        return selected;
-    });
-}
-
 SCM window_view(SCM host_object, SCM window_value) {
     HostLease& host = require_host(host_object, "window-view-id");
     const WindowId window = entity_id_from_scheme<WindowTag>(window_value, "window-view-id", 2);
@@ -4862,8 +4831,6 @@ void initialize_host_module(void*) {
                              reinterpret_cast<scm_t_subr>(delete_other_windows));
     (void)scm_c_define_gsubr("open-window-ids", 1, 0, 0,
                              reinterpret_cast<scm_t_subr>(open_windows));
-    (void)scm_c_define_gsubr("active-window-id", 1, 0, 0,
-                             reinterpret_cast<scm_t_subr>(active_window));
     (void)scm_c_define_gsubr("window-view-id", 2, 0, 0, reinterpret_cast<scm_t_subr>(window_view));
     (void)scm_c_define_gsubr("window-buffer-id", 2, 0, 0,
                              reinterpret_cast<scm_t_subr>(window_buffer));
@@ -4912,7 +4879,7 @@ void initialize_host_module(void*) {
         "project-provider-definitions", "project-id-by-root", "create-project!",
         "buffer-save-snapshot", "mark-buffer-saved!", "open-buffer-ids",
         "create-buffer!", "buffer-modified?", "release-buffer!", "split-window!", "delete-window!",
-        "delete-other-windows!", "open-window-ids", "active-window-id", "window-view-id",
+        "delete-other-windows!", "open-window-ids", "window-view-id",
         "window-buffer-id", "focus-window!", nullptr);
     initialize_guile_async_host_bindings(require_async_bridge);
 }

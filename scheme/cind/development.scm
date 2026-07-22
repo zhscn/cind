@@ -1,5 +1,6 @@
 (define-module (cind development)
   #:use-module (ares repl)
+  #:use-module (cind extension)
   #:use-module (cind buffers)
   #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
@@ -39,18 +40,7 @@
 
 (define (make-evaluation-module host)
   (or (state-ref host 'evaluation-module)
-      (let ((module (make-fresh-user-module)))
-        ;; Buffer identity moved out of (cind host) into (cind buffers); user
-        ;; code documented against buffer-name, rename-buffer! and
-        ;; set-buffer-project! must keep resolving them without a new import.
-        (module-use! module (resolve-interface '(cind buffers)))
-        (module-use! module (resolve-interface '(cind application)))
-        (module-use! module (resolve-interface '(cind command)))
-        (module-use! module (resolve-interface '(cind async)))
-        (module-use! module (resolve-interface '(cind input)))
-        (module-use! module (resolve-interface '(cind minibuffer)))
-        (module-use! module (resolve-interface '(cind host)))
-        (module-define! module 'host host)
+      (let ((module (make-user-module host)))
         (state-set! host 'evaluation-module module))))
 
 (define (render-value value)
