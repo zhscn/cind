@@ -123,160 +123,56 @@ target_include_directories(cind_scheme PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cind_scheme PUBLIC cind_application PRIVATE cind_indent)
 
 set(CIND_SCHEME_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/scheme")
-set(CIND_APPLICATION_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/application.scm")
-set(CIND_APPLICATION_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/application.scm")
-set(CIND_ARES_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/ares.scm")
-set(CIND_ARES_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/ares.scm")
-set(CIND_ASYNC_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/async.scm")
-set(CIND_ASYNC_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/async.scm")
-set(CIND_CORE_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/core.scm")
-set(CIND_CORE_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/core.scm")
-set(CIND_COMMAND_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/command.scm")
-set(CIND_COMMAND_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/command.scm")
-set(CIND_COMPLETION_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/completion.scm")
-set(CIND_COMPLETION_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/completion.scm")
-set(CIND_DEVELOPMENT_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/development.scm")
-set(CIND_DEVELOPMENT_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/development.scm")
-set(CIND_EMACS_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/emacs.scm")
-set(CIND_EMACS_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/emacs.scm")
-set(CIND_EXTENSION_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/extension.scm")
-set(CIND_EXTENSION_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/extension.scm")
-set(CIND_HELIX_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/helix.scm")
-set(CIND_HELIX_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/helix.scm")
-set(CIND_INPUT_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/input.scm")
-set(CIND_INPUT_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/input.scm")
-set(CIND_INTROSPECT_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/introspect.scm")
-set(CIND_INTROSPECT_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/introspect.scm")
-set(CIND_LIFECYCLE_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/lifecycle.scm")
-set(CIND_LIFECYCLE_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/lifecycle.scm")
-set(CIND_LSP_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/lsp.scm")
-set(CIND_LSP_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/lsp.scm")
-set(CIND_MEOW_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/meow.scm")
-set(CIND_MEOW_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/meow.scm")
-set(CIND_MINIBUFFER_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/minibuffer.scm")
-set(CIND_MINIBUFFER_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/minibuffer.scm")
-set(CIND_POINTER_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/pointer.scm")
-set(CIND_POINTER_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/pointer.scm")
-set(CIND_PAREDIT_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/paredit.scm")
-set(CIND_PAREDIT_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/paredit.scm")
-set(CIND_STATE_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/state.scm")
-set(CIND_STATE_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/state.scm")
-set(CIND_STRUCTURAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/structural.scm")
-set(CIND_STRUCTURAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/structural.scm")
-set(CIND_VIM_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/vim.scm")
-set(CIND_VIM_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/vim.scm")
-set(CIND_WORKBENCH_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/workbench.scm")
-set(CIND_WORKBENCH_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/workbench.scm")
-set(CIND_TOY_MODAL_SCHEME_SOURCE "${PROJECT_SOURCE_DIR}/scheme/cind/toy-modal.scm")
-set(CIND_TOY_MODAL_SCHEME_OUTPUT "${CIND_SCHEME_OUTPUT_DIR}/cind/toy-modal.scm")
+
+# The bundled Scheme modules, copied next to the binaries so a build tree can run
+# without an installed prefix. Adding a module means adding its name here and
+# nothing else -- the sources, outputs and copy commands are all derived.
+set(CIND_SCHEME_MODULES
+  application
+  ares
+  async
+  command
+  completion
+  core
+  development
+  emacs
+  extension
+  helix
+  input
+  introspect
+  lifecycle
+  lsp
+  meow
+  minibuffer
+  paredit
+  pointer
+  state
+  structural
+  toy-modal
+  vim
+  workbench
+)
+
+set(CIND_SCHEME_SOURCES "")
+set(CIND_SCHEME_OUTPUTS "")
+set(CIND_SCHEME_COPY_COMMANDS "")
+foreach(module IN LISTS CIND_SCHEME_MODULES)
+  set(source "${PROJECT_SOURCE_DIR}/scheme/cind/${module}.scm")
+  set(output "${CIND_SCHEME_OUTPUT_DIR}/cind/${module}.scm")
+  list(APPEND CIND_SCHEME_SOURCES "${source}")
+  list(APPEND CIND_SCHEME_OUTPUTS "${output}")
+  list(APPEND CIND_SCHEME_COPY_COMMANDS
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${source}" "${output}")
+endforeach()
+
 add_custom_command(
-  OUTPUT "${CIND_APPLICATION_SCHEME_OUTPUT}"
-         "${CIND_ARES_SCHEME_OUTPUT}"
-         "${CIND_ASYNC_SCHEME_OUTPUT}"
-         "${CIND_CORE_SCHEME_OUTPUT}" "${CIND_COMMAND_SCHEME_OUTPUT}"
-         "${CIND_COMPLETION_SCHEME_OUTPUT}"
-         "${CIND_DEVELOPMENT_SCHEME_OUTPUT}"
-         "${CIND_EMACS_SCHEME_OUTPUT}" "${CIND_EXTENSION_SCHEME_OUTPUT}"
-         "${CIND_HELIX_SCHEME_OUTPUT}"
-         "${CIND_INPUT_SCHEME_OUTPUT}" "${CIND_INTROSPECT_SCHEME_OUTPUT}"
-         "${CIND_LIFECYCLE_SCHEME_OUTPUT}"
-         "${CIND_LSP_SCHEME_OUTPUT}"
-         "${CIND_MEOW_SCHEME_OUTPUT}" "${CIND_MINIBUFFER_SCHEME_OUTPUT}"
-         "${CIND_POINTER_SCHEME_OUTPUT}"
-         "${CIND_PAREDIT_SCHEME_OUTPUT}"
-         "${CIND_STATE_SCHEME_OUTPUT}"
-         "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
-         "${CIND_VIM_SCHEME_OUTPUT}"
-         "${CIND_WORKBENCH_SCHEME_OUTPUT}"
-         "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
+  OUTPUT ${CIND_SCHEME_OUTPUTS}
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CIND_SCHEME_OUTPUT_DIR}/cind"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_APPLICATION_SCHEME_SOURCE}" "${CIND_APPLICATION_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_ARES_SCHEME_SOURCE}" "${CIND_ARES_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_ASYNC_SCHEME_SOURCE}" "${CIND_ASYNC_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_CORE_SCHEME_SOURCE}" "${CIND_CORE_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_COMMAND_SCHEME_SOURCE}" "${CIND_COMMAND_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_COMPLETION_SCHEME_SOURCE}" "${CIND_COMPLETION_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_DEVELOPMENT_SCHEME_SOURCE}" "${CIND_DEVELOPMENT_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_EMACS_SCHEME_SOURCE}" "${CIND_EMACS_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_EXTENSION_SCHEME_SOURCE}" "${CIND_EXTENSION_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_HELIX_SCHEME_SOURCE}" "${CIND_HELIX_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_INPUT_SCHEME_SOURCE}" "${CIND_INPUT_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_INTROSPECT_SCHEME_SOURCE}" "${CIND_INTROSPECT_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_LIFECYCLE_SCHEME_SOURCE}" "${CIND_LIFECYCLE_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_LSP_SCHEME_SOURCE}" "${CIND_LSP_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_MEOW_SCHEME_SOURCE}" "${CIND_MEOW_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_MINIBUFFER_SCHEME_SOURCE}" "${CIND_MINIBUFFER_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_POINTER_SCHEME_SOURCE}" "${CIND_POINTER_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_PAREDIT_SCHEME_SOURCE}" "${CIND_PAREDIT_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_STATE_SCHEME_SOURCE}" "${CIND_STATE_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_STRUCTURAL_SCHEME_SOURCE}" "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_VIM_SCHEME_SOURCE}" "${CIND_VIM_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_WORKBENCH_SCHEME_SOURCE}" "${CIND_WORKBENCH_SCHEME_OUTPUT}"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-          "${CIND_TOY_MODAL_SCHEME_SOURCE}" "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
-  DEPENDS "${CIND_APPLICATION_SCHEME_SOURCE}"
-          "${CIND_ARES_SCHEME_SOURCE}" "${CIND_ASYNC_SCHEME_SOURCE}"
-          "${CIND_CORE_SCHEME_SOURCE}" "${CIND_COMMAND_SCHEME_SOURCE}"
-          "${CIND_COMPLETION_SCHEME_SOURCE}"
-          "${CIND_DEVELOPMENT_SCHEME_SOURCE}"
-          "${CIND_EMACS_SCHEME_SOURCE}" "${CIND_EXTENSION_SCHEME_SOURCE}"
-          "${CIND_HELIX_SCHEME_SOURCE}"
-          "${CIND_INPUT_SCHEME_SOURCE}" "${CIND_INTROSPECT_SCHEME_SOURCE}"
-          "${CIND_LIFECYCLE_SCHEME_SOURCE}"
-          "${CIND_LSP_SCHEME_SOURCE}"
-          "${CIND_MEOW_SCHEME_SOURCE}" "${CIND_MINIBUFFER_SCHEME_SOURCE}"
-          "${CIND_POINTER_SCHEME_SOURCE}"
-          "${CIND_PAREDIT_SCHEME_SOURCE}"
-          "${CIND_STATE_SCHEME_SOURCE}"
-          "${CIND_STRUCTURAL_SCHEME_SOURCE}"
-          "${CIND_VIM_SCHEME_SOURCE}"
-          "${CIND_WORKBENCH_SCHEME_SOURCE}"
-          "${CIND_TOY_MODAL_SCHEME_SOURCE}"
+  ${CIND_SCHEME_COPY_COMMANDS}
+  DEPENDS ${CIND_SCHEME_SOURCES}
   VERBATIM
 )
-add_custom_target(cind_scheme_resources
-  DEPENDS "${CIND_APPLICATION_SCHEME_OUTPUT}"
-          "${CIND_ARES_SCHEME_OUTPUT}"
-          "${CIND_ASYNC_SCHEME_OUTPUT}"
-          "${CIND_CORE_SCHEME_OUTPUT}" "${CIND_COMMAND_SCHEME_OUTPUT}"
-          "${CIND_COMPLETION_SCHEME_OUTPUT}"
-          "${CIND_DEVELOPMENT_SCHEME_OUTPUT}"
-          "${CIND_EMACS_SCHEME_OUTPUT}" "${CIND_EXTENSION_SCHEME_OUTPUT}"
-          "${CIND_HELIX_SCHEME_OUTPUT}"
-          "${CIND_INPUT_SCHEME_OUTPUT}" "${CIND_INTROSPECT_SCHEME_OUTPUT}"
-          "${CIND_LIFECYCLE_SCHEME_OUTPUT}"
-          "${CIND_LSP_SCHEME_OUTPUT}"
-          "${CIND_MEOW_SCHEME_OUTPUT}" "${CIND_MINIBUFFER_SCHEME_OUTPUT}"
-          "${CIND_POINTER_SCHEME_OUTPUT}"
-          "${CIND_PAREDIT_SCHEME_OUTPUT}"
-          "${CIND_STATE_SCHEME_OUTPUT}"
-          "${CIND_STRUCTURAL_SCHEME_OUTPUT}"
-          "${CIND_VIM_SCHEME_OUTPUT}"
-          "${CIND_WORKBENCH_SCHEME_OUTPUT}"
-          "${CIND_TOY_MODAL_SCHEME_OUTPUT}"
-)
+add_custom_target(cind_scheme_resources DEPENDS ${CIND_SCHEME_OUTPUTS})
 
 add_library(cind_guile STATIC
   script/guile_async_bridge.cpp

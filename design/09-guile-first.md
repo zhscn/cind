@@ -71,7 +71,9 @@ AsyncRuntime（libuv）、LSP transport（进程 + JSON-RPC 框架）、目录 w
 - **不在病灶上**。`uv_` 符号在 `src/` 下只出现于 `src/async/runtime.cpp` 一个文件、1341 行，全仓再无第二处。它已经就是本节要保留的那条 IO 机制腿，形态是对的。壳的膨胀在 editor/ 15.3k + script/ 12.9k + gui/ 11.2k，换掉 libuv 一行也删不掉。
 - **两个调度器**。fibers 的 scheduler 要自己持有 epoll 等待；cind 的主循环由 UI 事件源驱动（SDL3 / 终端）。让 fibers 拥有等待就要把 UI 事件塞进它的 poller，让它不拥有就要按帧 pump，两条都是把一个自洽的运行时改成半自洽。
 - **与 §7.2 已测风险冲突**。fibers 建在分隔续延之上，每个挂起的 fiber 是捕获进 Guile 堆的续延——而 §7.2 实测的真实尾部风险恰是 Boehm 对 Guile 自身堆的整堆回收。把 IO 并发搬进那个堆，是往已知的痛处加压。
-- **多一个必须随发行携带的依赖**（本机 Guile 3.0.9 未安装 fibers）。
+**"多一个依赖"这条不成立**（先前写错了，此处更正）：`cmake/GuileRuntime.cmake:45` 已用 ExternalProject 拉取并构建 fibers 1.4.3 装进项目自带的 Guile prefix，`cind_guile` 直接 `add_dependencies` 它——因为 guile-ares-rs（nREPL）依赖它。也就是说 **fibers 已经是随发行携带的依赖，成本已付**；`scheme/` 与 `src/` 里目前零处引用它。先前那句"本机未安装"说的是系统 Guile 3.0.9，与项目无关，是个误判。
+
+因此反对理由只剩上面三条（不在病灶、两个调度器、续延进 Boehm 堆），而"引入成本"这条要划掉。若将来 IO 策略迁完之后仍想让 Scheme 侧的异步组合更顺手，fibers 是**零新增依赖**的选项，届时该重新评估——真正要解决的是调度器归属，不是依赖。
 
 **该搬的是 IO 策略而非 IO 机制**：哪些 watch 存在、防抖与重试、LSP 会话生命周期与能力协商——这些今天仍在 native（`src/lsp/` 2604 行 vs `scheme/cind/lsp.scm` 214 行），属 §3.4 的组合根，随 P2/P3 迁走。迁完之后若 `src/async/runtime.cpp` 仍是唯一的 IO 代码，那正是终态。
 
