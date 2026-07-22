@@ -205,6 +205,76 @@ TEST_CASE("failed Guile extension loads cancel tasks created during evaluation")
     drain_until(async, [&] { return async_host.tasks().empty(); });
 }
 
+TEST_CASE("Application state root owns declared slots per application") {
+    EditorRuntime runtime;
+    GuileRuntime guile(runtime);
+
+    auto run = [&](const std::string& source) {
+        const std::expected<GuileEvaluationResult, std::string> result =
+            guile.evaluate({.source = source, .source_name = "state.scm"});
+        REQUIRE(result.has_value());
+        REQUIRE_FALSE(result->error.has_value());
+        return *result;
+    };
+    auto evaluate = [&](const std::string& source) {
+        const GuileEvaluationResult result = run(source);
+        REQUIRE(result.values.size() == 1);
+        return result.values.front();
+    };
+
+    run("(use-modules (cind state))");
+
+    // A state slot materializes from its initializer and then retains writes.
+    run("(define-state-slot! 'test-counter (lambda () 0))");
+    CHECK(evaluate("(state-ref host 'test-counter)") == "0");
+    run("(state-update! host 'test-counter 1+)");
+    run("(state-update! host 'test-counter 1+)");
+    CHECK(evaluate("(state-ref host 'test-counter)") == "2");
+    run("(state-clear! host 'test-counter)");
+    CHECK(evaluate("(state-ref host 'test-counter)") == "0");
+
+    // A policy slot falls back to its declared default until configured.
+    run("(define-policy-slot! 'test-policy (lambda (h) 'default))");
+    CHECK(evaluate("(policy-configured? host 'test-policy)") == "#f");
+    CHECK(evaluate("((policy-ref host 'test-policy) host)") == "default");
+    run("(policy-set! host 'test-policy (lambda (h) 'configured))");
+    CHECK(evaluate("(policy-configured? host 'test-policy)") == "#t");
+    CHECK(evaluate("((policy-ref host 'test-policy) host)") == "configured");
+
+    // A policy without a default is mandatory rather than silently absent.
+    run("(define-policy-slot! 'test-required)");
+    CHECK(evaluate("(catch #t (lambda () (policy-ref host 'test-required)) (lambda a 'raised))") ==
+          "raised");
+
+    // Accessors refuse to read a slot of the other kind.
+    CHECK(evaluate("(catch #t (lambda () (state-ref host 'test-policy)) (lambda a 'raised))") ==
+          "raised");
+
+    // The root is enumerable: this is what replaces per-subsystem serializers.
+    CHECK(evaluate("(let ((entry (assq 'command-prefix (map (lambda (v) (cons (vector-ref v 0) v))"
+                   "                                        (application-state-snapshot host)))))"
+                   "  (vector-ref (cdr entry) 1))") == "state");
+    run("(state-set! host 'test-counter 7)");
+    CHECK(evaluate("(let ((entry (assq 'test-counter (map (lambda (v) (cons (vector-ref v 0) v))"
+                   "                                      (application-state-snapshot host)))))"
+                   "  (vector-ref (cdr entry) 2))") == "7");
+
+    // Slot values belong to one application; declarations are process-wide.
+    {
+        EditorRuntime other_runtime;
+        GuileRuntime other(other_runtime);
+        const std::expected<GuileEvaluationResult, std::string> isolated =
+            other.evaluate({.source = "(use-modules (cind state))(state-ref host 'test-counter)",
+                            .source_name = "other.scm"});
+        REQUIRE(isolated.has_value());
+        REQUIRE_FALSE(isolated->error.has_value());
+        CHECK(isolated->values == std::vector<std::string>{"0"});
+    }
+
+    run("(release-application-state! host)");
+    CHECK(evaluate("(state-ref host 'test-counter)") == "0");
+}
+
 TEST_CASE("Guile evaluation keeps an application-local module and reports streams") {
     EditorRuntime runtime;
     GuileRuntime guile(runtime);
@@ -833,12 +903,12 @@ TEST_CASE("bundled Guile policy installs available default key bindings") {
     CHECK(snapshot.version == "3.0.11");
     CHECK(snapshot.modules ==
           std::vector<std::string>{
-              "cind application", "cind command",    "cind completion",  "cind input",
-              "cind lsp",         "cind async",      "cind workbench",   "cind lifecycle",
-              "cind pointer",     "cind extension",  "cind emacs",       "cind toy-modal",
-              "cind meow",        "cind vim",        "cind helix",       "cind structural",
-              "cind paredit",     "cind minibuffer", "cind development", "cind ares",
-              "cind introspect",  "cind core"});
+              "cind state",      "cind application", "cind command",    "cind completion",
+              "cind input",      "cind lsp",         "cind async",      "cind workbench",
+              "cind lifecycle",  "cind pointer",     "cind extension",  "cind emacs",
+              "cind toy-modal",  "cind meow",        "cind vim",        "cind helix",
+              "cind structural", "cind paredit",     "cind minibuffer", "cind development",
+              "cind ares",       "cind introspect",  "cind core"});
     CHECK(snapshot.binding_revision == 1);
     CHECK_FALSE(snapshot.last_error.has_value());
 }

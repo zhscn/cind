@@ -1,6 +1,7 @@
 (define-module (cind command)
   #:use-module (ice-9 optargs)
   #:use-module (cind host)
+  #:use-module (cind state)
   #:export (command-completed
             command-completed/preserve
             command-completed/collapse
@@ -79,8 +80,10 @@
             selection-with-metadata
             selection-with-ranges))
 
-(define command-feedback-states (make-weak-key-hash-table))
-(define command-prefix-states (make-weak-key-hash-table))
+;; Runtime state lives in the application state root rather than in tables
+;; private to this module (design/09-guile-first.md §4).
+(define-state-slot! 'command-feedback (lambda () (vector "" "" "")))
+(define-state-slot! 'command-prefix (lambda () #(#f #f ())))
 
 (define (valid-command-prefix-extra? extra)
   (and (list? extra)
@@ -112,21 +115,17 @@
   state)
 
 (define (command-prefix-state host)
-  (or (hashq-ref command-prefix-states host) #(#f #f ())))
+  (state-ref host 'command-prefix))
 
 (define (set-command-prefix-state! host state)
   (validate-command-prefix-state state)
-  (hashq-set! command-prefix-states host state)
-  state)
+  (state-set! host 'command-prefix state))
 
 (define (clear-command-prefix-state! host)
-  (hashq-remove! command-prefix-states host))
+  (state-clear! host 'command-prefix))
 
 (define (command-feedback-entry host)
-  (or (hashq-ref command-feedback-states host)
-      (let ((state (vector "" "" "")))
-        (hashq-set! command-feedback-states host state)
-        state)))
+  (state-ref host 'command-feedback))
 
 (define (command-feedback-state host)
   (let ((state (command-feedback-entry host)))
@@ -307,14 +306,14 @@
 (define (context-project context)
   (context-value context 'project))
 
-(define keymap-root-policies (make-weak-key-hash-table))
-
 (define default-keymap-root-policy
   (vector (vector 'editor.default)
           (vector 'application.global)
           (vector 'editor.system)
           (vector 'window.policy-created)
           (vector 'completion.active)))
+
+(define-state-slot! 'keymap-roots (lambda () default-keymap-root-policy))
 
 (define (keymap-name-vector value name)
   (let ((result (cond ((vector? value) value)
@@ -341,11 +340,10 @@
                         (keymap-name-vector policy-created-window
                                             "policy-created window keymaps")
                         (keymap-name-vector completion "completion keymaps"))))
-    (hashq-set! keymap-root-policies host policy)
-    policy))
+    (state-set! host 'keymap-roots policy)))
 
 (define (keymap-root-policy host)
-  (or (hashq-ref keymap-root-policies host) default-keymap-root-policy))
+  (state-ref host 'keymap-roots))
 
 (define (keymap-name-text name)
   (if (symbol? name) (symbol->string name) name))
@@ -458,134 +456,81 @@
 (define (active-keymap-layers host context)
   (keymap-policy-names (resolve-keymap-policy host context) #t))
 
-(define modeline-policies (make-weak-key-hash-table))
-
-(define display-policies (make-weak-key-hash-table))
+;; Presentation policies are configured procedures with no default: each is a
+;; declared policy slot instead of a private table plus a hand-written
+;; "configured or raise" accessor pair (design/09-guile-first.md §4).
+(define-policy-slot! 'display)
+(define-policy-slot! 'modeline)
+(define-policy-slot! 'chrome)
+(define-policy-slot! 'theme)
+(define-policy-slot! 'style)
+(define-policy-slot! 'motion)
+(define-policy-slot! 'metrics)
+(define-policy-slot! 'typography)
 
 (define (configure-display-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "display policy must be a procedure" procedure))
-  (hashq-set! display-policies host procedure)
-  procedure)
+  (policy-set! host 'display procedure))
 
 (define (resolve-display-plan host facts)
-  (let ((procedure (hashq-ref display-policies host)))
-    (unless procedure
-      (error "display policy is not configured"))
-    (procedure host facts)))
+  ((policy-ref host 'display) host facts))
 
 (define (configure-modeline-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "modeline policy must be a procedure" procedure))
-  (hashq-set! modeline-policies host procedure)
-  procedure)
+  (policy-set! host 'modeline procedure))
 
 (define (resolve-modeline-content host context facts)
-  (let ((procedure (hashq-ref modeline-policies host)))
-    (unless procedure
-      (error "modeline policy is not configured"))
-    (let ((effective-facts (list->vector (vector->list facts))))
-      (vector-set! effective-facts 9
-                   (if (equal? (context-window context) (active-window-id host))
-                       (vector-ref (command-feedback-entry host) 1)
-                       ""))
-      (procedure host context effective-facts))))
-
-(define chrome-policies (make-weak-key-hash-table))
+  (let ((effective-facts (list->vector (vector->list facts))))
+    (vector-set! effective-facts 9
+                 (if (equal? (context-window context) (active-window-id host))
+                     (vector-ref (command-feedback-entry host) 1)
+                     ""))
+    ((policy-ref host 'modeline) host context effective-facts)))
 
 (define (configure-chrome-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "chrome policy must be a procedure" procedure))
-  (hashq-set! chrome-policies host procedure)
-  procedure)
+  (policy-set! host 'chrome procedure))
 
 (define (resolve-chrome-content host context facts)
-  (let ((procedure (hashq-ref chrome-policies host)))
-    (unless procedure
-      (error "chrome policy is not configured"))
-    (let ((effective-facts (list->vector (vector->list facts))))
-      (vector-set! effective-facts 7
-                   (vector-ref (command-feedback-entry host) 0))
-      (procedure host context effective-facts))))
-
-(define theme-policies (make-weak-key-hash-table))
+  (let ((effective-facts (list->vector (vector->list facts))))
+    (vector-set! effective-facts 7
+                 (vector-ref (command-feedback-entry host) 0))
+    ((policy-ref host 'chrome) host context effective-facts)))
 
 (define (configure-theme-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "theme policy must be a procedure" procedure))
-  (hashq-set! theme-policies host procedure)
-  procedure)
+  (policy-set! host 'theme procedure))
 
 (define (resolve-presentation-theme host)
-  (let ((procedure (hashq-ref theme-policies host)))
-    (unless procedure
-      (error "theme policy is not configured"))
-    (procedure host)))
-
-(define style-policies (make-weak-key-hash-table))
+  ((policy-ref host 'theme) host))
 
 (define (configure-style-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "style policy must be a procedure" procedure))
-  (hashq-set! style-policies host procedure)
-  procedure)
+  (policy-set! host 'style procedure))
 
 (define (resolve-presentation-styles host)
-  (let ((procedure (hashq-ref style-policies host)))
-    (unless procedure
-      (error "style policy is not configured"))
-    (procedure host (resolve-presentation-theme host))))
-
-(define motion-policies (make-weak-key-hash-table))
+  ((policy-ref host 'style) host (resolve-presentation-theme host)))
 
 (define (configure-motion-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "motion policy must be a procedure" procedure))
-  (hashq-set! motion-policies host procedure)
-  procedure)
+  (policy-set! host 'motion procedure))
 
 (define (resolve-presentation-motion host)
-  (let ((procedure (hashq-ref motion-policies host)))
-    (unless procedure
-      (error "motion policy is not configured"))
-    (procedure host)))
-
-(define metrics-policies (make-weak-key-hash-table))
+  ((policy-ref host 'motion) host))
 
 (define (configure-metrics-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "metrics policy must be a procedure" procedure))
-  (hashq-set! metrics-policies host procedure)
-  procedure)
+  (policy-set! host 'metrics procedure))
 
 (define (resolve-presentation-metrics host)
-  (let ((procedure (hashq-ref metrics-policies host)))
-    (unless procedure
-      (error "metrics policy is not configured"))
-    (procedure host)))
-
-(define typography-policies (make-weak-key-hash-table))
+  ((policy-ref host 'metrics) host))
 
 (define (configure-typography-policy! host procedure)
-  (unless (procedure? procedure)
-    (error "typography policy must be a procedure" procedure))
-  (hashq-set! typography-policies host procedure)
-  procedure)
+  (policy-set! host 'typography procedure))
 
 (define (resolve-presentation-typography host)
-  (let ((procedure (hashq-ref typography-policies host)))
-    (unless procedure
-      (error "typography policy is not configured"))
-    (procedure host)))
+  ((policy-ref host 'typography) host))
 
+;; Resolves the theme once and hands that exact value to the style policy, so
+;; the frontend snapshot cannot mix two theme resolutions.
 (define (resolve-presentation-profile host)
-  (let* ((theme (resolve-presentation-theme host))
-         (style-procedure (hashq-ref style-policies host)))
-    (unless style-procedure
-      (error "style policy is not configured"))
+  (let ((theme (resolve-presentation-theme host)))
     (vector 'presentation-profile
             theme
-            (style-procedure host theme)
+            ((policy-ref host 'style) host theme)
             (resolve-presentation-motion host)
             (resolve-presentation-metrics host)
             (resolve-presentation-typography host))))
