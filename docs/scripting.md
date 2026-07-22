@@ -311,12 +311,13 @@ keymap names and returns `#(none)`, `#(prefix source-keymap)`, or
 `#(command command-name source-keymap)`. Resolution is side-effect free and applies at most one
 remap using the same high-to-low layer order as command dispatch.
 
-`keymap-context-snapshot` returns the named keymaps attached to the InputState stack, Window, View,
-Buffer, active minor modes, and major mode, and whether display policy created the Window. It
-exposes attachment and activation facts without assigning precedence or selecting global roots. It
-no longer reports a Buffer kind: the only thing the policy read that for was whether the focused
-buffer is the transient interaction surface, which `interaction-mechanism-status` already answers
-and which is a fact about the mechanism rather than a classification of the buffer.
+`keymap-context-snapshot` returns whether the focused Buffer is the transient interaction surface,
+the named keymaps attached to the InputState stack, Window, View, Buffer, active minor modes, and
+major mode, and whether display policy created the Window. It exposes attachment and activation
+facts without assigning precedence or selecting global roots. The first field replaces the Buffer
+kind it used to report: the only thing the policy read that for was whether the focused buffer is
+the interaction surface, which is a fact the mechanism knows about itself rather than a
+classification of the buffer.
 
 `(cind command)` owns the corresponding policy interface:
 

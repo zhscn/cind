@@ -1001,21 +1001,30 @@ SCM keymap_context_snapshot(SCM host_object, SCM context_value) {
             major = named_keymap_source_value(runtime, "major-mode", mode.name, keymaps);
         }
 
-        // No buffer kind: the only thing the policy read it for was "is this the
-        // transient interaction surface", which the mechanism already reports.
-        SCM result = scm_c_make_vector(9, SCM_UNSPECIFIED);
+        // Not the buffer kind: the only thing the policy read that for was "is
+        // this the transient interaction surface", which is a fact about the
+        // mechanism. Reporting it here keeps the answer one boolean instead of
+        // making the policy build a status record per keystroke.
+        const GuileInteractionMechanismStatus interaction =
+            host.services.interaction_mechanism_status
+                ? host.services.interaction_mechanism_status()
+                : GuileInteractionMechanismStatus{};
+        SCM result = scm_c_make_vector(10, SCM_UNSPECIFIED);
         scm_c_vector_set_x(result, 0, scm_from_utf8_symbol("keymap-context"));
-        scm_c_vector_set_x(result, 1, states);
-        scm_c_vector_set_x(result, 2, keymap_names_value(runtime, window.keymaps()));
-        scm_c_vector_set_x(result, 3, keymap_names_value(runtime, view.keymaps()));
-        scm_c_vector_set_x(result, 4, keymap_names_value(runtime, buffer.keymaps()));
-        scm_c_vector_set_x(result, 5, minors);
-        scm_c_vector_set_x(result, 6, major);
+        scm_c_vector_set_x(
+            result, 1,
+            scm_from_bool(interaction.active && interaction.buffer == buffer.id()));
+        scm_c_vector_set_x(result, 2, states);
+        scm_c_vector_set_x(result, 3, keymap_names_value(runtime, window.keymaps()));
+        scm_c_vector_set_x(result, 4, keymap_names_value(runtime, view.keymaps()));
+        scm_c_vector_set_x(result, 5, keymap_names_value(runtime, buffer.keymaps()));
+        scm_c_vector_set_x(result, 6, minors);
+        scm_c_vector_set_x(result, 7, major);
         const SCM window_state =
             scheme_workbench_window_state(host_object, window.id(), "keymap-context-snapshot");
-        scm_c_vector_set_x(result, 7, scm_c_vector_ref(window_state, 3));
+        scm_c_vector_set_x(result, 8, scm_c_vector_ref(window_state, 3));
         scm_c_vector_set_x(
-            result, 8,
+            result, 9,
             scm_from_bool(host.services.completion_active && host.services.completion_active()));
         return result;
     });

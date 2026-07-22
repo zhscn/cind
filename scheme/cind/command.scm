@@ -395,15 +395,18 @@
           (loop (- index 1)
                 (append-keymap-vector result (vector-ref mode 2) scope))))))
 
-(define (assemble-base-keymap-layers snapshot roots initial interaction-surface?)
-  (let* ((window-maps (vector-ref snapshot 2))
-         (view-maps (vector-ref snapshot 3))
-         (buffer-maps (vector-ref snapshot 4))
-         (minor-modes (vector-ref snapshot 5))
-         (major-mode (vector-ref snapshot 6))
+;; Slot 1 is "the focused buffer is the transient interaction surface", which the
+;; mechanism reports about itself -- not a classification of the buffer.
+(define (assemble-base-keymap-layers snapshot roots initial)
+  (let* ((interaction-surface? (vector-ref snapshot 1))
+         (window-maps (vector-ref snapshot 3))
+         (view-maps (vector-ref snapshot 4))
+         (buffer-maps (vector-ref snapshot 5))
+         (minor-modes (vector-ref snapshot 6))
+         (major-mode (vector-ref snapshot 7))
          (window-layers (append-keymap-vector initial window-maps "window"))
          (policy-window-layers
-          (if (and (not interaction-surface?) (vector-ref snapshot 7))
+          (if (and (not interaction-surface?) (vector-ref snapshot 8))
               (append-keymap-vector window-layers (vector-ref roots 3)
                                     "window:policy-created")
               window-layers))
@@ -423,31 +426,21 @@
                             (append-keymap-vector major-layers (vector-ref roots 0) "editor"))))
     (append-keymap-vector editor-layers (vector-ref roots 1) "global")))
 
-;; The transient interaction surface takes a different layer stack. That is a
-;; fact about the mechanism, not a buffer classification, so ask the mechanism
-;; which buffer it owns rather than tagging the buffer.
-(define (interaction-surface? host context)
-  (let ((mechanism (interaction-mechanism-status host)))
-    (and (vector-ref mechanism 0)
-         (equal? (context-buffer context) (vector-ref mechanism 2)))))
-
 (define (resolve-base-keymap-policy host context)
   (let* ((snapshot (keymap-context-snapshot host context))
          (roots (keymap-root-policy host))
-         (layers (assemble-base-keymap-layers snapshot roots '()
-                                              (interaction-surface? host context))))
+         (layers (assemble-base-keymap-layers snapshot roots '())))
     (vector 'keymap-policy (list->vector layers) (vector))))
 
 (define (resolve-keymap-policy host context)
   (let* ((snapshot (keymap-context-snapshot host context))
          (roots (keymap-root-policy host))
          (context-layers
-          (if (vector-ref snapshot 8)
+          (if (vector-ref snapshot 9)
               (append-keymap-vector '() (vector-ref roots 4) "completion-active")
               '()))
-         (state-layers (append-state-layers context-layers (vector-ref snapshot 1)))
-         (layers (assemble-base-keymap-layers snapshot roots state-layers
-                                              (interaction-surface? host context))))
+         (state-layers (append-state-layers context-layers (vector-ref snapshot 2)))
+         (layers (assemble-base-keymap-layers snapshot roots state-layers)))
     (vector 'keymap-policy (list->vector layers) (vector-ref roots 2))))
 
 (define (keymap-policy-names policy include-overrides?)
